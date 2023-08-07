@@ -228,11 +228,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean isSymbolAsFieldSupported() {
                 return symbolAsFieldSupported;
             }
-
-            @Override
-            public boolean readOnlySecurityContext() {
-                return false;
-            }
         };
     }
 
@@ -270,15 +265,20 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
     }
 
-    protected void runInContext(Runnable r) throws Exception {
+    @FunctionalInterface
+    public interface UnstableRunnable {
+        void run() throws Exception;
+    }
+
+    protected void runInContext(UnstableRunnable r) throws Exception {
         runInContext(r, null);
     }
 
-    protected void runInContext(Runnable r, Runnable onCommitNewEvent) throws Exception {
+    protected void runInContext(UnstableRunnable r, UnstableRunnable onCommitNewEvent) throws Exception {
         runInContext(null, r, onCommitNewEvent);
     }
 
-    protected void runInContext(FilesFacade ff, Runnable r, Runnable onCommitNewEvent) throws Exception {
+    protected void runInContext(FilesFacade ff, UnstableRunnable r, UnstableRunnable onCommitNewEvent) throws Exception {
         assertMemoryLeak(ff, () -> {
             setupContext(onCommitNewEvent);
             try {
@@ -289,7 +289,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
     }
 
-    protected void setupContext(Runnable onCommitNewEvent) {
+    protected void setupContext(UnstableRunnable onCommitNewEvent) {
         disconnected = false;
         recvBuffer = null;
         scheduler = new LineTcpMeasurementScheduler(
@@ -306,7 +306,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                     NetworkIOJob netIoJob,
                     LineTcpConnectionContext context,
                     LineTcpParser parser
-            ) {
+            ) throws Exception {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }

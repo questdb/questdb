@@ -29,11 +29,12 @@ import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -217,7 +218,8 @@ public class IODispatcherTest extends AbstractTest {
                 180_000_000,
                 721,
                 180_000_000,
-                721);
+                721
+        );
     }
 
     @Test
@@ -229,7 +231,8 @@ public class IODispatcherTest extends AbstractTest {
                 0,
                 0,
                 0,
-                0);
+                0
+        );
     }
 
     @Test
@@ -312,7 +315,8 @@ public class IODispatcherTest extends AbstractTest {
                 3_600_000_000L, // 1 hour, micro precision
                 1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -648,7 +652,8 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testExpExplainQueryPlan() throws Exception {
-        testJsonQuery(1,
+        testJsonQuery(
+                1,
                 "GET /exp?query=explain+select+1+from+x+where+f>systimestamp()+and+f<0+limit+1 HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "Connection: keep-alive\r\n" +
@@ -681,7 +686,8 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
-                1);
+                1
+        );
     }
 
     @Test
@@ -713,7 +719,8 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
-                1);
+                1
+        );
     }
 
     @Test
@@ -755,7 +762,8 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testExplainQueryPlan() throws Exception {
-        testJsonQuery(1,
+        testJsonQuery(
+                1,
                 "GET /query?query=explain+select+1+from+x+where+f>systimestamp()+and+f<0+limit+1 HTTP/1.1\r\n" +
                         "Accept: */*\r\n" +
                         "Accept-Encoding: gzip, deflate, br\r\n" +
@@ -783,7 +791,8 @@ public class IODispatcherTest extends AbstractTest {
                         "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"dataset\":[[\"Limit lo: 1\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;workers: 2\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]],\"timestamp\":-1,\"count\":9}\r\n" +
                         "00\r\n" +
                         "\r\n",
-                1);
+                1
+        );
     }
 
     @Test
@@ -1152,7 +1161,8 @@ public class IODispatcherTest extends AbstractTest {
                                 .withHttpProtocolVersion("HTTP/1.1 ")
                                 .withServerKeepAlive(true)
                 )
-                .run(configuration,
+                .run(
+                        configuration,
                         engine -> {
                             createTable.run(engine);
                             sendAndReceive(
@@ -1164,7 +1174,8 @@ public class IODispatcherTest extends AbstractTest {
                                     false,
                                     expectReceiveDisconnect
                             );
-                        });
+                        }
+                );
     }
 
     @Test
@@ -1181,12 +1192,9 @@ public class IODispatcherTest extends AbstractTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                            try (
-                                    SqlCompiler compiler = new SqlCompiler(engine);
-                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                            ) {
-                                compiler.compile("create table test (col_a int, col_b long, ts timestamp) timestamp(ts) partition by week", executionContext);
-                                compile(compiler, "alter table test drop column col_b", executionContext);
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.ddl("create table test (col_a int, col_b long, ts timestamp) timestamp(ts) partition by week", executionContext);
+                                engine.ddl("alter table test drop column col_b", executionContext);
 
                                 sendAndReceive(
                                         NetworkFacadeImpl.INSTANCE,
@@ -1235,7 +1243,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                 StringSink sink = new StringSink();
                                 TestUtils.assertSql(
-                                        compiler,
+                                        engine,
                                         executionContext,
                                         "test",
                                         sink,
@@ -1263,13 +1271,10 @@ public class IODispatcherTest extends AbstractTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                            try (
-                                    SqlCompiler compiler = new SqlCompiler(engine);
-                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                            ) {
-                                compiler.compile("create table test (col_a int, col_b long)", executionContext);
-                                compile(compiler, "alter table test drop column col_a", executionContext);
-                                compile(compiler, "alter table test add column col_a long", executionContext);
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.ddl("create table test (col_a int, col_b long)", executionContext);
+                                engine.ddl("alter table test drop column col_a", executionContext);
+                                engine.ddl("alter table test add column col_a long", executionContext);
 
                                 sendAndReceive(
                                         NetworkFacadeImpl.INSTANCE,
@@ -1318,7 +1323,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                 StringSink sink = new StringSink();
                                 TestUtils.assertSql(
-                                        compiler,
+                                        engine,
                                         executionContext,
                                         "test",
                                         sink,
@@ -1653,11 +1658,8 @@ public class IODispatcherTest extends AbstractTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                            try (
-                                    SqlCompiler compiler = new SqlCompiler(engine);
-                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                            ) {
-                                compiler.compile("create table test (ts timestamp, value int) timestamp(ts) partition by DAY", executionContext);
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.ddl("create table test (ts timestamp, value int) timestamp(ts) partition by DAY", executionContext);
 
                                 sendAndReceive(
                                         NetworkFacadeImpl.INSTANCE,
@@ -1713,7 +1715,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                 StringSink sink = new StringSink();
                                 TestUtils.assertSql(
-                                        compiler,
+                                        engine,
                                         executionContext,
                                         "test",
                                         sink,
@@ -1879,11 +1881,8 @@ public class IODispatcherTest extends AbstractTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                            try (
-                                    SqlCompiler compiler = new SqlCompiler(engine);
-                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                            ) {
-                                compiler.compile("create table test (geo1 geohash(1c), geo2 geohash(3c), geo4 geohash(6c), geo8 geohash(12c), geo2b geohash(2b))", executionContext);
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.ddl("create table test (geo1 geohash(1c), geo2 geohash(3c), geo4 geohash(6c), geo8 geohash(12c), geo2b geohash(2b))", executionContext);
 
                                 sendAndReceive(
                                         NetworkFacadeImpl.INSTANCE,
@@ -1935,7 +1934,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                 StringSink sink = new StringSink();
                                 TestUtils.assertSql(
-                                        compiler,
+                                        engine,
                                         executionContext,
                                         "test",
                                         sink,
@@ -1964,7 +1963,7 @@ public class IODispatcherTest extends AbstractTest {
                 )
                 .run((engine) -> {
                             try (
-                                    SqlCompiler compiler = new SqlCompiler(engine);
+                                    SqlCompiler compiler = engine.getSqlCompiler();
                                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                             ) {
                                 sendAndReceive(
@@ -2685,7 +2684,8 @@ public class IODispatcherTest extends AbstractTest {
                         "{\"query\":\"insert into op values ('abc')\",\"error\":\"inconvertible value: `abc` [STRING -> INT]\",\"position\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
-                , 1);
+                , 1
+        );
     }
 
     @Test
@@ -2718,7 +2718,8 @@ public class IODispatcherTest extends AbstractTest {
                         "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"CHAR\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,\"1\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,\"2\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,\"3\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,\"4\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,\"5\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,\"6\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,\"7\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,\"8\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,\"9\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,\"10\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,\"11\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,\"12\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"m\",2950,false,0,16,0,\"13\",\"\",null,null,null,0,\"b\"]],\"timestamp\":-1,\"count\":13,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
-                , 10);
+                , 10
+        );
     }
 
     @Test
@@ -2769,7 +2770,8 @@ public class IODispatcherTest extends AbstractTest {
                             engine,
                             30,
                             new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
+                            new TestRecord.ArrayBinarySequence()
+                    );
 
                     // send multipart request to server
                     final String request = "GET /query?query=x HTTP/1.1\r\n" +
@@ -3526,7 +3528,8 @@ public class IODispatcherTest extends AbstractTest {
                         "2c\r\n" +
                         "{\"query\":\"x\",\"error\":\"empty column in list\"}\r\n" +
                         "00\r\n" +
-                        "\r\n", 20);
+                        "\r\n", 20
+        );
     }
 
     @Test
@@ -3638,7 +3641,8 @@ public class IODispatcherTest extends AbstractTest {
                         "32\r\n" +
                         "{\"query\":\"x\",\"error\":'invalid column in list: f1'}\r\n" +
                         "00\r\n" +
-                        "\r\n", 20);
+                        "\r\n", 20
+        );
     }
 
     @Test
@@ -3662,7 +3666,8 @@ public class IODispatcherTest extends AbstractTest {
                         "32\r\n" +
                         "{\"query\":\"x\",\"error\":'invalid column in list: l2'}\r\n" +
                         "00\r\n" +
-                        "\r\n", 20);
+                        "\r\n", 20
+        );
     }
 
     @Test
@@ -3921,11 +3926,8 @@ public class IODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
-                    try (
-                            SqlCompiler compiler = new SqlCompiler(engine);
-                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                    ) {
-                        compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", executionContext);
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", executionContext);
 
                         final CyclicBarrier barrier = new CyclicBarrier(threadCount);
                         final CountDownLatch latch = new CountDownLatch(threadCount);
@@ -4242,7 +4244,8 @@ public class IODispatcherTest extends AbstractTest {
                     engine,
                     20,
                     new Rnd(),
-                    new TestRecord.ArrayBinarySequence());
+                    new TestRecord.ArrayBinarySequence()
+            );
 
             // rename x -> y (quoted)
             sendAndReceive(
@@ -4381,7 +4384,8 @@ public class IODispatcherTest extends AbstractTest {
                         "02f5\r\n" +
                         "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"]],\"timestamp\":-1,\"count\":11}\r\n" +
                         "00\r\n" +
-                        "\r\n");
+                        "\r\n"
+        );
     }
 
     @Test
@@ -4685,7 +4689,8 @@ public class IODispatcherTest extends AbstractTest {
                             engine,
                             20,
                             new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
+                            new TestRecord.ArrayBinarySequence()
+                    );
 
                     // send multipart request to server
                     final String request = "GET /query?query=x%20where2%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
@@ -4735,11 +4740,8 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
                 .run((engine) -> {
-                    try (
-                            SqlCompiler compiler = new SqlCompiler(engine);
-                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                    ) {
-                        compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         // We expect header only to be sent and then a disconnect.
                         new SendAndReceiveRequestBuilder()
                                 .withExpectReceiveDisconnect(true)
@@ -4767,11 +4769,8 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(timeout)
                 .run((engine) -> {
-                    try (
-                            SqlCompiler compiler = new SqlCompiler(engine);
-                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                    ) {
-                        compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
@@ -4896,7 +4895,8 @@ public class IODispatcherTest extends AbstractTest {
                     engine,
                     20,
                     new Rnd(),
-                    new TestRecord.ArrayBinarySequence());
+                    new TestRecord.ArrayBinarySequence()
+            );
 
             final String vacuumQuery = "vacuum table x";
             sendAndReceive(
@@ -4961,7 +4961,8 @@ public class IODispatcherTest extends AbstractTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount());
+                                workerPool.getWorkerCount()
+                        );
                     }
                 });
 
@@ -4973,7 +4974,8 @@ public class IODispatcherTest extends AbstractTest {
                             engine,
                             30,
                             new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
+                            new TestRecord.ArrayBinarySequence()
+                    );
 
                     // send multipart request to server
                     final String request = "GET /query?query=x HTTP/1.1\r\n" +
@@ -5038,7 +5040,8 @@ public class IODispatcherTest extends AbstractTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount());
+                                workerPool.getWorkerCount()
+                        );
                     }
                 });
 
@@ -5050,7 +5053,8 @@ public class IODispatcherTest extends AbstractTest {
                             engine,
                             1000,
                             new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
+                            new TestRecord.ArrayBinarySequence()
+                    );
 
                     // send multipart request to server
                     // testJsonQueryWithCompressedResults1 tested requests from REST API, while this test mimics requests sent from web console
@@ -5138,12 +5142,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 });
 
-                O3Utils.setupWorkerPool(
-                        workerPool,
-                        engine,
-                        null,
-                        null
-                );
+                O3Utils.setupWorkerPool(workerPool, engine, null);
 
                 workerPool.start(LOG);
 
@@ -5290,7 +5289,8 @@ public class IODispatcherTest extends AbstractTest {
                         "{\"query\":\"select null from long_sequence(1)\",\"columns\":[{\"name\":\"null\",\"type\":\"STRING\"}],\"dataset\":[[null]],\"timestamp\":-1,\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
-                , 1);
+                , 1
+        );
     }
 
     @Test
@@ -5319,7 +5319,8 @@ public class IODispatcherTest extends AbstractTest {
                         "{\"query\":\"select 0 рекордно from long_sequence(10)\",\"columns\":[{\"name\":\"рекордно\",\"type\":\"INT\"}],\"dataset\":[[0],[0],[0],[0],[0],[0],[0],[0],[0],[0]],\"timestamp\":-1,\"count\":10}\r\n" +
                         "00\r\n" +
                         "\r\n",
-                1);
+                1
+        );
     }
 
     @Test
@@ -7309,7 +7310,8 @@ public class IODispatcherTest extends AbstractTest {
                         "\"c\"\r\n" +
                         "\r\n" +
                         "00\r\n" +
-                        "\r\n");
+                        "\r\n"
+        );
     }
 
     @Test
@@ -7450,11 +7452,8 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
                 .run((engine) -> {
-                    try (
-                            SqlCompiler compiler = new SqlCompiler(engine);
-                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                    ) {
-                        compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         // We expect header only to be sent and then a disconnect.
                         new SendAndReceiveRequestBuilder()
                                 .withExpectReceiveDisconnect(true)
@@ -7483,11 +7482,8 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(timeout)
                 .run((engine) -> {
-                    try (
-                            SqlCompiler compiler = new SqlCompiler(engine);
-                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                    ) {
-                        compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
                                     "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
@@ -7518,7 +7514,8 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryUuid() throws Exception {
-        testJsonQuery(10,
+        testJsonQuery(
+                10,
                 "GET /exp?query=SELECT+*+FROM+x HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
@@ -7893,13 +7890,6 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    private static void compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, executionContext);
-        try (OperationFuture future = cc.execute(null)) {
-            future.await();
-        }
-    }
-
     private static HttpServer createHttpServer(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
@@ -7910,8 +7900,6 @@ public class IODispatcherTest extends AbstractTest {
                 cairoEngine,
                 workerPool,
                 workerPool.getWorkerCount(),
-                null,
-                null,
                 IODispatcherTest.metrics
         );
     }
@@ -8185,7 +8173,8 @@ public class IODispatcherTest extends AbstractTest {
             int expectedMaxUncommittedRows,
             int expectedImportedRows,
             String data,
-            String expectedData) throws Exception {
+            String expectedData
+    ) throws Exception {
         String tableName = "test_table";
         String command = "POST /upload?fmt=json&" +
                 "overwrite=false&" +
@@ -8254,7 +8243,8 @@ public class IODispatcherTest extends AbstractTest {
                 expectedMaxUncommittedRows,
                 expectedImportedRows,
                 expectedData,
-                false);
+                false
+        );
     }
 
     private void printTelemetryEventAndOrigin(RecordCursor cursor, RecordMetadata metadata, StringSink sink) {
@@ -8324,10 +8314,9 @@ public class IODispatcherTest extends AbstractTest {
                 .withTempFolder(root)
                 .run(engine -> {
                     try (
-                            SqlCompiler compiler = new SqlCompiler(engine);
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
-                        compiler.compile("create table y as (\n" +
+                        engine.ddl("create table y as (\n" +
                                 "select\n" +
                                 "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
                                 "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(3c)) geo2,\n" +

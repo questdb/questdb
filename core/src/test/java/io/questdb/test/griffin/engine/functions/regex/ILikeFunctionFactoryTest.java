@@ -28,20 +28,20 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
+public class ILikeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBindVariableConcatIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
             bindVariableService.setStr(0, "H");
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%' || $1 || '%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '%' || $1 || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -54,10 +54,10 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableConcatNamed() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
             bindVariableService.setStr("str", "H");
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%' || :str || '%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '%' || :str || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -79,9 +79,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike ''", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike ''")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -103,9 +103,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '[][n'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '[][n'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -118,8 +118,8 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeCharacterNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-            try (RecordCursorFactory factory = compiler.compile("select * from x where  name ilike 'H'", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            try (RecordCursorFactory factory = select("select * from x where  name ilike 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -142,9 +142,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'aBcGe'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike 'aBcGe'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -158,8 +158,8 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-                    compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-                    try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
+                    ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+                    try (RecordCursorFactory factory = select("select * from x where name ilike 'XJ'")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             sink.clear();
                             printer.print(cursor, factory.getMetadata(), true, sink);
@@ -182,9 +182,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'AbC%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike 'AbC%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -208,9 +208,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%GgG'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '%GgG'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -232,9 +232,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%BcG%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '%BcG%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -256,9 +256,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '_B%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '_B%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -280,9 +280,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '_BC__'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ilike '_BC__'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -295,10 +295,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                compiler.compile("select * from x where name ilike rnd_str('foo','bar')", sqlExecutionContext);
-                Assert.fail();
+                assertException("select * from x where name ilike rnd_str('foo','bar')");
             } catch (SqlException e) {
                 Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
@@ -309,9 +308,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where not name ilike 'H'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where not name ilike 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -324,9 +323,9 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where not name ilike 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where not name ilike 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);

@@ -40,7 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -51,12 +51,13 @@ import org.junit.Test;
 
 import java.util.Arrays;
 
-public class SampleByTest extends AbstractGriffinTest {
+public class SampleByTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(SampleByTest.class);
 
     @Test
     public void testBadFunction() throws Exception {
-        assertFailure("select b, sum(a), sum(c), k from x sample by 3h fill(20.56)",
+        assertException(
+                "select b, sum(a), sum(c), k from x sample by 3h fill(20.56)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -67,7 +68,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 22,
-                "Invalid column: c");
+                "Invalid column: c"
+        );
     }
 
     @Test
@@ -147,7 +149,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGeohashInterpolated() throws Exception {
-        assertFailure(
+        assertException(
                 "select k, first(b) from x sample by 3h fill(linear)",
                 "create table x as " +
                         "(" +
@@ -165,59 +167,52 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByAllTypes() throws Exception {
-        assertQuery13("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
-                        "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
-                        "\t680.7651\t771.0922622028395\t15020424080\t333\t197423\t-5259855777509188759\n" +
-                        "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
-                        "PEHN\t104.2904\t100.8772613783025\t3354324129\t18\t17565\t-4882690809235649274\n" +
-                        "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n",
-                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_byte(2, 50) e," +
-                        " abs(rnd_short()) f," +
-                        " abs(rnd_long()) g," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_byte(2, 50) e," +
-                        " abs(rnd_short()) f," +
-                        " abs(rnd_long()) g," +
-                        " timestamp_sequence(277200000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
-                        "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
-                        "\t779.3558\t869.932373151714\t16932485166\t363\t215247\t3597805051091659961\n" +
-                        "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
-                        "PEHN\t104.2904\t100.8772613783025\t3354324129\t18\t17565\t-4882690809235649274\n" +
-                        "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n" +
-                        "ZGHW\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\n" +
-                        "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
-                        "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
-                        "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true,
-                true
-        );
+        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+                "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
+                "\t680.7651\t771.0922622028395\t15020424080\t333\t197423\t-5259855777509188759\n" +
+                "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
+                "PEHN\t104.2904\t100.8772613783025\t3354324129\t18\t17565\t-4882690809235649274\n" +
+                "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n", "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_float(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_double(0)*100 c," +
+                " abs(rnd_int()) d," +
+                " rnd_byte(2, 50) e," +
+                " abs(rnd_short()) f," +
+                " abs(rnd_long()) g," +
+                " timestamp_sequence(172800000000, 3600000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                "select" +
+                " rnd_float(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_double(0)*100 c," +
+                " abs(rnd_int()) d," +
+                " rnd_byte(2, 50) e," +
+                " abs(rnd_short()) f," +
+                " abs(rnd_long()) g," +
+                " timestamp_sequence(277200000000, 3600000000) k" +
+                " from" +
+                " long_sequence(5)" +
+                ") timestamp(k)", "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+                "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
+                "\t779.3558\t869.932373151714\t16932485166\t363\t215247\t3597805051091659961\n" +
+                "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
+                "PEHN\t104.2904\t100.8772613783025\t3354324129\t18\t17565\t-4882690809235649274\n" +
+                "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n" +
+                "ZGHW\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\n" +
+                "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
+                "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
+                "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n", true, true, false);
     }
 
     @Test
     public void testGroupByAllTypesAndInvalidTimestampColumn() throws Exception {
-        assertFailure("select \n" +
+        assertException(
+                "select \n" +
                         "    LastUpdate, \n" +
                         "    CountryRegion, \n" +
                         "    last(Confirmed) Confirmed, \n" +
@@ -262,7 +257,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByAllTypesAndInvalidTimestampType() throws Exception {
-        assertFailure("select \n" +
+        assertException(
+                "select \n" +
                         "    LastUpdate, \n" +
                         "    CountryRegion, \n" +
                         "    last(Confirmed) Confirmed, \n" +
@@ -307,193 +303,161 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByAllTypesAndTimestampSameLevel() throws Exception {
-        assertQuery13("k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
-                        "1970-01-03T00:00:00.000000Z\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\n" +
-                        "1970-01-03T01:00:00.000000Z\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\n" +
-                        "1970-01-03T02:00:00.000000Z\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\n" +
-                        "1970-01-03T03:00:00.000000Z\t81.4681\t12.503042190293423\t2085282008\t9\t11472\t8955092533521658248\n" +
-                        "1970-01-03T04:00:00.000000Z\t67.6193\t34.35685332942956\t2144581835\t6\t10942\t3152466304308949756\n" +
-                        "1970-01-03T05:00:00.000000Z\t41.3816\t55.22494170511608\t667031149\t38\t22298\t5536695302686527374\n" +
-                        "1970-01-03T06:00:00.000000Z\t97.5020\t0.11075361080621349\t1515787781\t49\t19013\t7316123607359392486\n" +
-                        "1970-01-03T07:00:00.000000Z\t4.1428\t92.050039469858\t1299391311\t31\t19997\t4091897709796604687\n" +
-                        "1970-01-03T08:00:00.000000Z\t22.8223\t88.37421918800908\t1269042121\t9\t6093\t4608960730952244094\n" +
-                        "1970-01-03T09:00:00.000000Z\t72.3002\t12.105630273556178\t572338288\t28\t24397\t8081265393416742311\n" +
-                        "1970-01-03T10:00:00.000000Z\t81.6418\t91.0141759290032\t1609750740\t3\t14377\t6161552193869048721\n" +
-                        "1970-01-03T11:00:00.000000Z\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n" +
-                        "1970-01-03T12:00:00.000000Z\t67.5251\t95.40069089049732\t865832060\t48\t1315\t9063592617902736531\n" +
-                        "1970-01-03T13:00:00.000000Z\t14.8305\t94.41658975532606\t2043803188\t6\t1464\t9144172287200792483\n" +
-                        "1970-01-03T14:00:00.000000Z\t57.9745\t76.57837745299521\t462277692\t40\t21561\t9143800334706665900\n" +
-                        "1970-01-03T15:00:00.000000Z\t39.0173\t10.643046345788132\t1238491107\t13\t30722\t6912707344119330199\n" +
-                        "1970-01-03T16:00:00.000000Z\t48.9274\t82.31249461985348\t805434743\t31\t18600\t6187389706549636253\n" +
-                        "1970-01-03T17:00:00.000000Z\t58.9340\t56.99444693578853\t1311366306\t9\t27078\t8755128364143858197\n" +
-                        "1970-01-03T18:00:00.000000Z\t65.4048\t86.7718184863495\t593242882\t6\t23251\t5292387498953709416\n" +
-                        "1970-01-03T19:00:00.000000Z\t85.9313\t33.74707565497281\t2105201404\t34\t14733\t8994301462266164776\n",
-                "(select k, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x) timestamp(k)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_byte(2, 50) e," +
-                        " abs(rnd_short()) f," +
-                        " abs(rnd_long()) g," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_byte(2, 50) e," +
-                        " abs(rnd_short()) f," +
-                        " abs(rnd_long()) g," +
-                        " timestamp_sequence(277200000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                "k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
-                        "1970-01-03T00:00:00.000000Z\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\n" +
-                        "1970-01-03T01:00:00.000000Z\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\n" +
-                        "1970-01-03T02:00:00.000000Z\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\n" +
-                        "1970-01-03T03:00:00.000000Z\t81.4681\t12.503042190293423\t2085282008\t9\t11472\t8955092533521658248\n" +
-                        "1970-01-03T04:00:00.000000Z\t67.6193\t34.35685332942956\t2144581835\t6\t10942\t3152466304308949756\n" +
-                        "1970-01-03T05:00:00.000000Z\t41.3816\t55.22494170511608\t667031149\t38\t22298\t5536695302686527374\n" +
-                        "1970-01-03T06:00:00.000000Z\t97.5020\t0.11075361080621349\t1515787781\t49\t19013\t7316123607359392486\n" +
-                        "1970-01-03T07:00:00.000000Z\t4.1428\t92.050039469858\t1299391311\t31\t19997\t4091897709796604687\n" +
-                        "1970-01-03T08:00:00.000000Z\t22.8223\t88.37421918800908\t1269042121\t9\t6093\t4608960730952244094\n" +
-                        "1970-01-03T09:00:00.000000Z\t72.3002\t12.105630273556178\t572338288\t28\t24397\t8081265393416742311\n" +
-                        "1970-01-03T10:00:00.000000Z\t81.6418\t91.0141759290032\t1609750740\t3\t14377\t6161552193869048721\n" +
-                        "1970-01-03T11:00:00.000000Z\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n" +
-                        "1970-01-03T12:00:00.000000Z\t67.5251\t95.40069089049732\t865832060\t48\t1315\t9063592617902736531\n" +
-                        "1970-01-03T13:00:00.000000Z\t14.8305\t94.41658975532606\t2043803188\t6\t1464\t9144172287200792483\n" +
-                        "1970-01-03T14:00:00.000000Z\t57.9745\t76.57837745299521\t462277692\t40\t21561\t9143800334706665900\n" +
-                        "1970-01-03T15:00:00.000000Z\t39.0173\t10.643046345788132\t1238491107\t13\t30722\t6912707344119330199\n" +
-                        "1970-01-03T16:00:00.000000Z\t48.9274\t82.31249461985348\t805434743\t31\t18600\t6187389706549636253\n" +
-                        "1970-01-03T17:00:00.000000Z\t58.9340\t56.99444693578853\t1311366306\t9\t27078\t8755128364143858197\n" +
-                        "1970-01-03T18:00:00.000000Z\t65.4048\t86.7718184863495\t593242882\t6\t23251\t5292387498953709416\n" +
-                        "1970-01-03T19:00:00.000000Z\t85.9313\t33.74707565497281\t2105201404\t34\t14733\t8994301462266164776\n" +
-                        "1970-01-04T05:00:00.000000Z\t98.5907\t98.8401109488745\t1912061086\t30\t17824\t8857660828600848720\n" +
-                        "1970-01-04T06:00:00.000000Z\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\n" +
-                        "1970-01-04T07:00:00.000000Z\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
-                        "1970-01-04T08:00:00.000000Z\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
-                        "1970-01-04T09:00:00.000000Z\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true,
-                true
-        );
+        assertQuery("k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+                "1970-01-03T00:00:00.000000Z\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\n" +
+                "1970-01-03T01:00:00.000000Z\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\n" +
+                "1970-01-03T02:00:00.000000Z\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\n" +
+                "1970-01-03T03:00:00.000000Z\t81.4681\t12.503042190293423\t2085282008\t9\t11472\t8955092533521658248\n" +
+                "1970-01-03T04:00:00.000000Z\t67.6193\t34.35685332942956\t2144581835\t6\t10942\t3152466304308949756\n" +
+                "1970-01-03T05:00:00.000000Z\t41.3816\t55.22494170511608\t667031149\t38\t22298\t5536695302686527374\n" +
+                "1970-01-03T06:00:00.000000Z\t97.5020\t0.11075361080621349\t1515787781\t49\t19013\t7316123607359392486\n" +
+                "1970-01-03T07:00:00.000000Z\t4.1428\t92.050039469858\t1299391311\t31\t19997\t4091897709796604687\n" +
+                "1970-01-03T08:00:00.000000Z\t22.8223\t88.37421918800908\t1269042121\t9\t6093\t4608960730952244094\n" +
+                "1970-01-03T09:00:00.000000Z\t72.3002\t12.105630273556178\t572338288\t28\t24397\t8081265393416742311\n" +
+                "1970-01-03T10:00:00.000000Z\t81.6418\t91.0141759290032\t1609750740\t3\t14377\t6161552193869048721\n" +
+                "1970-01-03T11:00:00.000000Z\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n" +
+                "1970-01-03T12:00:00.000000Z\t67.5251\t95.40069089049732\t865832060\t48\t1315\t9063592617902736531\n" +
+                "1970-01-03T13:00:00.000000Z\t14.8305\t94.41658975532606\t2043803188\t6\t1464\t9144172287200792483\n" +
+                "1970-01-03T14:00:00.000000Z\t57.9745\t76.57837745299521\t462277692\t40\t21561\t9143800334706665900\n" +
+                "1970-01-03T15:00:00.000000Z\t39.0173\t10.643046345788132\t1238491107\t13\t30722\t6912707344119330199\n" +
+                "1970-01-03T16:00:00.000000Z\t48.9274\t82.31249461985348\t805434743\t31\t18600\t6187389706549636253\n" +
+                "1970-01-03T17:00:00.000000Z\t58.9340\t56.99444693578853\t1311366306\t9\t27078\t8755128364143858197\n" +
+                "1970-01-03T18:00:00.000000Z\t65.4048\t86.7718184863495\t593242882\t6\t23251\t5292387498953709416\n" +
+                "1970-01-03T19:00:00.000000Z\t85.9313\t33.74707565497281\t2105201404\t34\t14733\t8994301462266164776\n", "(select k, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x) timestamp(k)", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_float(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_double(0)*100 c," +
+                " abs(rnd_int()) d," +
+                " rnd_byte(2, 50) e," +
+                " abs(rnd_short()) f," +
+                " abs(rnd_long()) g," +
+                " timestamp_sequence(172800000000, 3600000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_float(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_double(0)*100 c," +
+                " abs(rnd_int()) d," +
+                " rnd_byte(2, 50) e," +
+                " abs(rnd_short()) f," +
+                " abs(rnd_long()) g," +
+                " timestamp_sequence(277200000000, 3600000000) k" +
+                " from" +
+                " long_sequence(5)" +
+                ") timestamp(k)", "k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+                "1970-01-03T00:00:00.000000Z\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\n" +
+                "1970-01-03T01:00:00.000000Z\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\n" +
+                "1970-01-03T02:00:00.000000Z\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\n" +
+                "1970-01-03T03:00:00.000000Z\t81.4681\t12.503042190293423\t2085282008\t9\t11472\t8955092533521658248\n" +
+                "1970-01-03T04:00:00.000000Z\t67.6193\t34.35685332942956\t2144581835\t6\t10942\t3152466304308949756\n" +
+                "1970-01-03T05:00:00.000000Z\t41.3816\t55.22494170511608\t667031149\t38\t22298\t5536695302686527374\n" +
+                "1970-01-03T06:00:00.000000Z\t97.5020\t0.11075361080621349\t1515787781\t49\t19013\t7316123607359392486\n" +
+                "1970-01-03T07:00:00.000000Z\t4.1428\t92.050039469858\t1299391311\t31\t19997\t4091897709796604687\n" +
+                "1970-01-03T08:00:00.000000Z\t22.8223\t88.37421918800908\t1269042121\t9\t6093\t4608960730952244094\n" +
+                "1970-01-03T09:00:00.000000Z\t72.3002\t12.105630273556178\t572338288\t28\t24397\t8081265393416742311\n" +
+                "1970-01-03T10:00:00.000000Z\t81.6418\t91.0141759290032\t1609750740\t3\t14377\t6161552193869048721\n" +
+                "1970-01-03T11:00:00.000000Z\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\n" +
+                "1970-01-03T12:00:00.000000Z\t67.5251\t95.40069089049732\t865832060\t48\t1315\t9063592617902736531\n" +
+                "1970-01-03T13:00:00.000000Z\t14.8305\t94.41658975532606\t2043803188\t6\t1464\t9144172287200792483\n" +
+                "1970-01-03T14:00:00.000000Z\t57.9745\t76.57837745299521\t462277692\t40\t21561\t9143800334706665900\n" +
+                "1970-01-03T15:00:00.000000Z\t39.0173\t10.643046345788132\t1238491107\t13\t30722\t6912707344119330199\n" +
+                "1970-01-03T16:00:00.000000Z\t48.9274\t82.31249461985348\t805434743\t31\t18600\t6187389706549636253\n" +
+                "1970-01-03T17:00:00.000000Z\t58.9340\t56.99444693578853\t1311366306\t9\t27078\t8755128364143858197\n" +
+                "1970-01-03T18:00:00.000000Z\t65.4048\t86.7718184863495\t593242882\t6\t23251\t5292387498953709416\n" +
+                "1970-01-03T19:00:00.000000Z\t85.9313\t33.74707565497281\t2105201404\t34\t14733\t8994301462266164776\n" +
+                "1970-01-04T05:00:00.000000Z\t98.5907\t98.8401109488745\t1912061086\t30\t17824\t8857660828600848720\n" +
+                "1970-01-04T06:00:00.000000Z\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\n" +
+                "1970-01-04T07:00:00.000000Z\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
+                "1970-01-04T08:00:00.000000Z\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
+                "1970-01-04T09:00:00.000000Z\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n", true, true, false);
     }
 
     @Test
     public void testGroupByCount() throws Exception {
-        assertQuery13("c\tcount\n" +
-                        "\t5\n" +
-                        "UU\t4\n" +
-                        "XY\t6\n" +
-                        "ZP\t5\n",
-                "select c, count() from x order by c",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " x," +
-                        " rnd_symbol('XY','ZP', null, 'UU') c" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " x," +
-                        " rnd_symbol('KK', 'PL') c" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ")",
-                "c\tcount\n" +
-                        "\t5\n" +
-                        "KK\t1\n" +
-                        "PL\t4\n" +
-                        "UU\t4\n" +
-                        "XY\t6\n" +
-                        "ZP\t5\n",
-                true,
-                true
-        );
+        assertQuery("c\tcount\n" +
+                "\t5\n" +
+                "UU\t4\n" +
+                "XY\t6\n" +
+                "ZP\t5\n", "select c, count() from x order by c", "create table x as " +
+                "(" +
+                "select" +
+                " x," +
+                " rnd_symbol('XY','ZP', null, 'UU') c" +
+                " from" +
+                " long_sequence(20)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " x," +
+                " rnd_symbol('KK', 'PL') c" +
+                " from" +
+                " long_sequence(5)" +
+                ")", "c\tcount\n" +
+                "\t5\n" +
+                "KK\t1\n" +
+                "PL\t4\n" +
+                "UU\t4\n" +
+                "XY\t6\n" +
+                "ZP\t5\n", true, true, false);
     }
 
     @Test
     public void testGroupByCountFromSubQuery() throws Exception {
-        assertQuery13("c\tcount\n" +
-                        "UU\t1\n" +
-                        "XY\t1\n" +
-                        "ZP\t1\n" +
-                        "\t1\n",
-                "select c, count() from (x latest on ts partition by c)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " cast(x as timestamp) ts," +
-                        " rnd_symbol('XY','ZP', null, 'UU') c" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(ts)",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " cast(x+20 as timestamp) ts," +
-                        " rnd_symbol('KK', 'PL') c" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ")",
-                "c\tcount\n" +
-                        "UU\t1\n" +
-                        "XY\t1\n" +
-                        "ZP\t1\n" +
-                        "\t1\n" +
-                        "KK\t1\n" +
-                        "PL\t1\n",
-                true,
-                true
-        );
+        assertQuery("c\tcount\n" +
+                "UU\t1\n" +
+                "XY\t1\n" +
+                "ZP\t1\n" +
+                "\t1\n", "select c, count() from (x latest on ts partition by c)", "create table x as " +
+                "(" +
+                "select" +
+                " cast(x as timestamp) ts," +
+                " rnd_symbol('XY','ZP', null, 'UU') c" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(ts)", null, "insert into x select * from (" +
+                "select" +
+                " cast(x+20 as timestamp) ts," +
+                " rnd_symbol('KK', 'PL') c" +
+                " from" +
+                " long_sequence(5)" +
+                ")", "c\tcount\n" +
+                "UU\t1\n" +
+                "XY\t1\n" +
+                "ZP\t1\n" +
+                "\t1\n" +
+                "KK\t1\n" +
+                "PL\t1\n", true, true, false);
     }
 
     @Test
     public void testGroupByEmpty() throws Exception {
-        assertQuery13("c\tsum_t\n",
-                "select c, sum_t(d) from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " x," +
-                        " rnd_double(0) d," +
-                        " rnd_symbol('XY','ZP', null, 'UU') c" +
-                        " from" +
-                        " long_sequence(0)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " x," +
-                        " rnd_double(0) d," +
-                        " rnd_symbol('KK', 'PL') c" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ")",
-                "c\tsum_t\n" +
-                        "PL\t1.088880189118224\n" +
-                        "KK\t2.614956708935964\n",
-                true,
-                true
-        );
+        assertQuery("c\tsum_t\n", "select c, sum_t(d) from x", "create table x as " +
+                "(" +
+                "select" +
+                " x," +
+                " rnd_double(0) d," +
+                " rnd_symbol('XY','ZP', null, 'UU') c" +
+                " from" +
+                " long_sequence(0)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " x," +
+                " rnd_double(0) d," +
+                " rnd_symbol('KK', 'PL') c" +
+                " from" +
+                " long_sequence(5)" +
+                ")", "c\tsum_t\n" +
+                "PL\t1.088880189118224\n" +
+                "KK\t2.614956708935964\n", true, true, false);
     }
 
     @Test
     public void testGroupByFail() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -502,8 +466,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             " rnd_symbol('XY','ZP', null, 'UU') c" +
                             " from" +
                             " long_sequence(1000000)" +
-                            ")",
-                    sqlExecutionContext
+                            ")"
             );
 
             engine.clear();
@@ -528,7 +491,7 @@ public class SampleByTest extends AbstractGriffinTest {
             };
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
                             RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine));
@@ -548,45 +511,38 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByFreesFunctions() throws Exception {
-        assertQuery13("c\tsum_t\n" +
-                        "UU\t4.192763851971972\n" +
-                        "XY\t5.326379743132296\n" +
-                        "\t1.8586710189229834\n" +
-                        "ZP\t0.7836635625207334\n",
-                "select c, sum_t(d) from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " x," +
-                        " rnd_double(0) d," +
-                        " rnd_symbol('XY','ZP', null, 'UU') c" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " x," +
-                        " rnd_double(0) d," +
-                        " rnd_symbol('KK', 'PL') c" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ")",
-                "c\tsum_t\n" +
-                        "UU\t4.192763851971972\n" +
-                        "XY\t5.326379743132296\n" +
-                        "\t1.8586710189229834\n" +
-                        "ZP\t0.7836635625207334\n" +
-                        "KK\t1.6435699091508287\n" +
-                        "PL\t1.1627169669458202\n",
-                true,
-                true
-        );
+        assertQuery("c\tsum_t\n" +
+                "UU\t4.192763851971972\n" +
+                "XY\t5.326379743132296\n" +
+                "\t1.8586710189229834\n" +
+                "ZP\t0.7836635625207334\n", "select c, sum_t(d) from x", "create table x as " +
+                "(" +
+                "select" +
+                " x," +
+                " rnd_double(0) d," +
+                " rnd_symbol('XY','ZP', null, 'UU') c" +
+                " from" +
+                " long_sequence(20)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " x," +
+                " rnd_double(0) d," +
+                " rnd_symbol('KK', 'PL') c" +
+                " from" +
+                " long_sequence(5)" +
+                ")", "c\tsum_t\n" +
+                "UU\t4.192763851971972\n" +
+                "XY\t5.326379743132296\n" +
+                "\t1.8586710189229834\n" +
+                "ZP\t0.7836635625207334\n" +
+                "KK\t1.6435699091508287\n" +
+                "PL\t1.1627169669458202\n", true, true, false);
     }
 
     @Test
     public void testGroupByRandomAccessConsistency() throws Exception {
-        assertQuery("c\tcount\n" +
+        assertQuery(
+                "c\tcount\n" +
                         "XY\t6\n" +
                         "ZP\t5\n",
                 "select c, count() count from (x where c = 'ZP' union all x where c = 'XY') order by 1, 2",
@@ -606,7 +562,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleBy() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-04T00:26:40.000000Z\ta\t70.00560222114518\t168.04971262491318\n" +
                         "1970-01-04T01:26:40.000000Z\ta\t6.612327943200507\t151.3046788842135\n" +
                         "1970-01-04T02:26:40.000000Z\ta\t117.11888283070247\tNaN\n" +
@@ -626,12 +583,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testIndexSampleBy2() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
@@ -640,9 +599,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:20:00.000000Z\tb\t-3.0\t7.0\n" +
                         "1970-01-01T01:20:00.000000Z\tb\t-9.0\t13.0\n" +
                         "1970-01-01T02:20:00.000000Z\tb\t-15.0\t19.0\n" +
@@ -678,9 +639,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(150)\n");
+                        "long_sequence(150)\n"
+        );
 
-        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:10:00.000000Z\t\t-2.0\t13.0\n" +
                         "1970-01-01T02:10:00.000000Z\t\t-14.0\t25.0\n" +
                         "1970-01-01T04:10:00.000000Z\t\t-26.0\t37.0\n" +
@@ -697,12 +660,14 @@ public class SampleByTest extends AbstractGriffinTest {
                 "select k, s, first(lat) lat, last(lon) lon \n" +
                         "from xx \n" +
                         "where k > '1970-01-01' and s = null \n" +
-                        "sample by 2h");
+                        "sample by 2h"
+        );
     }
 
     @Test
     public void testIndexSampleBy3() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
                         "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
@@ -711,9 +676,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T21:10:00.000000Z\ta\t-128.0\t128.0\n" +
                         "1970-01-01T23:10:00.000000Z\ta\t-140.0\t140.0\n" +
                         "1970-01-02T01:10:00.000000Z\ta\t-152.0\t152.0\n" +
@@ -729,9 +696,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(180)\n");
+                        "long_sequence(180)\n"
+        );
 
-        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T21:10:00.000000Z\t\t-128.0\t128.0\n" +
                         "1970-01-01T23:10:00.000000Z\t\t-140.0\t140.0\n" +
                         "1970-01-02T01:10:00.000000Z\t\t-152.0\t152.0\n" +
@@ -740,12 +709,14 @@ public class SampleByTest extends AbstractGriffinTest {
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
                         "where k > '1970-01-01T21:00' and s = null " +
-                        "sample by 2h");
+                        "sample by 2h"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendar() throws Exception {
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
                         "2021-03-28T00:00:00.000000Z\ta\t106.0418967098362\tNaN\n" +
                         "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
@@ -763,13 +734,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-27T23:30:00.00000Z', 100000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
-                        "),index(s) timestamp(k) partition by DAY");
+                        "),index(s) timestamp(k) partition by DAY"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -785,13 +757,12 @@ public class SampleByTest extends AbstractGriffinTest {
 
             snapshotMemoryUsage();
             try (
-                    RecordCursorFactory factory = compiler.compile(
+                    RecordCursorFactory factory = select(
                             "select k, s, first(lat) lat, last(lon) lon " +
                                     "from x " +
                                     "where s in ('a') " +
-                                    "sample by 1h align to calendar time zone $1 with offset $2",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
+                                    "sample by 1h align to calendar time zone $1 with offset $2"
+                    )
             ) {
 
                 String expectedMoscow = "k\ts\tlat\tlon\n" +
@@ -869,7 +840,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testIndexSampleByAlignToCalendarBindVariablesWrongTypes() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -879,13 +850,12 @@ public class SampleByTest extends AbstractGriffinTest {
                             "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
-                            "), index(s) timestamp(k) partition by DAY",
-                    sqlExecutionContext
+                            "), index(s) timestamp(k) partition by DAY"
             );
 
             String sql = "select k, s, first(lat) lat, last(lon) lon from x sample by 1h align to calendar time zone $1 with offset $2";
 
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(sql)) {
                 sqlExecutionContext.getBindVariableService().setLong(0, 42);
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
                 try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
@@ -897,7 +867,7 @@ public class SampleByTest extends AbstractGriffinTest {
             }
 
             sqlExecutionContext.getBindVariableService().clear();
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(sql)) {
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setLong(1, 42);
                 try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
@@ -912,7 +882,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
                         "2021-03-28T01:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
                         "2021-03-28T03:00:00.000000Z\ta\tNaN\t127.43011035722469\n" +
                         "2021-03-28T04:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n",
@@ -937,7 +908,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge2() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
                         "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\tNaN\n" +
                         "2021-03-28T04:00:00.000000Z\ta\t98.27279585461298\t128.42101395467057\n",
                 "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
@@ -961,7 +933,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge3() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
                         "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
                         "2021-03-28T04:00:00.000000Z\ta\tNaN\t127.43011035722469\n" +
                         "2021-03-28T05:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n",
@@ -986,7 +959,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardLocalMidnight() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
                         "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
                         "2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n",
                 "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
@@ -1010,7 +984,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBack() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-24T00:00:00.000000Z\t2020-10-23T22:00:00.000000Z\ta\t142.30215575416736\t2020-10-24T19:50:00.000000Z\n" +
                         "2020-10-25T00:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\tNaN\t2020-10-25T20:00:00.000000Z\n" +
                         "2020-10-26T00:00:00.000000Z\t2020-10-25T23:00:00.000000Z\ta\t33.45558404694713\t2020-10-26T21:50:00.000000Z\n" +
@@ -1031,12 +1006,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourly() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T22:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
                         "2021-03-27T23:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\tNaN\t2021-03-27T23:48:00.000000Z\n" +
@@ -1059,12 +1036,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffset() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                         "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
                         "2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
@@ -1088,12 +1067,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftForward() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\t2021-03-25T23:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\t2021-03-26T23:00:00.000000Z\ta\tNaN\t2021-03-27T22:10:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\t109.94209864193589\t2021-03-28T20:40:00.000000Z\n" +
@@ -1114,12 +1095,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondon365Days() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\ta\t142.30215575416736\t2020-01-02T03:23:00.000000Z\n" +
                         "2020-02-15T00:00:00.000000Z\t2020-02-15T00:00:00.000000Z\ta\t135.8378128727785\t2020-02-15T17:44:30.000000Z\n" +
                         "2020-02-16T00:00:00.000000Z\t2020-02-16T00:00:00.000000Z\ta\t149.54213547651923\t2020-02-16T17:50:00.000000Z\n" +
@@ -1148,12 +1131,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-01-01T20:30:00.00000Z', 35 * 6 * 59 * 1000000L) k" + // ~3.5 hour interval
                         "   from" +
                         "   long_sequence(365 * 7)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondon365DaysWithOffset() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlon\n" +
                         "2019-12-31T00:51:00.000000Z\t2019-12-31T00:51:00.000000Z\ta\t144.77803379943109\t2020-01-01T00:30:00.000000Z\n" +
                         "2020-01-01T00:51:00.000000Z\t2020-01-01T00:51:00.000000Z\ta\t145.3027002009222\t2020-01-01T03:56:30.000000Z\n" +
                         "2020-01-02T00:51:00.000000Z\t2020-01-02T00:51:00.000000Z\ta\t0.19935649945118428\t2020-01-02T04:02:00.000000Z\n" +
@@ -1184,12 +1169,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-01-01 00:30:00', 35 * 6 * 59 * 1000000L) k" + // ~3.5 hour interval
                         "   from" +
                         "   long_sequence(365 * 7)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\t2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\t2021-03-27T00:00:00.000000Z\ta\tNaN\t2021-03-27T23:00:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
@@ -1208,12 +1195,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBackwardHourly() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlastk\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlastk\n" +
                         "2021-03-27T21:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
                         "2021-03-27T22:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
                         "2021-03-27T23:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\tNaN\t2021-03-27T23:48:00.000000Z\n" +
@@ -1236,12 +1225,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForward() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-23T00:00:00.000000Z\t2020-10-22T23:00:00.000000Z\ta\t142.30215575416736\t2020-10-23T22:10:00.000000Z\n" +
                         "2020-10-24T00:00:00.000000Z\t2020-10-23T23:00:00.000000Z\ta\t7.457062446418488\t2020-10-24T22:20:00.000000Z\n" +
                         "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\tNaN\t2020-10-25T20:00:00.000000Z\n" +
@@ -1266,7 +1257,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForwardHourly() throws Exception {
-        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlastk\n" +
+        assertSampleByIndexQuery(
+                "to_timezone\tk\ts\tlat\tlastk\n" +
                         "2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z\n" +
                         "2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z\n" +
                         "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z\n" +
@@ -1289,14 +1281,16 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-10-23 20:30:00.00000Z', 259 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)");
+                        "),index(s) timestamp(k)"
+        );
     }
 
     @Test
     public void testIndexSampleByBufferExceeded() throws Exception {
         configOverrideSampleByIndexSearchPageSize(16);
 
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where s in ('a')" +
@@ -1305,9 +1299,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 4096) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:01:00.000000Z\ta\t-2.0\t2.0\n" +
                         "1970-01-01T00:03:00.000000Z\ta\t-4.0\t4.0\n" +
                         "1970-01-01T00:05:00.000000Z\ta\t-6.0\t6.0\n" +
@@ -1333,21 +1329,25 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 60 * 1000L * 1000L) k\n" +
                         "from\n" +
-                        "long_sequence(30)\n");
+                        "long_sequence(30)\n"
+        );
 
-        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:00:00.000000Z\t\t-1.0\t10.0\n" +
                         "1970-01-01T00:10:00.000000Z\t\t-11.0\t20.0\n" +
                         "1970-01-01T00:20:00.000000Z\t\t-21.0\t30.0\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where s = null " +
-                        "sample by 10m");
+                        "sample by 10m"
+        );
     }
 
     @Test
     public void testIndexSampleByEmpty() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k > '2000-01-04' and s in ('a') " +
@@ -1364,13 +1364,16 @@ public class SampleByTest extends AbstractGriffinTest {
                         "), index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                false);
+                false
+        );
 
-        assertWithSymbolColumnTop("k\ts\tlat\tlon\n",
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k > '2000-01-04' and s = null " +
-                        "sample by 1h");
+                        "sample by 1h"
+        );
     }
 
     @Test
@@ -1388,7 +1391,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 true
         );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-02-01T00:00:00.000000Z\tb\t-745.0\t767.0\n" +
                         "1970-02-02T00:00:00.000000Z\tb\t-769.0\t791.0\n" +
                         "1970-02-03T00:00:00.000000Z\tb\t-793.0\t815.0\n" +
@@ -1414,9 +1418,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 60 * 60 * 1000000L) k\n" + // 60 mins
                         "from\n" +
-                        "long_sequence(365 * 24)\n");
+                        "long_sequence(365 * 24)\n"
+        );
 
-        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
                         "1970-02-01T00:00:00.000000Z\t\t-745.0\t816.0\n" +
                         "1970-02-04T00:00:00.000000Z\t\t-817.0\t888.0\n" +
                         "1970-02-07T00:00:00.000000Z\t\t-889.0\t960.0\n" +
@@ -1425,12 +1431,14 @@ public class SampleByTest extends AbstractGriffinTest {
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k in '1970-02' and k < '1970-02-16' and s = null " +
-                        "sample by 3d");
+                        "sample by 3d"
+        );
     }
 
     @Test
     public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
                         "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
@@ -1439,9 +1447,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:10:00.000000Z\ta\t-2.0\t2.0\n" +
                         "1970-01-01T04:10:00.000000Z\ta\t-32.0\t32.0\n" +
                         "1970-01-01T10:10:00.000000Z\ta\t-62.0\t62.0\n" +
@@ -1458,9 +1468,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(180)\n");
+                        "long_sequence(180)\n"
+        );
 
-        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:00:00.000000Z\t\t-1.0\t4.0\n" +
                         "1970-01-01T04:00:00.000000Z\t\t-31.0\t34.0\n" +
                         "1970-01-01T10:00:00.000000Z\t\t-61.0\t64.0\n" +
@@ -1470,15 +1482,17 @@ public class SampleByTest extends AbstractGriffinTest {
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
-                        "sample by 2h");
+                        "sample by 2h"
+        );
     }
 
     @Test
     public void testIndexSampleByIndexNoTimestampColSelected() throws Exception {
-        assertMemoryLeak(() -> compiler.compile("create table xx (lat double, lon double, s symbol, k timestamp)" +
-                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
+        assertMemoryLeak(() -> ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY"));
 
-        assertQuery("s\tlat\tlon\n" +
+        assertQuery(
+                "s\tlat\tlon\n" +
                         "a\t-2.0\t2.0\n" +
                         "a\t-32.0\t32.0\n" +
                         "a\t-62.0\t62.0\n" +
@@ -1498,14 +1512,16 @@ public class SampleByTest extends AbstractGriffinTest {
                         "long_sequence(180)\n",
                 null,
                 false,
-                false);
+                false
+        );
 
         assertMemoryLeak(() -> {
-            compile("alter table xx drop column s", sqlExecutionContext);
-            compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            ddl("alter table xx drop column s", sqlExecutionContext);
+            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
-        TestUtils.assertSqlCursors(compiler,
+        TestUtils.assertSqlCursors(
+                engine,
                 sqlExecutionContext,
                 "select s, first(lat) lat, last(lon) lon " +
                         "from xx " +
@@ -1515,15 +1531,17 @@ public class SampleByTest extends AbstractGriffinTest {
                         "from xx " +
                         "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
                         "sample by 2h",
-                LOG);
+                LOG
+        );
     }
 
     @Test
     public void testIndexSampleByIndexWithIrregularEmptyPeriods() throws Exception {
-        assertMemoryLeak(() -> compiler.compile("create table xx (s symbol, k timestamp)" +
-                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
+        assertMemoryLeak(() -> ddl("create table xx (s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY"));
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T20:50:00.000000Z\ta\t1970-01-01T20:50:00.000000Z\t1970-01-01T21:30:00.000000Z\n" +
                         "1970-01-01T21:50:00.000000Z\ta\t1970-01-01T21:50:00.000000Z\t1970-01-01T21:50:00.000000Z\n" +
                         "1970-01-01T23:50:00.000000Z\ta\t1970-01-02T00:30:00.000000Z\t1970-01-02T00:30:00.000000Z\n" +
@@ -1538,9 +1556,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when (x / 7) % 3 = 0 and x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(360)\n");
+                        "long_sequence(360)\n"
+        );
 
-        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T20:00:00.000000Z\t\t1970-01-01T20:00:00.000000Z\t1970-01-01T21:50:00.000000Z\n" +
                         "1970-01-01T22:00:00.000000Z\t\t1970-01-01T22:00:00.000000Z\t1970-01-01T23:50:00.000000Z\n" +
                         "1970-01-02T00:00:00.000000Z\t\t1970-01-02T00:00:00.000000Z\t1970-01-02T01:50:00.000000Z\n" +
@@ -1549,12 +1569,14 @@ public class SampleByTest extends AbstractGriffinTest {
                 "select k, s, first(k) lat, last(k) lon " +
                         "from xx " +
                         "where k between '1970-01-01T20:00' and '1970-01-02T04:00' and s = null " +
-                        "sample by 2h");
+                        "sample by 2h"
+        );
     }
 
     @Test
     public void testIndexSampleByLastAndFirstOnDifferentIndexPages() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
@@ -1563,9 +1585,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T21:10:00.000000Z\ta\t-128.0\t138.0\n" +
                         "1970-01-01T23:10:00.000000Z\ta\t-140.0\t150.0\n" +
                         "1970-01-02T01:10:00.000000Z\ta\t-152.0\t162.0\n" +
@@ -1581,9 +1605,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(180)\n");
+                        "long_sequence(180)\n"
+        );
 
-        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T21:10:00.000000Z\t\t-128.0\t139.0\n" +
                         "1970-01-01T23:10:00.000000Z\t\t-140.0\t151.0\n" +
                         "1970-01-02T01:10:00.000000Z\t\t-152.0\t163.0\n" +
@@ -1592,12 +1618,14 @@ public class SampleByTest extends AbstractGriffinTest {
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k > '1970-01-01T21:00' and s = null " +
-                        "sample by 2h");
+                        "sample by 2h"
+        );
     }
 
     @Test
     public void testIndexSampleByManyPartitions() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
                         "where k in '1970-02' and s in ('b')" +
@@ -1606,9 +1634,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-02-01T00:00:00.000000Z\tb\t-745.0\t745.0\n" +
                         "1970-02-02T00:00:00.000000Z\tb\t-769.0\t769.0\n" +
                         "1970-02-03T00:00:00.000000Z\tb\t-793.0\t793.0\n" +
@@ -1634,7 +1664,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 60 * 60 * 1000000L) k\n" + // 60 mins
                         "from\n" +
-                        "long_sequence(365 * 24)\n");
+                        "long_sequence(365 * 24)\n"
+        );
     }
 
     @Test
@@ -1762,7 +1793,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByMonth() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, last(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where s = 'b' " +
@@ -1773,9 +1805,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "2014-01-01T00:00:00.000000Z\tb\t248.0\t123.7\n",
                 "select k, s, last(lat) lat, last(lon) lon " +
                         "from xx " +
@@ -1788,12 +1822,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "    ('2014-01-01T00:00:00.000000Z', 'b', 245, 123.4)," +
                         "    ('2014-01-01T00:05:00.000000Z', 'b', 246, 123.5)," +
                         "    ('2014-01-01T00:10:00.000000Z', 'b', 247, 123.6)," +
-                        "    ('2014-01-01T00:15:00.000000Z', 'b', 248, 123.7);");
+                        "    ('2014-01-01T00:15:00.000000Z', 'b', 248, 123.7);"
+        );
     }
 
     @Test
     public void testIndexSampleBySameTimePoints() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:00:00.000000Z\ta\t1\t58\n" +
                         "1970-01-01T01:00:00.000000Z\ta\t63\t116\n" +
                         "1970-01-01T02:00:00.000000Z\ta\t126\t178\n" +
@@ -1814,12 +1850,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   long_sequence(25*60)" +
                         "), index(s) timestamp(k) partition by DAY",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testIndexSampleByVeryFewRowsPerInterval() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k in '1970-02' and s in ('a')" +
@@ -1828,9 +1866,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:54:00.000000Z\ta\t-2\t2\n" +
                         "1970-01-01T02:39:00.000000Z\ta\t-4\t4\n" +
                         "1970-01-01T04:29:00.000000Z\ta\t-6\t6\n" +
@@ -1854,12 +1894,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 54 * 60 * 1000000L) k\n" + // 54 mins
                         "from\n" +
-                        "long_sequence(48)\n");
+                        "long_sequence(48)\n"
+        );
     }
 
     @Test
     public void testIndexSampleByWithArithmetics() throws Exception {
-        assertQuery("k\ts\tlat\tlon\tconst\n" +
+        assertQuery(
+                "k\ts\tlat\tlon\tconst\n" +
                         "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\t1\n" +
                         "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\t1\n" +
                         "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\t1\n" +
@@ -1879,12 +1921,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testIndexSampleByWithEmptyIndexPage() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
                         "where k in '1970-02' and s in ('b')" +
@@ -1893,9 +1937,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                true);
+                true
+        );
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-02-02T00:00:00.000000Z\tb\t-33.0\t33.0\n" +
                         "1970-02-04T00:00:00.000000Z\tb\t-35.0\t35.0\n" +
                         "1970-02-06T00:00:00.000000Z\tb\t-37.0\t37.0\n" +
@@ -1913,12 +1959,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 24 * 60 * 60 * 1000000L) k\n" + // 60 mins
                         "from\n" +
-                        "long_sequence(365)\n");
+                        "long_sequence(365)\n"
+        );
     }
 
     @Test
     public void testIndexSampleByWithInvalidFunctionArgs() throws Exception {
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
                         "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
                         "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\n" +
@@ -1942,7 +1990,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByWithInvalidFunctionArgs2() throws Exception {
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-04T00:26:40.000000Z\ta\t70.00560222114518\t1\n" +
                         "1970-01-04T01:26:40.000000Z\ta\t6.612327943200507\t1\n" +
                         "1970-01-04T02:26:40.000000Z\ta\t117.11888283070247\t1\n" +
@@ -1967,15 +2016,15 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testIndexSampleIndexNoRowsInIndex() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (k timestamp)\n" +
-                    " timestamp(k) partition by DAY", sqlExecutionContext);
-            compiler.compile(
+            ddl("create table xx (k timestamp)\n" +
+                    " timestamp(k) partition by DAY");
+            insert(
                     "insert into xx " +
                             "select " +
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(100)\n", sqlExecutionContext);
-            compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+                            "long_sequence(100)\n");
+            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
         String expected = "fk\tlk\tk\ts\n" +
@@ -1983,26 +2032,27 @@ public class SampleByTest extends AbstractGriffinTest {
                 "1970-01-01T01:00:00.000000Z\t1970-01-01T01:39:00.000000Z\t1970-01-01T01:00:00.000000Z\t\n";
 
         // Forced no index execution
-        assertSql("select first(k) fk, last(k) lk, k, s\n" +
-                        "from xx\n" +
-                        "where s = null or s = 'none'\n" +
-                        "sample by 1h",
-                expected);
+        assertSql(expected, "select first(k) fk, last(k) lk, k, s\n" +
+                "from xx\n" +
+                "where s = null or s = 'none'\n" +
+                "sample by 1h"
+        );
 
         // Indexed execution
-        assertSql("select first(k) fk, last(k) lk, k, s\n" +
-                        "from xx\n" +
-                        "where s = null\n" +
-                        "sample by 1h",
-                expected);
+        assertSql(expected, "select first(k) fk, last(k) lk, k, s\n" +
+                "from xx\n" +
+                "where s = null\n" +
+                "sample by 1h"
+        );
     }
 
     @Test
     public void testIndexSampleLatestRestrictedByWhere() throws Exception {
-        assertMemoryLeak(() -> compiler.compile("create table xx (s symbol, k timestamp)" +
-                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
+        assertMemoryLeak(() -> ddl("create table xx (s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY"));
 
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
                         "1970-01-01T05:01:00.000000Z\ta\t1970-01-01T05:01:00.000000Z\t1970-01-01T05:29:00.000000Z\n",
                 "select k, s, first(k) lat, last(k) lon " +
                         "from xx " +
@@ -2013,32 +2063,34 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(360)\n");
+                        "long_sequence(360)\n"
+        );
     }
 
     @Test
     public void testIndexSampleMainIndexHasColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (k timestamp)\n" +
-                    " timestamp(k) partition by DAY", sqlExecutionContext);
-            compiler.compile(
+            ddl("create table xx (k timestamp)\n" +
+                    " timestamp(k) partition by DAY");
+            insert(
                     "insert into xx " +
                             "select " +
                             "timestamp_sequence('1970-01-01T12', 2 * 60 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(8)\n", sqlExecutionContext);
-            compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
-            compiler.compile("insert into xx " +
+                            "long_sequence(8)\n");
+            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            insert("insert into xx " +
                     "select " +
                     "timestamp_sequence('1970-01-03', 1 * 60 * 1000000L),\n" +
                     "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                     "from\n" +
-                    "long_sequence(60)\n", sqlExecutionContext);
+                    "long_sequence(60)\n");
         });
 
         // 1970-01-01 data does not have s column
         // first hour of 1970-01-02 does not have s column
-        assertSampleByIndexQuery("fk\tlk\tk\ts\n" +
+        assertSampleByIndexQuery(
+                "fk\tlk\tk\ts\n" +
                         "1970-01-02T01:00:00.000000Z\t1970-01-02T01:58:00.000000Z\t1970-01-02T01:00:00.000000Z\tb\n" +
                         "1970-01-02T02:00:00.000000Z\t1970-01-02T02:58:00.000000Z\t1970-01-02T02:00:00.000000Z\tb\n" +
                         "1970-01-02T03:00:00.000000Z\t1970-01-02T03:58:00.000000Z\t1970-01-02T03:00:00.000000Z\tb\n" +
@@ -2054,28 +2106,29 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence('1970-01-02T01', 1 * 60 * 1000000L),\n" +
                         "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                         "from\n" +
-                        "long_sequence(300)\n");
+                        "long_sequence(300)\n"
+        );
     }
 
     @Test
     public void testIndexSampleWithColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (s symbol, k timestamp)" +
-                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
+            ddl("create table xx (s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            compiler.compile(
+            insert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(100)\n", sqlExecutionContext);
+                            "long_sequence(100)\n");
 
-            compile("alter table xx add i1 int", sqlExecutionContext);
-            compile("alter table xx add c1 char", sqlExecutionContext);
-            compile("alter table xx add l1 long", sqlExecutionContext);
+            ddl("alter table xx add i1 int", sqlExecutionContext);
+            ddl("alter table xx add c1 char", sqlExecutionContext);
+            ddl("alter table xx add l1 long", sqlExecutionContext);
 
-            compiler.compile(
+            insert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2084,18 +2137,19 @@ public class SampleByTest extends AbstractGriffinTest {
                             "rnd_char() c1,\n" +
                             "x as l1\n" +
                             "from\n" +
-                            "long_sequence(100)", sqlExecutionContext);
+                            "long_sequence(100)");
 
-            compile("alter table xx add f1 float", sqlExecutionContext);
-            compile("alter table xx add d1 double", sqlExecutionContext);
-            compile("alter table xx add s1 symbol", sqlExecutionContext);
-            compile("alter table xx add ss1 short", sqlExecutionContext);
-            compile("alter table xx add b1 byte", sqlExecutionContext);
-            compile("alter table xx add t1 timestamp", sqlExecutionContext);
-            compile("alter table xx add dt date", sqlExecutionContext);
+            ddl("alter table xx add f1 float", sqlExecutionContext);
+            ddl("alter table xx add d1 double", sqlExecutionContext);
+            ddl("alter table xx add s1 symbol", sqlExecutionContext);
+            ddl("alter table xx add ss1 short", sqlExecutionContext);
+            ddl("alter table xx add b1 byte", sqlExecutionContext);
+            ddl("alter table xx add t1 timestamp", sqlExecutionContext);
+            ddl("alter table xx add dt date", sqlExecutionContext);
         });
 
-        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
+        assertSampleByIndexQuery(
+                "fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t\t\t\t\t1970-01-01T00:00:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t\t\t\t\t1970-01-01T00:30:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t\t\t\t\t1970-01-01T01:00:00.000000Z\tb\n" +
@@ -2129,28 +2183,29 @@ public class SampleByTest extends AbstractGriffinTest {
                         "cast(x as timestamp) t1,\n" +
                         "cast(x as date) dt\n" +
                         "from\n" +
-                        "long_sequence(100)");
+                        "long_sequence(100)"
+        );
     }
 
     @Test
     public void testIndexSampleWithColumnTopsGeo() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (s symbol, k timestamp)" +
-                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
+            ddl("create table xx (s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            compiler.compile(
+            insert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(100)\n", sqlExecutionContext);
+                            "long_sequence(100)\n");
 
-            compile("alter table xx add i1 int", sqlExecutionContext);
-            compile("alter table xx add c1 char", sqlExecutionContext);
-            compile("alter table xx add l1 long", sqlExecutionContext);
+            ddl("alter table xx add i1 int", sqlExecutionContext);
+            ddl("alter table xx add c1 char", sqlExecutionContext);
+            ddl("alter table xx add l1 long", sqlExecutionContext);
 
-            compiler.compile(
+            insert(
                     "insert into xx " +
                             "select " +
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
@@ -2159,22 +2214,23 @@ public class SampleByTest extends AbstractGriffinTest {
                             "rnd_char() c1,\n" +
                             "x as l1\n" +
                             "from\n" +
-                            "long_sequence(100)", sqlExecutionContext);
+                            "long_sequence(100)");
 
-            compile("alter table xx add f1 float", sqlExecutionContext);
-            compile("alter table xx add d1 double", sqlExecutionContext);
-            compile("alter table xx add s1 symbol", sqlExecutionContext);
-            compile("alter table xx add ss1 short", sqlExecutionContext);
-            compile("alter table xx add b1 byte", sqlExecutionContext);
-            compile("alter table xx add t1 timestamp", sqlExecutionContext);
-            compile("alter table xx add dt date", sqlExecutionContext);
-            compile("alter table xx add ge1 geohash(3b)", sqlExecutionContext);
-            compile("alter table xx add ge2 geohash(2c)", sqlExecutionContext);
-            compile("alter table xx add ge4 geohash(5c)", sqlExecutionContext);
-            compile("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
+            ddl("alter table xx add f1 float", sqlExecutionContext);
+            ddl("alter table xx add d1 double", sqlExecutionContext);
+            ddl("alter table xx add s1 symbol", sqlExecutionContext);
+            ddl("alter table xx add ss1 short", sqlExecutionContext);
+            ddl("alter table xx add b1 byte", sqlExecutionContext);
+            ddl("alter table xx add t1 timestamp", sqlExecutionContext);
+            ddl("alter table xx add dt date", sqlExecutionContext);
+            ddl("alter table xx add ge1 geohash(3b)", sqlExecutionContext);
+            ddl("alter table xx add ge2 geohash(2c)", sqlExecutionContext);
+            ddl("alter table xx add ge4 geohash(5c)", sqlExecutionContext);
+            ddl("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
         });
 
-        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tfge1\tlge1\tfge2\tlge2\tfge4\tlge4\tfge8\tlge8\tk\ts\n" +
+        assertSampleByIndexQuery(
+                "fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tfge1\tlge1\tfge2\tlge2\tfge4\tlge4\tfge8\tlge8\tk\ts\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T00:00:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T00:30:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T01:00:00.000000Z\tb\n" +
@@ -2213,34 +2269,35 @@ public class SampleByTest extends AbstractGriffinTest {
                         "rnd_geohash(25) ge4,\n" +
                         "rnd_geohash(45) ge8\n" +
                         "from\n" +
-                        "long_sequence(100)");
+                        "long_sequence(100)"
+        );
     }
 
     @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterDataFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
-                    ", index(s capacity 345) timestamp(k) partition by DAY \n", sqlExecutionContext);
+            ddl("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
+                    ", index(s capacity 345) timestamp(k) partition by DAY \n");
 
-            compiler.compile("insert into xx " +
+            insert("insert into xx " +
                     "select " +
                     "timestamp_sequence(25 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
                     "rnd_double() d,\n" +
                     "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                     "from\n" +
-                    "long_sequence(300)\n", sqlExecutionContext);
+                    "long_sequence(300)\n");
 
-            assertSql("select sum(d)\n" +
-                            "from xx " +
-                            "where s in ('a')",
-                    "sum\n" +
-                            "75.42541658721542\n");
+            assertSql("sum\n" +
+                    "75.42541658721542\n", "select sum(d)\n" +
+                    "from xx " +
+                    "where s in ('a')"
+            );
         });
     }
 
     @Test
     public void testSampleBadFunction() throws Exception {
-        assertFailure(
+        assertException(
                 "select b, sumx(a, 'ab') k from x sample by 3h fill(none)",
                 "create table x as " +
                         "(" +
@@ -2258,7 +2315,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleBadFunctionInterpolated() throws Exception {
-        assertFailure(
+        assertException(
                 "select b, sumx(a, 'ac') k from x sample by 3h fill(linear)",
                 "create table x as " +
                         "(" +
@@ -2377,7 +2434,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, false);
+                        ") timestamp(k) partition by NONE", "k", false, false
+        );
     }
 
     @Test
@@ -2434,7 +2492,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, false);
+                        ") timestamp(k) partition by NONE", "k", false, false
+        );
     }
 
     @Test
@@ -2453,12 +2512,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false);
+                        ") timestamp(k) partition by NONE", "k", false
+        );
     }
 
     @Test
     public void testSampleByAllTypesAndInvalidTimestampColumn() throws Exception {
-        assertFailure("select \n" +
+        assertException(
+                "select \n" +
                         "    LastUpdate, \n" +
                         "    CountryRegion, \n" +
                         "    last(Confirmed) Confirmed, \n" +
@@ -2503,7 +2564,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByAllTypesAndInvalidTimestampType() throws Exception {
-        assertFailure("select \n" +
+        assertException(
+                "select \n" +
                         "    LastUpdate, \n" +
                         "    CountryRegion, \n" +
                         "    last(Confirmed) Confirmed, \n" +
@@ -2568,7 +2630,8 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByAllowsPredicatePushdownWhenTsIsNotIncludedInColumnList() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan("select * from (" +
+            assertPlan(
+                    "select * from (" +
                             "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar ) " +
@@ -2582,13 +2645,15 @@ public class SampleByTest extends AbstractGriffinTest {
                             "          workers: 1\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: x\n");
+                            "                Frame forward scan on: x\n"
+            );
         });
     }
 
     @Test
     public void testSampleByCountWithNoTsColSelected() throws Exception {
-        assertQuery("count\n" +
+        assertQuery(
+                "count\n" +
                         "300\n" +
                         "300\n" +
                         "300\n" +
@@ -2602,7 +2667,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(1000)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false);
+                false
+        );
     }
 
     @Test
@@ -2626,7 +2692,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        ") timestamp(k)", null, false);
+                        ") timestamp(k)", null, false
+        );
     }
 
     @Test
@@ -2701,7 +2768,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        ") timestamp(k)", null, false);
+                        ") timestamp(k)", null, false
+        );
     }
 
     @Test
@@ -2741,9 +2809,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             "2022-12-01T01:44:00.000000Z\t4\tB\n" +
                             "2022-12-01T01:55:00.000000Z\t5\tB\n" +
                             "2022-12-01T02:06:00.000000Z\t6\tB\n",
-                    "select * from tab", "ts", true, true);
+                    "select * from tab", "ts", true, true
+            );
 
-            assertPlan("select * from (select ts, s, first(v)  from tab sample by 30m fill(prev)) where s = 'B'",
+            assertPlan(
+                    "select * from (select ts, s, first(v)  from tab sample by 30m fill(prev)) where s = 'B'",
                     "SelectedRecord\n" +
                             "    Filter filter: s='B'\n" +
                             "        SampleBy\n" +
@@ -2752,13 +2822,15 @@ public class SampleByTest extends AbstractGriffinTest {
                             "          values: [first(v)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n");
+                            "                Frame forward scan on: tab\n"
+            );
 
             assertQuery("ts\ts\tfirst\n" +
                             "2022-12-01T01:11:00.000000Z\tB\t3\n" +
                             "2022-12-01T01:41:00.000000Z\tB\t4\n",
                     "select * from (select ts, s, first(v) from tab sample by 30m fill(prev)) where s = 'B' ",
-                    "ts", false);
+                    "ts", false
+            );
         });
     }
 
@@ -2769,24 +2841,28 @@ public class SampleByTest extends AbstractGriffinTest {
                     "select dateadd('m', 10*x::int, '2022-12-01T01:00:00.000000Z') ts, x v\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
-            assertPlan("select * from (select ts, first(v) from tab sample by 30m fill(prev)) where ts > '2022-12-01T01:10:00.000000Z'",
+            assertPlan(
+                    "select * from (select ts, first(v) from tab sample by 30m fill(prev)) where ts > '2022-12-01T01:10:00.000000Z'",
                     "Filter filter: 1669857000000000<ts\n" +
                             "    SampleByFillPrev\n" +
                             "      values: [first(v)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n");
+                            "            Frame forward scan on: tab\n"
+            );
 
             assertQuery("ts\tfirst\n" +
                             "2022-12-01T01:40:00.000000Z\t4\n",
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev)) where ts > '2022-12-01T01:10:00.000000Z' ",
-                    "ts", false);
+                    "ts", false
+            );
         });
     }
 
     @Test
     public void testSampleByFilteredByIndex() throws Exception {
-        assertQuery("time\ts1\tdd\n" +
+        assertQuery(
+                "time\ts1\tdd\n" +
                         "2023-05-16T00:04:00.000000Z\ta\tNaN\n" +
                         "2023-05-16T00:05:00.000000Z\ta\t0.5243722859289777\n" +
                         "2023-05-16T00:08:00.000000Z\tc\t0.1985581797355932\n" +
@@ -2824,7 +2900,8 @@ public class SampleByTest extends AbstractGriffinTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan("select time, last(lat) lat, last(lon) lon " +
+            assertPlan(
+                    "select time, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     "SampleByFirstLast\n" +
@@ -2833,7 +2910,8 @@ public class SampleByTest extends AbstractGriffinTest {
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: id deferred: true\n" +
                             "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n");
+                            "        Frame forward scan on: pos\n"
+            );
 
         });
     }
@@ -2850,7 +2928,8 @@ public class SampleByTest extends AbstractGriffinTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan("select   id, time, ts, last(lat) lat, last(lon) lon " +
+            assertPlan(
+                    "select   id, time, ts, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     "SampleBy\n" +
@@ -2859,7 +2938,8 @@ public class SampleByTest extends AbstractGriffinTest {
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: id deferred: true\n" +
                             "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n");
+                            "        Frame forward scan on: pos\n"
+            );
 
         });
     }
@@ -2876,7 +2956,8 @@ public class SampleByTest extends AbstractGriffinTest {
                     "  type SYMBOL " +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan("select time, type, last(lat) lat, last(lon) lon " +
+            assertPlan(
+                    "select time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     "SampleBy\n" +
@@ -2885,9 +2966,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: id deferred: true\n" +
                             "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n");
+                            "        Frame forward scan on: pos\n"
+            );
 
-            assertPlan("select   id, time, type, last(lat) lat, last(lon) lon " +
+            assertPlan(
+                    "select   id, time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     "SampleBy\n" +
@@ -2896,7 +2979,8 @@ public class SampleByTest extends AbstractGriffinTest {
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: id deferred: true\n" +
                             "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n");
+                            "        Frame forward scan on: pos\n"
+            );
 
         });
     }
@@ -2912,7 +2996,8 @@ public class SampleByTest extends AbstractGriffinTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan("select   id, time, geo6, last(lat) lat, last(lon) lon " +
+            assertPlan(
+                    "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     "SampleBy\n" +
@@ -2921,9 +3006,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: id deferred: true\n" +
                             "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n");
+                            "        Frame forward scan on: pos\n"
+            );
 
-            assertPlan("select   id, time, lat, last(lat) lastlat, last(lon) lon " +
+            assertPlan(
+                    "select   id, time, lat, last(lat) lastlat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     "SampleBy\n" +
@@ -2932,7 +3019,8 @@ public class SampleByTest extends AbstractGriffinTest {
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: id deferred: true\n" +
                             "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n");
+                            "        Frame forward scan on: pos\n"
+            );
         });
     }
 
@@ -3034,12 +3122,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "A\t1970-01-01T00:30:00.000000Z\tyyyyyy\t40.0\t40.0\n" +
                         "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
                         "A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0\n",
-                false, false, false);
+                false, false, false
+        );
     }
 
     @Test
     public void testSampleByMicrosFillNoneNotKeyedEmpty() throws Exception {
-        assertQuery("sum\tk\n",
+        assertQuery(
+                "sum\tk\n",
                 "select sum(a), k from x sample by 100U fill(none)",
                 "create table x" +
                         "(" +
@@ -3087,12 +3177,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "58.912164838797885\t1970-01-04T05:00:00.002700Z\n" +
                         "67.52509547112409\t1970-01-04T05:00:00.002800Z\n" +
                         "44.80468966861358\t1970-01-04T05:00:00.002900Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
-        assertQuery("sum\tk\n",
+        assertQuery(
+                "sum\tk\n",
                 "select sum(a), k from x sample by 100T fill(none)",
                 "create table x as " +
                         "(" +
@@ -3143,7 +3235,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "94.41658975532606\t1970-01-04T05:00:02.700000Z\n" +
                         "62.5966045857722\t1970-01-04T05:00:02.800000Z\n" +
                         "94.55893004802432\t1970-01-04T05:00:02.900000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
@@ -3369,7 +3462,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneVariable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -3378,16 +3471,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             " timestamp_sequence(172800000000, 300000000) k" +
                             " from" +
                             " long_sequence(100)" +
-                            ") timestamp(k) partition by NONE",
-                    sqlExecutionContext
+                            ") timestamp(k) partition by NONE"
             );
 
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile(
-                    "select k, count() from x sample by 90m align to calendar time zone $1 with offset $2",
-                    sqlExecutionContext
-            ).getRecordCursorFactory()) {
-
+            try (RecordCursorFactory factory = select("select k, count() from x sample by 90m align to calendar time zone $1 with offset $2")) {
                 String expectedMoscow = "k\tcount\n" +
                         "1970-01-02T22:45:00.000000Z\t3\n" +
                         "1970-01-03T00:15:00.000000Z\t18\n" +
@@ -3526,12 +3614,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        ") timestamp(k)", null, false);
+                        ") timestamp(k)", null, false
+        );
     }
 
     @Test
     public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
-        assertQuery("open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
+        assertQuery(
+                "open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
                         "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
                 "select * from (" +
                         "  select" +
@@ -3557,7 +3647,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                false);
+                false
+        );
     }
 
     @Test
@@ -3574,11 +3665,13 @@ public class SampleByTest extends AbstractGriffinTest {
                             "2022-12-01T01:44:00.000000Z\t4\tB\n" +
                             "2022-12-01T01:55:00.000000Z\t5\tB\n" +
                             "2022-12-01T02:06:00.000000Z\t6\tB\n",
-                    "select * from tab", "ts", true, true);
+                    "select * from tab", "ts", true, true
+            );
 
             String query = "select ts, s, first(v) from tab where s = 'B' and ts > '2022-12-01T00:00:00.000000Z'  sample by 30m fill(prev)";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "SampleBy\n" +
                             "  fill: prev\n" +
                             "  keys: [ts,s]\n" +
@@ -3589,652 +3682,610 @@ public class SampleByTest extends AbstractGriffinTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: tab\n" +
-                            "              intervals: [(\"2022-12-01T00:00:00.000001Z\",\"MAX\")]\n");
+                            "              intervals: [(\"2022-12-01T00:00:00.000001Z\",\"MAX\")]\n"
+            );
 
             assertQuery("ts\ts\tfirst\n" +
                             "2022-12-01T01:33:00.000000Z\tB\t3\n" +
                             "2022-12-01T02:03:00.000000Z\tB\t6\n",
-                    query, "ts", false);
+                    query, "ts", false
+            );
         });
     }
 
     @Test
     public void testSampleCountFillLinear() throws Exception {
-        assertQuery13("b\tcount\tk\n" +
-                        "\t15\t1970-01-03T02:00:00.000000Z\n" +
-                        "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
-                        "PEHN\t5\t1970-01-03T02:00:00.000000Z\n" +
-                        "HYRX\t3\t1970-01-03T02:00:00.000000Z\n" +
-                        "CPSW\t2\t1970-01-03T02:00:00.000000Z\n" +
-                        "\t14\t1970-01-03T05:00:00.000000Z\n" +
-                        "VTJW\t4\t1970-01-03T05:00:00.000000Z\n" +
-                        "CPSW\t5\t1970-01-03T05:00:00.000000Z\n" +
-                        "HYRX\t4\t1970-01-03T05:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T05:00:00.000000Z\n" +
-                        "PEHN\t1\t1970-01-03T05:00:00.000000Z\n" +
-                        "\t17\t1970-01-03T08:00:00.000000Z\n" +
-                        "VTJW\t4\t1970-01-03T08:00:00.000000Z\n" +
-                        "HYRX\t3\t1970-01-03T08:00:00.000000Z\n" +
-                        "RXGZ\t4\t1970-01-03T08:00:00.000000Z\n" +
-                        "PEHN\t2\t1970-01-03T08:00:00.000000Z\n" +
-                        "CPSW\t8\t1970-01-03T08:00:00.000000Z\n" +
-                        "\t4\t1970-01-03T11:00:00.000000Z\n" +
-                        "RXGZ\t3\t1970-01-03T11:00:00.000000Z\n" +
-                        "VTJW\t3\t1970-01-03T11:00:00.000000Z\n" +
-                        "PEHN\t3\t1970-01-03T11:00:00.000000Z\n" +
-                        "HYRX\t2\t1970-01-03T11:00:00.000000Z\n" +
-                        "CPSW\t11\t1970-01-03T11:00:00.000000Z\n",
-
-                "select b, count(), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T02:00:00.000000Z' as timestamp), 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(CAST('1970-01-03T13:10:00.000000Z' as timestamp), 360000000) k" +
-                        " from" +
-                        " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tcount\tk\n" +
-                        "\t15\t1970-01-03T02:00:00.000000Z\n" +
-                        "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
-                        "PEHN\t5\t1970-01-03T02:00:00.000000Z\n" +
-                        "HYRX\t3\t1970-01-03T02:00:00.000000Z\n" +
-                        "CPSW\t2\t1970-01-03T02:00:00.000000Z\n" +
-                        "CGFN\t-2\t1970-01-03T02:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T02:00:00.000000Z\n" +
-                        "PEVM\t-2\t1970-01-03T02:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T02:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T02:00:00.000000Z\n" +
-                        "\t14\t1970-01-03T05:00:00.000000Z\n" +
-                        "VTJW\t4\t1970-01-03T05:00:00.000000Z\n" +
-                        "CPSW\t5\t1970-01-03T05:00:00.000000Z\n" +
-                        "HYRX\t4\t1970-01-03T05:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T05:00:00.000000Z\n" +
-                        "PEHN\t1\t1970-01-03T05:00:00.000000Z\n" +
-                        "CGFN\t-1\t1970-01-03T05:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T05:00:00.000000Z\n" +
-                        "PEVM\t-1\t1970-01-03T05:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T05:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T05:00:00.000000Z\n" +
-                        "\t17\t1970-01-03T08:00:00.000000Z\n" +
-                        "VTJW\t4\t1970-01-03T08:00:00.000000Z\n" +
-                        "HYRX\t3\t1970-01-03T08:00:00.000000Z\n" +
-                        "RXGZ\t4\t1970-01-03T08:00:00.000000Z\n" +
-                        "PEHN\t2\t1970-01-03T08:00:00.000000Z\n" +
-                        "CPSW\t8\t1970-01-03T08:00:00.000000Z\n" +
-                        "CGFN\t0\t1970-01-03T08:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T08:00:00.000000Z\n" +
-                        "PEVM\t0\t1970-01-03T08:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T08:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T08:00:00.000000Z\n" +
-                        "\t10\t1970-01-03T11:00:00.000000Z\n" +
-                        "RXGZ\t3\t1970-01-03T11:00:00.000000Z\n" +
-                        "VTJW\t3\t1970-01-03T11:00:00.000000Z\n" +
-                        "CGFN\t1\t1970-01-03T11:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T11:00:00.000000Z\n" +
-                        "PEVM\t1\t1970-01-03T11:00:00.000000Z\n" +
-                        "PEHN\t3\t1970-01-03T11:00:00.000000Z\n" +
-                        "HYRX\t2\t1970-01-03T11:00:00.000000Z\n" +
-                        "CPSW\t11\t1970-01-03T11:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T11:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T11:00:00.000000Z\n" +
-                        "\t15\t1970-01-03T14:00:00.000000Z\n" +
-                        "WGRM\t3\t1970-01-03T14:00:00.000000Z\n" +
-                        "CGFN\t2\t1970-01-03T14:00:00.000000Z\n" +
-                        "PEVM\t2\t1970-01-03T14:00:00.000000Z\n" +
-                        "ZNFK\t3\t1970-01-03T14:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T14:00:00.000000Z\n" +
-                        "VTJW\t2\t1970-01-03T14:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T14:00:00.000000Z\n" +
-                        "PEHN\t4\t1970-01-03T14:00:00.000000Z\n" +
-                        "HYRX\t1\t1970-01-03T14:00:00.000000Z\n" +
-                        "CPSW\t14\t1970-01-03T14:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("b\tcount\tk\n" +
+                "\t15\t1970-01-03T02:00:00.000000Z\n" +
+                "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
+                "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
+                "PEHN\t5\t1970-01-03T02:00:00.000000Z\n" +
+                "HYRX\t3\t1970-01-03T02:00:00.000000Z\n" +
+                "CPSW\t2\t1970-01-03T02:00:00.000000Z\n" +
+                "\t14\t1970-01-03T05:00:00.000000Z\n" +
+                "VTJW\t4\t1970-01-03T05:00:00.000000Z\n" +
+                "CPSW\t5\t1970-01-03T05:00:00.000000Z\n" +
+                "HYRX\t4\t1970-01-03T05:00:00.000000Z\n" +
+                "RXGZ\t2\t1970-01-03T05:00:00.000000Z\n" +
+                "PEHN\t1\t1970-01-03T05:00:00.000000Z\n" +
+                "\t17\t1970-01-03T08:00:00.000000Z\n" +
+                "VTJW\t4\t1970-01-03T08:00:00.000000Z\n" +
+                "HYRX\t3\t1970-01-03T08:00:00.000000Z\n" +
+                "RXGZ\t4\t1970-01-03T08:00:00.000000Z\n" +
+                "PEHN\t2\t1970-01-03T08:00:00.000000Z\n" +
+                "CPSW\t8\t1970-01-03T08:00:00.000000Z\n" +
+                "\t4\t1970-01-03T11:00:00.000000Z\n" +
+                "RXGZ\t3\t1970-01-03T11:00:00.000000Z\n" +
+                "VTJW\t3\t1970-01-03T11:00:00.000000Z\n" +
+                "PEHN\t3\t1970-01-03T11:00:00.000000Z\n" +
+                "HYRX\t2\t1970-01-03T11:00:00.000000Z\n" +
+                "CPSW\t11\t1970-01-03T11:00:00.000000Z\n", "select b, count(), k from x sample by 3h fill(linear)", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(cast('1970-01-03T02:00:00.000000Z' as timestamp), 360000000) k" +
+                " from" +
+                " long_sequence(100)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(CAST('1970-01-03T13:10:00.000000Z' as timestamp), 360000000) k" +
+                " from" +
+                " long_sequence(35)" +
+                ") timestamp(k)", "b\tcount\tk\n" +
+                "\t15\t1970-01-03T02:00:00.000000Z\n" +
+                "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
+                "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
+                "PEHN\t5\t1970-01-03T02:00:00.000000Z\n" +
+                "HYRX\t3\t1970-01-03T02:00:00.000000Z\n" +
+                "CPSW\t2\t1970-01-03T02:00:00.000000Z\n" +
+                "CGFN\t-2\t1970-01-03T02:00:00.000000Z\n" +
+                "NPIW\t1\t1970-01-03T02:00:00.000000Z\n" +
+                "PEVM\t-2\t1970-01-03T02:00:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T02:00:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T02:00:00.000000Z\n" +
+                "\t14\t1970-01-03T05:00:00.000000Z\n" +
+                "VTJW\t4\t1970-01-03T05:00:00.000000Z\n" +
+                "CPSW\t5\t1970-01-03T05:00:00.000000Z\n" +
+                "HYRX\t4\t1970-01-03T05:00:00.000000Z\n" +
+                "RXGZ\t2\t1970-01-03T05:00:00.000000Z\n" +
+                "PEHN\t1\t1970-01-03T05:00:00.000000Z\n" +
+                "CGFN\t-1\t1970-01-03T05:00:00.000000Z\n" +
+                "NPIW\t1\t1970-01-03T05:00:00.000000Z\n" +
+                "PEVM\t-1\t1970-01-03T05:00:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T05:00:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T05:00:00.000000Z\n" +
+                "\t17\t1970-01-03T08:00:00.000000Z\n" +
+                "VTJW\t4\t1970-01-03T08:00:00.000000Z\n" +
+                "HYRX\t3\t1970-01-03T08:00:00.000000Z\n" +
+                "RXGZ\t4\t1970-01-03T08:00:00.000000Z\n" +
+                "PEHN\t2\t1970-01-03T08:00:00.000000Z\n" +
+                "CPSW\t8\t1970-01-03T08:00:00.000000Z\n" +
+                "CGFN\t0\t1970-01-03T08:00:00.000000Z\n" +
+                "NPIW\t1\t1970-01-03T08:00:00.000000Z\n" +
+                "PEVM\t0\t1970-01-03T08:00:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T08:00:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T08:00:00.000000Z\n" +
+                "\t10\t1970-01-03T11:00:00.000000Z\n" +
+                "RXGZ\t3\t1970-01-03T11:00:00.000000Z\n" +
+                "VTJW\t3\t1970-01-03T11:00:00.000000Z\n" +
+                "CGFN\t1\t1970-01-03T11:00:00.000000Z\n" +
+                "NPIW\t1\t1970-01-03T11:00:00.000000Z\n" +
+                "PEVM\t1\t1970-01-03T11:00:00.000000Z\n" +
+                "PEHN\t3\t1970-01-03T11:00:00.000000Z\n" +
+                "HYRX\t2\t1970-01-03T11:00:00.000000Z\n" +
+                "CPSW\t11\t1970-01-03T11:00:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T11:00:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T11:00:00.000000Z\n" +
+                "\t15\t1970-01-03T14:00:00.000000Z\n" +
+                "WGRM\t3\t1970-01-03T14:00:00.000000Z\n" +
+                "CGFN\t2\t1970-01-03T14:00:00.000000Z\n" +
+                "PEVM\t2\t1970-01-03T14:00:00.000000Z\n" +
+                "ZNFK\t3\t1970-01-03T14:00:00.000000Z\n" +
+                "NPIW\t1\t1970-01-03T14:00:00.000000Z\n" +
+                "VTJW\t2\t1970-01-03T14:00:00.000000Z\n" +
+                "RXGZ\t2\t1970-01-03T14:00:00.000000Z\n" +
+                "PEHN\t4\t1970-01-03T14:00:00.000000Z\n" +
+                "HYRX\t1\t1970-01-03T14:00:00.000000Z\n" +
+                "CPSW\t14\t1970-01-03T14:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleCountFillLinearFromSubQuery() throws Exception {
-        assertQuery13("b\tcount\tk\n" +
-                        "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
-                        "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
-                        "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
-                        "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
-                        "\t1\t1970-01-03T08:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n",
-
-                "select b, count(), k from (x latest on k partition by b) sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tcount\tk\n" +
-                        "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
-                        "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
-                        "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                        "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
-                        "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                        "WGRM\t1\t1970-01-04T05:24:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-04T05:24:00.000000Z\n" +
-                        "CGFN\t1\t1970-01-04T05:24:00.000000Z\n" +
-                        "ZNFK\t1\t1970-01-04T05:24:00.000000Z\n" +
-                        "PEVM\t1\t1970-01-04T05:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                        "\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                        "\t1\t1970-01-04T08:24:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-04T08:24:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("b\tcount\tk\n" +
+                "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
+                "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
+                "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
+                "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
+                "\t1\t1970-01-03T08:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n", "select b, count(), k from (x latest on k partition by b) sample by 3h fill(linear)", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(172800000000, 360000000) k" +
+                " from" +
+                " long_sequence(100)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(277200000000, 360000000) k" +
+                " from" +
+                " long_sequence(35)" +
+                ") timestamp(k)", "b\tcount\tk\n" +
+                "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
+                "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
+                "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
+                "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                "WGRM\t1\t1970-01-04T05:24:00.000000Z\n" +
+                "NPIW\t1\t1970-01-04T05:24:00.000000Z\n" +
+                "CGFN\t1\t1970-01-04T05:24:00.000000Z\n" +
+                "ZNFK\t1\t1970-01-04T05:24:00.000000Z\n" +
+                "PEVM\t1\t1970-01-04T05:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                "\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                "\t1\t1970-01-04T08:24:00.000000Z\n" +
+                "CPSW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "PEHN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "HYRX\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "VTJW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "ZNFK\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                "PEVM\tNaN\t1970-01-04T08:24:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleFillAllTypesLinear() throws Exception {
-        assertQuery13("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
-                        "HYRX\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t140.1138\t-63.36813480742224\t2901521895\t9\t16851\t9223372036854775807\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t81.4681\t12.503042190293423\t2085282008\t9\t11472\t8955092533521658248\t1970-01-03T03:00:00.000000Z\n" +
-                        "CPSW\t67.6193\t34.35685332942956\t2144581835\t6\t10942\t3152466304308949756\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t41.3816\t55.22494170511608\t667031149\t38\t22298\t5536695302686527374\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t23.0646\t50.77786067801929\t435411399\t41\t9083\t5351051939379353600\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t101.6448\t92.16079308066422\t2815179092\t80\t39010\t-7038722756553554443\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t22.8223\t88.37421918800908\t1269042121\t9\t6093\t4608960730952244094\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t34.7012\t59.378032936344596\t444366830\t41\t13242\t6615301404488457216\t1970-01-03T06:00:00.000000Z\n" +
-                        "CPSW\t101.6304\t-8.043024049101913\t3866222134\t-15\t-10428\t1862482881794971392\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t153.9420\t103.11980620255937\t2182089028\t31\t38774\t-4203926486423760584\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t46.3378\t67.9782051946699\t453322261\t40\t17401\t7879550869597561856\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\t135.6415\t-50.442901427633394\t5587862435\t-36\t-31798\t572499459280992448\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\t-35.8234\t164.24539618572473\t452802234\t9\t714\t262828928382831328\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t82.3556\t189.81728064582336\t2909635248\t54\t2779\t-238979168606022602\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t57.9745\t76.57837745299521\t462277692\t40\t21561\t9143800334706665900\t1970-01-03T12:00:00.000000Z\n" +
-                        "CPSW\t169.6526\t-92.84277880616484\t7309502735\t-57\t-53168\t-717483963232985728\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t-94.4692\t240.11657318344038\t-363437653\t9\t-4665\t-4083302874186582528\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t39.0173\t10.643046345788132\t1238491107\t13\t30722\t6912707344119330199\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t107.8614\t139.30694155564203\t2116801049\t40\t45678\t-3504226003016057166\t1970-01-03T15:00:00.000000Z\n" +
-                        "CPSW\t203.6637\t-135.24265618469636\t9031143035\t-78\t-74538\t-2007467385746963968\t1970-01-03T15:00:00.000000Z\n" +
-                        "PEHN\t-153.1149\t315.98775018115606\t-1179677539\t9\t-10044\t-8429434676755996672\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t151.3361\t120.5188941413223\t2698444286\t40\t37984\t-4160055112489677424\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t20.0601\t-55.29228476141894\t2014704521\t-14\t39883\t4681614353531994112\t1970-01-03T18:00:00.000000Z\n" +
-                        "CPSW\t237.6748\t-177.6425335632278\t10752783335\t-99\t-95908\t-3297450808260941824\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEHN\t-211.7607\t391.8589271788717\t-1995917427\t9\t-15423\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n",
-
-                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_byte(2, 50) e," +
-                        " abs(rnd_short()) f," +
-                        " abs(rnd_long()) g," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_byte(2, 50) e," +
-                        " abs(rnd_short()) f," +
-                        " abs(rnd_long()) g," +
-                        " timestamp_sequence(277200000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
-                        "HYRX\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t140.1138\t-63.36813480742224\t2901521895\t9\t16851\t9223372036854775807\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t81.4681\t12.503042190293423\t2085282008\t9\t11472\t8955092533521658248\t1970-01-03T03:00:00.000000Z\n" +
-                        "CPSW\t67.6193\t34.35685332942956\t2144581835\t6\t10942\t3152466304308949756\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t41.3816\t55.22494170511608\t667031149\t38\t22298\t5536695302686527374\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t23.0646\t50.77786067801929\t435411399\t41\t9083\t5351051939379353600\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t101.6448\t92.16079308066422\t2815179092\t80\t39010\t-7038722756553554443\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t22.8223\t88.37421918800908\t1269042121\t9\t6093\t4608960730952244094\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t34.7012\t59.378032936344596\t444366830\t41\t13242\t6615301404488457216\t1970-01-03T06:00:00.000000Z\n" +
-                        "CPSW\t101.6304\t-8.043024049101913\t3866222134\t-15\t-10428\t1862482881794971392\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t153.9420\t103.11980620255937\t2182089028\t31\t38774\t-4203926486423760584\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t46.3378\t67.9782051946699\t453322261\t40\t17401\t7879550869597561856\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\t135.6415\t-50.442901427633394\t5587862435\t-36\t-31798\t572499459280992448\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\t-35.8234\t164.24539618572473\t452802234\t9\t714\t262828928382831328\t1970-01-03T09:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t82.3556\t189.81728064582336\t2909635248\t54\t2779\t-238979168606022602\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t57.9745\t76.57837745299521\t462277692\t40\t21561\t9143800334706665900\t1970-01-03T12:00:00.000000Z\n" +
-                        "CPSW\t169.6526\t-92.84277880616484\t7309502735\t-57\t-53168\t-717483963232985728\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t-94.4692\t240.11657318344038\t-363437653\t9\t-4665\t-4083302874186582528\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t39.0173\t10.643046345788132\t1238491107\t13\t30722\t6912707344119330199\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t107.8614\t139.30694155564203\t2116801049\t40\t45678\t-3504226003016057166\t1970-01-03T15:00:00.000000Z\n" +
-                        "CPSW\t203.6637\t-135.24265618469636\t9031143035\t-78\t-74538\t-2007467385746963968\t1970-01-03T15:00:00.000000Z\n" +
-                        "PEHN\t-153.1149\t315.98775018115606\t-1179677539\t9\t-10044\t-8429434676755996672\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t151.3361\t120.5188941413223\t2698444286\t40\t37984\t-4160055112489677424\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t20.0601\t-55.29228476141894\t2014704521\t-14\t39883\t4681614353531994112\t1970-01-03T18:00:00.000000Z\n" +
-                        "CPSW\t237.6748\t-177.6425335632278\t10752783335\t-99\t-95908\t-3297450808260941824\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEHN\t-211.7607\t391.8589271788717\t-1995917427\t9\t-15423\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t1.1030\t-121.22761586862603\t2790917936\t-41\t49044\t2450521362944657408\t1970-01-03T21:00:00.000000Z\n" +
-                        "\t133.7543\t113.29263307717305\t2436316552\t36\t31264\t179183534540497952\t1970-01-03T21:00:00.000000Z\n" +
-                        "CPSW\t271.6859\t-220.04241094175927\t12474423635\t-120\t-117278\t-4587434230774920192\t1970-01-03T21:00:00.000000Z\n" +
-                        "PEHN\t-270.4064\t467.73010417658736\t-2812157313\t9\t-20802\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "HYRX\t-17.8542\t-187.1629469758331\t3567131351\t-68\t58205\t219428372357321856\t1970-01-04T00:00:00.000000Z\n" +
-                        "\t116.1725\t106.06637201302377\t2174188819\t33\t24544\t4518422181570673664\t1970-01-04T00:00:00.000000Z\n" +
-                        "CPSW\t305.6970\t-262.44228832029074\t14196063935\t-141\t-138648\t-5877417653288898560\t1970-01-04T00:00:00.000000Z\n" +
-                        "PEHN\t-329.0522\t543.601281174303\t-3628397201\t9\t-26181\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "\t98.5907\t98.8401109488745\t1912061086\t30\t17824\t8857660828600848720\t1970-01-04T03:00:00.000000Z\n" +
-                        "HYRX\t-36.8113\t-253.09827808304019\t4343344767\t-95\t67366\t-2011664618230010368\t1970-01-04T03:00:00.000000Z\n" +
-                        "CPSW\t339.7081\t-304.84216569882227\t15917704235\t-162\t-160018\t-7167401075802876928\t1970-01-04T03:00:00.000000Z\n" +
-                        "PEHN\t-387.6979\t619.4724581720187\t-4444637088\t9\t-31560\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "ZGHW\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\t1970-01-04T06:00:00.000000Z\n" +
-                        "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\t1970-01-04T06:00:00.000000Z\n" +
-                        "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\t1970-01-04T06:00:00.000000Z\n" +
-                        "HYRX\t-55.7685\t-319.0336091902473\t5119558182\t-122\t76527\t-4242757608817349120\t1970-01-04T06:00:00.000000Z\n" +
-                        "\t81.0089\t91.61384988472523\t1649933352\t27\t11104\t9223372036854775807\t1970-01-04T06:00:00.000000Z\n" +
-                        "CPSW\t373.7192\t-347.2420430773538\t17639344535\t-183\t-181388\t-8457384498316854272\t1970-01-04T06:00:00.000000Z\n" +
-                        "PEHN\t-446.3437\t695.3436351697343\t-5260876975\t9\t-36939\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\t1970-01-04T09:00:00.000000Z\n" +
-                        "HYRX\t-74.7257\t-384.9689402974543\t5895771596\t-149\t85688\t-6473850599404687360\t1970-01-04T09:00:00.000000Z\n" +
-                        "\t63.4271\t84.38758882057594\t1387805620\t24\t4384\t9223372036854775807\t1970-01-04T09:00:00.000000Z\n" +
-                        "CPSW\t407.7303\t-389.6419204558852\t19360984835\t-204\t-202758\tNaN\t1970-01-04T09:00:00.000000Z\n" +
-                        "PEHN\t-504.9894\t771.21481216745\t-6077116861\t9\t-42318\tNaN\t1970-01-04T09:00:00.000000Z\n" +
-                        "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
-                        "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
-                        "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
-                        "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+                "HYRX\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z\n" +
+                "\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\t1970-01-03T00:00:00.000000Z\n" +
+                "CPSW\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\t1970-01-03T00:00:00.000000Z\n" +
+                "PEHN\t140.1138\t-63.36813480742224\t2901521895\t9\t16851\t9223372036854775807\t1970-01-03T00:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "PEHN\t81.4681\t12.503042190293423\t2085282008\t9\t11472\t8955092533521658248\t1970-01-03T03:00:00.000000Z\n" +
+                "CPSW\t67.6193\t34.35685332942956\t2144581835\t6\t10942\t3152466304308949756\t1970-01-03T03:00:00.000000Z\n" +
+                "\t41.3816\t55.22494170511608\t667031149\t38\t22298\t5536695302686527374\t1970-01-03T03:00:00.000000Z\n" +
+                "HYRX\t23.0646\t50.77786067801929\t435411399\t41\t9083\t5351051939379353600\t1970-01-03T03:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "\t101.6448\t92.16079308066422\t2815179092\t80\t39010\t-7038722756553554443\t1970-01-03T06:00:00.000000Z\n" +
+                "PEHN\t22.8223\t88.37421918800908\t1269042121\t9\t6093\t4608960730952244094\t1970-01-03T06:00:00.000000Z\n" +
+                "HYRX\t34.7012\t59.378032936344596\t444366830\t41\t13242\t6615301404488457216\t1970-01-03T06:00:00.000000Z\n" +
+                "CPSW\t101.6304\t-8.043024049101913\t3866222134\t-15\t-10428\t1862482881794971392\t1970-01-03T06:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "\t153.9420\t103.11980620255937\t2182089028\t31\t38774\t-4203926486423760584\t1970-01-03T09:00:00.000000Z\n" +
+                "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\t1970-01-03T09:00:00.000000Z\n" +
+                "HYRX\t46.3378\t67.9782051946699\t453322261\t40\t17401\t7879550869597561856\t1970-01-03T09:00:00.000000Z\n" +
+                "CPSW\t135.6415\t-50.442901427633394\t5587862435\t-36\t-31798\t572499459280992448\t1970-01-03T09:00:00.000000Z\n" +
+                "PEHN\t-35.8234\t164.24539618572473\t452802234\t9\t714\t262828928382831328\t1970-01-03T09:00:00.000000Z\n" +
+                "\t82.3556\t189.81728064582336\t2909635248\t54\t2779\t-238979168606022602\t1970-01-03T12:00:00.000000Z\n" +
+                "HYRX\t57.9745\t76.57837745299521\t462277692\t40\t21561\t9143800334706665900\t1970-01-03T12:00:00.000000Z\n" +
+                "CPSW\t169.6526\t-92.84277880616484\t7309502735\t-57\t-53168\t-717483963232985728\t1970-01-03T12:00:00.000000Z\n" +
+                "PEHN\t-94.4692\t240.11657318344038\t-363437653\t9\t-4665\t-4083302874186582528\t1970-01-03T12:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "HYRX\t39.0173\t10.643046345788132\t1238491107\t13\t30722\t6912707344119330199\t1970-01-03T15:00:00.000000Z\n" +
+                "\t107.8614\t139.30694155564203\t2116801049\t40\t45678\t-3504226003016057166\t1970-01-03T15:00:00.000000Z\n" +
+                "CPSW\t203.6637\t-135.24265618469636\t9031143035\t-78\t-74538\t-2007467385746963968\t1970-01-03T15:00:00.000000Z\n" +
+                "PEHN\t-153.1149\t315.98775018115606\t-1179677539\t9\t-10044\t-8429434676755996672\t1970-01-03T15:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "\t151.3361\t120.5188941413223\t2698444286\t40\t37984\t-4160055112489677424\t1970-01-03T18:00:00.000000Z\n" +
+                "HYRX\t20.0601\t-55.29228476141894\t2014704521\t-14\t39883\t4681614353531994112\t1970-01-03T18:00:00.000000Z\n" +
+                "CPSW\t237.6748\t-177.6425335632278\t10752783335\t-99\t-95908\t-3297450808260941824\t1970-01-03T18:00:00.000000Z\n" +
+                "PEHN\t-211.7607\t391.8589271788717\t-1995917427\t9\t-15423\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n", "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_float(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_double(0)*100 c," +
+                " abs(rnd_int()) d," +
+                " rnd_byte(2, 50) e," +
+                " abs(rnd_short()) f," +
+                " abs(rnd_long()) g," +
+                " timestamp_sequence(172800000000, 3600000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_float(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_double(0)*100 c," +
+                " abs(rnd_int()) d," +
+                " rnd_byte(2, 50) e," +
+                " abs(rnd_short()) f," +
+                " abs(rnd_long()) g," +
+                " timestamp_sequence(277200000000, 3600000000) k" +
+                " from" +
+                " long_sequence(5)" +
+                ") timestamp(k)", "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+                "HYRX\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z\n" +
+                "\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\t1970-01-03T00:00:00.000000Z\n" +
+                "CPSW\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\t1970-01-03T00:00:00.000000Z\n" +
+                "PEHN\t140.1138\t-63.36813480742224\t2901521895\t9\t16851\t9223372036854775807\t1970-01-03T00:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "PEHN\t81.4681\t12.503042190293423\t2085282008\t9\t11472\t8955092533521658248\t1970-01-03T03:00:00.000000Z\n" +
+                "CPSW\t67.6193\t34.35685332942956\t2144581835\t6\t10942\t3152466304308949756\t1970-01-03T03:00:00.000000Z\n" +
+                "\t41.3816\t55.22494170511608\t667031149\t38\t22298\t5536695302686527374\t1970-01-03T03:00:00.000000Z\n" +
+                "HYRX\t23.0646\t50.77786067801929\t435411399\t41\t9083\t5351051939379353600\t1970-01-03T03:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "\t101.6448\t92.16079308066422\t2815179092\t80\t39010\t-7038722756553554443\t1970-01-03T06:00:00.000000Z\n" +
+                "PEHN\t22.8223\t88.37421918800908\t1269042121\t9\t6093\t4608960730952244094\t1970-01-03T06:00:00.000000Z\n" +
+                "HYRX\t34.7012\t59.378032936344596\t444366830\t41\t13242\t6615301404488457216\t1970-01-03T06:00:00.000000Z\n" +
+                "CPSW\t101.6304\t-8.043024049101913\t3866222134\t-15\t-10428\t1862482881794971392\t1970-01-03T06:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "\t153.9420\t103.11980620255937\t2182089028\t31\t38774\t-4203926486423760584\t1970-01-03T09:00:00.000000Z\n" +
+                "RXGZ\t96.4029\t42.02044253932608\t712702244\t46\t22661\t2762535352290012031\t1970-01-03T09:00:00.000000Z\n" +
+                "HYRX\t46.3378\t67.9782051946699\t453322261\t40\t17401\t7879550869597561856\t1970-01-03T09:00:00.000000Z\n" +
+                "CPSW\t135.6415\t-50.442901427633394\t5587862435\t-36\t-31798\t572499459280992448\t1970-01-03T09:00:00.000000Z\n" +
+                "PEHN\t-35.8234\t164.24539618572473\t452802234\t9\t714\t262828928382831328\t1970-01-03T09:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "\t82.3556\t189.81728064582336\t2909635248\t54\t2779\t-238979168606022602\t1970-01-03T12:00:00.000000Z\n" +
+                "HYRX\t57.9745\t76.57837745299521\t462277692\t40\t21561\t9143800334706665900\t1970-01-03T12:00:00.000000Z\n" +
+                "CPSW\t169.6526\t-92.84277880616484\t7309502735\t-57\t-53168\t-717483963232985728\t1970-01-03T12:00:00.000000Z\n" +
+                "PEHN\t-94.4692\t240.11657318344038\t-363437653\t9\t-4665\t-4083302874186582528\t1970-01-03T12:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "HYRX\t39.0173\t10.643046345788132\t1238491107\t13\t30722\t6912707344119330199\t1970-01-03T15:00:00.000000Z\n" +
+                "\t107.8614\t139.30694155564203\t2116801049\t40\t45678\t-3504226003016057166\t1970-01-03T15:00:00.000000Z\n" +
+                "CPSW\t203.6637\t-135.24265618469636\t9031143035\t-78\t-74538\t-2007467385746963968\t1970-01-03T15:00:00.000000Z\n" +
+                "PEHN\t-153.1149\t315.98775018115606\t-1179677539\t9\t-10044\t-8429434676755996672\t1970-01-03T15:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "\t151.3361\t120.5188941413223\t2698444286\t40\t37984\t-4160055112489677424\t1970-01-03T18:00:00.000000Z\n" +
+                "HYRX\t20.0601\t-55.29228476141894\t2014704521\t-14\t39883\t4681614353531994112\t1970-01-03T18:00:00.000000Z\n" +
+                "CPSW\t237.6748\t-177.6425335632278\t10752783335\t-99\t-95908\t-3297450808260941824\t1970-01-03T18:00:00.000000Z\n" +
+                "PEHN\t-211.7607\t391.8589271788717\t-1995917427\t9\t-15423\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "HYRX\t1.1030\t-121.22761586862603\t2790917936\t-41\t49044\t2450521362944657408\t1970-01-03T21:00:00.000000Z\n" +
+                "\t133.7543\t113.29263307717305\t2436316552\t36\t31264\t179183534540497952\t1970-01-03T21:00:00.000000Z\n" +
+                "CPSW\t271.6859\t-220.04241094175927\t12474423635\t-120\t-117278\t-4587434230774920192\t1970-01-03T21:00:00.000000Z\n" +
+                "PEHN\t-270.4064\t467.73010417658736\t-2812157313\t9\t-20802\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "HYRX\t-17.8542\t-187.1629469758331\t3567131351\t-68\t58205\t219428372357321856\t1970-01-04T00:00:00.000000Z\n" +
+                "\t116.1725\t106.06637201302377\t2174188819\t33\t24544\t4518422181570673664\t1970-01-04T00:00:00.000000Z\n" +
+                "CPSW\t305.6970\t-262.44228832029074\t14196063935\t-141\t-138648\t-5877417653288898560\t1970-01-04T00:00:00.000000Z\n" +
+                "PEHN\t-329.0522\t543.601281174303\t-3628397201\t9\t-26181\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "\t98.5907\t98.8401109488745\t1912061086\t30\t17824\t8857660828600848720\t1970-01-04T03:00:00.000000Z\n" +
+                "HYRX\t-36.8113\t-253.09827808304019\t4343344767\t-95\t67366\t-2011664618230010368\t1970-01-04T03:00:00.000000Z\n" +
+                "CPSW\t339.7081\t-304.84216569882227\t15917704235\t-162\t-160018\t-7167401075802876928\t1970-01-04T03:00:00.000000Z\n" +
+                "PEHN\t-387.6979\t619.4724581720187\t-4444637088\t9\t-31560\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "ZGHW\t50.2589\t38.42254384471547\t597366062\t21\t23702\t7037372650941669660\t1970-01-04T06:00:00.000000Z\n" +
+                "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\t1970-01-04T06:00:00.000000Z\n" +
+                "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\t1970-01-04T06:00:00.000000Z\n" +
+                "HYRX\t-55.7685\t-319.0336091902473\t5119558182\t-122\t76527\t-4242757608817349120\t1970-01-04T06:00:00.000000Z\n" +
+                "\t81.0089\t91.61384988472523\t1649933352\t27\t11104\t9223372036854775807\t1970-01-04T06:00:00.000000Z\n" +
+                "CPSW\t373.7192\t-347.2420430773538\t17639344535\t-183\t-181388\t-8457384498316854272\t1970-01-04T06:00:00.000000Z\n" +
+                "PEHN\t-446.3437\t695.3436351697343\t-5260876975\t9\t-36939\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                "OXPK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\t1970-01-04T09:00:00.000000Z\n" +
+                "HYRX\t-74.7257\t-384.9689402974543\t5895771596\t-149\t85688\t-6473850599404687360\t1970-01-04T09:00:00.000000Z\n" +
+                "\t63.4271\t84.38758882057594\t1387805620\t24\t4384\t9223372036854775807\t1970-01-04T09:00:00.000000Z\n" +
+                "CPSW\t407.7303\t-389.6419204558852\t19360984835\t-204\t-202758\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                "PEHN\t-504.9894\t771.21481216745\t-6077116861\t9\t-42318\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                "RXGZ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                "ZGHW\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleFillAllTypesLinearNoData() throws Exception {
         // sum_t tests memory leak
-        assertQuery13("b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n",
-                "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_byte(2, 50) e," +
-                        " abs(rnd_short()) f," +
-                        " abs(rnd_long()) g," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(0)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_byte(2, 50) e," +
-                        " abs(rnd_short()) f," +
-                        " abs(rnd_long()) g," +
-                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000Z' as timestamp), 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
-                        "\t25.168644428253174\t96.69784438858017\t1715501826\t97\t28323\t-3537127814486931722\t1970-01-04T05:00:00.000000Z\n" +
-                        "DEYY\t96.87422943115234\t67.00476391801053\t44173540\t34\t3282\t6794405451419334859\t1970-01-04T05:00:00.000000Z\n" +
-                        "SXUX\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T05:00:00.000000Z\n" +
-                        "SXUX\t26.922100067138672\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T08:00:00.000000Z\n" +
-                        "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000Z\n" +
-                        "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T08:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n", "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_float(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_double(0)*100 c," +
+                " abs(rnd_int()) d," +
+                " rnd_byte(2, 50) e," +
+                " abs(rnd_short()) f," +
+                " abs(rnd_long()) g," +
+                " timestamp_sequence(172800000000, 3600000000) k" +
+                " from" +
+                " long_sequence(0)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_float(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_double(0)*100 c," +
+                " abs(rnd_int()) d," +
+                " rnd_byte(2, 50) e," +
+                " abs(rnd_short()) f," +
+                " abs(rnd_long()) g," +
+                " timestamp_sequence(cast('1970-01-04T05:00:00.000000Z' as timestamp), 3600000000) k" +
+                " from" +
+                " long_sequence(5)" +
+                ") timestamp(k)", "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
+                "\t25.168644428253174\t96.69784438858017\t1715501826\t97\t28323\t-3537127814486931722\t1970-01-04T05:00:00.000000Z\n" +
+                "DEYY\t96.87422943115234\t67.00476391801053\t44173540\t34\t3282\t6794405451419334859\t1970-01-04T05:00:00.000000Z\n" +
+                "SXUX\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T05:00:00.000000Z\n" +
+                "SXUX\t26.922100067138672\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T08:00:00.000000Z\n" +
+                "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000Z\n" +
+                "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T08:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        assertQuery13("b\tsum\tk\n" +
-                        "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t60.419130298418445\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t269.0808495558698\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t183.3959405081909\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t26.922103479744898\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\t82.9603306085581\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t150.48604795487125\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
-                        "VTJW\t51.034785218217934\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t-73.65878663484577\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t172.06125086724973\t1970-01-03T15:00:00.000000Z\n" +
-                        "VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "HYRX\t-159.3436956825247\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
-                        "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n",
-
-                "select b, sum(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum\tk\n" +
-                        "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t60.419130298418445\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t269.0808495558698\t1970-01-03T00:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t183.3959405081909\t1970-01-03T03:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t26.922103479744898\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\t82.9603306085581\t1970-01-03T09:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t150.48604795487125\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
-                        "VTJW\t51.034785218217934\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t-73.65878663484577\t1970-01-03T12:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t172.06125086724973\t1970-01-03T15:00:00.000000Z\n" +
-                        "VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "HYRX\t-159.3436956825247\t1970-01-03T15:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
-                        "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "\t75.55713454429453\t1970-01-03T21:00:00.000000Z\n" +
-                        "VTJW\t57.67760781711089\t1970-01-03T21:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "PEHN\t-21.889850047664094\t1970-01-03T21:00:00.000000Z\n" +
-                        "HYRX\t-330.7135137778825\t1970-01-03T21:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "\t65.02434237974201\t1970-01-04T00:00:00.000000Z\n" +
-                        "VTJW\t59.891882016741896\t1970-01-04T00:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "PEHN\t-57.337327320922356\t1970-01-04T00:00:00.000000Z\n" +
-                        "HYRX\t-416.39842282556134\t1970-01-04T00:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "\t54.49155021518948\t1970-01-04T03:00:00.000000Z\n" +
-                        "VTJW\t62.10615621637288\t1970-01-04T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "PEHN\t-92.78480459418059\t1970-01-04T03:00:00.000000Z\n" +
-                        "HYRX\t-502.0833318732403\t1970-01-04T03:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "\t135.835983782176\t1970-01-04T06:00:00.000000Z\n" +
-                        "UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\n" +
-                        "VTJW\t64.32043041600387\t1970-01-04T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "PEHN\t-128.23228186743887\t1970-01-04T06:00:00.000000Z\n" +
-                        "HYRX\t-587.7682409209192\t1970-01-04T06:00:00.000000Z\n" +
-                        "KGHV\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n" +
-                        "\t217.1804173491625\t1970-01-04T09:00:00.000000Z\n" +
-                        "VTJW\t66.53470461563491\t1970-01-04T09:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T09:00:00.000000Z\n" +
-                        "PEHN\t-163.67975914069712\t1970-01-04T09:00:00.000000Z\n" +
-                        "HYRX\t-673.453149968598\t1970-01-04T09:00:00.000000Z\n" +
-                        "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("b\tsum\tk\n" +
+                "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
+                "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
+                "PEHN\t60.419130298418445\t1970-01-03T00:00:00.000000Z\n" +
+                "HYRX\t269.0808495558698\t1970-01-03T00:00:00.000000Z\n" +
+                "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
+                "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
+                "VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "HYRX\t183.3959405081909\t1970-01-03T03:00:00.000000Z\n" +
+                "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
+                "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
+                "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
+                "VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
+                "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
+                "\t26.922103479744898\t1970-01-03T09:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "PEHN\t82.9603306085581\t1970-01-03T09:00:00.000000Z\n" +
+                "\t150.48604795487125\t1970-01-03T12:00:00.000000Z\n" +
+                "PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
+                "VTJW\t51.034785218217934\t1970-01-03T12:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "HYRX\t-73.65878663484577\t1970-01-03T12:00:00.000000Z\n" +
+                "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
+                "\t172.06125086724973\t1970-01-03T15:00:00.000000Z\n" +
+                "VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "HYRX\t-159.3436956825247\t1970-01-03T15:00:00.000000Z\n" +
+                "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
+                "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
+                "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n", "select b, sum(a), k from x sample by 3h fill(linear)", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(172800000000, 3600000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(277200000000, 3600000000) k" +
+                " from" +
+                " long_sequence(5)" +
+                ") timestamp(k)", "b\tsum\tk\n" +
+                "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
+                "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
+                "PEHN\t60.419130298418445\t1970-01-03T00:00:00.000000Z\n" +
+                "HYRX\t269.0808495558698\t1970-01-03T00:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
+                "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
+                "VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "HYRX\t183.3959405081909\t1970-01-03T03:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
+                "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
+                "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
+                "VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
+                "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
+                "\t26.922103479744898\t1970-01-03T09:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "PEHN\t82.9603306085581\t1970-01-03T09:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "\t150.48604795487125\t1970-01-03T12:00:00.000000Z\n" +
+                "PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
+                "VTJW\t51.034785218217934\t1970-01-03T12:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "HYRX\t-73.65878663484577\t1970-01-03T12:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
+                "\t172.06125086724973\t1970-01-03T15:00:00.000000Z\n" +
+                "VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "HYRX\t-159.3436956825247\t1970-01-03T15:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
+                "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
+                "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "\t75.55713454429453\t1970-01-03T21:00:00.000000Z\n" +
+                "VTJW\t57.67760781711089\t1970-01-03T21:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "PEHN\t-21.889850047664094\t1970-01-03T21:00:00.000000Z\n" +
+                "HYRX\t-330.7135137778825\t1970-01-03T21:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "\t65.02434237974201\t1970-01-04T00:00:00.000000Z\n" +
+                "VTJW\t59.891882016741896\t1970-01-04T00:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "PEHN\t-57.337327320922356\t1970-01-04T00:00:00.000000Z\n" +
+                "HYRX\t-416.39842282556134\t1970-01-04T00:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "\t54.49155021518948\t1970-01-04T03:00:00.000000Z\n" +
+                "VTJW\t62.10615621637288\t1970-01-04T03:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "PEHN\t-92.78480459418059\t1970-01-04T03:00:00.000000Z\n" +
+                "HYRX\t-502.0833318732403\t1970-01-04T03:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "\t135.835983782176\t1970-01-04T06:00:00.000000Z\n" +
+                "UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\n" +
+                "VTJW\t64.32043041600387\t1970-01-04T06:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                "PEHN\t-128.23228186743887\t1970-01-04T06:00:00.000000Z\n" +
+                "HYRX\t-587.7682409209192\t1970-01-04T06:00:00.000000Z\n" +
+                "KGHV\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n" +
+                "\t217.1804173491625\t1970-01-04T09:00:00.000000Z\n" +
+                "VTJW\t66.53470461563491\t1970-01-04T09:00:00.000000Z\n" +
+                "RXGZ\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                "PEHN\t-163.67975914069712\t1970-01-04T09:00:00.000000Z\n" +
+                "HYRX\t-673.453149968598\t1970-01-04T09:00:00.000000Z\n" +
+                "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testSampleFillLinearBadType() throws Exception {
-        assertFailure(
+        assertException(
                 "select b, sum_t(b), k from x sample by 3h fill(linear)",
                 "create table x as " +
                         "(" +
@@ -4252,7 +4303,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillLinearByMonth() throws Exception {
-        assertQuery("b\tsum_t\tk\n" +
+        assertQuery(
+                "b\tsum_t\tk\n" +
                         "\t54112.40405938657\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t11209.880434660998\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t9939.438287132381\t1970-01-03T00:00:00.000000Z\n" +
@@ -4302,16 +4354,15 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearConstructorFail() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(172800000000, 3600000000) k" +
-                            " from" +
-                            " long_sequence(20000000)" +
-                            ") timestamp(k) partition by NONE",
-                    sqlExecutionContext
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20000000)" +
+                    ") timestamp(k) partition by NONE"
             );
 
             FilesFacade ff = new TestFilesFacadeImpl() {
@@ -4334,7 +4385,7 @@ public class SampleByTest extends AbstractGriffinTest {
             };
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
@@ -4351,16 +4402,15 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearFail() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(172800000000, 3600000000) k" +
-                            " from" +
-                            " long_sequence(20000000)" +
-                            ") timestamp(k) partition by NONE",
-                    sqlExecutionContext
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20000000)" +
+                    ") timestamp(k) partition by NONE"
             );
 
             FilesFacade ff = new TestFilesFacadeImpl() {
@@ -4383,7 +4433,7 @@ public class SampleByTest extends AbstractGriffinTest {
             };
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try {
                         try (
                                 RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
@@ -4407,7 +4457,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillNone() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -4464,12 +4515,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "\t135.835983782176\t1970-01-04T06:00:00.000000Z\n" +
                         "UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillNoneAllTypes() throws Exception {
-        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+        assertQuery(
+                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\t74.19752505948932\t113.1213\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
                         "CPSW\t0.35983672154330515\t76.7567\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
@@ -4643,12 +4696,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "FLOP\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "WVDK\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "JOXP\t67.29405590773638\t76.0625\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillNoneDataGaps() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T01:20:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T01:50:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T02:50:00.000000Z\n" +
@@ -4720,7 +4775,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillNoneDataGapsAlignToCalendar() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T01:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T02:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\n" +
@@ -4792,7 +4848,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillNoneDataGapsAlignToCalendarTimeZone() throws Exception {
-        assertQuery("b\ts\tk\n" +
+        assertQuery(
+                "b\ts\tk\n" +
                         "\t11.427984775756228\t2021-03-28T01:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t2021-03-28T03:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t2021-03-28T04:00:00.000000Z\n" +
@@ -4830,7 +4887,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillNoneEmpty() throws Exception {
-        assertQuery("b\tsum_t\tk\n",
+        assertQuery(
+                "b\tsum_t\tk\n",
                 "select b, sum_t(a), k from x sample by 2h fill(none)",
                 "create table x as " +
                         "(" +
@@ -4855,12 +4913,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "\t76.75673070796104\t1970-01-04T05:00:00.000000Z\n" +
                         "\t125.98934239031611\t1970-01-04T07:00:00.000000Z\n" +
                         "\t57.93466326862211\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillNoneNotKeyed() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "77.51096330391545\t1970-01-03T00:00:00.000000Z\n" +
                         "191.82172120242328\t1970-01-03T03:00:00.000000Z\n" +
                         "237.11377417413973\t1970-01-03T06:00:00.000000Z\n" +
@@ -4898,12 +4958,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "54.49155021518948\t1970-01-04T03:00:00.000000Z\n" +
                         "185.26488890176051\t1970-01-04T06:00:00.000000Z\n" +
                         "67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillNoneNotKeyedEmpty() throws Exception {
-        assertQuery("sum\tk\n",
+        assertQuery(
+                "sum\tk\n",
                 "select sum(a), k from x sample by 3h fill(none)",
                 "create table x as " +
                         "(" +
@@ -4926,12 +4988,14 @@ public class SampleByTest extends AbstractGriffinTest {
                 "sum\tk\n" +
                         "139.2898345080353\t1970-01-04T05:00:00.000000Z\n" +
                         "121.75073858040724\t1970-01-04T08:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillNull() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -5071,7 +5135,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
@@ -5079,7 +5144,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("b\ts\tk\n" +
+        assertQuery(
+                "b\ts\tk\n" +
                         "\t11.427984775756228\t2021-11-06T18:00:00.000000Z\n" +
                         "VTJW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
                         "RXGZ\tNaN\t2021-11-06T18:00:00.000000Z\n" +
@@ -5180,7 +5246,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("b\ts\tk\n" +
+        assertQuery(
+                "b\ts\tk\n" +
                         "\t77\t2021-11-06T18:00:00.000000Z\n" +
                         "VTJW\t0\t2021-11-06T18:00:00.000000Z\n" +
                         "RXGZ\t0\t2021-11-06T18:00:00.000000Z\n" +
@@ -5297,7 +5364,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("b\ts\tk\n" +
+        assertQuery(
+                "b\ts\tk\n" +
                         "\t0.6254\t2021-11-06T18:00:00.000000Z\n" +
                         "VTJW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
                         "RXGZ\tNaN\t2021-11-06T18:00:00.000000Z\n" +
@@ -5414,7 +5482,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("b\ts\tk\n" +
+        assertQuery(
+                "b\ts\tk\n" +
                         "\t1530831067\t2021-11-06T18:00:00.000000Z\n" +
                         "VTJW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
                         "RXGZ\tNaN\t2021-11-06T18:00:00.000000Z\n" +
@@ -5531,7 +5600,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("b\ts\tk\n" +
+        assertQuery(
+                "b\ts\tk\n" +
                         "\t-24357\t2021-11-06T18:00:00.000000Z\n" +
                         "VTJW\t0\t2021-11-06T18:00:00.000000Z\n" +
                         "RXGZ\t0\t2021-11-06T18:00:00.000000Z\n" +
@@ -5645,7 +5715,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillNullBadType() throws Exception {
-        assertFailure(
+        assertException(
                 "select b, sum_t(b), k from x sample by 3h fill(null)",
                 "create table x as " +
                         "(" +
@@ -5663,7 +5733,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillNullDay() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t7275.778376911272\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t1883.352722741196\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t1778.991207981299\t1970-01-03T00:00:00.000000Z\n" +
@@ -5687,12 +5758,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(400)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillNullDayNotKeyed() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "14618.599870362843\t1970-01-03T00:00:00.000000Z\n" +
                         "6102.934279721718\t1970-01-15T00:00:00.000000Z\n",
                 "select sum(a), k from x sample by 12d fill(null)",
@@ -5706,12 +5779,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(400)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillNullDayNotKeyedGaps() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "NaN\t1970-01-04T00:00:00.000000Z\n" +
                         "42.17768841969397\t1970-01-05T00:00:00.000000Z\n" +
@@ -5762,7 +5837,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
@@ -5847,7 +5923,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillNullNotKeyedAlignToCalendar() throws Exception {
-        assertQuery("s\tk\n" +
+        assertQuery(
+                "s\tk\n" +
                         "0.15786635599554755\t2021-10-31T02:00:00.000000Z\n" +
                         "0.7166790794135658\t2021-10-31T02:30:00.000000Z\n" +
                         "NaN\t2021-10-31T03:30:00.000000Z\n" +
@@ -5929,7 +6006,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillNullNotKeyedEmpty() throws Exception {
-        assertQuery("sum\tk\n",
+        assertQuery(
+                "sum\tk\n",
                 "select sum(a), k from x sample by 3h fill(null)",
                 "create table x as " +
                         "(" +
@@ -5952,12 +6030,13 @@ public class SampleByTest extends AbstractGriffinTest {
                 "sum\tk\n" +
                         "139.2898345080353\t1970-01-04T05:00:00.000000Z\n" +
                         "121.75073858040724\t1970-01-04T08:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillNullNotKeyedInvalid() throws Exception {
-        assertFailure(
+        assertException(
                 "select last(z) s from x sample by 30m fill(null)",
                 "create table x as " +
                         "(" +
@@ -6128,7 +6207,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillPrev() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -6268,12 +6348,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillPrevAlignToCalendar() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -6401,7 +6483,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z\n" +
                         "UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T06:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
@@ -6409,7 +6492,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("b\ts\tk\n" +
+        assertQuery(
+                "b\ts\tk\n" +
                         "\t11.427984775756228\t2021-11-06T18:00:00.000000Z\n" +
                         "VTJW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
                         "RXGZ\tNaN\t2021-11-06T18:00:00.000000Z\n" +
@@ -6507,7 +6591,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillPrevAllTypes() throws Exception {
-        assertQuery("a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tsum\tk\n" +
+        assertQuery(
+                "a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tsum\tk\n" +
                         "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t0.15786635599554755\t1970-01-03T00:00:00.000000Z\n" +
                         "-2132716300\ttrue\tU\t0.38179758047769774\tNaN\t813\t2015-07-01T22:08:50.655Z\tHYRX\t-6186964045554120476\t34\t00000000 07 42 fc 31 79 5f 8b 81 2b 93\t1970-01-01T01:00:00.000000Z\t0.04142812470232493\t1970-01-03T00:00:00.000000Z\n" +
                         "-360860352\ttrue\tM\t0.456344569609078\tNaN\t1013\t2015-01-15T20:11:07.487Z\tHYRX\t5271904137583983788\t30\t00000000 82 89 2b 4d 5f f6 46 90 c3 b3 59 8e e5 61 2f 64\n" +
@@ -6549,7 +6634,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillPrevDuplicateKey() throws Exception {
-        assertQuery("b\tb1\tb2\tsum\tk\n" +
+        assertQuery(
+                "b\tb1\tb2\tsum\tk\n" +
                         "\t\t\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -6689,12 +6775,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\tUVSD\tUVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\tKGHV\tKGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillPrevDuplicateTimestamp1() throws Exception {
-        assertQuery("b\tsum\tk\tk1\n" +
+        assertQuery(
+                "b\tsum\tk\tk1\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
@@ -6834,12 +6922,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillPrevDuplicateTimestamp2() throws Exception {
-        assertQuery("b\tsum\tk1\tk\n" +
+        assertQuery(
+                "b\tsum\tk1\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
@@ -6979,12 +7069,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillPrevEmptyBase() throws Exception {
-        assertQuery((CharSequence) null,
+        assertQuery(
+                (CharSequence) null,
                 "select a,b,c,d,e,f,g,i,j,l,m,p,sum(o), k from x where 0!=0 sample by 3h fill(prev)",
                 "create table x as " +
                         "(" +
@@ -7014,7 +7106,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillPrevNoTimestamp() throws Exception {
-        assertQuery("b\tsum\n" +
+        assertQuery(
+                "b\tsum\n" +
                         "\t11.427984775756228\n" +
                         "VTJW\t42.17768841969397\n" +
                         "RXGZ\t23.90529010846525\n" +
@@ -7154,12 +7247,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\t12.026122412833129\n" +
                         "UVSD\t49.42890511958454\n" +
                         "KGHV\t67.52509547112409\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillPrevNoTimestampLong256AndChar() throws Exception {
-        assertQuery("a\tb\tsum\n" +
+        assertQuery(
+                "a\tb\tsum\n" +
                         "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514\n" +
@@ -7622,12 +7717,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\t0.2879973939681931\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\t0.24008362859107102\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\t0.7446000371089992\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillPrevNotKeyed() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "0.8745454354091133\t1970-01-01T00:00:17.280000Z\n" +
                         "1.551810133791102\t1970-01-01T03:00:17.280000Z\n" +
                         "0.8214274286283418\t1970-01-01T06:00:17.280000Z\n" +
@@ -7691,7 +7788,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillPrevNotKeyedAlignToCalendar() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "0.15786635599554755\t2021-10-31T00:00:00.000000Z\n" +
                         "0.04142812470232493\t2021-10-31T00:30:00.000000Z\n" +
                         "0.04142812470232493\t2021-10-31T01:00:00.000000Z\n" +
@@ -7779,7 +7877,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
         // without the logic trying to back fill things
-        assertQuery("s\tto_timezone\n" +
+        assertQuery(
+                "s\tto_timezone\n" +
                         "11.427984775756228\t2021-10-31T03:00:00.000000Z\n" +
                         "66.08297852815922\t2021-10-31T03:30:00.000000Z\n" +
                         "70.94360487171201\t2021-10-31T04:30:00.000000Z\n" +
@@ -7871,7 +7970,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
         // without the logic trying to back fill things
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "11.427984775756228\t2021-03-28T00:00:00.000000Z\n" +
                         "42.17768841969397\t2021-03-28T00:30:00.000000Z\n" +
                         "42.17768841969397\t2021-03-28T01:00:00.000000Z\n" +
@@ -7966,7 +8066,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
         // without the logic trying to back fill things
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "11.427984775756228\t2021-10-30T23:40:00.000000Z\n" +
                         "11.427984775756228\t2021-10-31T00:10:00.000000Z\n" +
                         "66.08297852815922\t2021-10-31T00:40:00.000000Z\n" +
@@ -8056,7 +8157,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillPrevNotKeyedEmpty() throws Exception {
-        assertQuery("sum\tk\n",
+        assertQuery(
+                "sum\tk\n",
                 "select sum(o), k from x sample by 3h fill(prev)",
                 "create table x as " +
                         "(" +
@@ -8110,7 +8212,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValue() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -8250,7 +8353,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\t20.56\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\t20.56\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
@@ -8258,7 +8362,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t11.427984775756228\t2021-11-06T22:00:00.000000Z\n" +
                         "VTJW\t101.2\t2021-11-06T22:00:00.000000Z\n" +
                         "RXGZ\t101.2\t2021-11-06T22:00:00.000000Z\n" +
@@ -8350,12 +8455,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillValueAllKeyTypes() throws Exception {
-        assertQuery("b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+        assertQuery(
+                "b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t11.427984775756228\t42.1777\t1432278050\t13216\t4\t5539350449504785212\t1970-01-03T00:00:00.000000Z\n" +
                         "HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t12.026122412833129\t48.8205\t458818940\t3282\t8\t-6253307669002054137\t1970-01-03T00:00:00.000000Z\n" +
                         "\tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t5.048190020054388\t0.1108\t66297136\t-5637\t7\t9036423629723776443\t1970-01-03T00:00:00.000000Z\n" +
@@ -8416,7 +8523,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
@@ -8596,13 +8704,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         "FLOP\t20.56\t0.0000\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z\n" +
                         "WVDK\t20.56\t0.0000\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z\n" +
                         "JOXP\t67.29405590773638\t76.0625\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillValueAllTypesAndTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -8616,11 +8725,12 @@ public class SampleByTest extends AbstractGriffinTest {
                             " timestamp_sequence(172800000000, 3600000000) k" +
                             " from" +
                             " long_sequence(20)" +
-                            ") timestamp(k) partition by NONE",
-                    sqlExecutionContext
+                            ") timestamp(k) partition by NONE"
             );
+
             snapshotMemoryUsage();
-            try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)", sqlExecutionContext).getRecordCursorFactory()) {
+
+            try (final RecordCursorFactory factory = select("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")) {
                 assertTimestamp("k", factory);
                 String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\t74.19752505948932\t113.1213\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
@@ -8665,7 +8775,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
                 assertVariableColumns(factory, sqlExecutionContext);
 
-                compiler.compile("truncate table x", sqlExecutionContext);
+                ddl("truncate table x");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -8677,7 +8787,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueBadType() throws Exception {
-        assertFailure(
+        assertException(
                 "select b, sum_t(b), k from x sample by 3h fill(20.56)",
                 "create table x as " +
                         "(" +
@@ -8695,7 +8805,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueEmpty() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x sample by 3h fill(20.56)",
                 "create table x as " +
                         "(" +
@@ -8707,12 +8818,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillValueFromSubQuery() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T02:00:00.000000Z\n" +
                         "HYRX\t20.56\t1970-01-03T02:00:00.000000Z\n" +
                         "VTJW\t20.56\t1970-01-03T02:00:00.000000Z\n" +
@@ -8840,12 +8953,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "UVSD\t20.56\t1970-01-04T08:00:00.000000Z\n" +
                         "\t58.912164838797885\t1970-01-04T08:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T08:00:00.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillValueInvalid() throws Exception {
-        assertFailure(
+        assertException(
                 "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)",
                 "create table x as " +
                         "(" +
@@ -8868,7 +8982,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueListWithLinearAllTypesNotKeyed() throws Exception {
-        assertQuery("first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n",
+        assertQuery(
+                "first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n",
                 "select first(a),first(c),min(d),max(e),first(f),sum(j),first(l),first(p), k " +
                         "from x sample by 15m fill(linear,linear,linear,linear,linear,linear,linear,linear)",
                 "create table x " +
@@ -8921,7 +9036,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueListWithNullAndPrev() throws Exception {
-        assertQuery("b\tsum\tcount\tmin\tmax\tavg\tk\n" +
+        assertQuery(
+                "b\tsum\tcount\tmin\tmax\tavg\tk\n" +
                         "XYZ\t28.45577791213847\t1\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:00:00.000000Z\n" +
                         "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T01:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:30:00.000000Z\n" +
@@ -8994,12 +9110,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillValueListWithNullAndPrevAndLinear() throws Exception {
-        assertFailure(
+        assertException(
                 "select b, sum(a), count(), min(a), max(a), avg(a), k from x sample by 30m fill(20.56, null, prev, prev, linear)",
                 "create table x as " +
                         "(" +
@@ -9017,7 +9134,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueListWithNullAndPrevAndLinearAllTypesNotKeyed() throws Exception {
-        assertQuery("sum\tcount\tmin\tmax\tsum1\tmax1\tcount1\tsum2\tsum3\tsum4\tk\n" +
+        assertQuery(
+                "sum\tcount\tmin\tmax\tsum1\tmax1\tcount1\tsum2\tsum3\tsum4\tk\n" +
                         "1569490116\t1\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\t1\t-8671107786057422727\t26\t0.15786635599554755\t1970-01-03T00:00:00.000000Z\n" +
                         "123\tNaN\tNaN\tNaN\tNaN\t2015-05-16T20:27:48.158Z\t1\t556\t28\t0.15786635599554755\t1970-01-03T00:15:00.000000Z\n" +
                         "123\tNaN\tNaN\tNaN\tNaN\t2015-05-16T20:27:48.158Z\t1\t556\t30\t0.15786635599554755\t1970-01-03T00:30:00.000000Z\n" +
@@ -9065,7 +9183,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueListWithNullAndPrevAndLinearNotKeyed() throws Exception {
-        assertQuery("sum\tcount\tmin\tmax\tavg\tk\n" +
+        assertQuery(
+                "sum\tcount\tmin\tmax\tavg\tk\n" +
                         "76.75673070796104\t1\t76.75673070796104\t76.75673070796104\t76.75673070796104\t1970-01-03T01:00:00.000000Z\n" +
                         "20.56\tNaN\t76.75673070796104\t76.75673070796104\t73.52156685891707\t1970-01-03T01:30:00.000000Z\n" +
                         "20.56\tNaN\t76.75673070796104\t76.75673070796104\t70.28640300987308\t1970-01-03T02:00:00.000000Z\n" +
@@ -9111,12 +9230,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillValueNotEnough() throws Exception {
-        assertFailure(
+        assertException(
                 "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)",
                 "create table x as " +
                         "(" +
@@ -9139,7 +9259,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueNotKeyed() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "20.56\t1970-01-03T00:30:00.000000Z\n" +
                         "42.17768841969397\t1970-01-03T01:00:00.000000Z\n" +
@@ -9170,12 +9291,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillValueNotKeyedAlignToCalendar() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "42.17768841969397\t1970-01-03T00:30:00.000000Z\n" +
                         "20.56\t1970-01-03T01:00:00.000000Z\n" +
@@ -9270,7 +9393,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
         // without the logic trying to back fill things
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "11.427984775756228\t2021-10-30T23:40:00.000000Z\n" +
                         "20.56\t2021-10-31T00:10:00.000000Z\n" +
                         "42.17768841969397\t2021-10-31T00:40:00.000000Z\n" +
@@ -9363,7 +9487,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueNotKeyedAlignToCalendarTimeZone() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "11.427984775756228\t2021-03-28T00:00:00.000000Z\n" +
                         "42.17768841969397\t2021-03-28T00:30:00.000000Z\n" +
                         "20.56\t2021-03-28T01:00:00.000000Z\n" +
@@ -9458,7 +9583,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
         // without the logic trying to back fill things
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "11.427984775756228\t2021-10-31T00:00:00.000000Z\n" +
                         "66.08297852815922\t2021-10-31T00:30:00.000000Z\n" +
                         "70.94360487171201\t2021-10-31T02:30:00.000000Z\n" +
@@ -9550,7 +9676,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
         // without the logic trying to back fill things
-        assertQuery("s\tkz\n" +
+        assertQuery(
+                "s\tkz\n" +
                         "2\t2021-10-31T03:10:00.000000Z\n" +
                         "1\t2021-10-31T04:10:00.000000Z\n" +
                         "9999\t2021-10-31T04:40:00.000000Z\n" +
@@ -9640,7 +9767,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueNotKeyedEmpty() throws Exception {
-        assertQuery("sum\tk\n",
+        assertQuery(
+                "sum\tk\n",
                 "select sum(a), k from x sample by 30m fill(20.56)",
                 "create table x as " +
                         "(" +
@@ -9680,12 +9808,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "52.98405941762054\t1970-01-03T07:31:06.000000Z\n" +
                         "20.56\t1970-01-03T08:01:06.000000Z\n" +
                         "84.45258177211063\t1970-01-03T08:31:06.000000Z\n",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSampleFillValueNotKeyedInvalid() throws Exception {
-        assertFailure(
+        assertException(
                 "select sum(a), k from x sample by 30m fill(zz)",
                 "create table x as " +
                         "(" +
@@ -9739,7 +9868,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleArithmeticsInPeriod() throws Exception {
-        assertQuery("sum\tk\n",
+        assertQuery(
+                "sum\tk\n",
                 "select sum(a), k from x sample by (10+20)m",
                 "create table x as " +
                         "(" +
@@ -9751,12 +9881,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSimpleArithmeticsInPeriod2() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "1592.0966416600525\t1970-01-03T00:00:00.000000Z\n" +
                         "1566.8131178120786\t1970-01-04T06:00:00.000000Z\n" +
                         "1393.2872924527742\t1970-01-05T12:00:00.000000Z\n" +
@@ -9772,12 +9904,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSimpleArithmeticsInPeriod3() throws Exception {
-        assertQuery("sum\tk\n" +
+        assertQuery(
+                "sum\tk\n" +
                         "1592.0966416600525\t1970-01-03T00:00:00.000000Z\n" +
                         "1566.8131178120786\t1970-01-04T06:00:00.000000Z\n" +
                         "1393.2872924527742\t1970-01-05T12:00:00.000000Z\n" +
@@ -9793,12 +9927,14 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testSimpleLongArithmeticsInPeriod() throws Exception {
-        assertQuery("sum\tk\n",
+        assertQuery(
+                "sum\tk\n",
                 "select sum(a), k from x sample by (1+2)*10L m align to calendar",
                 "create table x as " +
                         "(" +
@@ -9810,14 +9946,15 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
+                false
+        );
     }
 
     @Test
     public void testTimestampColumnAliasPosFirst() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "time\tsum\tsum1\tsum2\n" +
@@ -9835,8 +9972,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnAliasPosLast() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "sum\tsum1\tsum2\ttime\n" +
@@ -9854,8 +9991,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnAliasPosMid() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "sum\ttime\tsum1\tsum2\n" +
@@ -9873,8 +10010,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnJoinTableAliasFirst() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "ts\tsum\tsum1\tsum2\n" +
@@ -9892,8 +10029,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnJoinTableAliasLast() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "sum\tsum1\tsum2\tts\n" +
@@ -9911,8 +10048,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testTimestampColumnJoinTableAliasMid() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
                     "sum\tsum1\tts\tsum2\n" +
@@ -9956,7 +10093,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "    FROM timed\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
-                        "select * from sampled;", "ts");
+                        "select * from sampled;", "ts"
+        );
     }
 
     @Test
@@ -9990,7 +10128,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "    FROM intermediate\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
-                        "select * from sampled;", "ts");
+                        "select * from sampled;", "ts"
+        );
     }
 
     @Test
@@ -10022,7 +10161,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "    FROM timed\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
-                        "select * from sampled;", null);
+                        "select * from sampled;", null
+        );
     }
 
     @Test
@@ -10048,7 +10188,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampIsRequiredBeforeSubqueryWithExplicitTs1() throws Exception {
-        assertFailure(
+        assertException(
                 "WITH  all_rows    AS (\n" +
                         "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
                         "    union all\n" +
@@ -10066,12 +10206,15 @@ public class SampleByTest extends AbstractGriffinTest {
                         "    FROM intermediate\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
-                        "select * from sampled;", null, 507, "base query does not provide ASC order over dedicated TIMESTAMP column");
+                        "select * from sampled;",
+                507,
+                "base query does not provide ASC order over dedicated TIMESTAMP column"
+        );
     }
 
     @Test
     public void testTimestampIsRequiredBeforeSubqueryWithExplicitTs2() throws Exception {
-        assertFailure(
+        assertException(
                 "WITH  all_rows    AS (\n" +
                         "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
                         "    union all\n" +
@@ -10089,7 +10232,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "    FROM intermediate\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
-                        "select * from sampled;", null, 489, "base query does not provide ASC order over dedicated TIMESTAMP column");
+                        "select * from sampled;",
+                489,
+                "base query does not provide ASC order over dedicated TIMESTAMP column"
+        );
     }
 
     @Test
@@ -10181,7 +10327,8 @@ public class SampleByTest extends AbstractGriffinTest {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 forceNoIndexQuery,
                 insert,
                 "k",
@@ -10189,7 +10336,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 false
         );
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 query,
                 null,
                 "k",
@@ -10200,23 +10348,27 @@ public class SampleByTest extends AbstractGriffinTest {
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {
         assertMemoryLeak(() -> {
-            compile("alter table xx drop column s", sqlExecutionContext);
-            compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            ddl("alter table xx drop column s", sqlExecutionContext);
+            ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
         String forceNoIndexQuery = query.replace("and s = null", " ");
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 forceNoIndexQuery,
                 null,
                 "k",
-                false);
+                false
+        );
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 query,
                 null,
                 "k",
-                false);
+                false
+        );
     }
 
     @NotNull
@@ -10240,7 +10392,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -10250,16 +10402,10 @@ public class SampleByTest extends AbstractGriffinTest {
                             "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
-                            "), index(s) timestamp(k) partition by DAY",
-                    sqlExecutionContext
+                            "), index(s) timestamp(k) partition by DAY"
             );
-            try (
-                    RecordCursorFactory ignored = compiler.compile(
-                            query,
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
-                Assert.fail();
+            try {
+                assertException(query);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
                 Assert.assertEquals(errorPosition, ex.getPosition());
@@ -10275,7 +10421,7 @@ public class SampleByTest extends AbstractGriffinTest {
     private void testSampleByPushdownWithDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
-            String fillOpt = fill.length() == 0 ? "" : "fill(" + fill + ")";
+            String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                     "from x " +
@@ -10289,7 +10435,7 @@ public class SampleByTest extends AbstractGriffinTest {
     private void testSampleByPushdownWithoutDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
-            String fillOpt = fill.length() == 0 ? "" : "fill(" + fill + ")";
+            String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                     "from y timestamp(ts) " +

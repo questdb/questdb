@@ -34,13 +34,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -52,66 +51,12 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
-
-public class SqlCodeGeneratorTest extends AbstractGriffinTest {
-
-    @Test
-    public void IPv4NullTest() throws Exception {
-        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
-        executeInsert("insert into test values(null)");
-        assertSql("test", "col\n" +
-                "\n");
-    }
-
-    @Test
-    public void alterTableIPv4NullCol() throws Exception {
-        compiler.compile("create table test (col1 ipv4)", sqlExecutionContext);
-        executeInsert("insert into test values ('0.0.0.1')");
-        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
-        }
-
-        assertSql("test", "col1\tcol2\n" +
-                "0.0.0.1\t\n");
-    }
-
-    @Test
-    public void ipv4NullTest() throws Exception {
-        compiler.compile("create table x (b ipv4)", sqlExecutionContext);
-        executeInsert("insert into x values('128.0.0.0')");
-        executeInsert("insert into x values('0.0.0.0')");
-
-        assertSql("x", "b\n" +
-                "128.0.0.0\n" +
-                "\n");
-    }
-
-    @Test
-    public void testAggregateByIPv4() throws Exception {
-        assertQuery("ip\tsum\n" +
-                        "0.0.0.2\t7360\n" +
-                        "0.0.0.4\t10105\n" +
-                        "0.0.0.3\t9230\n" +
-                        "0.0.0.5\t11739\n" +
-                        "0.0.0.1\t11644\n",
-                "select ip, sum (bytes) from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,5,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000) time" +
-                        "  from long_sequence(100)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
+public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
-        assertQuery("k1\ta\tk\n" +
+        assertQuery(
+                "k1\ta\tk\n" +
                         "1970-01-01T00:00:00.000000Z\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.010000Z\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
                         "1970-01-01T00:00:00.020000Z\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
@@ -131,7 +76,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
-        assertQuery("col_k\ta\tk\tcol_k1\n" +
+        assertQuery(
+                "col_k\ta\tk\tcol_k1\n" +
                         "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\t1970-01-01T00:00:00.010000Z\n" +
                         "1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t1970-01-01T00:00:00.020000Z\n",
@@ -151,7 +97,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testAliasedColumnFollowedByWildcardInJoinQuery2() throws Exception {
-        assertQuery("col_k\ta\tk\ta1\tk1\n" +
+        assertQuery(
+                "col_k\ta\tk\ta1\tk1\n" +
                         "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\n" +
                         "1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\n",
@@ -182,7 +129,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -202,7 +150,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testAvgDoubleColumnPartitionByNone() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -222,7 +171,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testAvgDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -242,7 +192,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testAvgDoubleEmptyColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -281,24 +232,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 10);
 
-                snapshotMemoryUsage();
-                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\t$1\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true,
-                            true
-                    );
-                }
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = select("select x, $1 from long_sequence(2)")) {
+                assertCursor(
+                        "x\t$1\n" +
+                                "1\t10\n" +
+                                "2\t10\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -306,24 +252,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong("y", 10);
+            bindVariableService.clear();
+            bindVariableService.setLong("y", 10);
 
-                snapshotMemoryUsage();
-                try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\t:y\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true,
-                            true
-                    );
-                }
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = select("select x, :y from long_sequence(2)")) {
+                assertCursor(
+                        "x\t:y\n" +
+                                "1\t10\n" +
+                                "2\t10\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -331,25 +272,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect3() throws Exception {
         assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 10);
 
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
-
-                snapshotMemoryUsage();
-                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\t$1\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true,
-                            true
-                    );
-                }
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = select("select x, $1 from long_sequence(2)")) {
+                assertCursor(
+                        "x\t$1\n" +
+                                "1\t10\n" +
+                                "2\t10\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -357,24 +292,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 10);
 
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
-
-                snapshotMemoryUsage();
-                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = $1", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\n" +
-                                    "10\n",
-                            factory,
-                            true,
-                            false
-                    );
-                }
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = select("select x from long_sequence(100) where x = $1")) {
+                assertCursor(
+                        "x\n" +
+                                "10\n",
+                        factory,
+                        true,
+                        false
+                );
             }
         });
     }
@@ -382,10 +311,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
+            ddl("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY");
             try {
-                compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($n1)", sqlExecutionContext).getRecordCursorFactory();
-                Assert.fail();
+                assertException("select * from alcatel_traffic_tmp where deviceName in ($n1)");
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
@@ -407,7 +335,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testBug484() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery("sym\n" +
+        assertQuery(
+                "sym\n" +
                         "cc\n" +
                         "cc\n" +
                         "cc\n" +
@@ -434,410 +363,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCaseIPv41() throws Exception {
-        assertQuery("ip\tbytes\tcase\n" +
-                        "187.139.150.80\t580\tnay\n" +
-                        "212.159.205.29\t23\tnay\n" +
-                        "79.15.250.138\t850\tnay\n" +
-                        "205.123.179.216\t167\tnay\n" +
-                        "170.90.236.206\t572\tnay\n" +
-                        "92.26.178.136\t7\tnay\n" +
-                        "231.146.30.59\t766\tnay\n" +
-                        "113.132.124.243\t522\tnay\n" +
-                        "67.22.249.199\t203\tnay\n" +
-                        "25.107.51.160\t827\tYAY\n" +
-                        "146.16.210.119\t383\tnay\n" +
-                        "187.63.210.97\t424\tnay\n" +
-                        "188.239.72.25\t513\tnay\n" +
-                        "181.82.42.148\t539\tnay\n" +
-                        "129.172.181.73\t25\tnay\n" +
-                        "66.56.51.126\t904\tnay\n" +
-                        "230.202.108.161\t171\tnay\n" +
-                        "180.48.50.141\t136\tnay\n" +
-                        "128.225.84.244\t313\tnay\n" +
-                        "254.93.251.9\t810\tnay\n" +
-                        "227.40.250.157\t903\tnay\n" +
-                        "180.36.62.54\t528\tnay\n" +
-                        "136.166.51.222\t580\tnay\n" +
-                        "24.123.12.210\t95\tYAY\n" +
-                        "171.117.213.66\t720\tnay\n" +
-                        "224.99.254.121\t619\tnay\n" +
-                        "55.211.206.129\t785\tYAY\n" +
-                        "144.131.72.77\t369\tnay\n" +
-                        "97.159.145.120\t352\tnay\n" +
-                        "164.153.242.17\t906\tnay\n" +
-                        "165.166.233.251\t332\tnay\n" +
-                        "114.126.117.26\t71\tnay\n" +
-                        "164.74.203.45\t678\tnay\n" +
-                        "241.248.184.75\t334\tnay\n" +
-                        "255.95.177.227\t44\tnay\n" +
-                        "216.150.248.30\t563\tnay\n" +
-                        "71.73.196.29\t741\tnay\n" +
-                        "180.91.244.55\t906\tnay\n" +
-                        "111.221.228.130\t531\tnay\n" +
-                        "171.30.189.77\t238\tnay\n" +
-                        "73.153.126.70\t772\tnay\n" +
-                        "105.218.160.179\t986\tnay\n" +
-                        "201.100.238.229\t318\tnay\n" +
-                        "12.214.12.100\t598\tYAY\n" +
-                        "212.102.182.127\t984\tnay\n" +
-                        "50.214.139.184\t574\tYAY\n" +
-                        "186.33.243.40\t659\tnay\n" +
-                        "74.196.176.71\t740\tnay\n" +
-                        "150.153.88.133\t849\tnay\n" +
-                        "63.60.82.184\t37\tYAY\n",
-                "select ip, bytes, case when ip <<= '2.65.32.1/2' then 'YAY' else 'nay' end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testCaseIPv42() throws Exception {
-        assertQuery("ip\tbytes\tcase\n" +
-                        "187.139.150.80\t580\t\n" +
-                        "212.159.205.29\t23\t\n" +
-                        "79.15.250.138\t850\t\n" +
-                        "205.123.179.216\t167\t\n" +
-                        "170.90.236.206\t572\t\n" +
-                        "92.26.178.136\t7\t\n" +
-                        "231.146.30.59\t766\t\n" +
-                        "113.132.124.243\t522\t\n" +
-                        "67.22.249.199\t203\t\n" +
-                        "25.107.51.160\t827\tYAY\n" +
-                        "146.16.210.119\t383\t\n" +
-                        "187.63.210.97\t424\t\n" +
-                        "188.239.72.25\t513\t\n" +
-                        "181.82.42.148\t539\t\n" +
-                        "129.172.181.73\t25\t\n" +
-                        "66.56.51.126\t904\t\n" +
-                        "230.202.108.161\t171\t\n" +
-                        "180.48.50.141\t136\t\n" +
-                        "128.225.84.244\t313\t\n" +
-                        "254.93.251.9\t810\t\n" +
-                        "227.40.250.157\t903\t\n" +
-                        "180.36.62.54\t528\t\n" +
-                        "136.166.51.222\t580\t\n" +
-                        "24.123.12.210\t95\tYAY\n" +
-                        "171.117.213.66\t720\t\n" +
-                        "224.99.254.121\t619\t\n" +
-                        "55.211.206.129\t785\tYAY\n" +
-                        "144.131.72.77\t369\t\n" +
-                        "97.159.145.120\t352\t\n" +
-                        "164.153.242.17\t906\t\n" +
-                        "165.166.233.251\t332\t\n" +
-                        "114.126.117.26\t71\t\n" +
-                        "164.74.203.45\t678\t\n" +
-                        "241.248.184.75\t334\t\n" +
-                        "255.95.177.227\t44\t\n" +
-                        "216.150.248.30\t563\t\n" +
-                        "71.73.196.29\t741\t\n" +
-                        "180.91.244.55\t906\t\n" +
-                        "111.221.228.130\t531\t\n" +
-                        "171.30.189.77\t238\t\n" +
-                        "73.153.126.70\t772\t\n" +
-                        "105.218.160.179\t986\t\n" +
-                        "201.100.238.229\t318\t\n" +
-                        "12.214.12.100\t598\tYAY\n" +
-                        "212.102.182.127\t984\t\n" +
-                        "50.214.139.184\t574\tYAY\n" +
-                        "186.33.243.40\t659\t\n" +
-                        "74.196.176.71\t740\t\n" +
-                        "150.153.88.133\t849\t\n" +
-                        "63.60.82.184\t37\tYAY\n",
-                "select ip, bytes, case when ip <<= '2.65.32.1/2' then 'YAY' end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testCaseIPv43() throws Exception {
-        assertQuery("ip\tbytes\tcase\n" +
-                        "187.139.150.80\t580\t0\n" +
-                        "212.159.205.29\t23\t0\n" +
-                        "79.15.250.138\t850\t0\n" +
-                        "205.123.179.216\t167\t0\n" +
-                        "170.90.236.206\t572\t0\n" +
-                        "92.26.178.136\t7\t0\n" +
-                        "231.146.30.59\t766\t0\n" +
-                        "113.132.124.243\t522\t0\n" +
-                        "67.22.249.199\t203\t0\n" +
-                        "25.107.51.160\t827\t1\n" +
-                        "146.16.210.119\t383\t0\n" +
-                        "187.63.210.97\t424\t0\n" +
-                        "188.239.72.25\t513\t0\n" +
-                        "181.82.42.148\t539\t0\n" +
-                        "129.172.181.73\t25\t0\n" +
-                        "66.56.51.126\t904\t0\n" +
-                        "230.202.108.161\t171\t0\n" +
-                        "180.48.50.141\t136\t0\n" +
-                        "128.225.84.244\t313\t0\n" +
-                        "254.93.251.9\t810\t0\n" +
-                        "227.40.250.157\t903\t0\n" +
-                        "180.36.62.54\t528\t0\n" +
-                        "136.166.51.222\t580\t0\n" +
-                        "24.123.12.210\t95\t1\n" +
-                        "171.117.213.66\t720\t0\n" +
-                        "224.99.254.121\t619\t0\n" +
-                        "55.211.206.129\t785\t1\n" +
-                        "144.131.72.77\t369\t0\n" +
-                        "97.159.145.120\t352\t0\n" +
-                        "164.153.242.17\t906\t0\n" +
-                        "165.166.233.251\t332\t0\n" +
-                        "114.126.117.26\t71\t0\n" +
-                        "164.74.203.45\t678\t0\n" +
-                        "241.248.184.75\t334\t0\n" +
-                        "255.95.177.227\t44\t0\n" +
-                        "216.150.248.30\t563\t0\n" +
-                        "71.73.196.29\t741\t0\n" +
-                        "180.91.244.55\t906\t0\n" +
-                        "111.221.228.130\t531\t0\n" +
-                        "171.30.189.77\t238\t0\n" +
-                        "73.153.126.70\t772\t0\n" +
-                        "105.218.160.179\t986\t0\n" +
-                        "201.100.238.229\t318\t0\n" +
-                        "12.214.12.100\t598\t1\n" +
-                        "212.102.182.127\t984\t0\n" +
-                        "50.214.139.184\t574\t1\n" +
-                        "186.33.243.40\t659\t0\n" +
-                        "74.196.176.71\t740\t0\n" +
-                        "150.153.88.133\t849\t0\n" +
-                        "63.60.82.184\t37\t1\n",
-                "select ip, bytes, case when ip << '2.65.32.1/2' then 1 else 0 end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testCaseIPv44() throws Exception {
-        assertQuery("ip\tbytes\tcase\n" +
-                        "187.139.150.80\t580\tNaN\n" +
-                        "212.159.205.29\t23\tNaN\n" +
-                        "79.15.250.138\t850\tNaN\n" +
-                        "205.123.179.216\t167\tNaN\n" +
-                        "170.90.236.206\t572\tNaN\n" +
-                        "92.26.178.136\t7\tNaN\n" +
-                        "231.146.30.59\t766\tNaN\n" +
-                        "113.132.124.243\t522\tNaN\n" +
-                        "67.22.249.199\t203\tNaN\n" +
-                        "25.107.51.160\t827\t1\n" +
-                        "146.16.210.119\t383\tNaN\n" +
-                        "187.63.210.97\t424\tNaN\n" +
-                        "188.239.72.25\t513\tNaN\n" +
-                        "181.82.42.148\t539\tNaN\n" +
-                        "129.172.181.73\t25\tNaN\n" +
-                        "66.56.51.126\t904\tNaN\n" +
-                        "230.202.108.161\t171\tNaN\n" +
-                        "180.48.50.141\t136\tNaN\n" +
-                        "128.225.84.244\t313\tNaN\n" +
-                        "254.93.251.9\t810\tNaN\n" +
-                        "227.40.250.157\t903\tNaN\n" +
-                        "180.36.62.54\t528\tNaN\n" +
-                        "136.166.51.222\t580\tNaN\n" +
-                        "24.123.12.210\t95\t1\n" +
-                        "171.117.213.66\t720\tNaN\n" +
-                        "224.99.254.121\t619\tNaN\n" +
-                        "55.211.206.129\t785\t1\n" +
-                        "144.131.72.77\t369\tNaN\n" +
-                        "97.159.145.120\t352\tNaN\n" +
-                        "164.153.242.17\t906\tNaN\n" +
-                        "165.166.233.251\t332\tNaN\n" +
-                        "114.126.117.26\t71\tNaN\n" +
-                        "164.74.203.45\t678\tNaN\n" +
-                        "241.248.184.75\t334\tNaN\n" +
-                        "255.95.177.227\t44\tNaN\n" +
-                        "216.150.248.30\t563\tNaN\n" +
-                        "71.73.196.29\t741\tNaN\n" +
-                        "180.91.244.55\t906\tNaN\n" +
-                        "111.221.228.130\t531\tNaN\n" +
-                        "171.30.189.77\t238\tNaN\n" +
-                        "73.153.126.70\t772\tNaN\n" +
-                        "105.218.160.179\t986\tNaN\n" +
-                        "201.100.238.229\t318\tNaN\n" +
-                        "12.214.12.100\t598\t1\n" +
-                        "212.102.182.127\t984\tNaN\n" +
-                        "50.214.139.184\t574\t1\n" +
-                        "186.33.243.40\t659\tNaN\n" +
-                        "74.196.176.71\t740\tNaN\n" +
-                        "150.153.88.133\t849\tNaN\n" +
-                        "63.60.82.184\t37\t1\n",
-                "select ip, bytes, case when ip << '2.65.32.1/2' then 1 end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testCaseIPv45() throws Exception {
-        assertQuery("ip\tbytes\tcase\n" +
-                        "2.2.96.238\t774\tNOT NULL\n" +
-                        "2.2.89.171\t404\tNOT NULL\n" +
-                        "2.2.76.40\t167\tNOT NULL\n" +
-                        "2.2.95.15\t803\tNOT NULL\n" +
-                        "2.2.45.145\t182\tNOT NULL\n" +
-                        "\t647\tNULL\n" +
-                        "2.2.249.199\t203\tNOT NULL\n" +
-                        "\t827\tNULL\n" +
-                        "2.2.170.235\t987\tNOT NULL\n" +
-                        "2.2.184.81\t614\tNOT NULL\n" +
-                        "2.2.213.108\t539\tNOT NULL\n" +
-                        "2.2.47.76\t585\tNOT NULL\n" +
-                        "\t16\tNULL\n" +
-                        "2.2.129.200\t981\tNOT NULL\n" +
-                        "2.2.171.12\t313\tNOT NULL\n" +
-                        "2.2.253.254\t297\tNOT NULL\n" +
-                        "\t773\tNULL\n" +
-                        "2.2.227.50\t411\tNOT NULL\n" +
-                        "2.2.12.210\t95\tNOT NULL\n" +
-                        "2.2.205.4\t916\tNOT NULL\n" +
-                        "2.2.236.117\t983\tNOT NULL\n" +
-                        "2.2.183.179\t369\tNOT NULL\n" +
-                        "2.2.220.75\t12\tNOT NULL\n" +
-                        "2.2.157.48\t613\tNOT NULL\n" +
-                        "\t114\tNULL\n" +
-                        "2.2.52.211\t678\tNOT NULL\n" +
-                        "2.2.35.79\t262\tNOT NULL\n" +
-                        "2.2.207.241\t497\tNOT NULL\n" +
-                        "2.2.196.29\t741\tNOT NULL\n" +
-                        "2.2.228.56\t993\tNOT NULL\n" +
-                        "2.2.246.213\t562\tNOT NULL\n" +
-                        "2.2.126.70\t772\tNOT NULL\n" +
-                        "2.2.37.167\t907\tNOT NULL\n" +
-                        "2.2.234.47\t314\tNOT NULL\n" +
-                        "2.2.73.129\t984\tNOT NULL\n" +
-                        "2.2.112.55\t175\tNOT NULL\n" +
-                        "2.2.74.124\t254\tNOT NULL\n" +
-                        "2.2.167.123\t849\tNOT NULL\n" +
-                        "2.2.2.123\t941\tNOT NULL\n" +
-                        "2.2.140.124\t551\tNOT NULL\n" +
-                        "\t343\tNULL\n" +
-                        "\t77\tNULL\n" +
-                        "\t519\tNULL\n" +
-                        "2.2.15.163\t606\tNOT NULL\n" +
-                        "2.2.245.83\t446\tNOT NULL\n" +
-                        "2.2.204.60\t835\tNOT NULL\n" +
-                        "2.2.7.88\t308\tNOT NULL\n" +
-                        "2.2.186.59\t875\tNOT NULL\n" +
-                        "2.2.89.110\t421\tNOT NULL\n" +
-                        "2.2.46.225\t470\tNOT NULL\n",
-                "select ip, bytes, case when ip << null then 'NULL' else 'NOT NULL' end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4('2.2.2.2/16', 2) ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testCaseIPv46() throws Exception {
-        assertQuery("ip\tbytes\tcase\n" +
-                        "2.2.96.238\t774\tNOT NULL\n" +
-                        "2.2.89.171\t404\tNOT NULL\n" +
-                        "2.2.76.40\t167\tNOT NULL\n" +
-                        "2.2.95.15\t803\tNOT NULL\n" +
-                        "2.2.45.145\t182\tNOT NULL\n" +
-                        "\t647\tNULL\n" +
-                        "2.2.249.199\t203\tNOT NULL\n" +
-                        "\t827\tNULL\n" +
-                        "2.2.170.235\t987\tNOT NULL\n" +
-                        "2.2.184.81\t614\tNOT NULL\n" +
-                        "2.2.213.108\t539\tNOT NULL\n" +
-                        "2.2.47.76\t585\tNOT NULL\n" +
-                        "\t16\tNULL\n" +
-                        "2.2.129.200\t981\tNOT NULL\n" +
-                        "2.2.171.12\t313\tNOT NULL\n" +
-                        "2.2.253.254\t297\tNOT NULL\n" +
-                        "\t773\tNULL\n" +
-                        "2.2.227.50\t411\tNOT NULL\n" +
-                        "2.2.12.210\t95\tNOT NULL\n" +
-                        "2.2.205.4\t916\tNOT NULL\n" +
-                        "2.2.236.117\t983\tNOT NULL\n" +
-                        "2.2.183.179\t369\tNOT NULL\n" +
-                        "2.2.220.75\t12\tNOT NULL\n" +
-                        "2.2.157.48\t613\tNOT NULL\n" +
-                        "\t114\tNULL\n" +
-                        "2.2.52.211\t678\tNOT NULL\n" +
-                        "2.2.35.79\t262\tNOT NULL\n" +
-                        "2.2.207.241\t497\tNOT NULL\n" +
-                        "2.2.196.29\t741\tNOT NULL\n" +
-                        "2.2.228.56\t993\tNOT NULL\n" +
-                        "2.2.246.213\t562\tNOT NULL\n" +
-                        "2.2.126.70\t772\tNOT NULL\n" +
-                        "2.2.37.167\t907\tNOT NULL\n" +
-                        "2.2.234.47\t314\tNOT NULL\n" +
-                        "2.2.73.129\t984\tNOT NULL\n" +
-                        "2.2.112.55\t175\tNOT NULL\n" +
-                        "2.2.74.124\t254\tNOT NULL\n" +
-                        "2.2.167.123\t849\tNOT NULL\n" +
-                        "2.2.2.123\t941\tNOT NULL\n" +
-                        "2.2.140.124\t551\tNOT NULL\n" +
-                        "\t343\tNULL\n" +
-                        "\t77\tNULL\n" +
-                        "\t519\tNULL\n" +
-                        "2.2.15.163\t606\tNOT NULL\n" +
-                        "2.2.245.83\t446\tNOT NULL\n" +
-                        "2.2.204.60\t835\tNOT NULL\n" +
-                        "2.2.7.88\t308\tNOT NULL\n" +
-                        "2.2.186.59\t875\tNOT NULL\n" +
-                        "2.2.89.110\t421\tNOT NULL\n" +
-                        "2.2.46.225\t470\tNOT NULL\n",
-                "select ip, bytes, case when ip <<= null then 'NULL' else 'NOT NULL' end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4('2.2.2.2/16', 2) ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
-
-    @Test
     public void testCastAndAliasedColumnAfterWildcard() throws Exception {
-        assertQuery("a\tk\tklong\n" +
+        assertQuery(
+                "a\tk\tklong\n" +
                         "80.43224099968394\t1970-01-01T00:00:00.000000Z\t0\n" +
                         "8.486964232560668\t1970-01-01T00:00:00.010000Z\t10000\n" +
                         "8.43832076262595\t1970-01-01T00:00:00.020000Z\t20000\n",
@@ -857,7 +385,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testCastAndAliasedColumnFollowedByWildcard() throws Exception {
-        assertQuery("klong\ta\tk\n" +
+        assertQuery(
+                "klong\ta\tk\n" +
                         "0\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                         "10000\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
                         "20000\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
@@ -877,7 +406,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testCastAndAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
-        assertQuery("klong1\tklong2\ta\tk\ta1\tk1\n" +
+        assertQuery(
+                "klong1\tklong2\ta\tk\ta1\tk1\n" +
                         "0\t0\t4689592037643856\t1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\n" +
                         "10000\t10000\t4729996258992366\t1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\n" +
                         "20000\t20000\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\n",
@@ -897,7 +427,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testCastAndAliasedColumnRepeatedTwiceFollowedByWildcard() throws Exception {
-        assertQuery("klong\tkdate\ta\tk\n" +
+        assertQuery(
+                "klong\tkdate\ta\tk\n" +
                         "0\t1970-01-01T00:00:00.000Z\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                         "10000\t1970-01-01T00:00:00.010Z\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
                         "20000\t1970-01-01T00:00:00.020Z\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
@@ -956,85 +487,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "create table mdc_data as (select rnd_double() total_revenue, timestamp_sequence(dateadd('d', -1, now()),2) timestamp from long_sequence(10000)) timestamp(timestamp) partition by day",
                 null,
                 false,
-                true
-        );
-    }
-
-    @Test
-    public void testCountIPv4() throws Exception {
-        assertQuery("count\tbytes\n" +
-                        "8\t1\n" +
-                        "10\t2\n" +
-                        "12\t7\n" +
-                        "12\t5\n" +
-                        "6\t6\n" +
-                        "12\t0\n" +
-                        "14\t4\n" +
-                        "6\t3\n" +
-                        "9\t8\n" +
-                        "7\t9\n" +
-                        "4\t10\n",
-                "select count(ip), bytes from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,5,0)::ipv4 ip," +
-                        "    rnd_int(0,10,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testCreateAsSelectCastIPv4ToStr() throws Exception {
-        assertSql("select rnd_ipv4()::string from long_sequence(10)", "cast\n" +
-                "187.139.150.80\n" +
-                "18.206.96.238\n" +
-                "92.80.211.65\n" +
-                "212.159.205.29\n" +
-                "4.98.173.21\n" +
-                "199.122.166.85\n" +
-                "79.15.250.138\n" +
-                "35.86.82.23\n" +
-                "111.98.117.250\n" +
-                "205.123.179.216\n");
-    }
-
-    @Test
-    public void testCreateAsSelectCastStrToIPv4() throws Exception {
-
-        compiler.compile("create table x as (select x::string col from long_sequence(0))", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into x values('0.0.0.6')");
-        executeInsert("insert into x values('0.0.0.7')");
-        executeInsert("insert into x values('0.0.0.8')");
-        executeInsert("insert into x values('0.0.0.9')");
-        executeInsert("insert into x values('0.0.0.10')");
-
-        engine.releaseInactive();
-
-        assertQuery("col\n" +
-                        "0.0.0.1" + '\n' +
-                        "0.0.0.2" + '\n' +
-                        "0.0.0.3" + '\n' +
-                        "0.0.0.4" + '\n' +
-                        "0.0.0.5" + '\n' +
-                        "0.0.0.6" + '\n' +
-                        "0.0.0.7" + '\n' +
-                        "0.0.0.8" + '\n' +
-                        "0.0.0.9" + '\n' +
-                        "0.0.0.10" + '\n',
-                "select * from y",
-                "create table y as (x), cast(col as ipv4)",
-                null,
-                true,
                 true
         );
     }
@@ -1155,7 +607,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testCreateTableIfNotExists() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < 10; i++) {
-                compiler.compile("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
+                ddl("create table if not exists y as (select rnd_int() a from long_sequence(21))");
             }
         });
 
@@ -1192,7 +644,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCached() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
+            ddl("create table x (col string)");
 
             engine.clear();
 
@@ -1205,10 +657,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                compiler.compile("create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
+                ddl(compiler, "create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
 
                 try (TableReader reader = engine.getReader("y")) {
                     Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
@@ -1220,10 +672,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCachedSymbolCapacityHigh() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
+            ddl("create table x (col string)");
+
             try {
-                compiler.compile("create table y as (x), cast(col as symbol capacity 100000000)", sqlExecutionContext);
-                Assert.fail();
+                assertException("create table y as (x), cast(col as symbol capacity 100000000)");
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "max cached symbol capacity");
@@ -1236,9 +688,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
-
-            compiler.compile("create table y as (x), cast(col as symbol nocache)", sqlExecutionContext);
+            ddl("create table x (col string)");
+            ddl("create table y as (x), cast(col as symbol nocache)");
 
             try (TableReader reader = getReader("y")) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
@@ -1248,7 +699,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testCursorForLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "81.0161274171258\tCC\t1970-01-21T20:00:00.000000Z\n" +
                         "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
                 "(x where b in ('BB','CC')) where a > 0 latest on k partition by b",
@@ -1268,7 +720,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testCursorForLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
-        assertQuery("b\tk\n" +
+        assertQuery(
+                "b\tk\n" +
                         "CC\t1970-01-21T20:00:00.000000Z\n" +
                         "BB\t1970-01-22T23:46:40.000000Z\n",
                 "(select b, max(k) k from x where b in ('BB','CC') sample by 1T) latest on k partition by b",
@@ -1301,7 +754,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "5.0\n" +
                 "10.0\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select distinct round(val*10, 0) v from prices",
                 "create table prices as " +
                         "(" +
@@ -1330,7 +784,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "7.0\n" +
                 "12.0\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select distinct 2+round(val*10,0) v from prices",
                 "create table prices as " +
                         "(" +
@@ -1351,7 +806,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "B\n" +
                 "C\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select distinct pair from prices order by pair",
                 "create table prices as " +
                         "(" +
@@ -1375,7 +831,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "A\n" +
                 "B\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select distinct pair from prices where pair in ('A','B')",
                 "create table prices as " +
                         "(" +
@@ -1410,7 +867,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", null, true, true);
+                        ") timestamp(k) partition by DAY", null, true, true
+        );
     }
 
     @Test
@@ -1420,7 +878,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         final String expected = "a\tb\tk\n" +
                 "21.583224269349387\tYSBE\t1970-01-07T22:40:00.000000Z\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select * from (x timestamp(k)) where k IN '1970-01-07'",
                 "create table x as " +
                         "(" +
@@ -1442,7 +901,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
                             "select * from pos where hash = 'ewef'",
                             "time",
@@ -1458,7 +918,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
                             "select * from pos where 'ewef' = hash",
                             "time",
@@ -1470,77 +931,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testExplicitCastIPv4ToStr() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col string)",
-                21,
-                "inconvertible types: IPv4 -> STRING [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testExplicitCastIntToIPv4() throws Exception {
-        assertSql("select rnd_int()::ipv4 from long_sequence(10)", "cast\n" +
-                "18.206.96.238\n" +
-                "212.159.205.29\n" +
-                "199.122.166.85\n" +
-                "35.86.82.23\n" +
-                "205.123.179.216\n" +
-                "134.75.235.20\n" +
-                "162.25.160.241\n" +
-                "92.26.178.136\n" +
-                "93.204.45.145\n" +
-                "20.62.93.114\n");
-    }
-
-    @Test
-    public void testExplicitCastNullToIPv4() throws Exception {
-        assertSql("select cast(case when x = 1 then null else rnd_ipv4() end as string) from long_sequence(10)", "cast\n" +
-                "\n" +
-                "187.139.150.80\n" +
-                "18.206.96.238\n" +
-                "92.80.211.65\n" +
-                "212.159.205.29\n" +
-                "4.98.173.21\n" +
-                "199.122.166.85\n" +
-                "79.15.250.138\n" +
-                "35.86.82.23\n" +
-                "111.98.117.250\n");
-    }
-
-    @Test
-    public void testExplicitCastStrToIPv4() throws Exception {
-        assertSql("select rnd_ipv4()::string::ipv4 from long_sequence(10)", "cast\n" +
-                "18.206.96.238\n" +
-                "212.159.205.29\n" +
-                "199.122.166.85\n" +
-                "35.86.82.23\n" +
-                "205.123.179.216\n" +
-                "134.75.235.20\n" +
-                "162.25.160.241\n" +
-                "92.26.178.136\n" +
-                "93.204.45.145\n" +
-                "20.62.93.114\n");
-    }
-
-    @Test
-    public void testExplicitCastStrToIPv4Null() throws Exception {
-        assertSql("select rnd_str()::ipv4 from long_sequence(10)", "cast\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n");
-    }
-
-    @Test
     public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
-        assertFailure(
+        assertException(
                 "with tab as (x where b in ('BB')) select * from tab latest by b",
                 "create table x as " +
                         "(" +
@@ -1580,7 +972,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "63.59144993891355\tDSWU\t1970-01-21T20:00:00.000000Z\n" +
                 "50.65228336156442\tLNVT\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select * from x where test_match()",
                 "create table x as " +
                         "(" +
@@ -1591,7 +984,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
-                "k");
+                "k"
+        );
 
         // these values are assured to be correct for the scenario
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -1607,7 +1001,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     }
                 }
         };
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "(select sum(a) from x) where 1=1",
                 "create table x as " +
                         "(" +
@@ -1630,7 +1025,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "93.4460485739401\tPEHN\t1970-01-02T03:46:40.000000Z\n" +
                 "88.2822836669774\t\t1970-01-17T04:53:20.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where cast(b as symbol) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10)) and test_match()",
                 "create table x as " +
                         "(" +
@@ -1650,7 +1046,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -1684,7 +1082,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnConstantFalse() throws Exception {
-        assertQuery((CharSequence) null,
+        assertQuery(
+                (CharSequence) null,
                 "select * from x o where 10 < 8",
                 "create table x as " +
                         "(" +
@@ -1711,7 +1110,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testFilterOnIndexAndExpression() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery("contactId\n" +
+        assertQuery(
+                "contactId\n" +
                         "KOJSOLDYRO\n" +
                         "SKEDJ\n",
                 "SELECT\n" +
@@ -1756,7 +1156,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnInterval() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n",
@@ -1769,7 +1170,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " timestamp_sequence(0, 1000000000) k" +
                         " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
-                "k");
+                "k"
+        );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -1777,7 +1179,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testFilterOnIntervalAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n",
                 "select * from x o where k IN '1970-01-01T03:36:40;45m' and a > 50 and test_match()",
@@ -1790,7 +1193,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k)",
-                "k");
+                "k"
+        );
 
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
@@ -1822,7 +1226,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "92.050039469858\t\n" +
                 "45.6344569609078\t\n" +
                 "40.455469747939254\t\n";
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b = null",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b from long_sequence(20)), index(b)",
                 null,
@@ -1837,7 +1242,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "58.912164838797885\t\n" +
                         "44.80468966861358\t\n" +
                         "89.40917126581896\t\n" +
-                        "3.993124821273464\t\n");
+                        "3.993124821273464\t\n",
+                true
+        );
     }
 
     @Test
@@ -1859,7 +1266,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()",
                 "create table x as " +
                         "(" +
@@ -1879,7 +1287,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -1890,7 +1300,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "HYRX\t1970-01-07T22:40:00.000000Z\t97.71103146051203\n" +
                 "HYRX\t1970-01-11T10:00:00.000000Z\t12.026122412833129\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select b, k, a from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and b = 'HYRX'",
                 "create table x as " +
                         "(" +
@@ -1910,12 +1321,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "HYRX\t1971-01-01T00:00:00.000000Z\t56.594291398612405\n");
+                        "HYRX\t1971-01-01T00:00:00.000000Z\t56.594291398612405\n",
+                true
+        );
     }
 
     @Test
     public void testFilterOnSubQueryIndexedDeferred() throws Exception {
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x where b in (select rnd_symbol('ABC') a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -1939,7 +1353,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "25.53319339703062\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "89.40917126581896\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "28.799739396819312\tABC\t1971-01-01T00:00:00.000000Z\n" +
-                        "68.06873134626417\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "68.06873134626417\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
@@ -1957,7 +1373,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()" +
                         "and a < 80",
                 "create table x as " +
@@ -1980,7 +1397,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 expected + "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "72.30015763133606\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "12.105630273556178\tABC\t1971-01-01T00:00:00.000000Z\n" +
-                        "11.585982949541474\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "11.585982949541474\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
 
         // these value are also ok because ddl2 is present, there is another round of check for that
         // this ensures that "init" on filter is invoked
@@ -1993,7 +1412,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         final String expected = "a\tb\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match() and 1 = 2",
                 "create table x as " +
                         "(" +
@@ -2016,7 +1436,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnSubQueryIndexedStrColumn() throws Exception {
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x where b in (select 'ABC' a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -2036,7 +1457,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
@@ -2058,7 +1481,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in ('RXGZ', 'HYRX', null, 'QZT')",
                 "create table x as " +
                         "(" +
@@ -2092,7 +1516,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                         "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tQZT\t1971-01-01T00:00:00.000000Z\n"
+                        "56.594291398612405\tQZT\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -2117,7 +1542,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n";
 
-        assertQuery11(expected1,
+        assertQuery(
+                expected1,
                 "select * from x o where o.b in ('HYRX','PEHN', null, 'ABCD')",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
@@ -2137,14 +1563,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "76.9238189433781\tABCD\t\n" +
                         "49.42890511958454\tHYRX\t\n" +
                         "65.51335839796312\tABCD\t\n" +
-                        "28.20020716674768\tABCD\t\n");
+                        "28.20020716674768\tABCD\t\n",
+                true
+        );
     }
 
     @Test
     public void testFilterOnValuesAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
 
-        assertQuery11("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
                         "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
@@ -2176,14 +1605,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
                         "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
-                        "44.80468966861358\t\t\n");
+                        "44.80468966861358\t\t\n",
+                true
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testFilterOnValuesAndInterval() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n",
@@ -2196,12 +1628,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " timestamp_sequence(0, 1000000000) k" +
                         " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
-                "k");
+                "k"
+        );
     }
 
     @Test
     public void testFilterOnValuesDeferred() throws Exception {
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x o where o.b in ('ABCD', 'XYZ')",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
@@ -2216,7 +1650,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "81.64182592467493\tABCD\t\n" +
                         "76.9238189433781\tABCD\t\n" +
                         "65.51335839796312\tABCD\t\n" +
-                        "28.20020716674768\tABCD\t\n");
+                        "28.20020716674768\tABCD\t\n",
+                true
+        );
     }
 
     @Test
@@ -2226,7 +1662,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "52.98405941762054\tHYRX\n" +
                 "40.455469747939254\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b = 'HYRX'",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -2236,7 +1673,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(2)",
                 expected +
                         "75.88175403454873\tHYRX\n" +
-                        "57.78947915182423\tHYRX\n");
+                        "57.78947915182423\tHYRX\n",
+                true
+        );
     }
 
     @Test
@@ -2246,7 +1685,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         final String expected = "a\tb\n" +
                 "52.98405941762054\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b = 'HYRX' and a > 41 and test_match()",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -2256,14 +1696,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(2)",
                 expected +
                         "75.88175403454873\tHYRX\n" +
-                        "57.78947915182423\tHYRX\n");
+                        "57.78947915182423\tHYRX\n",
+                true
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testFilterSingleNonExistingSymbol() throws Exception {
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x where b = 'ABC'",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -2273,13 +1716,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(2)",
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
-                        "57.78947915182423\tABC\n");
+                        "57.78947915182423\tABC\n",
+                true
+        );
     }
 
     @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x where b = 'ABC' and a > 30 and test_match()",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -2289,7 +1735,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(2)",
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
-                        "57.78947915182423\tABC\n");
+                        "57.78947915182423\tABC\n",
+                true
+        );
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -2312,7 +1760,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -2332,7 +1781,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
@@ -2354,7 +1805,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', 'ABC', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -2374,7 +1826,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
@@ -2396,7 +1850,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -2416,7 +1871,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
@@ -2433,41 +1890,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // 2022-03-30 10:00:00.0
         // 2022-03-31 10:00:00.0
         currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
-        assertQuery13(
-                "min\tmax\n" +
-                        "\t\n",
-                "SELECT min(ts), max(ts)\n" +
-                        "FROM tab\n" +
-                        "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())",
-                "CREATE TABLE tab AS (\n" +
-                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
-                        "    FROM long_sequence(10)\n" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("min\tmax\n" +
+                "\t\n", "SELECT min(ts), max(ts)\n" +
+                "FROM tab\n" +
+                "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())", "CREATE TABLE tab AS (\n" +
+                "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                "    FROM long_sequence(10)\n" +
+                ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
 
-        compiler.compile("drop table tab", sqlExecutionContext);
+        drop("drop table tab");
 
-        assertQuery13(
-                "min\tmax\n" +
-                        "\t\n",
-                "SELECT min(ts), max(ts)\n" +
-                        " FROM tab\n" +
-                        " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())",
-                "CREATE TABLE tab AS (\n" +
-                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
-                        "    FROM long_sequence(10)\n" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("min\tmax\n" +
+                "\t\n", "SELECT min(ts), max(ts)\n" +
+                " FROM tab\n" +
+                " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())", "CREATE TABLE tab AS (\n" +
+                "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                "    FROM long_sequence(10)\n" +
+                ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
     }
 
     @Test
@@ -2528,7 +1967,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterWrongType() throws Exception {
-        assertFailure("select * from x where b - a",
+        assertException(
+                "select * from x where b - a",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2543,66 +1983,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFirstIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("select first(ip) from test", "first\n" +
-                "10.5.96.238\n");
-    }
-
-    @Test
-    public void testFullJoinIPv4() throws Exception {
-        compiler.setFullFatJoins(true);
-        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))", sqlExecutionContext);
-        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))", sqlExecutionContext);
-        assertSql("select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip", "count\tip\tip2\tcount2\n" +
-                "1\t12.5.9.227\t12.5.9.227\t2\n" +
-                "1\t12.5.9.23\t12.5.9.23\t2\n" +
-                "1\t12.5.9.145\t12.5.9.145\t2\n" +
-                "1\t12.5.9.159\t12.5.9.159\t2\n" +
-                "1\t12.5.9.159\t12.5.9.159\t2\n" +
-                "1\t12.5.9.115\t12.5.9.115\t2\n" +
-                "1\t12.5.9.216\t12.5.9.216\t2\n" +
-                "1\t12.5.9.216\t12.5.9.216\t2\n" +
-                "1\t12.5.9.216\t12.5.9.216\t2\n" +
-                "1\t12.5.9.48\t12.5.9.48\t2\n" +
-                "1\t12.5.9.228\t12.5.9.228\t2\n" +
-                "1\t12.5.9.228\t12.5.9.228\t2\n" +
-                "1\t12.5.9.117\t12.5.9.117\t2\n" +
-                "1\t12.5.9.179\t12.5.9.179\t2\n" +
-                "1\t12.5.9.48\t12.5.9.48\t2\n" +
-                "1\t12.5.9.26\t12.5.9.26\t2\n" +
-                "1\t12.5.9.240\t12.5.9.240\t2\n" +
-                "1\t12.5.9.194\t12.5.9.194\t2\n" +
-                "1\t12.5.9.137\t12.5.9.137\t2\n" +
-                "1\t12.5.9.179\t12.5.9.179\t2\n" +
-                "1\t12.5.9.179\t12.5.9.179\t2\n" +
-                "1\t12.5.9.159\t12.5.9.159\t2\n" +
-                "1\t12.5.9.159\t12.5.9.159\t2\n" +
-                "1\t12.5.9.215\t12.5.9.215\t2\n" +
-                "1\t12.5.9.184\t12.5.9.184\t2\n" +
-                "1\t12.5.9.46\t12.5.9.46\t2\n" +
-                "1\t12.5.9.184\t12.5.9.184\t2\n" +
-                "1\t12.5.9.147\t12.5.9.147\t2\n" +
-                "1\t12.5.9.152\t12.5.9.152\t2\n" +
-                "1\t12.5.9.28\t12.5.9.28\t2\n" +
-                "1\t12.5.9.20\t12.5.9.20\t2\n" +
-                "1\t12.5.9.20\t12.5.9.20\t2\n");
-        compiler.setFullFatJoins(false);
-    }
-
-    @Test
-    public void testFullJoinIPv4Fails() throws Exception {
-        compiler.setFullFatJoins(true);
-        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))", sqlExecutionContext);
-        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))", sqlExecutionContext);
-        engine.releaseInactive();
-        assertFailure("select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.count", null, 76, "join column type mismatch");
-        compiler.setFullFatJoins(false);
-    }
-
-    @Test
     public void testGreaterNoOpFilter() throws Exception {
-        assertQuery("c0\n",
+        assertQuery(
+                "c0\n",
                 "select t7.c0 from t7 where t7.c0 > t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
                 null,
@@ -2613,7 +1996,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testGreaterOrEqualsNoOpFilter() throws Exception {
-        assertQuery("c0\n" +
+        assertQuery(
+                "c0\n" +
                         "42\n",
                 "select t7.c0 from t7 where t7.c0 >= t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
@@ -2625,18 +2009,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByConstantMatchingColumnName() throws Exception {
-        assertQuery13(
-                "nts\tmin\nnts\t\n",
-                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                        "from long_sequence(2L)",
-                "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z\n",
-                false,
-                true);
+        assertQuery("nts\tmin\nnts\t\n", "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
+                "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
+                "from long_sequence(2L)", "nts\tmin\n" +
+                "nts\t2020-01-01T00:00:00.000010Z\n", false, true, false);
     }
 
     @Test
@@ -2647,3028 +2023,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "b\t65\n" +
                     "c\t75\n";
 
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_symbol('a','b','c') s," +
                     " timestamp_sequence(0, 1000000000) k" +
                     " from long_sequence(200)" +
-                    ") timestamp(k) partition by DAY", sqlExecutionContext);
+                    ") timestamp(k) partition by DAY");
 
             String query = "select s, count() from x order by s";
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor("s\tcount\n" + expectedData, factory, true, true);
             }
 
             query = "select s as symbol, count() from x order by symbol";
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor("symbol\tcount\n" + expectedData, factory, true, true);
             }
 
             query = "select s as symbol, count() as cnt from x group by symbol order by symbol";
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor("symbol\tcnt\n" + expectedData, factory, true, true);
             }
         });
     }
 
     @Test
-    public void testGroupByIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("select count(count), ip from test group by ip", "count\tip\n" +
-                "1\t10.5.96.238\n" +
-                "6\t\n" +
-                "1\t10.5.173.21\n" +
-                "1\t10.5.250.138\n" +
-                "1\t10.5.76.40\n" +
-                "1\t10.5.20.236\n" +
-                "1\t10.5.95.15\n" +
-                "1\t10.5.132.196\n" +
-                "1\t10.5.93.114\n" +
-                "1\t10.5.121.252\n" +
-                "1\t10.5.249.199\n" +
-                "1\t10.5.212.34\n" +
-                "1\t10.5.236.196\n" +
-                "1\t10.5.170.235\n" +
-                "1\t10.5.45.159\n");
-    }
-
-    @Test
-    public void testGroupByIPv42() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
-                "1\t10.5.96.238\n" +
-                "6\t\n" +
-                "1\t10.5.173.21\n" +
-                "1\t10.5.250.138\n" +
-                "1\t10.5.76.40\n" +
-                "1\t10.5.20.236\n" +
-                "1\t10.5.95.15\n" +
-                "1\t10.5.132.196\n" +
-                "1\t10.5.93.114\n" +
-                "1\t10.5.121.252\n" +
-                "1\t10.5.249.199\n" +
-                "1\t10.5.212.34\n" +
-                "1\t10.5.236.196\n" +
-                "1\t10.5.170.235\n" +
-                "1\t10.5.45.159\n");
-    }
-
-    @Test
-    public void testGroupByIPv43() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5.6/30', 2) ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("select sum(count), ip from test group by ip", "sum\tip\n" +
-                "4\t10.5.6.2\n" +
-                "6\t\n" +
-                "1\t10.5.6.1\n" +
-                "5\t10.5.6.0\n" +
-                "4\t10.5.6.3\n");
-    }
-
-    @Test
-    public void testIPv4BitwiseAndConst() throws Exception {
-        assertSql("select ipv4 '1.1.1.1' & ipv4 '0.0.1.1'", "column\n" +
-                "0.0.1.1\n");
-    }
-
-    @Test
-    public void testIPv4BitwiseAndFails() throws Exception {
-        assertQuery("column\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
-                "select ip & ipv4 'apple' from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4BitwiseAndFailsConst() throws Exception {
-        assertSql("select ipv4 '1.1.1.1' & ipv4 '0.0.1'", "column\n" +
-                "\n");
-    }
-
-    @Test(expected = ImplicitCastException.class)
-    public void testIPv4BitwiseAndFailsStr() throws Exception {
-        compiler.compile("select '1.1.1.1' & '0.0.1.1'", sqlExecutionContext);
-    }
-
-    @Test
-    public void testIPv4BitwiseAndHalfConst() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.18\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.18\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.17\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.17\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.18\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.18\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.18\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.18\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.12\n",
-                "select ip & ipv4 '255.255.255.255' from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4BitwiseAndVar() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.0.12\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.1\n" +
-                        "\n" +
-                        "0.0.0.20\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.5\n" +
-                        "\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.4\n" +
-                        "\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.5\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "\n" +
-                        "0.0.0.4\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.18\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.1\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.2\n" +
-                        "\n" +
-                        "0.0.0.2\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.6\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.14\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.8\n" +
-                        "\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.8\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.1\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.2\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.1\n" +
-                        "\n" +
-                        "0.0.0.12\n" +
-                        "\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.16\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.16\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.2\n" +
-                        "\n" +
-                        "0.0.0.6\n",
-                "select ip & ip2 from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(1,20,0)::ipv4 ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4BitwiseNotConst() throws Exception {
-        assertSql("select ~ ipv4 '1.1.1.1'", "column\n" +
-                "254.254.254.254\n");
-    }
-
-    @Test
-    public void testIPv4BitwiseNotFails() throws Exception {
-        assertSql("select ~ ipv4 'apple'", "column\n" +
-                "\n");
-    }
-
-    @Test(expected = ImplicitCastException.class)
-    public void testIPv4BitwiseNotFailsStr() throws Exception {
-        compiler.compile("select ~ '0.0.1.1'", sqlExecutionContext);
-    }
-
-    @Test
-    public void testIPv4BitwiseNotVar() throws Exception {
-        assertQuery("column\n" +
-                        "255.255.255.243\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.242\n" +
-                        "255.255.255.247\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.235\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.240\n" +
-                        "255.255.255.247\n" +
-                        "255.255.255.235\n" +
-                        "255.255.255.240\n" +
-                        "255.255.255.240\n" +
-                        "255.255.255.251\n" +
-                        "255.255.255.247\n" +
-                        "255.255.255.239\n" +
-                        "255.255.255.236\n" +
-                        "255.255.255.241\n" +
-                        "255.255.255.252\n" +
-                        "255.255.255.253\n" +
-                        "255.255.255.235\n" +
-                        "255.255.255.247\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.242\n" +
-                        "255.255.255.247\n" +
-                        "255.255.255.250\n" +
-                        "255.255.255.237\n" +
-                        "255.255.255.235\n" +
-                        "255.255.255.235\n" +
-                        "255.255.255.250\n" +
-                        "255.255.255.250\n" +
-                        "255.255.255.251\n" +
-                        "255.255.255.245\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.239\n" +
-                        "255.255.255.249\n" +
-                        "255.255.255.248\n" +
-                        "255.255.255.237\n" +
-                        "255.255.255.253\n" +
-                        "255.255.255.238\n" +
-                        "255.255.255.251\n" +
-                        "255.255.255.250\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.254\n" +
-                        "255.255.255.248\n" +
-                        "255.255.255.239\n" +
-                        "255.255.255.251\n" +
-                        "255.255.255.254\n" +
-                        "255.255.255.253\n" +
-                        "255.255.255.251\n" +
-                        "255.255.255.245\n" +
-                        "255.255.255.238\n" +
-                        "255.255.255.244\n" +
-                        "255.255.255.250\n" +
-                        "255.255.255.237\n" +
-                        "255.255.255.240\n" +
-                        "255.255.255.251\n" +
-                        "255.255.255.253\n" +
-                        "255.255.255.251\n" +
-                        "255.255.255.251\n" +
-                        "255.255.255.254\n" +
-                        "255.255.255.242\n" +
-                        "255.255.255.247\n" +
-                        "255.255.255.236\n" +
-                        "255.255.255.248\n" +
-                        "255.255.255.237\n" +
-                        "255.255.255.249\n" +
-                        "255.255.255.253\n" +
-                        "255.255.255.252\n" +
-                        "255.255.255.253\n" +
-                        "255.255.255.239\n" +
-                        "255.255.255.243\n" +
-                        "255.255.255.254\n" +
-                        "255.255.255.244\n" +
-                        "255.255.255.249\n" +
-                        "255.255.255.249\n" +
-                        "255.255.255.252\n" +
-                        "255.255.255.245\n" +
-                        "255.255.255.240\n" +
-                        "255.255.255.250\n" +
-                        "255.255.255.249\n" +
-                        "255.255.255.253\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.239\n" +
-                        "255.255.255.237\n" +
-                        "255.255.255.240\n" +
-                        "255.255.255.239\n" +
-                        "255.255.255.246\n" +
-                        "255.255.255.254\n" +
-                        "255.255.255.235\n" +
-                        "255.255.255.237\n" +
-                        "255.255.255.240\n" +
-                        "255.255.255.245\n" +
-                        "255.255.255.243\n" +
-                        "255.255.255.254\n" +
-                        "255.255.255.248\n" +
-                        "255.255.255.250\n" +
-                        "255.255.255.244\n" +
-                        "255.255.255.239\n" +
-                        "255.255.255.243\n",
-                "select ~ip from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4BitwiseOr() throws Exception {
-        assertQuery("column\n" +
-                        "255.0.0.12\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.13\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.19\n" +
-                        "255.0.0.14\n" +
-                        "255.0.0.3\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.13\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.10\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.7\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.17\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.7\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.10\n" +
-                        "255.0.0.17\n" +
-                        "255.0.0.11\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.13\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.19\n" +
-                        "255.0.0.7\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.3\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.12\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.11\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.3\n" +
-                        "255.0.0.10\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.10\n" +
-                        "255.0.0.12\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.7\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.11\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.12\n",
-                "select ip | ipv4 '255.0.0.0' from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4BitwiseOrConst() throws Exception {
-        assertSql("select ipv4 '1.1.1.1' | ipv4 '255.0.0.0'", "column\n" +
-                "255.1.1.1\n");
-    }
-
-    @Test(expected = ImplicitCastException.class)
-    public void testIPv4BitwiseOrFailsStr() throws Exception {
-        compiler.compile("select '1.1.1.1' | '0.0.1.1'", sqlExecutionContext);
-    }
-
-    @Test
-    public void testIPv4BitwiseOrVar() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.17\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.31\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.17\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.18\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.20\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.17\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.31\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.15\n",
-                "select ip | ip2 from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(1,20,0)::ipv4 ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnet() throws Exception {
-        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
-        executeInsert("insert into test values('12.67.45.3')");
-        executeInsert("insert into test values('160.5.22.8')");
-        executeInsert("insert into test values('240.110.88.22')");
-        executeInsert("insert into test values('1.6.2.0')");
-        executeInsert("insert into test values('255.255.255.255')");
-        executeInsert("insert into test values('0.0.0.0')");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/20'", sink, "col\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/1'", sink, "col\n" +
-                "12.67.45.3\n" +
-                "1.6.2.0\n" +
-                "\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '255.6.8.10/8'", sink, "col\n" +
-                "255.255.255.255\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/0'", sink, "col\n" +
-                "12.67.45.3\n" +
-                "160.5.22.8\n" +
-                "240.110.88.22\n" +
-                "1.6.2.0\n" +
-                "255.255.255.255\n" +
-                "\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '1.6.2.0/32'", sink, "col\n" +
-                "1.6.2.0\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where col <<= '1.6.2.0'", sink, "col\n" +
-                "1.6.2.0\n");
-
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetAndMask() throws Exception {
-        compiler.compile("create table test as (select rnd_int(0,1000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-
-        assertSql("select * from test where ip <<= '0.0.0/24'", "ip\n" +
-                "0.0.0.167\n" +
-                "0.0.0.182\n" +
-                "0.0.0.108\n" +
-                "0.0.0.95\n" +
-                "0.0.0.12\n" +
-                "0.0.0.71\n" +
-                "0.0.0.10\n" +
-                "0.0.0.238\n" +
-                "0.0.0.105\n" +
-                "0.0.0.203\n" +
-                "0.0.0.86\n" +
-                "0.0.0.100\n" +
-                "0.0.0.144\n" +
-                "0.0.0.173\n" +
-                "0.0.0.121\n" +
-                "0.0.0.231\n" +
-                "0.0.0.181\n" +
-                "0.0.0.218\n" +
-                "0.0.0.34\n" +
-                "0.0.0.90\n" +
-                "\n" +
-                "0.0.0.161\n" +
-                "0.0.0.188\n" +
-                "\n" +
-                "0.0.0.29\n" +
-                "0.0.0.159\n");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFails() throws Exception {
-        assertFailure("select * from test where ip <<= '0.0.0.1/hello'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.1/hello");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFails2() throws Exception {
-        assertFailure("select * from test where ip <<= '0.0.0/hello'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/hello");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFails3() throws Exception {
-        assertFailure("select * from test where ip <<= '0.0.0.0/65'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/65");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFails4() throws Exception {
-        assertFailure("select * from test where ip <<= '0.0.0/65'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/65");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFails5() throws Exception {
-        assertFailure("select * from test where ip <<= '0.0.0.0/-1'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/-1");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFails6() throws Exception {
-        assertFailure("select * from test where ip <<= '0.0.0/-1'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/-1");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFailsChars() throws Exception {
-        assertFailure("select * from test where ip <<= 'apple'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: apple");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFailsNetmaskOverflow() throws Exception {
-        assertFailure("select * from test where ip <<= '85.7.36/74'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFailsNums() throws Exception {
-        assertFailure("select * from test where ip <<= '8573674'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 8573674");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetFailsOverflow() throws Exception {
-        assertFailure("select * from test where ip <<= '256.256.256.256'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 256.256.256.256");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetIncorrectMask() throws Exception {
-        assertFailure("select * from test where ip <<= '0.0.0/32'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/32");
-    }
-
-    @Test
-    public void testIPv4ContainsEqSubnetNoMask() throws Exception {
-
-        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-
-        assertSql("select * from test where ip <<= '0.0.0.4'", "ip\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n");
-    }
-
-    @Test
-    public void testIPv4ContainsSubnet() throws Exception {
-        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-        assertSql("select * from test where ip << '0.0.0.1'", "ip\n");
-    }
-
-    @Test
-    public void testIPv4ContainsSubnet2() throws Exception {
-        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-        assertSql("select * from test where ip << '0.0.0.1/32'", "ip\n");
-    }
-
-    @Test
-    public void testIPv4ContainsSubnet3() throws Exception {
-        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))", sqlExecutionContext);
-        assertSql("select * from test where ip << '0.0.0.1/24'", "ip\n" +
-                "0.0.0.2\n" +
-                "0.0.0.2\n" +
-                "0.0.0.1\n" +
-                "0.0.0.1\n" +
-                "0.0.0.1\n" +
-                "0.0.0.2\n" +
-                "0.0.0.1\n" +
-                "0.0.0.2\n" +
-                "0.0.0.2\n" +
-                "0.0.0.1\n");
-    }
-
-    @Test
-    public void testIPv4CountDistinct() throws Exception {
-        assertQuery("count_distinct\n" +
-                        "20\n", "select count_distinct(ip) from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                false,
-                true);
-    }
-
-    @Test
-    public void testIPv4Distinct() throws Exception {
-        assertQuery("ip\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.5\n",
-                "select distinct ip from test order by ip",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,5,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                false);
-    }
-
-    @Test
-    public void testIPv4EqArgsSwapped() throws Exception {
-        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
-
-        assertSql("select * from test where '0.0.0.1' = ip", "ip\n" +
-                "0.0.0.1\n");
-    }
-
-    @Test
-    public void testIPv4EqNegated() throws Exception {
-        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
-
-        assertSql("select * from test where ip != '0.0.0.1'", "ip\n" +
-                "\n" +
-                "0.0.0.5\n" +
-                "0.0.0.4\n" +
-                "\n" +
-                "0.0.0.4\n" +
-                "0.0.0.5\n" +
-                "0.0.0.4\n" +
-                "\n" +
-                "0.0.0.5\n" +
-                "\n" +
-                "0.0.0.3\n" +
-                "0.0.0.2\n" +
-                "\n" +
-                "0.0.0.5\n" +
-                "0.0.0.4\n" +
-                "0.0.0.2\n" +
-                "0.0.0.2\n" +
-                "\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIPv4EqNegated2() throws Exception {
-        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))", sqlExecutionContext);
-
-        assertSql("select * from test where '0.0.0.1' != ip", "ip\n" +
-                "\n" +
-                "0.0.0.5\n" +
-                "0.0.0.4\n" +
-                "\n" +
-                "0.0.0.4\n" +
-                "0.0.0.5\n" +
-                "0.0.0.4\n" +
-                "\n" +
-                "0.0.0.5\n" +
-                "\n" +
-                "0.0.0.3\n" +
-                "0.0.0.2\n" +
-                "\n" +
-                "0.0.0.5\n" +
-                "0.0.0.4\n" +
-                "0.0.0.2\n" +
-                "0.0.0.2\n" +
-                "\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIPv4EqNull() throws Exception {
-        compiler.compile("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-        assertSql("select * from test where ip = null", "ip\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIPv4Except() throws Exception {
-        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
-        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into x values('0.0.0.6')");
-        executeInsert("insert into y values('0.0.0.1')");
-        executeInsert("insert into y values('0.0.0.2')");
-        executeInsert("insert into y values('0.0.0.3')");
-        executeInsert("insert into y values('0.0.0.4')");
-        executeInsert("insert into y values('0.0.0.5')");
-
-        assertSql("select col1 from x except select col2 from y", "col1\n" +
-                "0.0.0.6\n");
-    }
-
-    @Test
-    public void testIPv4Explain() throws Exception {
-        assertQuery("QUERY PLAN\n" +
-                        "Sort light\n" +
-                        "  keys: [ip desc]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: test\n",
-                "explain select * from test order by ip desc",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                false,
-                true);
-    }
-
-    @Test
-    public void testIPv4Intersect() throws Exception {
-        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
-        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into x values('0.0.0.6')");
-        executeInsert("insert into y values('0.0.0.1')");
-        executeInsert("insert into y values('0.0.0.2')");
-
-
-        assertSql("select col1 from x intersect select col2 from y", "col1\n" +
-                "0.0.0.1\n" +
-                "0.0.0.2\n");
-    }
-
-    @Test
-    public void testIPv4IsOrderedAsc() throws Exception {
-        compiler.compile("create table test (ip ipv4, bytes int)", sqlExecutionContext);
-        executeInsert("insert into test values ('0.0.0.1', 1)");
-        executeInsert("insert into test values ('0.0.0.2', 1)");
-        executeInsert("insert into test values ('0.0.0.3', 1)");
-        executeInsert("insert into test values ('0.0.0.4', 1)");
-        executeInsert("insert into test values ('0.0.0.5', 1)");
-
-        assertSql("select isOrdered(ip) from test", "isOrdered\n" +
-                "true\n");
-    }
-
-    @Test
-    public void testIPv4IsOrderedFalse() throws Exception {
-        assertQuery("isOrdered\n" +
-                        "false\n",
-                "select isOrdered(ip) from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                false,
-                true);
-    }
-
-    @Test
-    public void testIPv4IsOrderedNull() throws Exception {
-        compiler.compile("create table test (ip ipv4, bytes int)", sqlExecutionContext);
-        executeInsert("insert into test values ('0.0.0.0', 1)");
-        executeInsert("insert into test values ('0.0.0.0', 1)");
-        executeInsert("insert into test values ('0.0.0.0', 1)");
-        executeInsert("insert into test values ('0.0.0.0', 1)");
-        executeInsert("insert into test values ('0.0.0.0', 1)");
-
-        assertSql("select isOrdered(ip) from test", "isOrdered\n" +
-                "true\n");
-    }
-
-    @Test
-    public void testIPv4IsOrderedSame() throws Exception {
-        compiler.compile("create table test (ip ipv4, bytes int)", sqlExecutionContext);
-        executeInsert("insert into test values ('0.0.0.12', 1)");
-        executeInsert("insert into test values ('0.0.0.12', 1)");
-        executeInsert("insert into test values ('0.0.0.12', 1)");
-        executeInsert("insert into test values ('0.0.0.12', 1)");
-        executeInsert("insert into test values ('0.0.0.12', 1)");
-
-        assertSql("select isOrdered(ip) from test", "isOrdered\n" +
-                "true\n");
-    }
-
-    @Test
-    public void testIPv4MinusIPv4Const() throws Exception {
-        assertSql("select ipv4 '1.1.1.1' - ipv4 '255.255.255.255'", "column\n" +
-                "-4278124286\n");
-    }
-
-    @Test
-    public void testIPv4MinusIPv4ConstNull() throws Exception {
-        assertSql("select ipv4 '0.0.0.0' - ipv4 '1.1.1.1'", "column\n" +
-                "NaN\n");
-    }
-
-    @Test
-    public void testIPv4MinusIPv4HalfConst() throws Exception {
-        assertQuery("column\n" +
-                        "2773848137\n" +
-                        "-299063538\n" +
-                        "1496084467\n" +
-                        "2485446343\n" +
-                        "1196850877\n" +
-                        "1158191828\n" +
-                        "752939968\n" +
-                        "3837158002\n" +
-                        "2820505953\n" +
-                        "2797158930\n" +
-                        "860245551\n" +
-                        "1326914642\n" +
-                        "3499386522\n" +
-                        "3619032084\n" +
-                        "3460716594\n" +
-                        "3438474390\n" +
-                        "-304373661\n" +
-                        "86179701\n" +
-                        "2503987003\n" +
-                        "2347192664\n" +
-                        "3255296908\n" +
-                        "1265208177\n" +
-                        "2135218764\n" +
-                        "-211046476\n" +
-                        "2383725862\n" +
-                        "2622936746\n" +
-                        "1484573162\n" +
-                        "823377430\n" +
-                        "2720404929\n" +
-                        "2339832612\n" +
-                        "862156863\n" +
-                        "3548828754\n" +
-                        "-257891288\n" +
-                        "3190861944\n" +
-                        "2198440386\n" +
-                        "1846652797\n" +
-                        "2153992830\n" +
-                        "1422720116\n" +
-                        "493192821\n" +
-                        "466104543\n" +
-                        "3304290560\n" +
-                        "3854300225\n" +
-                        "1834010571\n" +
-                        "1811077867\n" +
-                        "1226040229\n" +
-                        "3639006165\n" +
-                        "865851868\n" +
-                        "642416689\n" +
-                        "990194656\n" +
-                        "3282022737\n",
-                "select ip - ipv4 '22.54.6.7' from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_ipv4() ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(50)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4MinusIPv4Var() throws Exception {
-        assertQuery("column\n" +
-                        "-11\n" +
-                        "17\n" +
-                        "121\n" +
-                        "129\n" +
-                        "40\n" +
-                        "-76\n" +
-                        "-88\n" +
-                        "50\n" +
-                        "-111\n" +
-                        "47\n" +
-                        "154\n" +
-                        "-18\n" +
-                        "131\n" +
-                        "136\n" +
-                        "164\n" +
-                        "-74\n" +
-                        "-11\n" +
-                        "-15\n" +
-                        "-49\n" +
-                        "42\n" +
-                        "67\n" +
-                        "-59\n" +
-                        "-31\n" +
-                        "14\n" +
-                        "57\n" +
-                        "-45\n" +
-                        "-165\n" +
-                        "45\n" +
-                        "-55\n" +
-                        "31\n" +
-                        "-16\n" +
-                        "74\n" +
-                        "8\n" +
-                        "153\n" +
-                        "-84\n" +
-                        "-45\n" +
-                        "-35\n" +
-                        "169\n" +
-                        "71\n" +
-                        "92\n" +
-                        "47\n" +
-                        "-28\n" +
-                        "113\n" +
-                        "-77\n" +
-                        "104\n" +
-                        "25\n" +
-                        "191\n" +
-                        "213\n" +
-                        "50\n" +
-                        "-96\n",
-                "select ip2 - ip from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4('2.65.11.1/24', 0) ip," +
-                        "    rnd_ipv4('2.65.11.1/24', 0) ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(50)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4MinusIntConst() throws Exception {
-        assertSql("select ipv4 '1.1.1.1' - 1", "column\n" +
-                "1.1.1.0\n");
-    }
-
-    @Test
-    public void testIPv4MinusIntConst2() throws Exception {
-        assertSql("select ipv4 '1.1.1.1' - 16843008", "column\n" +
-                "0.0.0.1\n");
-    }
-
-    @Test
-    public void testIPv4MinusIntConstOverflow() throws Exception {
-        assertSql("select ipv4 '1.1.1.1' - 16843010", "column\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIPv4MinusIntHalfConst() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.0.7\n" +
-                        "\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.15\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.14\n" +
-                        "\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.8\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.8\n" +
-                        "\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.10\n" +
-                        "\n" +
-                        "0.0.0.3\n" +
-                        "\n" +
-                        "0.0.0.11\n" +
-                        "\n" +
-                        "0.0.0.13\n" +
-                        "\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.11\n" +
-                        "\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.9\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.2\n" +
-                        "0.0.0.7\n" +
-                        "0.0.0.11\n" +
-                        "\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.12\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.12\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.13\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.13\n" +
-                        "\n" +
-                        "0.0.0.4\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.11\n" +
-                        "0.0.0.13\n" +
-                        "0.0.0.11\n" +
-                        "\n" +
-                        "0.0.0.2\n" +
-                        "\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.14\n" +
-                        "0.0.0.7\n" +
-                        "\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.6\n" +
-                        "0.0.0.3\n" +
-                        "0.0.0.8\n" +
-                        "0.0.0.5\n" +
-                        "0.0.0.15\n" +
-                        "0.0.0.1\n" +
-                        "0.0.0.14\n" +
-                        "\n" +
-                        "\n" +
-                        "0.0.0.5\n" +
-                        "\n" +
-                        "0.0.0.1\n",
-                "select ip - 5 from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(1,20,0)::ipv4 ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4MinusIntVar() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.4.203\n" +
-                        "0.0.6.190\n" +
-                        "0.0.4.145\n" +
-                        "0.0.2.139\n" +
-                        "0.0.5.33\n" +
-                        "0.0.2.82\n" +
-                        "0.0.6.43\n" +
-                        "0.0.2.70\n" +
-                        "0.0.1.179\n" +
-                        "0.0.2.151\n" +
-                        "0.0.5.56\n" +
-                        "0.0.1.142\n" +
-                        "0.0.1.58\n" +
-                        "0.0.2.210\n" +
-                        "0.0.2.197\n" +
-                        "0.0.5.228\n" +
-                        "0.0.4.42\n" +
-                        "0.0.3.93\n" +
-                        "0.0.5.171\n" +
-                        "0.0.1.116\n" +
-                        "0.0.3.143\n" +
-                        "0.0.3.149\n" +
-                        "0.0.5.119\n" +
-                        "0.0.2.2\n" +
-                        "0.0.7.46\n" +
-                        "0.0.3.253\n" +
-                        "0.0.8.160\n" +
-                        "0.0.7.202\n" +
-                        "0.0.6.59\n" +
-                        "0.0.2.79\n" +
-                        "0.0.5.134\n" +
-                        "0.0.5.79\n" +
-                        "0.0.1.228\n" +
-                        "0.0.0.252\n" +
-                        "0.0.4.25\n" +
-                        "0.0.5.239\n" +
-                        "0.0.3.20\n" +
-                        "0.0.1.159\n" +
-                        "0.0.4.168\n" +
-                        "0.0.0.203\n" +
-                        "0.0.6.12\n" +
-                        "0.0.5.222\n" +
-                        "0.0.2.100\n" +
-                        "0.0.2.99\n" +
-                        "0.0.7.92\n" +
-                        "0.0.4.37\n" +
-                        "0.0.0.231\n" +
-                        "0.0.8.152\n" +
-                        "0.0.1.189\n" +
-                        "0.0.4.89\n" +
-                        "0.0.3.224\n" +
-                        "\n" +
-                        "0.0.8.229\n" +
-                        "0.0.6.127\n" +
-                        "0.0.6.11\n" +
-                        "0.0.5.26\n" +
-                        "0.0.5.250\n" +
-                        "0.0.4.64\n" +
-                        "0.0.2.20\n" +
-                        "0.0.4.16\n" +
-                        "0.0.5.235\n" +
-                        "0.0.3.162\n" +
-                        "0.0.8.157\n" +
-                        "0.0.0.19\n" +
-                        "0.0.0.244\n" +
-                        "0.0.0.42\n" +
-                        "0.0.2.75\n" +
-                        "0.0.1.226\n" +
-                        "0.0.0.253\n" +
-                        "0.0.5.171\n" +
-                        "0.0.7.59\n" +
-                        "0.0.6.183\n" +
-                        "0.0.3.38\n" +
-                        "0.0.4.113\n" +
-                        "0.0.2.138\n" +
-                        "0.0.0.47\n" +
-                        "0.0.3.150\n" +
-                        "0.0.2.138\n" +
-                        "0.0.4.204\n" +
-                        "0.0.5.3\n" +
-                        "0.0.2.67\n" +
-                        "0.0.2.63\n" +
-                        "0.0.8.152\n" +
-                        "0.0.6.195\n" +
-                        "0.0.4.52\n" +
-                        "0.0.2.253\n" +
-                        "0.0.2.37\n" +
-                        "\n" +
-                        "0.0.3.70\n" +
-                        "0.0.6.69\n" +
-                        "0.0.2.19\n" +
-                        "0.0.3.56\n" +
-                        "0.0.4.130\n" +
-                        "0.0.5.164\n" +
-                        "0.0.5.5\n" +
-                        "0.0.8.220\n" +
-                        "0.0.6.186\n" +
-                        "0.0.7.42\n" +
-                        "0.0.0.196\n" +
-                        "\n",
-                "select ip - bytes from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(500,2500,0)::ipv4 ip," +
-                        "    rnd_int(1,20,0)::ipv4 ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnet() throws Exception {
-        compiler.compile("create table test (col ipv4)", sqlExecutionContext);
-        executeInsert("insert into test values('12.67.45.3')");
-        executeInsert("insert into test values('160.5.22.8')");
-        executeInsert("insert into test values('240.110.88.22')");
-        executeInsert("insert into test values('1.6.2.0')");
-        executeInsert("insert into test values('255.255.255.255')");
-        executeInsert("insert into test values('0.0.0.0')");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/20' >>= col", sink, "col\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/1' >>= col", sink, "col\n" +
-                "12.67.45.3\n" +
-                "1.6.2.0\n" +
-                "\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '255.6.8.10/8' >>= col", sink, "col\n" +
-                "255.255.255.255\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '12.67.50.2/0' >>= col", sink, "col\n" +
-                "12.67.45.3\n" +
-                "160.5.22.8\n" +
-                "240.110.88.22\n" +
-                "1.6.2.0\n" +
-                "255.255.255.255\n" +
-                "\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '1.6.2.0/32' >>= col", sink, "col\n" +
-                "1.6.2.0\n");
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from test where '1.6.2.0' >>= col", sink, "col\n" +
-                "1.6.2.0\n");
-
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetAndMask() throws Exception {
-        compiler.compile("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-
-        assertSql("select * from test where '0.0.0/24' >>= ip", "ip\n" +
-                "0.0.0.115\n" +
-                "0.0.0.208\n" +
-                "0.0.0.110\n" +
-                "0.0.0.90\n" +
-                "0.0.0.53\n" +
-                "0.0.0.143\n" +
-                "0.0.0.246\n" +
-                "0.0.0.158\n" +
-                "0.0.0.237\n" +
-                "0.0.0.220\n" +
-                "0.0.0.184\n" +
-                "0.0.0.103\n");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFails() throws Exception {
-        assertFailure("select * from test where '0.0.0.1/hello' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.1/hello");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFails2() throws Exception {
-        assertFailure("select * from test where '0.0.0/hello' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/hello");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFails3() throws Exception {
-        assertFailure("select * from test where '0.0.0.0/65' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/65");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFails4() throws Exception {
-        assertFailure("select * from test where '0.0.0/65' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/65");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFails5() throws Exception {
-        assertFailure("select * from test where '0.0.0.0/-1' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/-1");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFails6() throws Exception {
-        assertFailure("select * from test where '0.0.0/-1' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/-1");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFailsChars() throws Exception {
-        assertFailure("select * from test where 'apple' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: apple");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFailsNetmaskOverflow() throws Exception {
-        assertFailure("select * from test where '85.7.36/74' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFailsNums() throws Exception {
-        assertFailure("select * from test where '8573674' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 8573674");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetFailsOverflow() throws Exception {
-        assertFailure("select * from test where '256.256.256.256' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 256.256.256.256");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetIncorrectMask() throws Exception {
-        assertFailure("select * from test where '0.0.0/32' >>= ip", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1000,2000,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/32");
-    }
-
-    @Test
-    public void testIPv4NegContainsEqSubnetNoMask() throws Exception {
-
-        compiler.compile("create table test as (select rnd_int(0,5,2)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-
-        assertSql("select * from test where '0.0.0.4' >>= ip", "ip\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n" +
-                "0.0.0.4\n");
-    }
-
-    @Test
-    public void testIPv4NegContainsSubnet() throws Exception {
-        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-        assertSql("select * from test where '0.0.0.1' >> ip", "ip\n");
-    }
-
-    @Test
-    public void testIPv4NegContainsSubnet2() throws Exception {
-        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))", sqlExecutionContext);
-        assertSql("select * from test where '0.0.0.1/32' >> ip", "ip\n");
-    }
-
-    @Test
-    public void testIPv4NegContainsSubnet3() throws Exception {
-        compiler.compile("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))", sqlExecutionContext);
-        assertSql("select * from test where '0.0.0.1/24' >> ip", "ip\n" +
-                "0.0.0.2\n" +
-                "0.0.0.2\n" +
-                "0.0.0.1\n" +
-                "0.0.0.1\n" +
-                "0.0.0.1\n" +
-                "0.0.0.2\n" +
-                "0.0.0.1\n" +
-                "0.0.0.2\n" +
-                "0.0.0.2\n" +
-                "0.0.0.1\n");
-    }
-
-    @Test
-    public void testIPv4NullIf() throws Exception {
-        assertQuery("k\tnullif\n" +
-                        "1970-01-01T00:00:00.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T00:01:40.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T00:03:20.000000Z\t0.0.0.3\n" +
-                        "1970-01-01T00:05:00.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T00:06:40.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T00:08:20.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T00:10:00.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T00:11:40.000000Z\t\n" +
-                        "1970-01-01T00:13:20.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T00:15:00.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T00:16:40.000000Z\t\n" +
-                        "1970-01-01T00:18:20.000000Z\t\n" +
-                        "1970-01-01T00:20:00.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T00:21:40.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T00:23:20.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T00:25:00.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T00:26:40.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T00:28:20.000000Z\t0.0.0.3\n" +
-                        "1970-01-01T00:30:00.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T00:31:40.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T00:33:20.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T00:35:00.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T00:36:40.000000Z\t0.0.0.3\n" +
-                        "1970-01-01T00:38:20.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T00:40:00.000000Z\t\n" +
-                        "1970-01-01T00:41:40.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T00:43:20.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T00:45:00.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T00:46:40.000000Z\t\n" +
-                        "1970-01-01T00:48:20.000000Z\t\n" +
-                        "1970-01-01T00:50:00.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T00:51:40.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T00:53:20.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T00:55:00.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T00:56:40.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T00:58:20.000000Z\t0.0.0.7\n" +
-                        "1970-01-01T01:00:00.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T01:01:40.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T01:03:20.000000Z\t0.0.0.7\n" +
-                        "1970-01-01T01:05:00.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T01:06:40.000000Z\t\n" +
-                        "1970-01-01T01:08:20.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T01:10:00.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T01:11:40.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T01:13:20.000000Z\t0.0.0.7\n" +
-                        "1970-01-01T01:15:00.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T01:16:40.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T01:18:20.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T01:20:00.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T01:21:40.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T01:23:20.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T01:25:00.000000Z\t0.0.0.7\n" +
-                        "1970-01-01T01:26:40.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T01:28:20.000000Z\t\n" +
-                        "1970-01-01T01:30:00.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T01:31:40.000000Z\t\n" +
-                        "1970-01-01T01:33:20.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T01:35:00.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T01:36:40.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T01:38:20.000000Z\t0.0.0.4\n" +
-                        "1970-01-01T01:40:00.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T01:41:40.000000Z\t0.0.0.3\n" +
-                        "1970-01-01T01:43:20.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T01:45:00.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T01:46:40.000000Z\t0.0.0.7\n" +
-                        "1970-01-01T01:48:20.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T01:50:00.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T01:51:40.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T01:53:20.000000Z\t0.0.0.3\n" +
-                        "1970-01-01T01:55:00.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T01:56:40.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T01:58:20.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T02:00:00.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T02:01:40.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T02:03:20.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T02:05:00.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T02:06:40.000000Z\t0.0.0.3\n" +
-                        "1970-01-01T02:08:20.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T02:10:00.000000Z\t\n" +
-                        "1970-01-01T02:11:40.000000Z\t\n" +
-                        "1970-01-01T02:13:20.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T02:15:00.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T02:16:40.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T02:18:20.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T02:20:00.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T02:21:40.000000Z\t\n" +
-                        "1970-01-01T02:23:20.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T02:25:00.000000Z\t0.0.0.9\n" +
-                        "1970-01-01T02:26:40.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T02:28:20.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T02:30:00.000000Z\t0.0.0.8\n" +
-                        "1970-01-01T02:31:40.000000Z\t\n" +
-                        "1970-01-01T02:33:20.000000Z\t0.0.0.10\n" +
-                        "1970-01-01T02:35:00.000000Z\t0.0.0.2\n" +
-                        "1970-01-01T02:36:40.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T02:38:20.000000Z\t0.0.0.7\n" +
-                        "1970-01-01T02:40:00.000000Z\t\n" +
-                        "1970-01-01T02:41:40.000000Z\t0.0.0.1\n" +
-                        "1970-01-01T02:43:20.000000Z\t0.0.0.6\n" +
-                        "1970-01-01T02:45:00.000000Z\t0.0.0.2\n", "select k, nullif(ip, '0.0.0.5') from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,10,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                "k",
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4PlusIntConst() throws Exception {
-        assertSql("select ipv4 '1.1.1.1' + 20", "column\n" +
-                "1.1.1.21\n");
-    }
-
-    @Test
-    public void testIPv4PlusIntConst2() throws Exception {
-        assertSql("select ipv4 '255.255.255.20' + 235", "column\n" +
-                "255.255.255.255\n");
-    }
-
-    @Test
-    public void testIPv4PlusIntConst3() throws Exception {
-        assertSql("select  ('255.255.255.255')::ipv4 + 10", "column\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIPv4PlusIntConstNull() throws Exception {
-        assertSql("select ipv4 '0.0.0.0' + 20", "column\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIPv4PlusIntConstOverflow() throws Exception {
-        assertSql("select ipv4 '255.255.255.255' + 1", "column\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIPv4PlusIntConstOverflow2() throws Exception {
-        assertSql("select ipv4 '255.255.255.20' + 236", "column\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIPv4PlusIntHalfConst() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.40\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.35\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.40\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.31\n" +
-                        "0.0.0.33\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.33\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.35\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.34\n" +
-                        "0.0.0.35\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.33\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.40\n" +
-                        "0.0.0.31\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.33\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.40\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.26\n",
-                "select ip + 20 from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(1,20,0)::ipv4 ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4PlusIntVar() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.1.120\n" +
-                        "0.0.0.186\n" +
-                        "0.0.3.77\n" +
-                        "0.0.2.202\n" +
-                        "0.0.1.82\n" +
-                        "0.0.3.45\n" +
-                        "0.0.0.102\n" +
-                        "0.0.3.224\n" +
-                        "0.0.3.157\n" +
-                        "0.0.0.29\n" +
-                        "0.0.3.197\n" +
-                        "0.0.1.2\n" +
-                        "0.0.1.81\n" +
-                        "0.0.2.114\n" +
-                        "0.0.0.44\n" +
-                        "0.0.1.201\n" +
-                        "0.0.3.136\n" +
-                        "0.0.1.65\n" +
-                        "0.0.3.139\n" +
-                        "0.0.2.169\n" +
-                        "0.0.2.229\n" +
-                        "0.0.2.132\n" +
-                        "0.0.3.169\n" +
-                        "0.0.0.194\n" +
-                        "0.0.1.103\n" +
-                        "0.0.1.100\n" +
-                        "0.0.0.108\n" +
-                        "0.0.1.236\n" +
-                        "0.0.2.42\n" +
-                        "0.0.3.132\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.29\n" +
-                        "0.0.1.129\n" +
-                        "0.0.2.160\n" +
-                        "0.0.3.122\n" +
-                        "0.0.2.7\n" +
-                        "0.0.2.172\n" +
-                        "0.0.0.175\n" +
-                        "0.0.0.80\n" +
-                        "0.0.3.123\n" +
-                        "0.0.0.165\n" +
-                        "0.0.0.112\n" +
-                        "0.0.0.73\n" +
-                        "0.0.2.150\n" +
-                        "0.0.1.9\n" +
-                        "0.0.3.3\n" +
-                        "0.0.2.147\n" +
-                        "0.0.0.210\n" +
-                        "0.0.1.96\n" +
-                        "0.0.1.249\n" +
-                        "0.0.3.98\n" +
-                        "0.0.3.6\n" +
-                        "0.0.0.58\n" +
-                        "0.0.2.82\n" +
-                        "0.0.2.177\n" +
-                        "0.0.0.87\n" +
-                        "0.0.3.64\n" +
-                        "0.0.2.206\n" +
-                        "0.0.0.84\n" +
-                        "0.0.1.86\n" +
-                        "0.0.1.6\n" +
-                        "0.0.3.176\n" +
-                        "0.0.1.25\n" +
-                        "0.0.2.127\n" +
-                        "0.0.3.118\n" +
-                        "0.0.3.222\n" +
-                        "0.0.3.24\n" +
-                        "0.0.1.187\n" +
-                        "0.0.1.99\n" +
-                        "0.0.1.63\n" +
-                        "0.0.0.136\n" +
-                        "0.0.1.71\n" +
-                        "0.0.3.123\n" +
-                        "0.0.3.25\n" +
-                        "0.0.1.17\n" +
-                        "0.0.3.191\n" +
-                        "0.0.0.101\n" +
-                        "0.0.3.236\n" +
-                        "0.0.2.10\n" +
-                        "0.0.2.188\n" +
-                        "0.0.2.154\n" +
-                        "0.0.1.171\n" +
-                        "0.0.0.146\n" +
-                        "0.0.0.153\n" +
-                        "0.0.0.155\n" +
-                        "0.0.2.146\n" +
-                        "0.0.1.70\n" +
-                        "0.0.2.226\n" +
-                        "0.0.3.70\n" +
-                        "0.0.0.176\n" +
-                        "0.0.0.188\n" +
-                        "0.0.0.251\n" +
-                        "0.0.1.190\n" +
-                        "0.0.1.42\n" +
-                        "0.0.1.74\n" +
-                        "0.0.0.151\n" +
-                        "0.0.0.241\n" +
-                        "0.0.2.134\n" +
-                        "0.0.2.79\n" +
-                        "0.0.3.98\n",
-                "select ip + bytes from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(1,20,0)::ipv4 ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4Rank() throws Exception {
-        assertQuery("ip\tbytes\trank\n" +
-                        "0.0.0.1\t814\t1\n" +
-                        "0.0.0.1\t30\t1\n" +
-                        "0.0.0.1\t660\t1\n" +
-                        "0.0.0.1\t368\t1\n" +
-                        "0.0.0.1\t924\t1\n" +
-                        "0.0.0.1\t887\t1\n" +
-                        "0.0.0.2\t493\t7\n" +
-                        "0.0.0.2\t93\t7\n" +
-                        "0.0.0.2\t606\t7\n" +
-                        "0.0.0.2\t288\t7\n" +
-                        "0.0.0.2\t480\t7\n" +
-                        "0.0.0.2\t345\t7\n" +
-                        "0.0.0.2\t906\t7\n" +
-                        "0.0.0.3\t624\t14\n" +
-                        "0.0.0.3\t840\t14\n" +
-                        "0.0.0.3\t563\t14\n" +
-                        "0.0.0.4\t511\t17\n" +
-                        "0.0.0.4\t907\t17\n" +
-                        "0.0.0.4\t937\t17\n" +
-                        "0.0.0.4\t883\t17\n" +
-                        "0.0.0.4\t328\t17\n" +
-                        "0.0.0.4\t181\t17\n" +
-                        "0.0.0.4\t807\t17\n" +
-                        "0.0.0.4\t619\t17\n" +
-                        "0.0.0.5\t624\t25\n" +
-                        "0.0.0.5\t193\t25\n" +
-                        "0.0.0.5\t397\t25\n" +
-                        "0.0.0.5\t697\t25\n" +
-                        "0.0.0.5\t308\t25\n" +
-                        "0.0.0.5\t877\t25\n" +
-                        "0.0.0.5\t37\t25\n" +
-                        "0.0.0.6\t240\t32\n" +
-                        "0.0.0.6\t841\t32\n" +
-                        "0.0.0.6\t255\t32\n" +
-                        "0.0.0.6\t746\t32\n" +
-                        "0.0.0.6\t735\t32\n" +
-                        "0.0.0.7\t727\t37\n" +
-                        "0.0.0.7\t75\t37\n" +
-                        "0.0.0.7\t99\t37\n" +
-                        "0.0.0.7\t173\t37\n" +
-                        "0.0.0.8\t665\t41\n" +
-                        "0.0.0.8\t740\t41\n" +
-                        "0.0.0.8\t986\t41\n" +
-                        "0.0.0.8\t369\t41\n" +
-                        "0.0.0.8\t136\t41\n" +
-                        "0.0.0.8\t522\t41\n" +
-                        "0.0.0.9\t269\t47\n" +
-                        "0.0.0.9\t487\t47\n" +
-                        "0.0.0.9\t935\t47\n" +
-                        "0.0.0.9\t34\t47\n" +
-                        "0.0.0.9\t345\t47\n" +
-                        "0.0.0.9\t598\t47\n" +
-                        "0.0.0.9\t539\t47\n" +
-                        "0.0.0.9\t827\t47\n" +
-                        "0.0.0.9\t167\t47\n" +
-                        "0.0.0.10\t868\t56\n" +
-                        "0.0.0.10\t472\t56\n" +
-                        "0.0.0.10\t644\t56\n" +
-                        "0.0.0.10\t470\t56\n" +
-                        "0.0.0.11\t511\t60\n" +
-                        "0.0.0.11\t519\t60\n" +
-                        "0.0.0.11\t188\t60\n" +
-                        "0.0.0.12\t326\t63\n" +
-                        "0.0.0.12\t884\t63\n" +
-                        "0.0.0.12\t655\t63\n" +
-                        "0.0.0.12\t23\t63\n" +
-                        "0.0.0.13\t0\t67\n" +
-                        "0.0.0.13\t574\t67\n" +
-                        "0.0.0.13\t7\t67\n" +
-                        "0.0.0.14\t334\t70\n" +
-                        "0.0.0.15\t172\t71\n" +
-                        "0.0.0.15\t149\t71\n" +
-                        "0.0.0.15\t551\t71\n" +
-                        "0.0.0.15\t910\t71\n" +
-                        "0.0.0.15\t95\t71\n" +
-                        "0.0.0.15\t528\t71\n" +
-                        "0.0.0.15\t904\t71\n" +
-                        "0.0.0.16\t25\t78\n" +
-                        "0.0.0.16\t597\t78\n" +
-                        "0.0.0.16\t777\t78\n" +
-                        "0.0.0.16\t482\t78\n" +
-                        "0.0.0.16\t428\t78\n" +
-                        "0.0.0.16\t711\t78\n" +
-                        "0.0.0.16\t906\t78\n" +
-                        "0.0.0.17\t770\t85\n" +
-                        "0.0.0.17\t417\t85\n" +
-                        "0.0.0.18\t660\t87\n" +
-                        "0.0.0.18\t852\t87\n" +
-                        "0.0.0.18\t569\t87\n" +
-                        "0.0.0.18\t367\t87\n" +
-                        "0.0.0.18\t162\t87\n" +
-                        "0.0.0.18\t594\t87\n" +
-                        "0.0.0.19\t326\t93\n" +
-                        "0.0.0.19\t71\t93\n" +
-                        "0.0.0.20\t585\t95\n" +
-                        "0.0.0.20\t606\t95\n" +
-                        "0.0.0.20\t180\t95\n" +
-                        "0.0.0.20\t238\t95\n" +
-                        "0.0.0.20\t810\t95\n" +
-                        "0.0.0.20\t424\t95\n",
-                "select ip, bytes, rank() over (order by ip asc) rank from test order by rank",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                false);
-    }
-
-    @Test
-    public void testIPv4RowNum() throws Exception {
-        assertQuery("ip\tbytes\trow_num\n" +
-                        "0.0.0.12\t23\t1\n" +
-                        "0.0.0.9\t167\t2\n" +
-                        "0.0.0.13\t7\t3\n" +
-                        "0.0.0.8\t522\t4\n" +
-                        "0.0.0.9\t827\t5\n" +
-                        "0.0.0.20\t424\t6\n" +
-                        "0.0.0.9\t539\t7\n" +
-                        "0.0.0.15\t904\t8\n" +
-                        "0.0.0.8\t136\t9\n" +
-                        "0.0.0.20\t810\t10\n" +
-                        "0.0.0.15\t528\t11\n" +
-                        "0.0.0.15\t95\t12\n" +
-                        "0.0.0.4\t619\t13\n" +
-                        "0.0.0.8\t369\t14\n" +
-                        "0.0.0.16\t906\t15\n" +
-                        "0.0.0.19\t71\t16\n" +
-                        "0.0.0.14\t334\t17\n" +
-                        "0.0.0.3\t563\t18\n" +
-                        "0.0.0.2\t906\t19\n" +
-                        "0.0.0.20\t238\t20\n" +
-                        "0.0.0.8\t986\t21\n" +
-                        "0.0.0.9\t598\t22\n" +
-                        "0.0.0.13\t574\t23\n" +
-                        "0.0.0.8\t740\t24\n" +
-                        "0.0.0.5\t37\t25\n" +
-                        "0.0.0.18\t594\t26\n" +
-                        "0.0.0.20\t180\t27\n" +
-                        "0.0.0.20\t606\t28\n" +
-                        "0.0.0.5\t877\t29\n" +
-                        "0.0.0.5\t308\t30\n" +
-                        "0.0.0.4\t807\t31\n" +
-                        "0.0.0.10\t470\t32\n" +
-                        "0.0.0.9\t345\t33\n" +
-                        "0.0.0.16\t711\t34\n" +
-                        "0.0.0.6\t735\t35\n" +
-                        "0.0.0.7\t173\t36\n" +
-                        "0.0.0.18\t162\t37\n" +
-                        "0.0.0.2\t345\t38\n" +
-                        "0.0.0.17\t417\t39\n" +
-                        "0.0.0.4\t181\t40\n" +
-                        "0.0.0.5\t697\t41\n" +
-                        "0.0.0.9\t34\t42\n" +
-                        "0.0.0.9\t935\t43\n" +
-                        "0.0.0.1\t887\t44\n" +
-                        "0.0.0.7\t99\t45\n" +
-                        "0.0.0.16\t428\t46\n" +
-                        "0.0.0.4\t328\t47\n" +
-                        "0.0.0.1\t924\t48\n" +
-                        "0.0.0.2\t480\t49\n" +
-                        "0.0.0.4\t883\t50\n" +
-                        "0.0.0.10\t644\t51\n" +
-                        "0.0.0.17\t770\t52\n" +
-                        "0.0.0.11\t188\t53\n" +
-                        "0.0.0.5\t397\t54\n" +
-                        "0.0.0.18\t367\t55\n" +
-                        "0.0.0.15\t910\t56\n" +
-                        "0.0.0.4\t937\t57\n" +
-                        "0.0.0.2\t288\t58\n" +
-                        "0.0.0.4\t907\t59\n" +
-                        "0.0.0.4\t511\t60\n" +
-                        "0.0.0.1\t368\t61\n" +
-                        "0.0.0.13\t0\t62\n" +
-                        "0.0.0.8\t665\t63\n" +
-                        "0.0.0.19\t326\t64\n" +
-                        "0.0.0.7\t75\t65\n" +
-                        "0.0.0.18\t569\t66\n" +
-                        "0.0.0.6\t746\t67\n" +
-                        "0.0.0.2\t606\t68\n" +
-                        "0.0.0.3\t840\t69\n" +
-                        "0.0.0.2\t93\t70\n" +
-                        "0.0.0.16\t482\t71\n" +
-                        "0.0.0.12\t655\t72\n" +
-                        "0.0.0.1\t660\t73\n" +
-                        "0.0.0.11\t519\t74\n" +
-                        "0.0.0.6\t255\t75\n" +
-                        "0.0.0.6\t841\t76\n" +
-                        "0.0.0.3\t624\t77\n" +
-                        "0.0.0.10\t472\t78\n" +
-                        "0.0.0.15\t551\t79\n" +
-                        "0.0.0.5\t193\t80\n" +
-                        "0.0.0.6\t240\t81\n" +
-                        "0.0.0.2\t493\t82\n" +
-                        "0.0.0.9\t487\t83\n" +
-                        "0.0.0.16\t777\t84\n" +
-                        "0.0.0.18\t852\t85\n" +
-                        "0.0.0.15\t149\t86\n" +
-                        "0.0.0.16\t597\t87\n" +
-                        "0.0.0.9\t269\t88\n" +
-                        "0.0.0.1\t30\t89\n" +
-                        "0.0.0.20\t585\t90\n" +
-                        "0.0.0.18\t660\t91\n" +
-                        "0.0.0.15\t172\t92\n" +
-                        "0.0.0.10\t868\t93\n" +
-                        "0.0.0.12\t884\t94\n" +
-                        "0.0.0.1\t814\t95\n" +
-                        "0.0.0.7\t727\t96\n" +
-                        "0.0.0.5\t624\t97\n" +
-                        "0.0.0.11\t511\t98\n" +
-                        "0.0.0.16\t25\t99\n" +
-                        "0.0.0.12\t326\t100\n",
-                "select ip, bytes, row_number() over () as row_num from test order by row_num asc",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                false);
-    }
-
-    @Test
-    public void testIPv4StrBitwiseOrHalfConst() throws Exception {
-        assertQuery("column\n" +
-                        "255.0.0.12\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.13\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.19\n" +
-                        "255.0.0.14\n" +
-                        "255.0.0.3\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.13\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.10\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.7\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.17\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.7\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.10\n" +
-                        "255.0.0.17\n" +
-                        "255.0.0.11\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.4\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.13\n" +
-                        "255.0.0.8\n" +
-                        "255.0.0.19\n" +
-                        "255.0.0.7\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.3\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.12\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.11\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.3\n" +
-                        "255.0.0.10\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.6\n" +
-                        "255.0.0.2\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.9\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.20\n" +
-                        "255.0.0.18\n" +
-                        "255.0.0.15\n" +
-                        "255.0.0.10\n" +
-                        "255.0.0.12\n" +
-                        "255.0.0.1\n" +
-                        "255.0.0.7\n" +
-                        "255.0.0.5\n" +
-                        "255.0.0.11\n" +
-                        "255.0.0.16\n" +
-                        "255.0.0.12\n",
-                "select ip | ipv4 '255.0.0.0' from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIPv4StringUnionFails() throws Exception {
-        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
-        compiler.compile("create table y (col2 string)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into y values('0.0.0.1')");
-        executeInsert("insert into y values('0.0.0.2')");
-        executeInsert("insert into y values('0.0.0.3')");
-        executeInsert("insert into y values('0.0.0.4')");
-        executeInsert("insert into y values('0.0.0.5')");
-
-        engine.releaseInactive();
-
-        assertFailure("select col1 from x union select col2 from y", null, 25, "unsupported cast [column=col2, from=STRING, to=IPv4]");
-    }
-
-    @Test
-    public void testIPv4Union() throws Exception {
-        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
-        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into y values('0.0.0.1')");
-        executeInsert("insert into y values('0.0.0.2')");
-        executeInsert("insert into y values('0.0.0.3')");
-        executeInsert("insert into y values('0.0.0.4')");
-        executeInsert("insert into y values('0.0.0.5')");
-
-        assertSql("select col1 from x union select col2 from y", "col1\n" +
-                "0.0.0.1\n" +
-                "0.0.0.2\n" +
-                "0.0.0.3\n" +
-                "0.0.0.4\n" +
-                "0.0.0.5\n");
-    }
-
-    @Test
-    public void testIPv4UnionAll() throws Exception {
-        compiler.compile("create table x (col1 ipv4)", sqlExecutionContext);
-        compiler.compile("create table y (col2 ipv4)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into y values('0.0.0.1')");
-        executeInsert("insert into y values('0.0.0.2')");
-        executeInsert("insert into y values('0.0.0.3')");
-        executeInsert("insert into y values('0.0.0.4')");
-        executeInsert("insert into y values('0.0.0.5')");
-
-        assertSql("select col1 from x union all select col2 from y", "col1\n" +
-                "0.0.0.1\n" +
-                "0.0.0.2\n" +
-                "0.0.0.3\n" +
-                "0.0.0.4\n" +
-                "0.0.0.5\n" +
-                "0.0.0.1\n" +
-                "0.0.0.2\n" +
-                "0.0.0.3\n" +
-                "0.0.0.4\n" +
-                "0.0.0.5\n");
-    }
-
-    @Test
-    public void testImplicitCastBinaryToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_bin() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: BINARY -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastBoolToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_boolean() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: BOOLEAN -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastByteToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_byte() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: BYTE -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastCharToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_char() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: CHAR -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastDateToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_date() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: DATE -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastDoubleToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_double() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: DOUBLE -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastFloatToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_float() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: FLOAT -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToBinary() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col binary)",
-                21,
-                "inconvertible types: IPv4 -> BINARY [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToBool() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col boolean)",
-                21,
-                "inconvertible types: IPv4 -> BOOLEAN [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToByte() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col byte)",
-                21,
-                "inconvertible types: IPv4 -> BYTE [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToChar() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col char)",
-                21,
-                "inconvertible types: IPv4 -> CHAR [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToDate() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col date)",
-                21,
-                "inconvertible types: IPv4 -> DATE [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToDouble() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col double)",
-                21,
-                "inconvertible types: IPv4 -> DOUBLE [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToFloat() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col float)",
-                21,
-                "inconvertible types: IPv4 -> FLOAT [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToInt() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col int)",
-                21,
-                "inconvertible types: IPv4 -> INT [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToLong() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col long)",
-                21,
-                "inconvertible types: IPv4 -> LONG [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToLong128() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col long128)",
-                21,
-                "inconvertible types: IPv4 -> LONG128 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToLong256() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col long256)",
-                21,
-                "inconvertible types: IPv4 -> LONG256 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToShort() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col short)",
-                21,
-                "inconvertible types: IPv4 -> SHORT [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToStr() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col string)",
-                21,
-                "inconvertible types: IPv4 -> STRING [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToSymbol() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col symbol)",
-                21,
-                "inconvertible types: IPv4 -> SYMBOL [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToTimestamp() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col timestamp)",
-                21,
-                "inconvertible types: IPv4 -> TIMESTAMP [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIPv4ToUUID() throws Exception {
-        assertFailure("insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col uuid)",
-                21,
-                "inconvertible types: IPv4 -> UUID [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIntToIPv4() throws Exception {
-
-        assertFailure("insert into y select rnd_int() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: INT -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastIntToStr() throws Exception {
-        assertFailure("insert into y select rnd_int() col from long_sequence(10)",
-                "create table y (col string)",
-                21,
-                "inconvertible types: INT -> STRING [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastLong256ToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_long256() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: LONG256 -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastLongToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_long() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: LONG -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastShortToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_short() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: SHORT -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
     public void testImplicitCastStrToDouble() throws Exception {
-        assertQuery("column\tprice\n" +
+        assertQuery(
+                "column\tprice\n" +
                         "80.43224099968394\t0.8043224099968393\n" +
                         "28.45577791213847\t0.2845577791213847\n" +
                         "93.4460485739401\t0.9344604857394011\n" +
@@ -5695,104 +2078,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImplicitCastStrToIpv4() throws Exception {
-
-        compiler.compile("create table x (b string)", sqlExecutionContext);
-        executeInsert("insert into x values('0.0.0.1')");
-        executeInsert("insert into x values('0.0.0.2')");
-        executeInsert("insert into x values('0.0.0.3')");
-        executeInsert("insert into x values('0.0.0.4')");
-        executeInsert("insert into x values('0.0.0.5')");
-        executeInsert("insert into x values('0.0.0.6')");
-        executeInsert("insert into x values('0.0.0.7')");
-        executeInsert("insert into x values('0.0.0.8')");
-        executeInsert("insert into x values('0.0.0.9')");
-        executeInsert("insert into x values('0.0.0.10')");
-        compiler.compile("create table y (a ipv4)", sqlExecutionContext);
-
-        engine.releaseInactive();
-
-        assertQuery("a\n" +
-                        "0.0.0.1" + '\n' +
-                        "0.0.0.2" + '\n' +
-                        "0.0.0.3" + '\n' +
-                        "0.0.0.4" + '\n' +
-                        "0.0.0.5" + '\n' +
-                        "0.0.0.6" + '\n' +
-                        "0.0.0.7" + '\n' +
-                        "0.0.0.8" + '\n' +
-                        "0.0.0.9" + '\n' +
-                        "0.0.0.10" + '\n',
-                "select * from y",
-                "insert into y select * from x",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testImplicitCastSymbolToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_symbol(4,4,4,2) col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: SYMBOL -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastTimestampToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_timestamp(10,100000,356) col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: TIMESTAMP -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testImplicitCastUUIDToIPv4() throws Exception {
-        assertFailure("insert into y select rnd_uuid4() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: UUID -> IPv4 [from=col, to=col]"
-        );
-    }
-
-    @Test
-    public void testInnerJoinIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('1.1.1.1/32', 0) ip, 1 count from long_sequence(5))", sqlExecutionContext);
-        compiler.compile("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))", sqlExecutionContext);
-        assertSql("select test.count, test2.count2 from test inner join test2 on test2.ip2 = test.ip", "count\tcount2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n" +
-                "1\t2\n");
-    }
-
-    @Test
     public void testInsertMissingQuery() throws Exception {
-        assertFailure(
+        assertException(
                 "insert into x (a,b)",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b from long_sequence(20)), index(b)",
                 19,
@@ -5801,279 +2088,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntPlusIPv4Const() throws Exception {
-        assertSql("select 20 + ipv4 '1.1.1.1'", "column\n" +
-                "1.1.1.21\n");
-    }
-
-    @Test
-    public void testIntPlusIPv4Const2() throws Exception {
-        assertSql("select 235 + ipv4 '255.255.255.20'", "column\n" +
-                "255.255.255.255\n");
-    }
-
-    @Test
-    public void testIntPlusIPv4ConstNull() throws Exception {
-        assertSql("select 20 + ipv4 '0.0.0.0'", "column\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIntPlusIPv4ConstOverflow() throws Exception {
-        assertSql("select 1 + ipv4 '255.255.255.255'", "column\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIntPlusIPv4ConstOverflow2() throws Exception {
-        assertSql("select 236 + ipv4 '255.255.255.20'", "column\n" +
-                "\n");
-    }
-
-    @Test
-    public void testIntPlusIPv4HalfConst() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.40\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.35\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.40\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.31\n" +
-                        "0.0.0.33\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.33\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.35\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.34\n" +
-                        "0.0.0.35\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.37\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.22\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.29\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.38\n" +
-                        "0.0.0.36\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.27\n" +
-                        "0.0.0.25\n" +
-                        "0.0.0.33\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.32\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.40\n" +
-                        "0.0.0.31\n" +
-                        "0.0.0.28\n" +
-                        "0.0.0.33\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.40\n" +
-                        "0.0.0.26\n" +
-                        "0.0.0.39\n" +
-                        "0.0.0.21\n" +
-                        "0.0.0.24\n" +
-                        "0.0.0.30\n" +
-                        "0.0.0.23\n" +
-                        "0.0.0.26\n",
-                "select 20 + ip from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(1,20,0)::ipv4 ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testIntPlusIPv4Var() throws Exception {
-        assertQuery("column\n" +
-                        "0.0.1.120\n" +
-                        "0.0.0.186\n" +
-                        "0.0.3.77\n" +
-                        "0.0.2.202\n" +
-                        "0.0.1.82\n" +
-                        "0.0.3.45\n" +
-                        "0.0.0.102\n" +
-                        "0.0.3.224\n" +
-                        "0.0.3.157\n" +
-                        "0.0.0.29\n" +
-                        "0.0.3.197\n" +
-                        "0.0.1.2\n" +
-                        "0.0.1.81\n" +
-                        "0.0.2.114\n" +
-                        "0.0.0.44\n" +
-                        "0.0.1.201\n" +
-                        "0.0.3.136\n" +
-                        "0.0.1.65\n" +
-                        "0.0.3.139\n" +
-                        "0.0.2.169\n" +
-                        "0.0.2.229\n" +
-                        "0.0.2.132\n" +
-                        "0.0.3.169\n" +
-                        "0.0.0.194\n" +
-                        "0.0.1.103\n" +
-                        "0.0.1.100\n" +
-                        "0.0.0.108\n" +
-                        "0.0.1.236\n" +
-                        "0.0.2.42\n" +
-                        "0.0.3.132\n" +
-                        "0.0.0.10\n" +
-                        "0.0.0.29\n" +
-                        "0.0.1.129\n" +
-                        "0.0.2.160\n" +
-                        "0.0.3.122\n" +
-                        "0.0.2.7\n" +
-                        "0.0.2.172\n" +
-                        "0.0.0.175\n" +
-                        "0.0.0.80\n" +
-                        "0.0.3.123\n" +
-                        "0.0.0.165\n" +
-                        "0.0.0.112\n" +
-                        "0.0.0.73\n" +
-                        "0.0.2.150\n" +
-                        "0.0.1.9\n" +
-                        "0.0.3.3\n" +
-                        "0.0.2.147\n" +
-                        "0.0.0.210\n" +
-                        "0.0.1.96\n" +
-                        "0.0.1.249\n" +
-                        "0.0.3.98\n" +
-                        "0.0.3.6\n" +
-                        "0.0.0.58\n" +
-                        "0.0.2.82\n" +
-                        "0.0.2.177\n" +
-                        "0.0.0.87\n" +
-                        "0.0.3.64\n" +
-                        "0.0.2.206\n" +
-                        "0.0.0.84\n" +
-                        "0.0.1.86\n" +
-                        "0.0.1.6\n" +
-                        "0.0.3.176\n" +
-                        "0.0.1.25\n" +
-                        "0.0.2.127\n" +
-                        "0.0.3.118\n" +
-                        "0.0.3.222\n" +
-                        "0.0.3.24\n" +
-                        "0.0.1.187\n" +
-                        "0.0.1.99\n" +
-                        "0.0.1.63\n" +
-                        "0.0.0.136\n" +
-                        "0.0.1.71\n" +
-                        "0.0.3.123\n" +
-                        "0.0.3.25\n" +
-                        "0.0.1.17\n" +
-                        "0.0.3.191\n" +
-                        "0.0.0.101\n" +
-                        "0.0.3.236\n" +
-                        "0.0.2.10\n" +
-                        "0.0.2.188\n" +
-                        "0.0.2.154\n" +
-                        "0.0.1.171\n" +
-                        "0.0.0.146\n" +
-                        "0.0.0.153\n" +
-                        "0.0.0.155\n" +
-                        "0.0.2.146\n" +
-                        "0.0.1.70\n" +
-                        "0.0.2.226\n" +
-                        "0.0.3.70\n" +
-                        "0.0.0.176\n" +
-                        "0.0.0.188\n" +
-                        "0.0.0.251\n" +
-                        "0.0.1.190\n" +
-                        "0.0.1.42\n" +
-                        "0.0.1.74\n" +
-                        "0.0.0.151\n" +
-                        "0.0.0.241\n" +
-                        "0.0.2.134\n" +
-                        "0.0.2.79\n" +
-                        "0.0.3.98\n",
-                "select bytes + ip from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,20,0)::ipv4 ip," +
-                        "    rnd_int(1,20,0)::ipv4 ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true);
-    }
-
-    @Test
     public void testJoinOnExecutionOrder() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table l as( select x from long_sequence(100) )", sqlExecutionContext);
-            compiler.compile("create table rr as( select x + 50 as y from long_sequence(100) )", sqlExecutionContext);
+            ddl("create table l as( select x from long_sequence(100) )");
+            ddl("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select x, y from l left join rr on l.x = rr.y and (y > 0 or y > 10)",
                     sink,
@@ -6185,11 +2206,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testJoinWhereExecutionOrder() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table l as( select x from long_sequence(100) )", sqlExecutionContext);
-            compiler.compile("create table rr as( select x + 50 as y from long_sequence(100) )", sqlExecutionContext);
+            ddl("create table l as( select x from long_sequence(100) )");
+            ddl("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select x, y\n" +
                             "from l left join rr on l.x = rr.y\n" +
@@ -6251,81 +2272,56 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLastIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 2) ip, rnd_symbol('ab', '$a', 'ac') sym from long_sequence(20))", sqlExecutionContext);
-        assertSql("select sym, last(ip) from test", "sym\tlast\n" +
-                "$a\t10.5.237.229\n" +
-                "ac\t10.5.235.200\n" +
-                "ab\t\n");
-    }
-
-    @Test
     public void testLatestByAll() throws Exception {
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllBool() throws Exception {
-        assertQuery13("a\tb\tk\n" +
-                        "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                        "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select * from" +
-                        "(" +
-                        " select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_boolean() b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20) " +
-                        ")" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " false," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                        "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
+                "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select * from" +
+                "(" +
+                " select" +
+                " rnd_double(0)*100 a," +
+                " rnd_boolean() b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20) " +
+                ")" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " false," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
+                "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6336,34 +2332,26 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
-                "select * from x where 6 < 10 latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select * from x where 6 < 10 latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6373,33 +2361,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
-                "select * from x where a > 40 latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select * from x where a > 40 latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6410,34 +2390,26 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
-                "select * from x latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select * from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6448,33 +2420,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
-                "select * from x where 5 > 2 latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select * from x where 5 > 2 latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -6484,38 +2448,30 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(expected,
-                "select * from (select a,k,b from x latest on k partition by b) where a > 40",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 46.578761277152225," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tk\tb\n" +
-                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
-                true,
-                false
-        );
+        assertQuery(expected, "select * from (select a,k,b from x latest on k partition by b) where a > 40", "create table x as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " to_timestamp('2019', 'yyyy') t," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " 46.578761277152225," +
+                " 'VTJW'" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tk\tb\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, false, false);
     }
 
     @Test
@@ -6526,78 +2482,63 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(expected,
-                "select a,k,b from x where a > 40 latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 46.578761277152225," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tk\tb\n" +
-                        "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
-                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select a,k,b from x where a > 40 latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " to_timestamp('2019', 'yyyy') t," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " 46.578761277152225," +
+                " 'VTJW'" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tk\tb\n" +
+                "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllIndexedFilterBySymbol() throws Exception {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
-        assertQuery13(expected,
-                "select * from x where c = 'SXUX' latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_symbol(5,4,4,1) c," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " 'SXUX'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tc\tk\n" +
-                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
-                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select * from x where c = 'SXUX' latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " rnd_symbol(5,4,4,1) c," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " 'SXUX'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tb\tc\tk\n" +
+                "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
+                "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllIndexedFilterColumnDereference() throws Exception {
         final String expected = "b\tk\n" +
                 "RXGZ\t1970-01-12T13:46:40.000000Z\n";
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select b,k from x where b = 'RXGZ' and k < '1970-01-22' latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -6618,38 +2559,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllIndexedFilteredMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
                                     "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "trips where id > 0 latest on ts partition by vendor order by ts",
                             sink,
@@ -6671,7 +2609,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(1);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
@@ -6689,7 +2628,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -6707,7 +2647,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -6725,7 +2666,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
@@ -6743,7 +2685,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(8);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
@@ -6762,7 +2705,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within(#f9, #z3, #vepe7h) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -6779,7 +2723,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllIndexedGeoHashFnNonConst() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile(
+                    ddl(
                             "create table x as (" +
                                     "select" +
                                     " rnd_symbol(113, 4, 4, 2) s," +
@@ -6788,11 +2732,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     " (rnd_double()*180.0 - 90.0) lat, " +
                                     " rnd_geohash(40) geo8" +
                                     " from long_sequence(1000)" +
-                                    "), index(s) timestamp (ts) partition by DAY",
-                            sqlExecutionContext
+                                    "), index(s) timestamp (ts) partition by DAY"
                     );
                     try {
-                        assertQuery("time\tuuid\thash\n",
+                        assertQuery(
+                                "time\tuuid\thash\n",
                                 "select * from x where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg) latest on ts partition by s",
                                 "ts",
                                 true,
@@ -6811,7 +2755,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("time\tuuid\thash\n" +
+                        assertQuery(
+                                "time\tuuid\thash\n" +
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                         "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -6833,7 +2778,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("time\tuuid\thash\n" +
+                        assertQuery(
+                                "time\tuuid\thash\n" +
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                         "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -6976,7 +2922,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createRndGeoHashBitsTable();
-                    assertQuery("i\ts\tts\tbits3\tbits7\tbits9\n" +
+                    assertQuery(
+                            "i\ts\tts\tbits3\tbits7\tbits9\n" +
                                     "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
                                     "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
                             "select * from x where bits7 within(#wt/5) latest on ts partition by s",//(##11100)",
@@ -6994,7 +2941,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createRndGeoHashBitsTable();
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from x where bits3 within(##111111) latest on ts partition by s",
                                 "ts",
                                 true,
@@ -7013,7 +2961,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
+                    assertQuery(
+                            "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
@@ -7103,7 +3052,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where 'hash' within(#f9) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -7122,7 +3072,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where uuid within(#f9) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -7141,7 +3092,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within() latest on time partition by uuid",
                                 "time",
                                 true,
@@ -7160,7 +3112,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within(#f9, #z3, null) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -7179,7 +3132,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -7198,7 +3152,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("",
+                        assertQuery(
+                                "",
                                 "select * from pos where hash within(cast('f91t' as geohash(4c)), #z3, null) latest on time partition by uuid",
                                 "time",
                                 true,
@@ -7215,38 +3170,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllIndexedListMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
                                     "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "trips where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') latest on ts partition by vendor order by ts",
                             sink,
@@ -7272,41 +3224,33 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery13(expected,
-                "select a,k,b from x latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tk\tb\n" +
-                        "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
-                        "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
-                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select a,k,b from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " to_timestamp('2019', 'yyyy') t," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " 'VTJW'" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "a\tk\tb\n" +
+                "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
+                "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
     }
 
     @Test
@@ -7317,72 +3261,61 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "1970-01-12T13:46:40.000000Z\t48.820511018586934\n" +
                 "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
                 "1970-01-22T23:46:40.000000Z\t40.455469747939254\n";
-        assertQuery13(expected,
-                "select k,a from x latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "k\ta\n" +
-                        "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
-                        "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
-                        "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
-                        "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
-                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select k,a from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'VTJW'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "k\ta\n" +
+                "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
+                "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
+                "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
+                "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
+                "2019-01-01T00:00:00.000000Z\t56.594291398612405\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllIndexedMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
                                     "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "trips latest on ts partition by vendor order by ts",
                             sink,
@@ -7401,84 +3334,73 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByAllMixed() throws Exception {
-        assertQuery13("b\tk\ta\n" +
-                        "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
-                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
-                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
-                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
-                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
-                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n",
-                "select b,k,a from x latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "b\tk\ta\n" +
-                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
-                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
-                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
-                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
-                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n" +
-                        "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n",
-                true,
-                true
-        );
+        assertQuery("b\tk\ta\n" +
+                "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
+                "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
+                "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
+                "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
+                "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
+                "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n", "select b,k,a from x latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " to_timestamp('2019', 'yyyy') t," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " rnd_double(0)*100," +
+                " 'VTJW'" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", "b\tk\ta\n" +
+                "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
+                "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
+                "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
+                "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
+                "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n" +
+                "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("create table trips(id int, vendor symbol, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ddl("create table trips(id int, vendor symbol, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
                                     "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
-                    compiler.compile(
+                    insert(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
                                     "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)",
-                            sqlExecutionContext
+                                    "from long_sequence(1000)"
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "trips latest on ts partition by vendor order by ts",
                             sink,
@@ -7502,54 +3424,46 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery13(expected,
-                "select * from x where a > 40 latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'CCKS'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                expected +
-                        "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery(expected, "select * from x where a > 40 latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                " select" +
+                " rnd_double(0)*100," +
+                " 'CCKS'," +
+                " to_timestamp('2019', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp (t)", expected +
+                "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByAllValueIndexedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(\n" +
+            ddl("create table balances(\n" +
                     "cust_id SYMBOL index,\n" +
                     "balance_ccy SYMBOL,\n" +
                     "balance DOUBLE,\n" +
                     "timestamp TIMESTAMP\n" +
                     ")\n" +
-                    "timestamp(timestamp)", sqlExecutionContext);
+                    "timestamp(timestamp)");
 
-            executeInsert("insert into balances values ('c1', 'USD', 1500, '2021-09-14T17:35:01.000000Z')");
-            executeInsert("insert into balances values ('c1', 'USD', 900.75, '2021-09-14T17:35:02.000000Z')");
-            executeInsert("insert into balances values ('c1', 'EUR', 880.2, '2021-09-14T17:35:03.000000Z')");
-            executeInsert("insert into balances values ('c1', 'EUR', 782, '2021-09-14T17:35:04.000000Z')");
-            executeInsert("insert into balances values ('c2', 'USD', 900, '2021-09-14T17:35:05.000000Z')");
-            executeInsert("insert into balances values ('c2', 'USD', 190.75, '2021-09-14T17:35:06.000000Z')");
-            executeInsert("insert into balances values ('c2', 'EUR', 890.2, '2021-09-14T17:35:07.000000Z')");
-            executeInsert("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
+            insert("insert into balances values ('c1', 'USD', 1500, '2021-09-14T17:35:01.000000Z')");
+            insert("insert into balances values ('c1', 'USD', 900.75, '2021-09-14T17:35:02.000000Z')");
+            insert("insert into balances values ('c1', 'EUR', 880.2, '2021-09-14T17:35:03.000000Z')");
+            insert("insert into balances values ('c1', 'EUR', 782, '2021-09-14T17:35:04.000000Z')");
+            insert("insert into balances values ('c2', 'USD', 900, '2021-09-14T17:35:05.000000Z')");
+            insert("insert into balances values ('c2', 'USD', 190.75, '2021-09-14T17:35:06.000000Z')");
+            insert("insert into balances values ('c2', 'EUR', 890.2, '2021-09-14T17:35:07.000000Z')");
+            insert("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "SELECT * FROM balances \n" +
                             "WHERE cust_id = 'c1' and balance_ccy='EUR' \n" +
@@ -7563,7 +3477,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByDeprecated() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "28.45577791213847\tHNR\t1970-01-02T03:46:40.000000Z\n" +
                         "88.99286912289664\tABC\t1970-01-05T15:06:40.000000Z\n",
                 "select * from x latest by b",
@@ -7589,12 +3504,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "11.427984775756228\tHNR\t1971-01-01T00:00:00.000000Z\n",
                 true,
                 false,
-                true);
+                true
+        );
     }
 
     @Test
     public void testLatestByDeprecatedFiltered() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
                 "select * from x latest by b where b = 'HNR'",
                 "create table x as " +
@@ -7618,12 +3535,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
                 true,
                 false,
-                true);
+                true
+        );
     }
 
     @Test
     public void testLatestByFailsOnNonDesignatedTimestamp() throws Exception {
-        assertFailure("tab latest on ts partition by id",
+        assertException(
+                "tab latest on ts partition by id",
                 "create table tab(" +
                         "    id symbol, " +
                         "    name symbol, " +
@@ -7631,7 +3550,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    ts timestamp" +
                         ")",
                 14,
-                "latest by over a table requires designated TIMESTAMP");
+                "latest by over a table requires designated TIMESTAMP"
+        );
     }
 
     @Test
@@ -7693,23 +3613,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration);
-                 SqlCompiler compiler = new SqlCompiler(engine);
-                 SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
-                    compiler.compile(("create table x as " +
+                    compiler.compile(
+                            "create table x as " +
                                     "(" +
                                     "select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 100000000000) k from" +
                                     " long_sequence(200)" +
-                                    ") timestamp(k) partition by DAY"),
-                            sqlExecutionContext);
-
-                    AbstractGriffinTest.refreshTablesInBaseEngine();
-                    try (final RecordCursorFactory factory = compiler.compile(
-                            "select * from x where b = 'PEHN' and a < 22 latest on k partition by b",
+                                    ") timestamp(k) partition by DAY",
                             sqlExecutionContext
-                    ).getRecordCursorFactory()) {
+                    );
+
+                    refreshTablesInBaseEngine();
+                    try (RecordCursorFactory factory = compiler.compile("select * from x where b = 'PEHN' and a < 22 latest on k partition by b", sqlExecutionContext).getRecordCursorFactory()) {
                         try {
                             assertCursor(
                                     "a\tb\tk\n" +
@@ -7733,28 +3653,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testLatestByIPv4() throws Exception {
-        assertQuery("ip\tbytes\ttime\n" +
-                        "0.0.0.4\t269\t1970-01-01T00:00:08.700000Z\n" +
-                        "0.0.0.3\t660\t1970-01-01T00:00:09.000000Z\n" +
-                        "0.0.0.5\t624\t1970-01-01T00:00:09.600000Z\n" +
-                        "0.0.0.1\t25\t1970-01-01T00:00:09.800000Z\n" +
-                        "0.0.0.2\t326\t1970-01-01T00:00:09.900000Z\n",
-                "select * from test latest by ip",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,5,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000) time" +
-                        "  from long_sequence(100)" +
-                        ")",
-                null,
-                true,
-                true);
     }
 
     @Test
@@ -7804,7 +3702,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByKeyValue() throws Exception {
         // no index
-        assertQuery11("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
                 "select * from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
@@ -7825,13 +3724,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
     public void testLatestByKeyValueColumnDereference() throws Exception {
         // no index
-        assertQuery11("k\ta\tb\n" +
+        assertQuery(
+                "k\ta\tb\n" +
                         "1970-01-03T07:33:20.000000Z\t23.90529010846525\tRXGZ\n",
                 "select k,a,b from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
@@ -7852,13 +3754,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "k\ta\tb\n" +
-                        "1971-01-01T00:00:00.000000Z\t56.594291398612405\tRXGZ\n");
+                        "1971-01-01T00:00:00.000000Z\t56.594291398612405\tRXGZ\n",
+                true
+        );
     }
 
     @Test
     public void testLatestByKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                 "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b",
                 "create table x as " +
@@ -7878,7 +3783,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n");
+                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -7887,7 +3794,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByKeyValueFilteredEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery("a\tb\tk\n",
+        assertQuery(
+                "a\tb\tk\n",
                 "select * from x where b = 'PEHN' and a < 22 and 1 = 2 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -7908,7 +3816,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByKeyValueIndexed() throws Exception {
-        assertQuery11("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
                 "select * from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
@@ -7928,13 +3837,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
     public void testLatestByKeyValueIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                 "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b",
                 "create table x as " +
@@ -7954,14 +3866,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n");
+                        "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testLatestByKeyValueInterval() throws Exception {
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n",
                 "select * from x where b = 'PEHN' and k IN '1970-01-06T18:53:20;11d' latest on k partition by b",
                 "create table x as " +
@@ -7973,139 +3888,108 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
-                "k");
+                "k"
+        );
     }
 
     @Test
     public void testLatestByKeyValues() throws Exception {
         // no index
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x where b in ('RXGZ','HYRX') latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByKeyValuesFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match() latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(5)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "12.105630273556178\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match() latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(5)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "12.105630273556178\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testLatestByKeyValuesIndexed() throws Exception {
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x where b in ('RXGZ','HYRX') latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n",
-                "select * from x where b in ('RXGZ','HYRX') and a > 20 and test_match() latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n", "select * from x where b in ('RXGZ','HYRX') and a > 20 and test_match() latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -8113,7 +3997,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByMissingKeyValue() throws Exception {
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -8133,13 +4018,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "72.30015763133606\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "72.30015763133606\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
     public void testLatestByMissingKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x where b in ('XYZ') and a < 60 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -8159,7 +4047,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -8167,7 +4057,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByMissingKeyValueIndexed() throws Exception {
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -8187,12 +4078,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "81.64182592467493\tXYZ\t1971-01-05T15:06:40.000000Z\n");
+                        "81.64182592467493\tXYZ\t1971-01-05T15:06:40.000000Z\n",
+                true
+        );
     }
 
     @Test
     public void testLatestByMissingKeyValueIndexedColumnDereference() throws Exception {
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select b,k,a from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -8212,13 +4106,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(t)",
                 "b\tk\ta\n" +
-                        "XYZ\t1971-01-05T15:06:40.000000Z\t81.64182592467493\n");
+                        "XYZ\t1971-01-05T15:06:40.000000Z\t81.64182592467493\n",
+                true
+        );
     }
 
     @Test
     public void testLatestByMissingKeyValueIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery11(null,
+        assertQuery(
+                null,
                 "select * from x where b in ('XYZ') and a < 60 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -8238,7 +4135,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(3)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -8246,63 +4145,47 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByMissingKeyValues() throws Exception {
         // no index
-        assertQuery13("a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x where b in ('XYZ','HYRX') latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('XYZ','HYRX') latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'XYZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByMissingKeyValuesFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n",
-                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'XYZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -8310,63 +4193,47 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByMissingKeyValuesIndexed() throws Exception {
-        assertQuery13("a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x where b in ('XYZ', 'HYRX') latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'XYZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByMissingKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
-                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n",
-                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 10000000000) k" +
-                        " from" +
-                        " long_sequence(300)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " 88.1," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
-                        "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n", "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 10000000000) k" +
+                " from" +
+                " long_sequence(300)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 88.1," +
+                " 'XYZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
+                "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -8454,46 +4321,38 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByMultipleColumns() throws Exception {
-        assertQuery13("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n",
-                "select * from balances latest on timestamp partition by cust_id, balance_ccy",
-                "create table balances (\n" +
-                        "\tcust_id int, \n" +
-                        "\tbalance_ccy symbol, \n" +
-                        "\tbalance double, \n" +
-                        "\tstatus byte, \n" +
-                        "\ttimestamp timestamp\n" +
-                        ") timestamp(timestamp)",
-                "timestamp",
-                "insert into balances select * from (" +
-                        " select" +
-                        " abs(rnd_int()) % 4," +
-                        " rnd_str('USD', 'GBP', 'EUR')," +
-                        " rnd_double()," +
-                        " rnd_byte(0,1)," +
-                        " cast(0 as timestamp) timestamp" +
-                        " from long_sequence(150)" +
-                        ") timestamp (timestamp)",
-                "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
-                        "3\tUSD\t0.8796413468565342\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "3\tEUR\t0.011099265671968506\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\tEUR\t0.10747511833573742\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\tGBP\t0.15274858078119136\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "0\tGBP\t0.07383464174908916\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\tEUR\t0.30062011052460846\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\tUSD\t0.12454054765285283\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "0\tUSD\t0.3124458010612313\t0\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\tUSD\t0.7943185767500432\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\tGBP\t0.4388864091771264\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n", "select * from balances latest on timestamp partition by cust_id, balance_ccy", "create table balances (\n" +
+                "\tcust_id int, \n" +
+                "\tbalance_ccy symbol, \n" +
+                "\tbalance double, \n" +
+                "\tstatus byte, \n" +
+                "\ttimestamp timestamp\n" +
+                ") timestamp(timestamp)", "timestamp", "insert into balances select * from (" +
+                " select" +
+                " abs(rnd_int()) % 4," +
+                " rnd_str('USD', 'GBP', 'EUR')," +
+                " rnd_double()," +
+                " rnd_byte(0,1)," +
+                " cast(0 as timestamp) timestamp" +
+                " from long_sequence(150)" +
+                ") timestamp (timestamp)", "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
+                "3\tUSD\t0.8796413468565342\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "3\tEUR\t0.011099265671968506\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "1\tEUR\t0.10747511833573742\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "1\tGBP\t0.15274858078119136\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "0\tGBP\t0.07383464174908916\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "2\tEUR\t0.30062011052460846\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "1\tUSD\t0.12454054765285283\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "0\tUSD\t0.3124458010612313\t0\t1970-01-01T00:00:00.000000Z\n" +
+                "2\tUSD\t0.7943185767500432\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "2\tGBP\t0.4388864091771264\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestByNonExistingColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from x latest on k partition by y",
                 "create table x as " +
                         "(" +
@@ -8505,7 +4364,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 41,
-                "Invalid column");
+                "Invalid column"
+        );
     }
 
     @Test
@@ -8555,127 +4415,127 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
+            ddl("create table tab(" +
                     "    id symbol, " +
                     "    name symbol, " +
                     "    value long, " +
                     "    ts timestamp, " +
                     "    other_ts timestamp" +
-                    ") timestamp(ts) partition by day", sqlExecutionContext);
+                    ") timestamp(ts) partition by day");
 
-            executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
-            executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
-            executeInsert("insert into tab values ('d1', 'c1', 113, 3, 1)");
-            executeInsert("insert into tab values ('d1', 'c2', 121, 2, 1)");
-            executeInsert("insert into tab values ('d1', 'c2', 122, 3, 2)");
-            executeInsert("insert into tab values ('d1', 'c2', 123, 4, 3)");
-            executeInsert("insert into tab values ('d2', 'c1', 211, 3, 3)");
-            executeInsert("insert into tab values ('d2', 'c1', 212, 4, 3)");
-            executeInsert("insert into tab values ('d2', 'c2', 221, 5, 4)");
-            executeInsert("insert into tab values ('d2', 'c2', 222, 6, 5)");
+            insert("insert into tab values ('d1', 'c1', 111, 1, 3)");
+            insert("insert into tab values ('d1', 'c1', 112, 2, 2)");
+            insert("insert into tab values ('d1', 'c1', 113, 3, 1)");
+            insert("insert into tab values ('d1', 'c2', 121, 2, 1)");
+            insert("insert into tab values ('d1', 'c2', 122, 3, 2)");
+            insert("insert into tab values ('d1', 'c2', 123, 4, 3)");
+            insert("insert into tab values ('d2', 'c1', 211, 3, 3)");
+            insert("insert into tab values ('d2', 'c1', 212, 4, 3)");
+            insert("insert into tab values ('d2', 'c2', 221, 5, 4)");
+            insert("insert into tab values ('d2', 'c2', 222, 6, 5)");
 
             // latest by designated timestamp, no order by, select all columns
             assertSql(
-                    "(tab where name in ('c1')) latest on ts partition by id",
                     "id\tname\tvalue\tts\tother_ts\n" +
                             "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
-                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n", "(tab where name in ('c1')) latest on ts partition by id"
+            );
 
             // latest by designated timestamp, ordered by another timestamp, select all columns
             assertSql(
-                    "(tab where name in ('c1') order by other_ts) latest on ts partition by id",
                     "id\tname\tvalue\tts\tother_ts\n" +
                             "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
-                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n", "(tab where name in ('c1') order by other_ts) latest on ts partition by id"
+            );
 
             // latest by designated timestamp, select subset of columns
             assertSql(
-                    "select value, ts from (tab where name in ('c1')) latest on ts partition by id",
                     "value\tts\n" +
                             "113\t1970-01-01T00:00:00.000003Z\n" +
-                            "212\t1970-01-01T00:00:00.000004Z\n");
+                            "212\t1970-01-01T00:00:00.000004Z\n", "select value, ts from (tab where name in ('c1')) latest on ts partition by id"
+            );
 
             // latest by designated timestamp, partition by multiple columns
             assertSql(
-                    "(tab where name in ('c1','c2')) latest on ts partition by id, name",
                     "id\tname\tvalue\tts\tother_ts\n" +
                             "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
                             "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n" +
                             "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n" +
-                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000005Z\n");
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000005Z\n", "(tab where name in ('c1','c2')) latest on ts partition by id, name"
+            );
 
             // latest by non-designated timestamp, ordered
             assertSql(
-                    "(tab where name in ('c1') order by other_ts) latest on other_ts partition by id",
                     "id\tname\tvalue\tts\tother_ts\n" +
                             "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
-                            "d2\tc1\t211\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\n");
+                            "d2\tc1\t211\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\n", "(tab where name in ('c1') order by other_ts) latest on other_ts partition by id"
+            );
 
             // latest by non-designated timestamp, no order
             // note: other_ts is equal for both 211 and 212 records, so it's fine that
             // the second returned row is different from the ordered by query
             assertSql(
-                    "(tab where name in ('c1')) latest on other_ts partition by id",
                     "id\tname\tvalue\tts\tother_ts\n" +
                             "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
-                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n", "(tab where name in ('c1')) latest on other_ts partition by id"
+            );
 
             // empty sub-query
             assertSql(
-                    "(tab where name in ('c3')) latest on ts partition by id",
-                    "id\tname\tvalue\tts\tother_ts\n");
+                    "id\tname\tvalue\tts\tother_ts\n", "(tab where name in ('c3')) latest on ts partition by id"
+            );
         });
     }
 
     @Test
     public void testLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
+            ddl("create table tab(" +
                     "    id symbol, " +
                     "    name symbol, " +
                     "    value long, " +
                     "    ts timestamp, " +
                     "    other_ts timestamp" +
-                    ") timestamp(ts) partition by day", sqlExecutionContext);
+                    ") timestamp(ts) partition by day");
 
-            executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
-            executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
-            executeInsert("insert into tab values ('d1', 'c1', 113, 3, 1)");
-            executeInsert("insert into tab values ('d1', 'c2', 121, 2, 1)");
-            executeInsert("insert into tab values ('d1', 'c2', 122, 3, 2)");
-            executeInsert("insert into tab values ('d1', 'c2', 123, 4, 3)");
-            executeInsert("insert into tab values ('d2', 'c1', 211, 3, 3)");
-            executeInsert("insert into tab values ('d2', 'c1', 212, 4, 3)");
-            executeInsert("insert into tab values ('d2', 'c2', 221, 5, 4)");
-            executeInsert("insert into tab values ('d2', 'c2', 222, 6, 5)");
+            insert("insert into tab values ('d1', 'c1', 111, 1, 3)");
+            insert("insert into tab values ('d1', 'c1', 112, 2, 2)");
+            insert("insert into tab values ('d1', 'c1', 113, 3, 1)");
+            insert("insert into tab values ('d1', 'c2', 121, 2, 1)");
+            insert("insert into tab values ('d1', 'c2', 122, 3, 2)");
+            insert("insert into tab values ('d1', 'c2', 123, 4, 3)");
+            insert("insert into tab values ('d2', 'c1', 211, 3, 3)");
+            insert("insert into tab values ('d2', 'c1', 212, 4, 3)");
+            insert("insert into tab values ('d2', 'c2', 221, 5, 4)");
+            insert("insert into tab values ('d2', 'c2', 222, 6, 5)");
 
             // select all columns
             assertSql(
-                    "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
-                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n");
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n", "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id"
+            );
 
             // partition by multiple columns
             assertSql(
-                    "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\n" +
                             "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
                             "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\n" +
-                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n");
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n", "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id, name"
+            );
 
             // select subset of columns
             assertSql(
-                    "select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id",
                     "value\tts\n" +
                             "123\t1970-01-01T00:00:00.000004Z\n" +
-                            "222\t1970-01-01T00:00:00.000006Z\n");
+                            "222\t1970-01-01T00:00:00.000006Z\n", "select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id"
+            );
 
             // empty sub-query
             assertSql(
-                    "(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T) latest on ts partition by id",
-                    "id\tname\tvalue\tts\n");
+                    "id\tname\tvalue\tts\n", "(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T) latest on ts partition by id"
+            );
         });
     }
 
@@ -8722,108 +4582,84 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestBySubQuery() throws Exception {
         // no index
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryDeferred() throws Exception {
         // no index
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'UCLA'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryDeferredFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                " and a > 12 and a < 50 and test_match()" +
+                " latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 33.46," +
+                " 'UCLA'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -8831,73 +4667,57 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestBySubQueryDeferredIndexed() throws Exception {
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'UCLA'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryDeferredIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                " and a > 12 and a < 50 and test_match()" +
+                " latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 33.46," +
+                " 'UCLA'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
@@ -8906,115 +4726,91 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestBySubQueryFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                " and a > 12 and a < 50 and test_match()" +
+                " latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 33.46," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testLatestBySubQueryIndexed() throws Exception {
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
     public void testLatestBySubQueryIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()" +
-                        " latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                " and a > 12 and a < 50 and test_match()" +
+                " latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "),index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " 33.46," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
     public void testLatestBySubQueryIndexedIntColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from x where b in (select 1 a from long_sequence(4)) latest on k partition by b",
                 "create table x as " +
                         "(" +
@@ -9026,36 +4822,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 35,
-                "unsupported column type");
+                "unsupported column type"
+        );
     }
 
     @Test
     public void testLatestBySubQueryIndexedStrColumn() throws Exception {
-        assertQuery13("a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
-                "select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true
-        );
+        assertQuery("a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n", "select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n", true, true, false);
     }
 
     @Test
@@ -9128,7 +4917,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByTimestampInclusion() throws Exception {
-        assertQuery("ts\tmarket_type\tavg\n" +
+        assertQuery(
+                "ts\tmarket_type\tavg\n" +
                         "1970-01-01T00:00:09.999996Z\taaa\t0.02110922811597793\n" +
                         "1970-01-01T00:00:09.999996Z\tbbb\t0.344021345830156\n",
                 "select ts, market_type, avg(bid_price) FROM market_updates LATEST ON ts PARTITION BY market_type SAMPLE BY 1s",
@@ -9155,21 +4945,22 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
         CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY";
-        assertCompile(createTableDDL);
+        ddl(createTableDDL);
         for (String[] nameType : new String[][]{
                 {"binary", "BINARY"}}) {
-            assertFailure(
+            assertException(
                     "comprehensive latest on ts partition by " + nameType[0],
-                    null,
                     40,
-                    String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail));
+                    String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail)
+            );
         }
     }
 
     @Test
     public void testLatestByValue() throws Exception {
         // no index
-        assertQuery("a\tb\tk\n" +
+        assertQuery(
+                "a\tb\tk\n" +
                         "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
                 "select * from x where b = 'HNR' latest on k partition by b",
                 "create table x as " +
@@ -9193,24 +4984,24 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
                 true,
                 false,
-                true);
+                true
+        );
     }
 
     @Test
     public void testLeftJoinDoesNotRequireTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE sensors (ID LONG, make STRING, city STRING);", sqlExecutionContext);
-            compiler.compile(
+            ddl("create TABLE sensors (ID LONG, make STRING, city STRING);");
+            insert(
                     "INSERT INTO sensors\n" +
                             "SELECT\n" +
                             "    x ID, --increasing integer\n" +
                             "    rnd_str('Eberle', 'Honeywell', 'Omron', 'United Automation', 'RS Pro') make,\n" +
                             "    rnd_str('New York', 'Miami', 'Boston', 'Chicago', 'San Francisco') city\n" +
-                            "FROM long_sequence(10000) x;",
-                    sqlExecutionContext
+                            "FROM long_sequence(10000) x;"
             );
 
-            compiler.compile(
+            ddl(
                     "CREATE TABLE readings\n" +
                             "AS(\n" +
                             "    SELECT\n" +
@@ -9220,12 +5011,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "        rnd_long(0, 10000, 0) sensorId\n" +
                             "    FROM long_sequence(10000000) x)\n" +
                             "TIMESTAMP(ts)\n" +
-                            "PARTITION BY MONTH;",
-                    sqlExecutionContext
+                            "PARTITION BY MONTH;"
             );
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "SELECT ts, a.city, a.make, avg(temp)\n" +
                             "FROM readings timestamp(ts)\n" +
@@ -9291,81 +5081,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLeftJoinIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('1.1.1.1/16', 0) ip, 1 count from long_sequence(5))", sqlExecutionContext);
-        compiler.compile("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))", sqlExecutionContext);
-        assertSql("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip", "ip\tip2\tcount\tcount2\n" +
-                "1.1.96.238\t\t1\tNaN\n" +
-                "1.1.50.227\t\t1\tNaN\n" +
-                "1.1.89.171\t\t1\tNaN\n" +
-                "1.1.82.23\t\t1\tNaN\n" +
-                "1.1.76.40\t\t1\tNaN\n");
-    }
-
-    @Test
-    public void testLeftJoinIPv42() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(50))", sqlExecutionContext);
-        compiler.compile("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(50))", sqlExecutionContext);
-        assertSql("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip", "ip\tip2\tcount\tcount2\n" +
-                "12.5.9.238\t\t1\tNaN\n" +
-                "12.5.9.227\t\t1\tNaN\n" +
-                "12.5.9.171\t\t1\tNaN\n" +
-                "12.5.9.23\t\t1\tNaN\n" +
-                "12.5.9.40\t\t1\tNaN\n" +
-                "12.5.9.236\t\t1\tNaN\n" +
-                "12.5.9.15\t\t1\tNaN\n" +
-                "12.5.9.136\t\t1\tNaN\n" +
-                "12.5.9.145\t\t1\tNaN\n" +
-                "12.5.9.114\t12.5.9.114\t1\t2\n" +
-                "12.5.9.243\t\t1\tNaN\n" +
-                "12.5.9.229\t\t1\tNaN\n" +
-                "12.5.9.120\t\t1\tNaN\n" +
-                "12.5.9.160\t\t1\tNaN\n" +
-                "12.5.9.196\t\t1\tNaN\n" +
-                "12.5.9.235\t\t1\tNaN\n" +
-                "12.5.9.159\t12.5.9.159\t1\t2\n" +
-                "12.5.9.81\t\t1\tNaN\n" +
-                "12.5.9.196\t\t1\tNaN\n" +
-                "12.5.9.108\t\t1\tNaN\n" +
-                "12.5.9.173\t\t1\tNaN\n" +
-                "12.5.9.76\t\t1\tNaN\n" +
-                "12.5.9.126\t\t1\tNaN\n" +
-                "12.5.9.248\t\t1\tNaN\n" +
-                "12.5.9.226\t12.5.9.226\t1\t2\n" +
-                "12.5.9.115\t\t1\tNaN\n" +
-                "12.5.9.98\t\t1\tNaN\n" +
-                "12.5.9.200\t\t1\tNaN\n" +
-                "12.5.9.247\t\t1\tNaN\n" +
-                "12.5.9.216\t\t1\tNaN\n" +
-                "12.5.9.48\t\t1\tNaN\n" +
-                "12.5.9.202\t\t1\tNaN\n" +
-                "12.5.9.50\t\t1\tNaN\n" +
-                "12.5.9.228\t\t1\tNaN\n" +
-                "12.5.9.210\t\t1\tNaN\n" +
-                "12.5.9.7\t\t1\tNaN\n" +
-                "12.5.9.4\t\t1\tNaN\n" +
-                "12.5.9.135\t\t1\tNaN\n" +
-                "12.5.9.117\t\t1\tNaN\n" +
-                "12.5.9.43\t12.5.9.43\t1\t2\n" +
-                "12.5.9.43\t12.5.9.43\t1\t2\n" +
-                "12.5.9.179\t12.5.9.179\t1\t2\n" +
-                "12.5.9.179\t12.5.9.179\t1\t2\n" +
-                "12.5.9.142\t\t1\tNaN\n" +
-                "12.5.9.75\t\t1\tNaN\n" +
-                "12.5.9.239\t\t1\tNaN\n" +
-                "12.5.9.48\t\t1\tNaN\n" +
-                "12.5.9.100\t12.5.9.100\t1\t2\n" +
-                "12.5.9.100\t12.5.9.100\t1\t2\n" +
-                "12.5.9.100\t12.5.9.100\t1\t2\n" +
-                "12.5.9.26\t\t1\tNaN\n" +
-                "12.5.9.240\t\t1\tNaN\n" +
-                "12.5.9.192\t\t1\tNaN\n" +
-                "12.5.9.181\t\t1\tNaN\n");
-    }
-
-    @Test
     public void testLessNoOpFilter() throws Exception {
-        assertQuery("c0\n",
+        assertQuery(
+                "c0\n",
                 "select t7.c0 from t7 where t7.c0 < t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
                 null,
@@ -9376,7 +5094,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLessOrEqualsNoOpFilter() throws Exception {
-        assertQuery("c0\n" +
+        assertQuery(
+                "c0\n" +
                         "42\n",
                 "select t7.c0 from t7 where t7.c0 <= t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
@@ -9387,48 +5106,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLimitIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("select * from test limit 5", "ip\tcount\n" +
-                "10.5.96.238\t1\n" +
-                "10.5.50.227\t1\n" +
-                "10.5.89.171\t1\n" +
-                "10.5.82.23\t1\n" +
-                "10.5.76.40\t1\n");
-    }
-
-    @Test
-    public void testLimitIPv42() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("select * from test limit -5", "ip\tcount\n" +
-                "10.5.170.235\t1\n" +
-                "10.5.45.159\t1\n" +
-                "10.5.184.81\t1\n" +
-                "10.5.207.196\t1\n" +
-                "10.5.213.108\t1\n");
-    }
-
-    @Test
-    public void testLimitIPv43() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("select * from test limit 2, 10", "ip\tcount\n" +
-                "10.5.89.171\t1\n" +
-                "10.5.82.23\t1\n" +
-                "10.5.76.40\t1\n" +
-                "10.5.20.236\t1\n" +
-                "10.5.95.15\t1\n" +
-                "10.5.178.136\t1\n" +
-                "10.5.45.145\t1\n" +
-                "10.5.93.114\t1\n");
-    }
-
-    @Test
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
+            ddl("create table x as (select x from long_sequence(10))");
             snapshotMemoryUsage();
-            try (RecordCursorFactory factory = compiler.compile("x limit -9223372036854775807-1, -1", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor("x\n" +
+            try (RecordCursorFactory factory = select("x limit -9223372036854775807-1, -1")) {
+                assertCursor(
+                        "x\n" +
                                 "1\n" +
                                 "2\n" +
                                 "3\n" +
@@ -9449,7 +5133,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLongCursor() throws Exception {
-        assertQuery("x\n" +
+        assertQuery(
+                "x\n" +
                         "1\n" +
                         "2\n" +
                         "3\n" +
@@ -9470,7 +5155,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // test another record count
 
-        assertQuery("x\n" +
+        assertQuery(
+                "x\n" +
                         "1\n" +
                         "2\n" +
                         "3\n" +
@@ -9500,7 +5186,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // test 0 record count
 
-        assertQuery("x\n",
+        assertQuery(
+                "x\n",
                 "select * from long_sequence(0)",
                 null,
                 null,
@@ -9508,7 +5195,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        assertQuery("x\n",
+        assertQuery(
+                "x\n",
                 "select * from long_sequence(-2)",
                 null,
                 null,
@@ -9521,7 +5209,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testMaxDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -9541,7 +5230,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testMaxDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -9558,18 +5248,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        executeInsert("insert into test values ('255.255.255.255', 1)");
-        assertSql("select max(ip) from test", "max\n" +
-                "255.255.255.255\n");
-    }
-
-    @Test
     public void testMinDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -9589,7 +5272,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testMinDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -9606,40 +5290,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMinIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        executeInsert("insert into test values ('0.0.0.1', 1)");
-        assertSql("select min(ip) from test", "min\n" +
-                "0.0.0.1\n");
-    }
-
-    @Test
-    public void testMinIPv4Null() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        executeInsert("insert into test values ('0.0.0.0', 1)");
-        assertSql("select min(ip) from test", "min\n" +
-                "4.98.173.21\n");
-    }
-
-    @Test
     public void testNamedBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong("var", 10);
-                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = :var", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor(
-                            "x\n" +
-                                    "10\n",
-                            factory,
-                            true,
-                            false
-                    );
-                }
+            bindVariableService.clear();
+            bindVariableService.setLong("var", 10);
+
+            try (RecordCursorFactory factory = select("select x from long_sequence(100) where x = :var")) {
+                assertCursor(
+                        "x\n" +
+                                "10\n",
+                        factory,
+                        true,
+                        false
+                );
             }
         });
     }
@@ -9699,7 +5362,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " order by b,a,x.a",
                 "create table x as " +
@@ -9720,7 +5384,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
     }
 
     @Test
@@ -9750,69 +5416,62 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
                 "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n";
 
-        assertQuery13(expected,
-                "x order by a,b,c,d,e,f,g,i,j,k,l,n",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x(a,d,c,k) select * from (" +
-                        "select" +
-                        " 1194691157," +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
-                        "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
-                        "-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
-                        "-2077041000\ttrue\tM\t0.7340656260730631\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
-                        "-1915752164\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
-                        "-1508370878\tfalse\t\tNaN\tNaN\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
-                        "00000010 2c 23\tVLOMPBETTTKRIV\n" +
-                        "-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
-                        "-1234141625\tfalse\tC\t0.06381657870188628\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
-                        "-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
-                        "-857795778\ttrue\t\t0.07828020681514525\t0.2395\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
-                        "-682294338\ttrue\tG\t0.9153044839960652\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
-                        "-42049305\tfalse\tW\t0.4698648140712085\t0.8912\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
-                        "33027131\tfalse\tS\t0.15369837085455984\t0.5083\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
-                        "131103569\ttrue\tO\tNaN\tNaN\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
-                        "161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
-                        "00000010 8e e5 61 2f\tQOLYXWC\n" +
-                        "971963578\ttrue\t\t0.22347827811588927\t0.7347\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
-                        "976011946\ttrue\tU\t0.24001459007748394\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
-                        "1150448121\ttrue\tC\t0.600707072503926\t0.7398\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
-                        "00000010 00\t\n" +
-                        "1194691156\tfalse\tQ\tNaN\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
-                        "1194691157\tfalse\tRXGZ\t88.69397617459538\tNaN\t0\t\t\tNaN\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
-                        "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
-                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n",
-                true,
-                true
-        );
+        assertQuery(expected, "x order by a,b,c,d,e,f,g,i,j,k,l,n", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_int() a," +
+                " rnd_boolean() b," +
+                " rnd_str(1,1,2) c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) i," +
+                " rnd_long() j," +
+                " timestamp_sequence(0, 1000000000) k," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", null, "insert into x(a,d,c,k) select * from (" +
+                "select" +
+                " 1194691157," +
+                " rnd_double(0)*100," +
+                " 'RXGZ'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
+                "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
+                "-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
+                "-2077041000\ttrue\tM\t0.7340656260730631\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                "-1915752164\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                "-1508370878\tfalse\t\tNaN\tNaN\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
+                "00000010 2c 23\tVLOMPBETTTKRIV\n" +
+                "-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
+                "-1234141625\tfalse\tC\t0.06381657870188628\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
+                "-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
+                "-857795778\ttrue\t\t0.07828020681514525\t0.2395\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
+                "-682294338\ttrue\tG\t0.9153044839960652\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
+                "-42049305\tfalse\tW\t0.4698648140712085\t0.8912\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
+                "33027131\tfalse\tS\t0.15369837085455984\t0.5083\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
+                "131103569\ttrue\tO\tNaN\tNaN\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
+                "161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                "00000010 8e e5 61 2f\tQOLYXWC\n" +
+                "971963578\ttrue\t\t0.22347827811588927\t0.7347\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
+                "976011946\ttrue\tU\t0.24001459007748394\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
+                "1150448121\ttrue\tC\t0.600707072503926\t0.7398\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
+                "00000010 00\t\n" +
+                "1194691156\tfalse\tQ\tNaN\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
+                "1194691157\tfalse\tRXGZ\t88.69397617459538\tNaN\t0\t\t\tNaN\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
+                "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
+                "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n", true, true, false);
     }
 
     @Test
     public void testOrderByFull() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t19.202208853547866\t1970-01-03T00:00:00.000000Z\n" +
                         "\t32.5403220015421\t1970-01-03T18:00:00.000000Z\n" +
                         "BHF\t87.99634725391621\t1970-01-03T06:00:00.000000Z\n" +
@@ -9880,12 +5539,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "XPE\t20.447441837877754\t1970-01-03T00:00:00.000000Z\n" +
                         "YCT\t57.78947915182423\t1970-01-03T18:00:00.000000Z\n" +
                         "ZOU\t65.90341607692226\t1970-01-03T15:00:00.000000Z\n",
-                true);
+                true
+        );
     }
 
     @Test
     public void testOrderByFullSymbol() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t144.98448717090477\t1970-01-03T00:00:00.000000Z\n" +
                         "\t87.99634725391621\t1970-01-03T03:00:00.000000Z\n" +
                         "\t146.37943613686184\t1970-01-03T06:00:00.000000Z\n" +
@@ -9939,12 +5600,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "SDOT\t12.02416087573498\t1970-01-04T06:00:00.000000Z\n" +
                         "SDOT\t65.51335839796312\t1970-01-04T09:00:00.000000Z\n" +
                         "VTJW\t40.22810626779558\t1970-01-03T09:00:00.000000Z\n",
-                true);
+                true
+        );
     }
 
     @Test
     public void testOrderByFullTimestampLead() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery(
+                "b\tsum\tk\n" +
                         "\t19.202208853547866\t1970-01-03T00:00:00.000000Z\n" +
                         "CPS\t80.43224099968394\t1970-01-03T00:00:00.000000Z\n" +
                         "XPE\t20.447441837877754\t1970-01-03T00:00:00.000000Z\n" +
@@ -10011,141 +5674,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "NVT\t95.40069089049732\t1970-01-04T06:00:00.000000Z\n" +
                         "WUG\t58.912164838797885\t1970-01-04T06:00:00.000000Z\n" +
                         "XIO\t14.830552335848957\t1970-01-04T09:00:00.000000Z\n",
-                true);
-    }
-
-    @Test
-    public void testOrderByIPv4Ascending() throws Exception {
-        assertQuery("ip\tbytes\tts\n" +
-                        "12.214.12.100\t598\t1970-01-01T01:11:40.000000Z\n" +
-                        "24.123.12.210\t95\t1970-01-01T00:38:20.000000Z\n" +
-                        "25.107.51.160\t827\t1970-01-01T00:15:00.000000Z\n" +
-                        "50.214.139.184\t574\t1970-01-01T01:15:00.000000Z\n" +
-                        "55.211.206.129\t785\t1970-01-01T00:43:20.000000Z\n" +
-                        "63.60.82.184\t37\t1970-01-01T01:21:40.000000Z\n" +
-                        "66.56.51.126\t904\t1970-01-01T00:25:00.000000Z\n" +
-                        "67.22.249.199\t203\t1970-01-01T00:13:20.000000Z\n" +
-                        "71.73.196.29\t741\t1970-01-01T01:00:00.000000Z\n" +
-                        "73.153.126.70\t772\t1970-01-01T01:06:40.000000Z\n" +
-                        "74.196.176.71\t740\t1970-01-01T01:18:20.000000Z\n" +
-                        "79.15.250.138\t850\t1970-01-01T00:03:20.000000Z\n" +
-                        "92.26.178.136\t7\t1970-01-01T00:08:20.000000Z\n" +
-                        "97.159.145.120\t352\t1970-01-01T00:46:40.000000Z\n" +
-                        "105.218.160.179\t986\t1970-01-01T01:08:20.000000Z\n" +
-                        "111.221.228.130\t531\t1970-01-01T01:03:20.000000Z\n" +
-                        "113.132.124.243\t522\t1970-01-01T00:11:40.000000Z\n" +
-                        "114.126.117.26\t71\t1970-01-01T00:51:40.000000Z\n" +
-                        "128.225.84.244\t313\t1970-01-01T00:30:00.000000Z\n" +
-                        "129.172.181.73\t25\t1970-01-01T00:23:20.000000Z\n" +
-                        "136.166.51.222\t580\t1970-01-01T00:36:40.000000Z\n" +
-                        "144.131.72.77\t369\t1970-01-01T00:45:00.000000Z\n" +
-                        "146.16.210.119\t383\t1970-01-01T00:16:40.000000Z\n" +
-                        "150.153.88.133\t849\t1970-01-01T01:20:00.000000Z\n" +
-                        "164.74.203.45\t678\t1970-01-01T00:53:20.000000Z\n" +
-                        "164.153.242.17\t906\t1970-01-01T00:48:20.000000Z\n" +
-                        "165.166.233.251\t332\t1970-01-01T00:50:00.000000Z\n" +
-                        "170.90.236.206\t572\t1970-01-01T00:06:40.000000Z\n" +
-                        "171.30.189.77\t238\t1970-01-01T01:05:00.000000Z\n" +
-                        "171.117.213.66\t720\t1970-01-01T00:40:00.000000Z\n" +
-                        "180.36.62.54\t528\t1970-01-01T00:35:00.000000Z\n" +
-                        "180.48.50.141\t136\t1970-01-01T00:28:20.000000Z\n" +
-                        "180.91.244.55\t906\t1970-01-01T01:01:40.000000Z\n" +
-                        "181.82.42.148\t539\t1970-01-01T00:21:40.000000Z\n" +
-                        "186.33.243.40\t659\t1970-01-01T01:16:40.000000Z\n" +
-                        "187.63.210.97\t424\t1970-01-01T00:18:20.000000Z\n" +
-                        "187.139.150.80\t580\t1970-01-01T00:00:00.000000Z\n" +
-                        "188.239.72.25\t513\t1970-01-01T00:20:00.000000Z\n" +
-                        "201.100.238.229\t318\t1970-01-01T01:10:00.000000Z\n" +
-                        "205.123.179.216\t167\t1970-01-01T00:05:00.000000Z\n" +
-                        "212.102.182.127\t984\t1970-01-01T01:13:20.000000Z\n" +
-                        "212.159.205.29\t23\t1970-01-01T00:01:40.000000Z\n" +
-                        "216.150.248.30\t563\t1970-01-01T00:58:20.000000Z\n" +
-                        "224.99.254.121\t619\t1970-01-01T00:41:40.000000Z\n" +
-                        "227.40.250.157\t903\t1970-01-01T00:33:20.000000Z\n" +
-                        "230.202.108.161\t171\t1970-01-01T00:26:40.000000Z\n" +
-                        "231.146.30.59\t766\t1970-01-01T00:10:00.000000Z\n" +
-                        "241.248.184.75\t334\t1970-01-01T00:55:00.000000Z\n" +
-                        "254.93.251.9\t810\t1970-01-01T00:31:40.000000Z\n" +
-                        "255.95.177.227\t44\t1970-01-01T00:56:40.000000Z\n",
-                "select * from test order by ip, bytes, ts",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true);
-    }
-
-    @Test
-    public void testOrderByIPv4Descending() throws Exception {
-        assertQuery("ip\tbytes\tts\n" +
-                        "255.95.177.227\t44\t1970-01-01T00:56:40.000000Z\n" +
-                        "254.93.251.9\t810\t1970-01-01T00:31:40.000000Z\n" +
-                        "241.248.184.75\t334\t1970-01-01T00:55:00.000000Z\n" +
-                        "231.146.30.59\t766\t1970-01-01T00:10:00.000000Z\n" +
-                        "230.202.108.161\t171\t1970-01-01T00:26:40.000000Z\n" +
-                        "227.40.250.157\t903\t1970-01-01T00:33:20.000000Z\n" +
-                        "224.99.254.121\t619\t1970-01-01T00:41:40.000000Z\n" +
-                        "216.150.248.30\t563\t1970-01-01T00:58:20.000000Z\n" +
-                        "212.159.205.29\t23\t1970-01-01T00:01:40.000000Z\n" +
-                        "212.102.182.127\t984\t1970-01-01T01:13:20.000000Z\n" +
-                        "205.123.179.216\t167\t1970-01-01T00:05:00.000000Z\n" +
-                        "201.100.238.229\t318\t1970-01-01T01:10:00.000000Z\n" +
-                        "188.239.72.25\t513\t1970-01-01T00:20:00.000000Z\n" +
-                        "187.139.150.80\t580\t1970-01-01T00:00:00.000000Z\n" +
-                        "187.63.210.97\t424\t1970-01-01T00:18:20.000000Z\n" +
-                        "186.33.243.40\t659\t1970-01-01T01:16:40.000000Z\n" +
-                        "181.82.42.148\t539\t1970-01-01T00:21:40.000000Z\n" +
-                        "180.91.244.55\t906\t1970-01-01T01:01:40.000000Z\n" +
-                        "180.48.50.141\t136\t1970-01-01T00:28:20.000000Z\n" +
-                        "180.36.62.54\t528\t1970-01-01T00:35:00.000000Z\n" +
-                        "171.117.213.66\t720\t1970-01-01T00:40:00.000000Z\n" +
-                        "171.30.189.77\t238\t1970-01-01T01:05:00.000000Z\n" +
-                        "170.90.236.206\t572\t1970-01-01T00:06:40.000000Z\n" +
-                        "165.166.233.251\t332\t1970-01-01T00:50:00.000000Z\n" +
-                        "164.153.242.17\t906\t1970-01-01T00:48:20.000000Z\n" +
-                        "164.74.203.45\t678\t1970-01-01T00:53:20.000000Z\n" +
-                        "150.153.88.133\t849\t1970-01-01T01:20:00.000000Z\n" +
-                        "146.16.210.119\t383\t1970-01-01T00:16:40.000000Z\n" +
-                        "144.131.72.77\t369\t1970-01-01T00:45:00.000000Z\n" +
-                        "136.166.51.222\t580\t1970-01-01T00:36:40.000000Z\n" +
-                        "129.172.181.73\t25\t1970-01-01T00:23:20.000000Z\n" +
-                        "128.225.84.244\t313\t1970-01-01T00:30:00.000000Z\n" +
-                        "114.126.117.26\t71\t1970-01-01T00:51:40.000000Z\n" +
-                        "113.132.124.243\t522\t1970-01-01T00:11:40.000000Z\n" +
-                        "111.221.228.130\t531\t1970-01-01T01:03:20.000000Z\n" +
-                        "105.218.160.179\t986\t1970-01-01T01:08:20.000000Z\n" +
-                        "97.159.145.120\t352\t1970-01-01T00:46:40.000000Z\n" +
-                        "92.26.178.136\t7\t1970-01-01T00:08:20.000000Z\n" +
-                        "79.15.250.138\t850\t1970-01-01T00:03:20.000000Z\n" +
-                        "74.196.176.71\t740\t1970-01-01T01:18:20.000000Z\n" +
-                        "73.153.126.70\t772\t1970-01-01T01:06:40.000000Z\n" +
-                        "71.73.196.29\t741\t1970-01-01T01:00:00.000000Z\n" +
-                        "67.22.249.199\t203\t1970-01-01T00:13:20.000000Z\n" +
-                        "66.56.51.126\t904\t1970-01-01T00:25:00.000000Z\n" +
-                        "63.60.82.184\t37\t1970-01-01T01:21:40.000000Z\n" +
-                        "55.211.206.129\t785\t1970-01-01T00:43:20.000000Z\n" +
-                        "50.214.139.184\t574\t1970-01-01T01:15:00.000000Z\n" +
-                        "25.107.51.160\t827\t1970-01-01T00:15:00.000000Z\n" +
-                        "24.123.12.210\t95\t1970-01-01T00:38:20.000000Z\n" +
-                        "12.214.12.100\t598\t1970-01-01T01:11:40.000000Z\n",
-                "select * from test order by ip DESC",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true);
+                true
+        );
     }
 
     @Test
@@ -10195,30 +5725,22 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n" +
                 "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n";
 
-        assertQuery13(expected,
-                "select * from x " +
-                        " order by b, a",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_long256() a," +
-                        " rnd_char() b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_long256()," +
-                        " 'W'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                expected2,
-                true,
-                true
-        );
+        assertQuery(expected, "select * from x " +
+                " order by b, a", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_long256() a," +
+                " rnd_char() b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by DAY", null, "insert into x select * from (" +
+                "select" +
+                " rnd_long256()," +
+                " 'W'," +
+                " to_timestamp('1971', 'yyyy') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", expected2, true, true, false);
     }
 
     @Test
@@ -10245,52 +5767,44 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
-        assertQuery13(expected,
-                "x order by c",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_str(1,1,2) c," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_str(5,16,2) n" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_int()," +
-                        " 'J'," +
-                        " to_timestamp('1971', 'yyyy') t," +
-                        " 'APPC'" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tc\tk\tn\n" +
-                        "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
-                        "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
-                        "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
-                        "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
-                        "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
-                        "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
-                        "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
-                        "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
-                        "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
-                        "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
-                        "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
-                        "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tAPPC\n" +
-                        "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
-                        "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
-                        "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
-                        "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
-                        "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
-                        "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                        "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                        "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
-                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n",
-                true,
-                true
-        );
+        assertQuery(expected, "x order by c", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_int() a," +
+                " rnd_str(1,1,2) c," +
+                " timestamp_sequence(0, 1000000000) k," +
+                " rnd_str(5,16,2) n" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                "select" +
+                " rnd_int()," +
+                " 'J'," +
+                " to_timestamp('1971', 'yyyy') t," +
+                " 'APPC'" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tc\tk\tn\n" +
+                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tAPPC\n" +
+                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
     }
 
     @Test
@@ -10301,7 +5815,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "4\t3\n" +
                 "5\t1\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a, count(*) from x order by 2 desc, 1 asc",
                 "create table x as (" +
                         "select" +
@@ -10325,7 +5840,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "4\t3\n" +
                 "5\t1\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a col_1, count(*) col_cnt from x order by 2 desc, 1 asc",
                 "create table x as (" +
                         "select" +
@@ -10355,7 +5871,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "1569490116\t1573662097\t-1151815083\n" +
                 "806715481\t1545253512\t-1942998303\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a col_1, b col_2, a+b col_sum from x order by 3 desc, 2, 1 desc",
                 "create table x as (" +
                         "select" +
@@ -10385,7 +5902,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "1569490116\t1573662097\t-1151815083\n" +
                 "806715481\t1545253512\t-1942998303\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select a, b, a+b from x order by 3 desc, 2, 1 desc",
                 "create table x as (" +
                         "select" +
@@ -10419,7 +5937,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery11(expected,
+        assertQuery(
+                expected,
                 "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " order by k",
                 "create table x as " +
@@ -10442,7 +5961,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 expected +
                         "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n" +
                         "88.2822836669774\tRXGZ\t1971-01-01T00:00:00.000000Z\n" +
-                        "72.30015763133606\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+                        "72.30015763133606\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true
         );
     }
 
@@ -10470,52 +5990,44 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
                 "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n";
 
-        assertQuery13(expected,
-                "x order by k,a",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_str(1,1,2) c," +
-                        " cast(1000000 as timestamp) k," +
-                        " rnd_str(5,16,2) n" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " 852921272," +
-                        " 'J'," +
-                        " cast(1000000 as timestamp) t," +
-                        " 'APPC'" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tc\tk\tn\n" +
-                        "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
-                        "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
-                        "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
-                        "-1470806499\t\t1970-01-01T00:00:01.000000Z\t\n" +
-                        "-1204245663\tJ\t1970-01-01T00:00:01.000000Z\tPKRGIIHYHBOQMY\n" +
-                        "-1182156192\t\t1970-01-01T00:00:01.000000Z\tGLUOHNZHZS\n" +
-                        "-1148479920\tJ\t1970-01-01T00:00:01.000000Z\tPSWHYRXPEH\n" +
-                        "-938514914\tX\t1970-01-01T00:00:01.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                        "-514934130\tH\t1970-01-01T00:00:01.000000Z\t\n" +
-                        "-235358133\tY\t1970-01-01T00:00:01.000000Z\tCXZOUICWEK\n" +
-                        "-147343840\tD\t1970-01-01T00:00:01.000000Z\tOGIFOUSZMZVQEB\n" +
-                        "116799613\tI\t1970-01-01T00:00:01.000000Z\tZEPIHVLTOVLJUML\n" +
-                        "326010667\tS\t1970-01-01T00:00:01.000000Z\tRFBVTMHGOOZZVDZ\n" +
-                        "410717394\tO\t1970-01-01T00:00:01.000000Z\tGETJR\n" +
-                        "852921272\tJ\t1970-01-01T00:00:01.000000Z\tAPPC\n" +
-                        "852921272\tC\t1970-01-01T00:00:01.000000Z\tLSUWDSWUGSHOLN\n" +
-                        "1431775887\tC\t1970-01-01T00:00:01.000000Z\tEHNOMVELLKKHT\n" +
-                        "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
-                        "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
-                        "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                        "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n",
-                true,
-                true
-        );
+        assertQuery(expected, "x order by k,a", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_int() a," +
+                " rnd_str(1,1,2) c," +
+                " cast(1000000 as timestamp) k," +
+                " rnd_str(5,16,2) n" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " 852921272," +
+                " 'J'," +
+                " cast(1000000 as timestamp) t," +
+                " 'APPC'" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tc\tk\tn\n" +
+                "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
+                "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
+                "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
+                "-1470806499\t\t1970-01-01T00:00:01.000000Z\t\n" +
+                "-1204245663\tJ\t1970-01-01T00:00:01.000000Z\tPKRGIIHYHBOQMY\n" +
+                "-1182156192\t\t1970-01-01T00:00:01.000000Z\tGLUOHNZHZS\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:01.000000Z\tPSWHYRXPEH\n" +
+                "-938514914\tX\t1970-01-01T00:00:01.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "-514934130\tH\t1970-01-01T00:00:01.000000Z\t\n" +
+                "-235358133\tY\t1970-01-01T00:00:01.000000Z\tCXZOUICWEK\n" +
+                "-147343840\tD\t1970-01-01T00:00:01.000000Z\tOGIFOUSZMZVQEB\n" +
+                "116799613\tI\t1970-01-01T00:00:01.000000Z\tZEPIHVLTOVLJUML\n" +
+                "326010667\tS\t1970-01-01T00:00:01.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "410717394\tO\t1970-01-01T00:00:01.000000Z\tGETJR\n" +
+                "852921272\tJ\t1970-01-01T00:00:01.000000Z\tAPPC\n" +
+                "852921272\tC\t1970-01-01T00:00:01.000000Z\tLSUWDSWUGSHOLN\n" +
+                "1431775887\tC\t1970-01-01T00:00:01.000000Z\tEHNOMVELLKKHT\n" +
+                "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
+                "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n", true, true, false);
     }
 
     @Test
@@ -10542,57 +6054,49 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
                 "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
 
-        assertQuery13(expected,
-                "x order by c,n desc",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_str(1,1,2) c," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_str(5,16,2) n" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_int()," +
-                        " 'J'," +
-                        " to_timestamp('1971', 'yyyy') t," +
-                        " 'ZZCC'" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tc\tk\tn\n" +
-                        "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
-                        "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
-                        "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
-                        "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
-                        "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
-                        "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
-                        "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
-                        "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
-                        "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
-                        "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
-                        "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
-                        "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tZZCC\n" +
-                        "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
-                        "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
-                        "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
-                        "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
-                        "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
-                        "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                        "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
-                        "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n",
-                true,
-                true
-        );
+        assertQuery(expected, "x order by c,n desc", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_int() a," +
+                " rnd_str(1,1,2) c," +
+                " timestamp_sequence(0, 1000000000) k," +
+                " rnd_str(5,16,2) n" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                "select" +
+                " rnd_int()," +
+                " 'J'," +
+                " to_timestamp('1971', 'yyyy') t," +
+                " 'ZZCC'" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tc\tk\tn\n" +
+                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tZZCC\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n", true, true, false);
     }
 
     @Test
     public void testOrderByUnsupportedType() throws Exception {
-        assertFailure(
+        assertException(
                 "x order by a,m,n",
                 "create table x as " +
                         "(" +
@@ -10619,71 +6123,63 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testOrderChar() throws Exception {
-        assertQuery13("a\n" +
-                        "C\n" +
-                        "E\n" +
-                        "G\n" +
-                        "H\n" +
-                        "H\n" +
-                        "J\n" +
-                        "N\n" +
-                        "P\n" +
-                        "P\n" +
-                        "R\n" +
-                        "R\n" +
-                        "S\n" +
-                        "T\n" +
-                        "V\n" +
-                        "W\n" +
-                        "W\n" +
-                        "X\n" +
-                        "X\n" +
-                        "Y\n" +
-                        "Z\n",
-                "select * from x order by a",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_char() a" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_char()" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ")",
-                "a\n" +
-                        "C\n" +
-                        "E\n" +
-                        "G\n" +
-                        "H\n" +
-                        "H\n" +
-                        "I\n" +
-                        "J\n" +
-                        "N\n" +
-                        "P\n" +
-                        "P\n" +
-                        "R\n" +
-                        "R\n" +
-                        "S\n" +
-                        "S\n" +
-                        "T\n" +
-                        "U\n" +
-                        "V\n" +
-                        "W\n" +
-                        "W\n" +
-                        "X\n" +
-                        "X\n" +
-                        "X\n" +
-                        "X\n" +
-                        "Y\n" +
-                        "Z\n",
-                true,
-                true
-        );
+        assertQuery("a\n" +
+                "C\n" +
+                "E\n" +
+                "G\n" +
+                "H\n" +
+                "H\n" +
+                "J\n" +
+                "N\n" +
+                "P\n" +
+                "P\n" +
+                "R\n" +
+                "R\n" +
+                "S\n" +
+                "T\n" +
+                "V\n" +
+                "W\n" +
+                "W\n" +
+                "X\n" +
+                "X\n" +
+                "Y\n" +
+                "Z\n", "select * from x order by a", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_char() a" +
+                " from" +
+                " long_sequence(20)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " rnd_char()" +
+                " from" +
+                " long_sequence(5)" +
+                ")", "a\n" +
+                "C\n" +
+                "E\n" +
+                "G\n" +
+                "H\n" +
+                "H\n" +
+                "I\n" +
+                "J\n" +
+                "N\n" +
+                "P\n" +
+                "P\n" +
+                "R\n" +
+                "R\n" +
+                "S\n" +
+                "S\n" +
+                "T\n" +
+                "U\n" +
+                "V\n" +
+                "W\n" +
+                "W\n" +
+                "X\n" +
+                "X\n" +
+                "X\n" +
+                "X\n" +
+                "Y\n" +
+                "Z\n", true, true, false);
     }
 
     @Test
@@ -10710,51 +6206,42 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n";
 
-        assertQuery13(expected,
-                "x where k IN '1970-01' order by b asc",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'ABC'," +
-                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n",
-                true,
-                true
-
-        );
+        assertQuery(expected, "x where k IN '1970-01' order by b asc", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'ABC'," +
+                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -10781,51 +6268,42 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery13(expected,
-                "x where k IN '1970-01' order by b desc",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'ABC'," +
-                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                true,
-                true
-
-        );
+        assertQuery(expected, "x where k IN '1970-01' order by b desc", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'ABC'," +
+                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -10852,49 +6330,41 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
 
-        assertQuery13(expected,
-                "x where k IN '1970-01' order by b, k desc",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by MONTH",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'ABC'," +
-                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n",
-                true,
-                true
-        );
+        assertQuery(expected, "x where k IN '1970-01' order by b, k desc", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from long_sequence(20)" +
+                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'ABC'," +
+                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n", true, true, false);
     }
 
     @Test
@@ -10921,58 +6391,50 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
-        assertQuery13(expected,
-                "x where k IN '1970-01' order by b desc, k",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "),index(b) timestamp(k) partition by DAY",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'ABC'," +
-                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                true,
-                true
-        );
+        assertQuery(expected, "x where k IN '1970-01' order by b desc, k", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(0, 100000000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                "),index(b) timestamp(k) partition by DAY", null, "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100," +
+                " 'ABC'," +
+                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                " from long_sequence(1)" +
+                ") timestamp(t)", "a\tb\tk\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
     }
 
     @Test
     public void testRecordJoinExpansion() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x(a int)", sqlExecutionContext);
+            ddl("create table x(a int)");
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)",
                     sink,
@@ -10986,38 +6448,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRndIPv4() throws Exception {
-        assertSql("select rnd_ipv4('12.6/16', 0) from long_sequence(10)", "rnd_ipv4\n" +
-                "12.6.96.238\n" +
-                "12.6.50.227\n" +
-                "12.6.89.171\n" +
-                "12.6.82.23\n" +
-                "12.6.76.40\n" +
-                "12.6.20.236\n" +
-                "12.6.95.15\n" +
-                "12.6.178.136\n" +
-                "12.6.45.145\n" +
-                "12.6.93.114\n");
-    }
-
-    @Test
-    public void testRndIPv42() throws Exception {
-        assertSql("select rnd_ipv4('12.6.8/16', 0) from long_sequence(10)", "rnd_ipv4\n" +
-                "12.6.96.238\n" +
-                "12.6.50.227\n" +
-                "12.6.89.171\n" +
-                "12.6.82.23\n" +
-                "12.6.76.40\n" +
-                "12.6.20.236\n" +
-                "12.6.95.15\n" +
-                "12.6.178.136\n" +
-                "12.6.45.145\n" +
-                "12.6.93.114\n");
-    }
-
-    @Test
     public void testSampleByFillLinearEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
                 "create table x as " +
                         "(" +
@@ -11036,7 +6469,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByFillNoneEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) order by k,b",
                 "create table x as " +
                         "(" +
@@ -11054,7 +6488,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByFillNullEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) order by k,b",
                 "create table x as " +
                         "(" +
@@ -11072,7 +6507,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByFillPrevEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) order by k,b",
                 "create table x as " +
                         "(" +
@@ -11090,7 +6526,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByFillValueEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
+        assertQuery(
+                "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) order by k,b",
                 "create table x as " +
                         "(" +
@@ -11107,75 +6544,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByIPv4() throws Exception {
-        assertQuery("ip\tts\tsum\n" +
-                        "12.214.12.100\t1970-01-01T00:00:00.000001Z\t598\n" +
-                        "24.123.12.210\t1970-01-01T00:00:00.000001Z\t95\n" +
-                        "25.107.51.160\t1970-01-01T00:00:00.000001Z\t827\n" +
-                        "50.214.139.184\t1970-01-01T00:00:00.000001Z\t574\n" +
-                        "55.211.206.129\t1970-01-01T00:00:00.000001Z\t785\n" +
-                        "63.60.82.184\t1970-01-01T00:00:00.000001Z\t37\n" +
-                        "66.56.51.126\t1970-01-01T00:00:00.000001Z\t904\n" +
-                        "67.22.249.199\t1970-01-01T00:00:00.000001Z\t203\n" +
-                        "71.73.196.29\t1970-01-01T00:00:00.000001Z\t741\n" +
-                        "73.153.126.70\t1970-01-01T00:00:00.000001Z\t772\n" +
-                        "74.196.176.71\t1970-01-01T00:00:00.000001Z\t740\n" +
-                        "79.15.250.138\t1970-01-01T00:00:00.000001Z\t850\n" +
-                        "92.26.178.136\t1970-01-01T00:00:00.000001Z\t7\n" +
-                        "97.159.145.120\t1970-01-01T00:00:00.000001Z\t352\n" +
-                        "105.218.160.179\t1970-01-01T00:00:00.000001Z\t986\n" +
-                        "111.221.228.130\t1970-01-01T00:00:00.000001Z\t531\n" +
-                        "113.132.124.243\t1970-01-01T00:00:00.000001Z\t522\n" +
-                        "114.126.117.26\t1970-01-01T00:00:00.000001Z\t71\n" +
-                        "128.225.84.244\t1970-01-01T00:00:00.000001Z\t313\n" +
-                        "129.172.181.73\t1970-01-01T00:00:00.000001Z\t25\n" +
-                        "136.166.51.222\t1970-01-01T00:00:00.000001Z\t580\n" +
-                        "144.131.72.77\t1970-01-01T00:00:00.000001Z\t369\n" +
-                        "146.16.210.119\t1970-01-01T00:00:00.000001Z\t383\n" +
-                        "150.153.88.133\t1970-01-01T00:00:00.000001Z\t849\n" +
-                        "164.74.203.45\t1970-01-01T00:00:00.000001Z\t678\n" +
-                        "164.153.242.17\t1970-01-01T00:00:00.000001Z\t906\n" +
-                        "165.166.233.251\t1970-01-01T00:00:00.000001Z\t332\n" +
-                        "170.90.236.206\t1970-01-01T00:00:00.000001Z\t572\n" +
-                        "171.30.189.77\t1970-01-01T00:00:00.000001Z\t238\n" +
-                        "171.117.213.66\t1970-01-01T00:00:00.000001Z\t720\n" +
-                        "180.36.62.54\t1970-01-01T00:00:00.000001Z\t528\n" +
-                        "180.48.50.141\t1970-01-01T00:00:00.000001Z\t136\n" +
-                        "180.91.244.55\t1970-01-01T00:00:00.000001Z\t906\n" +
-                        "181.82.42.148\t1970-01-01T00:00:00.000001Z\t539\n" +
-                        "186.33.243.40\t1970-01-01T00:00:00.000001Z\t659\n" +
-                        "187.63.210.97\t1970-01-01T00:00:00.000001Z\t424\n" +
-                        "187.139.150.80\t1970-01-01T00:00:00.000001Z\t580\n" +
-                        "188.239.72.25\t1970-01-01T00:00:00.000001Z\t513\n" +
-                        "201.100.238.229\t1970-01-01T00:00:00.000001Z\t318\n" +
-                        "205.123.179.216\t1970-01-01T00:00:00.000001Z\t167\n" +
-                        "212.102.182.127\t1970-01-01T00:00:00.000001Z\t984\n" +
-                        "212.159.205.29\t1970-01-01T00:00:00.000001Z\t23\n" +
-                        "216.150.248.30\t1970-01-01T00:00:00.000001Z\t563\n" +
-                        "224.99.254.121\t1970-01-01T00:00:00.000001Z\t619\n" +
-                        "227.40.250.157\t1970-01-01T00:00:00.000001Z\t903\n" +
-                        "230.202.108.161\t1970-01-01T00:00:00.000001Z\t171\n" +
-                        "231.146.30.59\t1970-01-01T00:00:00.000001Z\t766\n" +
-                        "241.248.184.75\t1970-01-01T00:00:00.000001Z\t334\n" +
-                        "254.93.251.9\t1970-01-01T00:00:00.000001Z\t810\n" +
-                        "255.95.177.227\t1970-01-01T00:00:00.000001Z\t44\n",
-                "select ip, ts, sum(bytes) from test sample by 1y order by 2,1",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(1,10000) ts" +
-                        "  from long_sequence(50)" +
-                        ") timestamp(ts)",
-                "ts",
-                true,
-                false);
-    }
-
-    @Test
     public void testSelectColumns() throws Exception {
-        assertQuery("a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
+        assertQuery(
+                "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t0.7611\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
                         "10\t1253890363\tfalse\tXYS\t0.1911234617573182\t0.5793\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
                         "27\t-1819240775\ttrue\tGOO\t0.04142812470232493\t0.9205\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
@@ -11231,7 +6602,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectColumnsSansTimestamp() throws Exception {
-        assertQuery("a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\n" +
+        assertQuery(
+                "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t0.7611\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\n" +
                         "10\t1253890363\tfalse\tXYS\t0.1911234617573182\t0.5793\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\n" +
                         "27\t-1819240775\ttrue\tGOO\t0.04142812470232493\t0.9205\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\n" +
@@ -11293,25 +6665,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "8\n" +
                 "9\n";
 
-        assertQuery13(expected,
-                "select distinct a from x order by a",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " abs(rnd_int())%10 a" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " abs(rnd_int())%10 a" +
-                        " from long_sequence(1000000)" +
-                        ") ",
-                expected,
-                true,
-                true
-        );
+        assertQuery(expected, "select distinct a from x order by a", "create table x as " +
+                "(" +
+                "select" +
+                " abs(rnd_int())%10 a" +
+                " from" +
+                " long_sequence(20)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " abs(rnd_int())%10 a" +
+                " from long_sequence(1000000)" +
+                ") ", expected, true, true, false);
     }
 
     @Test
@@ -11372,32 +6736,24 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "YYQE\n" +
                 "ZSXU\n";
 
-        assertQuery13(expected,
-                "select distinct a from x order by a",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_symbol(20,4,6,2) a" +
-                        " from" +
-                        " long_sequence(10000)" +
-                        ")",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_symbol(10,3,5,0) a" +
-                        " from long_sequence(1000000)" +
-                        ") ",
-                expected2,
-                true,
-                true
-        );
+        assertQuery(expected, "select distinct a from x order by a", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_symbol(20,4,6,2) a" +
+                " from" +
+                " long_sequence(10000)" +
+                ")", null, "insert into x select * from (" +
+                "select" +
+                " rnd_symbol(10,3,5,0) a" +
+                " from long_sequence(1000000)" +
+                ") ", expected2, true, true, false);
     }
 
     @Test
     public void testSelectDistinctWithColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table my_table as (select x as id from long_sequence(1))", sqlExecutionContext).getType();
-            try (RecordCursorFactory factory = compiler.compile("select distinct id as foo from my_table", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table my_table as (select x as id from long_sequence(1))");
+            try (RecordCursorFactory factory = select("select distinct id as foo from my_table")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
                 assertCursor("foo\n" +
@@ -11409,8 +6765,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSelectDistinctWithColumnAliasAndTableFunction() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (id long)", sqlExecutionContext).getType());
-            try (RecordCursorFactory factory = compiler.compile("select distinct x as foo from long_sequence(1)", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table my_table (id long)");
+            try (RecordCursorFactory factory = select("select distinct x as foo from long_sequence(1)")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
 
@@ -11429,7 +6785,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "from  tab t1 " +
                         "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id)",
                 "create table tab as (select x as id from long_sequence(3))",
-                null, false, false);
+                null, false, false
+        );
     }
 
     @Test
@@ -11440,7 +6797,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select distinct t1.id " +
                         "from  tab t1, tab t2",
                 "create table tab as (select x as id from long_sequence(2))",
-                null, false, false);
+                null, false, false
+        );
     }
 
     @Ignore("result order is currently dependent on stability of sorting method")
@@ -11484,30 +6842,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSelectExpectedOrder() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
+            ddl("create table tab(" +
                     "    id symbol index, " +
                     "    name symbol index, " +
                     "    value double, " +
                     "    ts timestamp" +
-                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
+                    ") timestamp(ts) partition by DAY");
+            insert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
             assertSql(
-                    "tab",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
                             "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
@@ -11524,15 +6881,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
                             "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
                             "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n", "tab"
+            );
         });
     }
 
     @Test
     public void testSelectFromAliasedTable() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (sym int, id long)", sqlExecutionContext).getType());
-            try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table my_table (sym int, id long)");
+            try (RecordCursorFactory factory = select("select sum(a.sym) yo, a.id from my_table a")) {
                 Assert.assertNotNull(factory);
             }
         });
@@ -11542,7 +6900,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testSelectUndefinedBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.clear();
-            try (RecordCursorFactory factory = compiler.compile("select $1+x, $2 from long_sequence(10)", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select $1+x, $2 from long_sequence(10)")) {
                 sink.clear();
                 factory.getMetadata().toJson(sink);
                 TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"column\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"$2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}", sink);
@@ -11629,34 +6987,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testStrIPv4Cast() throws Exception {
-        assertSql("select ipv4 '1.1.1.1'", "cast\n" +
-                "1.1.1.1\n");
-    }
-
-    @Test
-    public void testStrIPv4CastInvalid() throws Exception {
-        assertSql("select ipv4 '1.1.1.1'", "cast\n" +
-                "1.1.1.1\n");
-    }
-
-    @Test
-    public void testStrIPv4CastNull() throws Exception {
-        assertSql("select ipv4 '1.1.1.1'", "cast\n" +
-                "1.1.1.1\n");
-    }
-
-    @Test
-    public void testStrIPv4CastOverflow() throws Exception {
-        assertSql("select ipv4 '256.5.5.5'", "cast\n" +
-                "\n");
-    }
-
-    @Test
     public void testStrippingRowId() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x (a int)", sqlExecutionContext);
-            RecordCursorFactory factory = compiler.compile("select * from '*!*x'", sqlExecutionContext).getRecordCursorFactory();
+            ddl("create table x (a int)");
+            RecordCursorFactory factory = select("select * from '*!*x'");
             Assert.assertNotNull(factory);
             try {
                 Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
@@ -11670,7 +7004,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testSumDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -11690,7 +7025,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testSumDoubleColumnPartitionByNone() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -11708,8 +7044,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised1() throws Exception {
-        String ddl = "create table x (ds double)";
-        compiler.compile(ddl, sqlExecutionContext);
+        ddl("create table x (ds double)");
 
         executeInsertStatement(1.0);
         executeInsertStatement(2.0);
@@ -11717,8 +7052,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised2() throws Exception {
-        String ddl = "create table x (ds double)";
-        compiler.compile(ddl, sqlExecutionContext);
+        ddl("create table x (ds double)");
 
         executeInsertStatement(1.0);
         executeInsertStatement(1.0);
@@ -11734,8 +7068,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised3() throws Exception {
-        String ddl = "create table x (ds double)";
-        compiler.compile(ddl, sqlExecutionContext);
+        ddl("create table x (ds double)");
 
         executeInsertStatement(1.0);
         executeInsertStatement(1.0);
@@ -11757,7 +7090,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testSumDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -11775,15 +7109,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSymbolStrB() throws Exception {
-        assertQuery13("a\nC\nC\nB\nA\nA\n",
-                "select cast(a as string) a from x order by 1 desc",
-                "create table x as (select rnd_symbol('A','B','C') a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
-                null,
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("a\nC\nC\nB\nA\nA\n", "select cast(a as string) a from x order by 1 desc", "create table x as (select rnd_symbol('A','B','C') a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)", null, null, null, true, true, false);
     }
 
     @Test
@@ -11791,18 +7117,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         maxOpenPartitions = 2;
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            ddl("create table x as (" +
                     "select" +
                     " rnd_symbol('foo','bar') s," +
                     " timestamp_sequence(0, 10000000000) ts" +
                     " from long_sequence(50)" +
-                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+                    ") timestamp(ts) partition by DAY");
 
             // we need have more partitions than maxOpenPartitions for this test
             assertSql(
-                    "select count_distinct(timestamp_floor('d', ts)) from x",
                     "count_distinct\n" +
-                            "6\n"
+                            "6\n", "select count_distinct(timestamp_floor('d', ts)) from x"
             );
 
             for (int i = 0; i < 10; i++) {
@@ -11836,9 +7161,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampCrossReference() throws Exception {
-        compiler.compile("create table x (val double, t timestamp)", sqlExecutionContext);
-        compiler.compile("create table y (timestamp timestamp, d double)", sqlExecutionContext);
-        compiler.compile("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)", sqlExecutionContext);
+        ddl("create table x (val double, t timestamp)");
+        ddl("create table y (timestamp timestamp, d double)");
+        insert("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)");
 
         // to shut up memory leak check
         engine.clear();
@@ -11908,8 +7233,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampPropagation() throws Exception {
-        compiler.compile("create table readings (sensorId int)", sqlExecutionContext);
-        compiler.compile("create table sensors (ID int, make symbol, city symbol)", sqlExecutionContext);
+        ddl("create table readings (sensorId int)");
+        ddl("create table sensors (ID int, make symbol, city symbol)");
         assertQuery(
                 "sensorId\tsensId\tmake\tcity\n",
                 "SELECT * FROM readings JOIN(SELECT ID sensId, make, city FROM sensors) ON readings.sensorId = sensId",
@@ -11919,142 +7244,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTruncateIPv4() throws Exception {
-        compiler.compile("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))", sqlExecutionContext);
-        assertSql("test", "ip\tcount\n" +
-                "187.139.150.80\t1\n" +
-                "18.206.96.238\t1\n" +
-                "92.80.211.65\t1\n" +
-                "212.159.205.29\t1\n" +
-                "4.98.173.21\t1\n" +
-                "199.122.166.85\t1\n" +
-                "79.15.250.138\t1\n" +
-                "35.86.82.23\t1\n" +
-                "111.98.117.250\t1\n" +
-                "205.123.179.216\t1\n" +
-                "184.254.198.204\t1\n" +
-                "134.75.235.20\t1\n" +
-                "170.90.236.206\t1\n" +
-                "162.25.160.241\t1\n" +
-                "48.21.128.89\t1\n" +
-                "92.26.178.136\t1\n" +
-                "93.140.132.196\t1\n" +
-                "93.204.45.145\t1\n" +
-                "231.146.30.59\t1\n" +
-                "20.62.93.114\t1\n");
-        compiler.compile("truncate table test", sqlExecutionContext);
-        assertSql("test", "ip\tcount\n");
-    }
-
-    @Test
-    public void testUpdateTableIPv4ToString() throws Exception {
-        compiler.compile("create table test (col1 ipv4)", sqlExecutionContext);
-        executeInsert("insert into test values('0.0.0.1')");
-        executeInsert("insert into test values('0.0.0.2')");
-        executeInsert("insert into test values('0.0.0.3')");
-        executeInsert("insert into test values('0.0.0.4')");
-        executeInsert("insert into test values('0.0.0.5')");
-        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-            compiler.compile("alter table test add col2 string", sqlExecutionContext).getAlterOperation().apply(w, true);
-        }
-        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-            UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
-            op.withContext(sqlExecutionContext);
-            op.apply(w, true);
-        }
-        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "col1\tcol2\n" +
-                "0.0.0.1\t0.0.0.1\n" +
-                "0.0.0.2\t0.0.0.2\n" +
-                "0.0.0.3\t0.0.0.3\n" +
-                "0.0.0.4\t0.0.0.4\n" +
-                "0.0.0.5\t0.0.0.5\n");
-    }
-
-    @Test
-    public void testUpdateTableIPv4ToStringWal() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test as (" +
-                    "select " +
-                    " rnd_ipv4 col1, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-
-            compile("alter table test add column col2 string", sqlExecutionContext);
-            compile("update test set col2 = col1", sqlExecutionContext);
-
-            drainWalQueue();
-
-            String allRows = "col1\tts\tcol2\n" +
-                    "187.139.150.80\t2022-02-24T00:00:00.000000Z\t187.139.150.80\n" +
-                    "18.206.96.238\t2022-02-24T00:00:01.000000Z\t18.206.96.238\n" +
-                    "92.80.211.65\t2022-02-24T00:00:02.000000Z\t92.80.211.65\n" +
-                    "212.159.205.29\t2022-02-24T00:00:03.000000Z\t212.159.205.29\n" +
-                    "4.98.173.21\t2022-02-24T00:00:04.000000Z\t4.98.173.21\n";
-
-            assertSql("test", allRows);
-        });
-    }
-
-    @Test
-    public void testUpdateTableStringToIPv4() throws Exception {
-        compiler.compile("create table test (col1 string)", sqlExecutionContext);
-        executeInsert("insert into test values('0.0.0.1')");
-        executeInsert("insert into test values('0.0.0.2')");
-        executeInsert("insert into test values('0.0.0.3')");
-        executeInsert("insert into test values('0.0.0.4')");
-        executeInsert("insert into test values('0.0.0.5')");
-        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-            compiler.compile("alter table test add col2 ipv4", sqlExecutionContext).getAlterOperation().apply(w, true);
-        }
-        try (TableWriter w = engine.getWriter(engine.getTableTokenIfExists("test"), "doesnt matter")) {
-            UpdateOperation op = compiler.compile("update test set col2 = col1", sqlExecutionContext).getUpdateOperation();
-            op.withContext(sqlExecutionContext);
-            op.apply(w, true);
-        }
-        TestUtils.assertSql(compiler, sqlExecutionContext, "test", sink, "col1\tcol2\n" +
-                "0.0.0.1\t0.0.0.1\n" +
-                "0.0.0.2\t0.0.0.2\n" +
-                "0.0.0.3\t0.0.0.3\n" +
-                "0.0.0.4\t0.0.0.4\n" +
-                "0.0.0.5\t0.0.0.5\n");
-    }
-
-    @Test
-    public void testUpdateTableStringToIPv4Wal() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test as (" +
-                    "select " +
-                    " rnd_ipv4::string col1, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-
-            compile("alter table test add column col2 ipv4", sqlExecutionContext);
-            compile("update test set col2 = col1", sqlExecutionContext);
-
-            drainWalQueue();
-
-            String allRows = "col1\tts\tcol2\n" +
-                    "187.139.150.80\t2022-02-24T00:00:00.000000Z\t187.139.150.80\n" +
-                    "18.206.96.238\t2022-02-24T00:00:01.000000Z\t18.206.96.238\n" +
-                    "92.80.211.65\t2022-02-24T00:00:02.000000Z\t92.80.211.65\n" +
-                    "212.159.205.29\t2022-02-24T00:00:03.000000Z\t212.159.205.29\n" +
-                    "4.98.173.21\t2022-02-24T00:00:04.000000Z\t4.98.173.21\n";
-
-            assertSql("test", allRows);
-        });
-    }
-
-    @Test
     public void testUtf8TableName() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile("CREATE TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);", sqlExecutionContext);
+                    ddl("create TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);");
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                             sink,
@@ -12063,7 +7258,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     );
 
                     TestUtils.assertSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "show columns from 'привет от штиблет'",
                             sink,
@@ -12080,7 +7275,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testVectorAggregateOnSparsePartitions() throws Exception {
         final String expected = "a\tk\n";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "x where 1 = 0",
                 "create table x as " +
                         "(" +
@@ -12098,7 +7294,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
-        assertQuery("avg\tsum\n" +
+        assertQuery(
+                "avg\tsum\n" +
                         "0.49811606109211604\t17.932178199316176\n",
                 "select avg(c),sum(c) from x",
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(42))",
@@ -12121,7 +7318,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         }).start();
 
         try {
-            assertQuery("avg\tsum\n" +
+            assertQuery(
+                    "avg\tsum\n" +
                             "0.5003504\t834470.437288\n",
                     "select round(avg(c), 7) avg, round(sum(c), 6) sum from x",
                     "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
@@ -12137,7 +7335,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testVectorSumDoubleAndIntWithNulls() throws Exception {
-        assertQuery("sum\tsum1\n" +
+        assertQuery(
+                "sum\tsum1\n" +
                         "41676799\t416969.81549\n",
                 "select sum(a),round(sum(b),5) sum1 from x",
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(1000035L))",
@@ -12149,7 +7348,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testVirtualColumns() throws Exception {
-        assertQuery("a\ta1\tb\tc\tcolumn\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
+        assertQuery(
+                "a\ta1\tb\tc\tcolumn\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
                         "10\t1253890363\tfalse\tXYS\t0.7704700589519898\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
                         "27\t-1819240775\ttrue\tGOO\t0.9619284627798701\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
@@ -12205,7 +7405,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testVirtualColumnsSansTimestamp() throws Exception {
-        assertQuery("a\ta1\tb\tc\tcolumn\n" +
+        assertQuery(
+                "a\ta1\tb\tc\tcolumn\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\n" +
                         "10\t1253890363\tfalse\tXYS\t0.7704700589519898\n" +
                         "27\t-1819240775\ttrue\tGOO\t0.9619284627798701\n" +
@@ -12254,215 +7455,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWalIPv4() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test as (" +
-                    "select " +
-                    " rnd_ipv4 col1, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-            drainWalQueue();
-
-            String allRows = "col1\tts\n" +
-                    "187.139.150.80\t2022-02-24T00:00:00.000000Z\n" +
-                    "18.206.96.238\t2022-02-24T00:00:01.000000Z\n" +
-                    "92.80.211.65\t2022-02-24T00:00:02.000000Z\n" +
-                    "212.159.205.29\t2022-02-24T00:00:03.000000Z\n" +
-                    "4.98.173.21\t2022-02-24T00:00:04.000000Z\n";
-
-            assertSql("test", allRows);
-        });
-    }
-
-    @Test
-    public void testWhereIPv4() throws Exception {
-        assertQuery("ip\tbytes\tk\n" +
-                        "0.0.0.1\t906\t1970-01-01T00:23:20.000000Z\n" +
-                        "0.0.0.1\t711\t1970-01-01T00:55:00.000000Z\n" +
-                        "0.0.0.1\t735\t1970-01-01T00:56:40.000000Z\n" +
-                        "0.0.0.1\t887\t1970-01-01T01:11:40.000000Z\n" +
-                        "0.0.0.1\t428\t1970-01-01T01:15:00.000000Z\n" +
-                        "0.0.0.1\t924\t1970-01-01T01:18:20.000000Z\n" +
-                        "0.0.0.1\t188\t1970-01-01T01:26:40.000000Z\n" +
-                        "0.0.0.1\t368\t1970-01-01T01:40:00.000000Z\n" +
-                        "0.0.0.1\t746\t1970-01-01T01:50:00.000000Z\n" +
-                        "0.0.0.1\t482\t1970-01-01T01:56:40.000000Z\n" +
-                        "0.0.0.1\t660\t1970-01-01T02:00:00.000000Z\n" +
-                        "0.0.0.1\t519\t1970-01-01T02:01:40.000000Z\n" +
-                        "0.0.0.1\t255\t1970-01-01T02:03:20.000000Z\n" +
-                        "0.0.0.1\t841\t1970-01-01T02:05:00.000000Z\n" +
-                        "0.0.0.1\t240\t1970-01-01T02:13:20.000000Z\n" +
-                        "0.0.0.1\t777\t1970-01-01T02:18:20.000000Z\n" +
-                        "0.0.0.1\t597\t1970-01-01T02:23:20.000000Z\n" +
-                        "0.0.0.1\t30\t1970-01-01T02:26:40.000000Z\n" +
-                        "0.0.0.1\t814\t1970-01-01T02:36:40.000000Z\n" +
-                        "0.0.0.1\t511\t1970-01-01T02:41:40.000000Z\n" +
-                        "0.0.0.1\t25\t1970-01-01T02:43:20.000000Z\n",
-                "select * from test where ip = '0.0.0.1'",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,5,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                "k",
-                true,
-                false);
-    }
-
-    @Test
-    public void testWhereIPv4Var() throws Exception {
-        assertQuery("ip1\tip2\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "\t\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "\t\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "\t\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "\t\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "\t\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "\t\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "\t\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "\t\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "\t\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "\t\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "\t\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "\t\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.8\t0.0.0.8\n",
-                "select * from test where ip1 = ip2",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(0,9,0)::ipv4 ip1," +
-                        "    rnd_int(0,9,0)::ipv4::string ip2" +
-                        "  from long_sequence(1000)" +
-                        ")",
-                null,
-                true,
-                false);
-    }
-
-    @Test
-    public void testWhereInvalidIP() throws Exception {
-        assertFailure("select * from test where ip = 'hello'", "create table test as " +
-                "(" +
-                "  select" +
-                "    rnd_int(1,5,0)::ipv4 ip," +
-                "    rnd_int(0,1000,0) bytes," +
-                "    timestamp_sequence(0,100000000) k" +
-                "  from long_sequence(100)" +
-                ") timestamp(k)", 30, "not a valid IP address: hello");
-
-    }
-
-    @Test
     public void testWithinClauseWithFilterFails() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym",
                 "create table tab as " +
                         "(" +
@@ -12476,7 +7470,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testWithinClauseWithLatestByNonSymbolOrNonIndexedSymbolColumnFails() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz) latest on ts partition by x",
                 "create table tab as " +
                         "(" +
@@ -12491,20 +7485,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "WITHIN clause requires LATEST BY using only indexed symbol columns"
         );
 
-        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
-                null,
+        assertException(
+                "select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
                 28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+        );
 
-        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
-                null,
+        assertException(
+                "select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
                 28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+        );
 
-        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
-                null,
+        assertException(
+                "select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
                 28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+        );
     }
 
     @Test
@@ -12522,12 +7519,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, #zz as geo, x::timestamp ts " +
                         " from long_sequence(20) " +
-                        "), index(sym) timestamp(ts) ", "ts", true, true);
+                        "), index(sym) timestamp(ts) ", "ts", true, true
+        );
     }
 
     @Test
     public void testWithinClauseWithoutLatestByFails() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from tab where geo within(#zz)",
                 "create table tab as " +
                         "(" +
@@ -12540,40 +7538,37 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     private void createGeoHashTable(int chars) throws SqlException {
-        compiler.compile(
-                String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) +
-                        ", index(uuid) timestamp(time) partition by DAY",
-                sqlExecutionContext
-        );
-        executeInsert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
-        executeInsert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
-        executeInsert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
-        executeInsert("insert into pos values('2021-05-10T23:59:59.439000Z','bbb','ewef1vk8')");
-        executeInsert("insert into pos values('2021-05-10T00:00:00.016000Z','aaa','vb2wg49h')");
-        executeInsert("insert into pos values('2021-05-10T00:00:00.042000Z','ccc','bft3gn89')");
-        executeInsert("insert into pos values('2021-05-10T00:00:00.055000Z','aaa','z6cf5j85')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.123000Z','aaa','z3t2we5z')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.127000Z','aaa','bgn1yt4y')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.144000Z','aaa','fuetk3k6')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ccc','bchx5x14')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ZZZ','bbxwb5jj')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.186000Z','ZZZ','vepe7h62')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.241000Z','bbb','bchxpmmg')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.245000Z','ddd','f90z3bs5')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.247000Z','bbb','bftqreuh')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.295000Z','ddd','u2rqgy9s')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.304000Z','aaa','w23bhjd2')");
+        ddl(String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) + ", index(uuid) timestamp(time) partition by DAY");
+
+        insert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
+        insert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
+        insert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
+        insert("insert into pos values('2021-05-10T23:59:59.439000Z','bbb','ewef1vk8')");
+        insert("insert into pos values('2021-05-10T00:00:00.016000Z','aaa','vb2wg49h')");
+        insert("insert into pos values('2021-05-10T00:00:00.042000Z','ccc','bft3gn89')");
+        insert("insert into pos values('2021-05-10T00:00:00.055000Z','aaa','z6cf5j85')");
+        insert("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7')");
+        insert("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y')");
+        insert("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc')");
+        insert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
+        insert("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny')");
+        insert("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9')");
+        insert("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw')");
+        insert("insert into pos values('2021-05-11T00:00:00.123000Z','aaa','z3t2we5z')");
+        insert("insert into pos values('2021-05-11T00:00:00.127000Z','aaa','bgn1yt4y')");
+        insert("insert into pos values('2021-05-11T00:00:00.144000Z','aaa','fuetk3k6')");
+        insert("insert into pos values('2021-05-12T00:00:00.167000Z','ccc','bchx5x14')");
+        insert("insert into pos values('2021-05-12T00:00:00.167000Z','ZZZ','bbxwb5jj')");
+        insert("insert into pos values('2021-05-12T00:00:00.186000Z','ZZZ','vepe7h62')");
+        insert("insert into pos values('2021-05-12T00:00:00.241000Z','bbb','bchxpmmg')");
+        insert("insert into pos values('2021-05-12T00:00:00.245000Z','ddd','f90z3bs5')");
+        insert("insert into pos values('2021-05-12T00:00:00.247000Z','bbb','bftqreuh')");
+        insert("insert into pos values('2021-05-12T00:00:00.295000Z','ddd','u2rqgy9s')");
+        insert("insert into pos values('2021-05-12T00:00:00.304000Z','aaa','w23bhjd2')");
     }
 
     private void createRndGeoHashBitsTable() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -12583,13 +7578,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_geohash(7) bits7," +
                         " rnd_geohash(9) bits9" +
                         " from long_sequence(10000)" +
-                        "), index(s) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                        "), index(s) timestamp (ts) partition by DAY"
         );
     }
 
     private void createRndGeoHashTable() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -12600,53 +7594,38 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_geohash(25) geo4," +
                         " rnd_geohash(40) geo8" +
                         " from long_sequence(10000)" +
-                        "), index(s) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                        "), index(s) timestamp (ts) partition by DAY"
         );
     }
 
     private void executeInsertStatement(double d) throws SqlException {
         String ddl = "insert into x (ds) values (" + d + ")";
-        executeInsert(ddl);
+        insert(ddl);
     }
 
     private void expectSqlResult(CharSequence expected, CharSequence query) throws SqlException {
-        printSqlResult3(expected, query, "ts",
-                null,
-                null,
-                true,
-                true,
-                false,
-                null);
+        printSqlResult(expected, query, "ts", true, true);
     }
 
     private void testBindVariableInIndexedLookup(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
-                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
-                            "time TIMESTAMP, " +
-                            "slot SYMBOL, " +
-                            "port SYMBOL, " +
-                            "downStream DOUBLE, " +
-                            "upStream DOUBLE" +
-                            ") timestamp(time) partition by DAY",
-                    sqlExecutionContext);
-            compiler.compile("create table src as (" +
-                            "    select rnd_symbol(15000, 4,4,0) sym, " +
-                            "           timestamp_sequence(0, 100000) ts, " +
-                            "           rnd_double() val " +
-                            "    from long_sequence(500)" +
-                            ")",
-                    sqlExecutionContext);
-            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
-                    sqlExecutionContext);
+            ddl("create TABLE 'alcatel_traffic_tmp' (" +
+                    "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
+                    "time TIMESTAMP, " +
+                    "slot SYMBOL, " +
+                    "port SYMBOL, " +
+                    "downStream DOUBLE, " +
+                    "upStream DOUBLE" +
+                    ") timestamp(time) partition by DAY");
+            ddl("create table src as (" +
+                    "    select rnd_symbol(15000, 4,4,0) sym, " +
+                    "           timestamp_sequence(0, 100000) ts, " +
+                    "           rnd_double() val " +
+                    "    from long_sequence(500)" +
+                    ")");
+            insert("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
             // =
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName in $1",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName in $1")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 sink.clear();
@@ -12660,12 +7639,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             }
             // !=
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 sink.clear();
@@ -12685,31 +7659,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testBindVariableInLookupList(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
-                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
-                            "time TIMESTAMP, " +
-                            "slot SYMBOL, " +
-                            "port SYMBOL, " +
-                            "downStream DOUBLE, " +
-                            "upStream DOUBLE" +
-                            ") timestamp(time) partition by DAY",
-                    sqlExecutionContext);
-            compiler.compile("create table src as (" +
-                            "    select rnd_symbol(15000, 4,4,0) sym, " +
-                            "           timestamp_sequence(0, 100000) ts, " +
-                            "           rnd_double() val " +
-                            "    from long_sequence(500)" +
-                            ")",
-                    sqlExecutionContext);
-            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
-                    sqlExecutionContext);
+            ddl("create TABLE 'alcatel_traffic_tmp' (" +
+                    "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
+                    "time TIMESTAMP, " +
+                    "slot SYMBOL, " +
+                    "port SYMBOL, " +
+                    "downStream DOUBLE, " +
+                    "upStream DOUBLE" +
+                    ") timestamp(time) partition by DAY");
+            ddl("create table src as (" +
+                    "    select rnd_symbol(15000, 4,4,0) sym, " +
+                    "           timestamp_sequence(0, 100000) ts, " +
+                    "           rnd_double() val " +
+                    "    from long_sequence(500)" +
+                    ")");
+            insert("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
             // in
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName in ($1,$2)",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName in ($1,$2)")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 bindVariableService.setStr(1, "SHRI");
@@ -12725,12 +7691,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             }
             // not in
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName not in ($1,$2) and time < '1970-01-01T00:00:00.300000Z'",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName not in ($1,$2) and time < '1970-01-01T00:00:00.300000Z'")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 bindVariableService.setStr(1, "SHRI");
@@ -12751,65 +7712,61 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, bindVariableService)
-            ) {
-                compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
-                AbstractGriffinTest.refreshTablesInBaseEngine();
-                bindVariableService.clear();
-                try (RecordCursorFactory factory = compiler.compile("xy where v " + keyword + " $1", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table xy as (select rnd_str() v from long_sequence(100))");
+            refreshTablesInBaseEngine();
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = select("xy where v " + keyword + " $1")) {
+                bindVariableService.setStr(0, "MBE%");
+                assertCursor(
+                        "v\n" +
+                                "MBEZGHW\n",
+                        factory,
+                        true,
+                        false
+                );
 
-                    bindVariableService.setStr(0, "MBE%");
-                    assertCursor("v\n" +
-                                    "MBEZGHW\n",
-                            factory,
-                            true,
-                            false
-                    );
+                bindVariableService.setStr(0, "Z%");
+                assertCursor(
+                        "v\n" +
+                                "ZSQLDGLOG\n" +
+                                "ZLUOG\n" +
+                                "ZLCBDMIG\n" +
+                                "ZJYYFLSVI\n" +
+                                "ZWEVQTQO\n" +
+                                "ZSFXUNYQ\n",
+                        factory,
+                        true,
+                        false
+                );
 
-                    bindVariableService.setStr(0, "Z%");
-                    assertCursor("v\n" +
-                                    "ZSQLDGLOG\n" +
-                                    "ZLUOG\n" +
-                                    "ZLCBDMIG\n" +
-                                    "ZJYYFLSVI\n" +
-                                    "ZWEVQTQO\n" +
-                                    "ZSFXUNYQ\n",
-                            factory,
-                            true,
-                            false
-                    );
-
-                    assertCursor("v\n" +
-                                    "ZSQLDGLOG\n" +
-                                    "ZLUOG\n" +
-                                    "ZLCBDMIG\n" +
-                                    "ZJYYFLSVI\n" +
-                                    "ZWEVQTQO\n" +
-                                    "ZSFXUNYQ\n",
-                            factory,
-                            true,
-                            false
-                    );
+                assertCursor(
+                        "v\n" +
+                                "ZSQLDGLOG\n" +
+                                "ZLUOG\n" +
+                                "ZLCBDMIG\n" +
+                                "ZJYYFLSVI\n" +
+                                "ZWEVQTQO\n" +
+                                "ZSFXUNYQ\n",
+                        factory,
+                        true,
+                        false
+                );
 
 
-                    bindVariableService.setStr(0, null);
-                    assertCursor("v\n",
-                            factory,
-                            true,
-                            false
-                    );
-                }
+                bindVariableService.setStr(0, null);
+                assertCursor(
+                        "v\n",
+                        factory,
+                        true,
+                        false
+                );
             }
         });
     }
 
     private void testFilterWithSymbolBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -12817,9 +7774,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(20)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY");
 
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
@@ -12834,7 +7791,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testFilterWithSymbolBindVariableNotEquals(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -12842,9 +7799,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(5)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY");
 
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
@@ -12862,29 +7819,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestByFilteredBySymbolIn(String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
+            ddl(ddl);
 
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select metric, sum(value) from x \n" +
                             "where node in ('node1', 'node2') and metric in ('cpu') \n" +
@@ -12898,7 +7855,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestByKeyValueWithBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -12906,11 +7863,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(50)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY");
 
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
@@ -12924,7 +7879,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestByKeyValuesWithBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
+            ddl("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -12932,11 +7887,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(50)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY");
 
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "66.97969295620055\tVTJW\t1970-02-13T23:33:20.000000Z\n" +
@@ -12951,92 +7904,93 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testLatestByMultiColumnPlusFilter(CharSequence ddl) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
+            ddl(ddl);
+
+            insert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+            insert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
+            insert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
 
             assertSql(
-                    "tab where id = 'd1' latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
+                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n", "tab where id = 'd1' latest on ts partition by id, name"
+            );
             assertSql(
-                    "tab where id != 'd2' and value < 102.5 latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n");
+                            "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n", "tab where id != 'd2' and value < 102.5 latest on ts partition by id, name"
+            );
             assertSql(
-                    "tab where name = 'c1' latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n", "tab where name = 'c1' latest on ts partition by id, name"
+            );
             assertSql(
-                    "tab where name != 'c2' and value <= 111.7 latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n", "tab where name != 'c2' and value <= 111.7 latest on ts partition by id, name"
+            );
             assertSql(
-                    "tab where name = 'c2' latest on ts partition by id",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
-                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n");
+                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n", "tab where name = 'c2' latest on ts partition by id"
+            );
             assertSql(
-                    "tab where id = 'd1' latest on ts partition by name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
+                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n", "tab where id = 'd1' latest on ts partition by name"
+            );
             assertSql(
-                    "tab where id = 'd2' latest on ts partition by name",
                     "id\tname\tvalue\tts\n" +
                             "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n", "tab where id = 'd2' latest on ts partition by name"
+            );
             assertSql(
-                    "tab where id != 'd1' latest on ts partition by name",
                     "id\tname\tvalue\tts\n" +
                             "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n", "tab where id != 'd1' latest on ts partition by name"
+            );
         });
     }
 
     private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
+            ddl(ddl);
 
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
+            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
+            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
+            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select * from x \n" +
                             "where node in ('node2') and metric in ('cpu', 'memory') \n" +
@@ -13052,37 +8006,41 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     private void testLatestBySupportedColumnTypes(CharSequence ddl) throws Exception {
         assertMemoryLeak(() -> {
             // supported: [BOOLEAN, CHAR, INT, LONG, LONG256, STRING, SYMBOL]
-            compiler.compile(ddl, sqlExecutionContext);
-            executeInsert("insert into tab values (false, cast(24814 as short), 24814, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'ORANGE', '123', '1970-01-01T00:00:01.000000Z')");
-            executeInsert("insert into tab values (true, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'A', 'COCO', 'XoXoX', '1970-01-01T00:00:02.000000Z')");
-            executeInsert("insert into tab values (true, cast(14817 as short), 14817, 3614738589890112276, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'Q', null, 'XoXoX', '1970-01-01T00:00:03.000000Z')");
-            executeInsert("insert into tab values (true, cast(24814 as short), 24814, 3614738589890112276, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', null, 'XoXoX', '1970-01-01T00:00:04.000000Z')");
-            executeInsert("insert into tab values (true, cast(24814 as short), 24814, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Q', 'BANANA', '_(*y*)_', '1970-01-01T00:00:05.000000Z')");
-            executeInsert("insert into tab values (false, cast(14817 as short), 14817, 6404066507400987550, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'M', null, '123', '1970-01-01T00:00:06.000000Z')");
-            executeInsert("insert into tab values (false, cast(14333 as short), 14333, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'COCO', '123', '1970-01-01T00:00:07.000000Z')");
-            executeInsert("insert into tab values (false, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Z', 'BANANA', '_(*y*)_', '1970-01-01T00:00:08.000000Z')");
-            executeInsert("insert into tab values (true, cast(24814 as short), 24814, 7759636733976435003, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'J', 'ORANGE', '123', '1970-01-01T00:00:09.000000Z')");
-            executeInsert("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-01T00:00:10.000000Z')");
-            executeInsert("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-02T00:00:01.000000Z')");
+            ddl(ddl);
+
+            insert("insert into tab values (false, cast(24814 as short), 24814, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'ORANGE', '123', '1970-01-01T00:00:01.000000Z')");
+            insert("insert into tab values (true, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'A', 'COCO', 'XoXoX', '1970-01-01T00:00:02.000000Z')");
+            insert("insert into tab values (true, cast(14817 as short), 14817, 3614738589890112276, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'Q', null, 'XoXoX', '1970-01-01T00:00:03.000000Z')");
+            insert("insert into tab values (true, cast(24814 as short), 24814, 3614738589890112276, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', null, 'XoXoX', '1970-01-01T00:00:04.000000Z')");
+            insert("insert into tab values (true, cast(24814 as short), 24814, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Q', 'BANANA', '_(*y*)_', '1970-01-01T00:00:05.000000Z')");
+            insert("insert into tab values (false, cast(14817 as short), 14817, 6404066507400987550, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'M', null, '123', '1970-01-01T00:00:06.000000Z')");
+            insert("insert into tab values (false, cast(14333 as short), 14333, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'COCO', '123', '1970-01-01T00:00:07.000000Z')");
+            insert("insert into tab values (false, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Z', 'BANANA', '_(*y*)_', '1970-01-01T00:00:08.000000Z')");
+            insert("insert into tab values (true, cast(24814 as short), 24814, 7759636733976435003, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'J', 'ORANGE', '123', '1970-01-01T00:00:09.000000Z')");
+            insert("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-01T00:00:10.000000Z')");
+            insert("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-02T00:00:01.000000Z')");
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by boolean");
+                    "tab latest on ts partition by boolean"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by short");
+                    "tab latest on ts partition by short"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by int");
+                    "tab latest on ts partition by int"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -13090,7 +8048,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by long");
+                    "tab latest on ts partition by long"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -13098,7 +8057,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by long256");
+                    "tab latest on ts partition by long256"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -13108,7 +8068,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by char");
+                    "tab latest on ts partition by char"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -13116,14 +8077,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by string");
+                    "tab latest on ts partition by string"
+            );
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t3614738589890112276\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by symbol");
+                    "tab latest on ts partition by symbol"
+            );
         });
     }
 }

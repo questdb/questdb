@@ -74,10 +74,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-        @Override
-        public int getBindIPv4Address() {
-            return 0;
-        }
 
         @Override
         public int getBindPort() {
@@ -289,7 +285,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(ff, () -> {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
-                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }

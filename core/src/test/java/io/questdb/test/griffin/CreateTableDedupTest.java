@@ -29,27 +29,26 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.LongList;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class CreateTableDedupTest extends AbstractGriffinTest {
+public class CreateTableDedupTest extends AbstractCairoTest {
 
     @Test
     public void testAlterReadonlyFails() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table dups as" +
+            ddl("create table dups as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY WAL");
 
             SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
                     ReadOnlySecurityContext.INSTANCE,
@@ -60,8 +59,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
             );
 
             try {
-                compiler.compile("Alter table dups dedup upsert keys(ts)", roExecutionContext);
-                Assert.fail();
+                assertException("Alter table dups dedup upsert keys(ts)", roExecutionContext);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }
@@ -71,17 +69,49 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
-            compile("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
+            ddl("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
             String alterPrefix = "alter table a ";
 
-            assertCreate(alterPrefix + "deduplicate UPSERT KEYS(ts, str);", "UPSERT KEYS(ts, str)", "deduplicate key column can only be fixed size column [column=str, type=STRING]");
-            assertCreate(alterPrefix + "deduplicate UPSERT KEYS", "UPSERT KEYS", "deduplication column list expected");
-            assertCreate(alterPrefix + "deduplicate UPSERT KEYS (;", "UPSERT KEYS (;", "literal expected");
-            assertCreate(alterPrefix + "deduplicate UPSERT KEYS (a)", "UPSERT KEYS (a)", "deduplicate column not found ");
-            assertCreate(alterPrefix + "deduplicate UPSERT KEYS (s)", "UPSERT KEYS (s)", "deduplicate key list must include dedicated timestamp column");
-            assertCreate(alterPrefix + "deduplicate KEYS (s);", "deduplicate KEYS ", "expected 'upsert'");
-            assertCreate(alterPrefix + "deduplicate UPSERT (s);", "deduplicate UPSERT (", "expected 'keys'");
-            assertCreate(alterPrefix + "deduplicate UPSERT KEYS", "UPSERT KEYS", "column list expected");
+            assertException(
+                    alterPrefix + "deduplicate UPSERT KEYS(ts, str);",
+                    42,
+                    "deduplicate key column can only be fixed size column [column=str, type=STRING]"
+            );
+            assertException(
+                    alterPrefix + "deduplicate UPSERT KEYS",
+                    37,
+                    "deduplicate key column list expected"
+            );
+            assertException(
+                    alterPrefix + "deduplicate UPSERT KEYS (;",
+                    39,
+                    "literal expected"
+            );
+            assertException(
+                    alterPrefix + "deduplicate UPSERT KEYS (a)",
+                    39,
+                    "deduplicate key column not found "
+            );
+            assertException(
+                    alterPrefix + "deduplicate UPSERT KEYS (s)",
+                    39,
+                    "deduplicate key list must include dedicated timestamp column"
+            );
+            assertException(
+                    alterPrefix + "deduplicate KEYS (s);",
+                    26,
+                    "expected 'upsert'"
+            );
+            assertException(
+                    alterPrefix + "deduplicate UPSERT (s);",
+                    33,
+                    "expected 'keys'"
+            );
+            assertException(
+                    alterPrefix + "deduplicate UPSERT KEYS",
+                    37,
+                    "column list expected"
+            );
         });
     }
 
@@ -89,14 +119,46 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     public void testCreateTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             String createPrefix = "create table a (ts timestamp, i int, s symbol, l long, str string)";
-            assertCreate(createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);", "deduplicate ", "deduplication is possible only on WAL tables");
-            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (l, str);", "KEYS (l, s", "deduplicate key column can only be fixed size column [column=str, type=STRING]");
-            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;", "KEYS (;", "literal expected");
-            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (a);", "KEYS (a", "deduplicate column not found [column=a]");
-            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);", "KEYS (s)", "deduplicate key list must include dedicated timestamp column");
-            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);", "deduplicate ", "expected 'upsert'");
-            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);", "UPSERT (", "expected 'keys'");
-            assertCreate(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS", "UPSERT KEYS", "column list expected");
+            assertException(
+                    createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);",
+                    121,
+                    "deduplication is possible only on WAL tables"
+            );
+            assertException(
+                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (l, str);",
+                    130,
+                    "deduplicate key column can only be fixed size column [column=str, type=STRING]"
+            );
+            assertException(
+                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;",
+                    127,
+                    "literal expected"
+            );
+            assertException(
+                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (a);",
+                    127,
+                    "deduplicate key column not found [column=a]"
+            );
+            assertException(
+                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);",
+                    127,
+                    "deduplicate key list must include dedicated timestamp column"
+            );
+            assertException(
+                    createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);",
+                    114,
+                    "expected 'upsert'"
+            );
+            assertException(
+                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);",
+                    121,
+                    "expected 'keys'"
+            );
+            assertException(
+                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS",
+                    125,
+                    "column list expected"
+            );
         });
     }
 
@@ -104,7 +166,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     public void testDedupEnabledTimestampOnly() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts)"
@@ -116,10 +178,24 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDedupSyntaxError() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table " + tableName +
+                            " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                            " PARTITION BY DAY WAL"
+            );
+            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,", 54, "')' expected");
+            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s", 55, "')' expected");
+        });
+    }
+
+    @Test
     public void testDeduplicationEnabledIntAndSymbol() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol, i int) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS (ts, i, s ) "
@@ -131,11 +207,14 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(3));
             }
 
-            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
-                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n" +
-                    "i\tINT\tfalse\t0\tfalse\t0\tfalse\ttrue\n");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                            "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n" +
+                            "i\tINT\tfalse\t0\tfalse\t0\tfalse\ttrue\n",
+                    "SHOW COLUMNS FROM " + tableName
+            );
         });
     }
 
@@ -143,7 +222,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     public void testDeduplicationEnabledTimestampAndSymbol() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS(ts, s)"
@@ -160,7 +239,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     public void testDeduplicationEnabledTimestampOnly() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS (ts)"
@@ -175,7 +254,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     public void testDisableDedupOnTable() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
@@ -187,12 +266,15 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(2));
             }
 
-            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
-                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                            "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n",
+                    "SHOW COLUMNS FROM " + tableName
+            );
 
-            compile("ALTER table " + tableName + " dedup disable");
+            ddl("ALTER table " + tableName + " dedup disable");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -202,12 +284,15 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
             }
 
-            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                            "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n",
+                    "SHOW COLUMNS FROM " + tableName
+            );
 
-            compile("ALTER table " + tableName + " dedup UPSERT KEYS(ts)");
+            ddl("ALTER table " + tableName + " dedup UPSERT KEYS(ts)");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -217,14 +302,17 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
             }
 
-            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
-                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                            "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n",
+                    "SHOW COLUMNS FROM " + tableName
+            );
 
-            compile("ALTER table " + tableName + " dedup disable");
-            compile("ALTER table " + tableName + " drop column x");
-            compile("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)");
+            ddl("ALTER table " + tableName + " dedup disable");
+            ddl("ALTER table " + tableName + " drop column x");
+            ddl("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -234,18 +322,20 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(2));
             }
 
-            assertSql("SHOW COLUMNS FROM " + tableName, "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
-                    "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n",
+                    "SHOW COLUMNS FROM " + tableName
+            );
 
-            compile("ALTER table " + tableName + " dedup disable");
-            compile("ALTER table " + tableName + " drop column s");
-            try {
-                compile("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "deduplicate column not found [column=s]");
-            }
+            ddl("ALTER table " + tableName + " dedup disable");
+            ddl("ALTER table " + tableName + " drop column s");
+            assertException(
+                    "ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)",
+                    57,
+                    "deduplicate key column not found [column=s]"
+            );
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -261,20 +351,22 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     public void testEnableDedupDroppedColumnColumnConcurrently() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameStr = testName.getMethodName();
-            compile("create table " + tableNameStr + " as (" +
-                    "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY WAL");
+            ddl(
+                    "create table " + tableNameStr + " as (" +
+                            "select x, " +
+                            " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                            " from long_sequence(1)" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
             TableToken tableToken = engine.verifyTableName(tableNameStr);
 
             try (TableWriterAPI tw1 = engine.getTableWriterAPI(tableToken, "test")) {
                 try (TableWriterAPI tw2 = engine.getTableWriterAPI(tableToken, "test")) {
 
                     AlterOperationBuilder setDedupAlterBuilder = new AlterOperationBuilder()
-                            .ofDedupEnable(1, tableToken, true);
+                            .ofDedupEnable(1, tableToken);
                     setDedupAlterBuilder.setDedupKeyFlag(1);
                     AlterOperation ao = setDedupAlterBuilder.build();
                     ao.withContext(sqlExecutionContext);
@@ -307,7 +399,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
     public void testEnableDedupDroppedColumnColumnFails() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameStr = testName.getMethodName();
-            compile("create table " + tableNameStr + " as (" +
+            ddl("create table " + tableNameStr + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -338,7 +430,7 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 }
             }
 
-            compiler.compile("ALTER TABLE " + tableNameStr + " drop column sym", sqlExecutionContext);
+            ddl("ALTER TABLE " + tableNameStr + " drop column sym");
             try (TableWriter tw = getWriter(tableToken)) {
                 LongList columnIndexes = new LongList();
                 columnIndexes.add(1);
@@ -350,18 +442,5 @@ public class CreateTableDedupTest extends AbstractGriffinTest {
                 }
             }
         });
-    }
-
-    private static void assertCreate(String alterStmt, String errorAfter, String expected) {
-        int pos = alterStmt.indexOf(errorAfter);
-        assert pos > -1;
-        int errorPos = pos + errorAfter.length();
-        try {
-            compile(alterStmt);
-            Assert.fail("expected SQLException is not thrown");
-        } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), expected);
-            Assert.assertEquals(errorPos, ex.getPosition());
-        }
     }
 }

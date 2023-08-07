@@ -31,7 +31,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -46,7 +45,6 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -76,14 +74,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
 
-    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
+    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
-        operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount, ffCache);
+        operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());
@@ -231,9 +229,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
-
             try {
-
                 int iTransaction = 0;
                 int totalTransactionCount = 0;
                 long rowsAdded = 0;
@@ -330,7 +326,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 }
                             }
 
-
                             isTerminating = runStatus.isTerminating();
                             final long added = processWalCommit(
                                     writer,
@@ -402,7 +397,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 case DATA:
                     final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
                     if (writer.getWalTnxDetails().hasRecord(seqTxn)) {
-
                         long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();
                         final long start = microClock.getTicks();
                         walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
@@ -498,7 +492,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     /**
      * Returns transaction number, which is always > -1. Negative values are used as status code.
      */
-    long applyWAL(
+    long applyWal(
             TableToken tableToken,
             CairoEngine engine,
             OperationCompiler operationCompiler,
@@ -569,7 +563,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
-        final long txn = applyWAL(tableToken, engine, operationCompiler, runStatus);
+        final long txn = applyWal(tableToken, engine, operationCompiler, runStatus);
         if (txn == WAL_APPLY_FAILED) {
             try {
                 engine.getTableSequencerAPI().suspendTable(tableToken);

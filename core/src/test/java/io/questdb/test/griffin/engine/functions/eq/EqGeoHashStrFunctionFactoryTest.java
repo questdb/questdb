@@ -24,25 +24,23 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
+public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testEq1() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
+            ddl("create table geohash as (" +
                             "select " +
                             "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
                             "    cast(null as GeOhAsH(50b)) geohash2 " +
                             "from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
+                            ")");
             assertSql(
-                    "geohash where 'sp052w92p1' = geohash1",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where 'sp052w92p1' = geohash1"
             );
         });
     }
@@ -50,17 +48,15 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testEq2() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
+            ddl("create table geohash as (" +
                             "select " +
                             "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
                             "    cast(null as GeOhAsH(50b)) geohash2 " +
                             "from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
+                            ")");
             assertSql(
-                    "geohash where geohash1 = 'sp052w92p1'",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where geohash1 = 'sp052w92p1'"
             );
         });
     }
@@ -68,17 +64,15 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testEq3() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
+            ddl("create table geohash as (" +
                             "select " +
                             "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
                             "    cast(null as GeOhAsH(50b)) geohash2 " +
                             "from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
+                            ")");
             assertSql(
-                    "geohash where geohash2 = null",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where geohash2 = null"
             );
         });
     }
@@ -86,17 +80,15 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNoEq1() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
+            ddl("create table geohash as (" +
                             "select " +
                             "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
                             "    cast(null as GeOhAsH(50b)) geohash2 " +
                             "from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
+                            ")");
             assertSql(
-                    "geohash where 'sp052w92p0' != geohash1",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where 'sp052w92p0' != geohash1"
             );
         });
     }
@@ -104,17 +96,15 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNoEq2() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
+            ddl("create table geohash as (" +
                             "select " +
                             "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
                             "    cast(null as GeOhAsH(50b)) geohash2 " +
                             "from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
+                            ")");
             assertSql(
-                    "geohash where geohash1 != 'sp052w92p0'",
                     "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n"
+                            "sp052w92p1\t\n", "geohash where geohash1 != 'sp052w92p0'"
             );
         });
     }
@@ -122,16 +112,14 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNoEq3() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
+            ddl("create table geohash as (" +
                             "select " +
                             "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
                             "    cast(null as GeOhAsH(50b)) geohash2 " +
                             "from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
+                            ")");
             assertSql(
-                    "geohash where geohash2 != null",
-                    "geohash1\tgeohash2\n"
+                    "geohash1\tgeohash2\n", "geohash where geohash2 != null"
             );
         });
     }

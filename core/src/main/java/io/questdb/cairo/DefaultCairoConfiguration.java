@@ -848,6 +848,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalMaxLagTxnCount() {
+        return 20;
+    }
+
+    @Override
     public long getWalPurgeInterval() {
         return 30_000;
     }

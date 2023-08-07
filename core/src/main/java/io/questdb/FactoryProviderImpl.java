@@ -33,8 +33,6 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.griffin.SqlCompilerFactory;
-import io.questdb.griffin.SqlCompilerFactoryImpl;
 
 public class FactoryProviderImpl implements FactoryProvider {
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
@@ -65,11 +63,6 @@ public class FactoryProviderImpl implements FactoryProvider {
     @Override
     public SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
-    }
-
-    @Override
-    public SqlCompilerFactory getSqlCompilerFactory() {
-        return SqlCompilerFactoryImpl.INSTANCE;
     }
 
     @Override

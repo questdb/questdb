@@ -24,14 +24,14 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
+public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanDuplicateFalse() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -55,7 +55,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testBooleanDuplicateTrue() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -79,7 +79,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testBooleanDuplicateWayTooManyBranches() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -585,7 +585,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testDuplicateBranchStringToLongCast() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -659,7 +659,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testIntDuplicateBranch() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -910,7 +910,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLong256OrElse() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -936,7 +936,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLongDuplicateBranch() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1011,7 +1011,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLongVariableKeyError() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1276,7 +1276,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testStrToStrOrElseDuplicateBranch() throws Exception {
-        assertFailure("select \n" +
+        assertException("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +

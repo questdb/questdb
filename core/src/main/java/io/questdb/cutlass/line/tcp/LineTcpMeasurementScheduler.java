@@ -261,7 +261,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob,
             LineTcpConnectionContext ctx,
             LineTcpParser parser
-    ) {
+    ) throws Exception {
         DirectByteCharSequence measurementName = parser.getMeasurementName();
         TableUpdateDetails tud;
         try {

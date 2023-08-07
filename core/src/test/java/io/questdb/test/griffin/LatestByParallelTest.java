@@ -230,7 +230,7 @@ public class LatestByParallelTest extends AbstractTest {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount();
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine)
+                final SqlCompiler compiler = engine.getSqlCompiler()
         ) {
             try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
             ) {
@@ -300,6 +300,4 @@ public class LatestByParallelTest extends AbstractTest {
     interface LatestByRunnable {
         void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
-
 }
-

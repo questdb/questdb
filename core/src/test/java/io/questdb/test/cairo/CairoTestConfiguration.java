@@ -297,12 +297,17 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
 
     @Override
     public long getWalApplyTableTimeQuota() {
-        return overrides.getWalApplyTableTimeQuote() >= 0 ? overrides.getWalApplyTableTimeQuote() : super.getWalApplyTableTimeQuota();
+        return overrides.getWalApplyTableTimeQuota() >= 0 ? overrides.getWalApplyTableTimeQuota() : super.getWalApplyTableTimeQuota();
     }
 
     @Override
     public boolean getWalEnabledDefault() {
         return overrides.getDefaultTableWriteMode() < 0 ? super.getWalEnabledDefault() : overrides.getDefaultTableWriteMode() == 1;
+    }
+
+    @Override
+    public int getWalMaxLagTxnCount() {
+        return overrides.getWalMaxLagTxnCount() >= 0 ? overrides.getWalMaxLagTxnCount() : super.getWalMaxLagTxnCount();
     }
 
     @Override

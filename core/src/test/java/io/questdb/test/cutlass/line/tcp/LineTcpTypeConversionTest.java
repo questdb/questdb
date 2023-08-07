@@ -24,10 +24,6 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -264,20 +260,12 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
 
     private void testConversion(String table, String createTableCmd, String input, String expected) throws Exception {
         runInContext(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile(createTableCmd, sqlExecutionContext);
-            } catch (SqlException ex) {
-                throw new RuntimeException(ex);
-            }
-
+            ddl(createTableCmd);
             recvBuffer = input;
             do {
                 handleContextIO0();
                 Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
             closeContext();
             mayDrainWalQueue();
             assertTable(expected, table);
@@ -290,7 +278,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     private void testConversionToType(String type, String expected) throws Exception {
         resetTime();
         String table = "convTest";
-        testConversion(table,
+        testConversion(
+                table,
                 "create table " + table + " (testCol " + type + ", time TIMESTAMP) timestamp(time) partition by day" + (walEnabled ? " WAL;" : ";"),
                 table + ",testCol=questdb " + nextTime() + "\n" +
                         table + ",testCol=q " + nextTime() + "\n" +

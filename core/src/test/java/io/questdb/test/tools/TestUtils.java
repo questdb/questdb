@@ -565,16 +565,23 @@ public final class TestUtils {
 
         // Checks that the same tag used for allocation and freeing native memory
         long memAfter = Unsafe.getMemUsed();
+        long memNativeSqlCompilerDiff = 0;
         Assert.assertTrue(memAfter > -1);
         if (mem != memAfter) {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
-                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
-                    Assert.assertTrue(actualMemByTag > -1);
+                    if (i != MemoryTag.NATIVE_SQL_COMPILER) {
+                        Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
+                        Assert.assertTrue(actualMemByTag > -1);
+                    } else {
+                        // SqlCompiler memory is not released immediately as compilers are pooled
+                        Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
+                        memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
+                    }
                 }
             }
-            Assert.assertEquals(mem, memAfter);
+            Assert.assertEquals(mem + memNativeSqlCompilerDiff, memAfter);
         }
 
         int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
@@ -601,6 +608,18 @@ public final class TestUtils {
     }
 
     public static void assertSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+        }
+    }
+
+    public static void assertSql(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
@@ -614,6 +633,18 @@ public final class TestUtils {
                 sink
         );
         assertEquals(expected, sink);
+    }
+
+    public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log);
+        }
+    }
+
+    public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean symbolsAsStrings) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, symbolsAsStrings);
+        }
     }
 
     public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
@@ -654,10 +685,16 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
-        try (RecordCursorFactory factory = node.getSqlCompiler().compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
+        try (
+                SqlCompiler compiler = node.getEngine().getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()
+        ) {
             for (int i = 0, n = nodes.size(); i < n; i++) {
                 final QuestDBTestNode dbNode = nodes.get(i);
-                try (RecordCursorFactory factory2 = dbNode.getSqlCompiler().compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
+                try (
+                        SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
+                        RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()
+                ) {
                     try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
                         try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
                             assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
@@ -937,7 +974,7 @@ public final class TestUtils {
     }
 
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1, null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
             copyRequestJob.drain(0);
         }
     }
@@ -973,7 +1010,7 @@ public final class TestUtils {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
-                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
         ) {
             try {
@@ -1082,17 +1119,7 @@ public final class TestUtils {
         return engine.getWriter(tableToken, "test");
     }
 
-    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
-        CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
-        Assert.assertNotNull(compiledQuery.getInsertOperation());
-        final InsertOperation insertOperation = compiledQuery.getInsertOperation();
-        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
-    }
-
-    public static CharSequence insertFromSelectPopulateTableStmt(
+    public static String insertFromSelectPopulateTableStmt(
             TableModel tableModel,
             int totalRows,
             String startDate,
@@ -1163,7 +1190,7 @@ public final class TestUtils {
         }
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
-        return insertFromSelect;
+        return insertFromSelect.toString();
     }
 
     public static String ipv4ToString(int ip) {
@@ -1326,6 +1353,17 @@ public final class TestUtils {
     }
 
     public static void printSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            printSql(compiler, sqlExecutionContext, sql, sink);
+        }
+    }
+
+    public static void printSql(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
@@ -1405,7 +1443,7 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null);
     }
 
     public static long toMemory(CharSequence sequence) {

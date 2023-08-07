@@ -24,30 +24,21 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SimulateCrashFunctionTest extends AbstractGriffinTest {
+public class SimulateCrashFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select simulate_crash('0')",
-                sink,
+        assertMemoryLeak(() -> assertSql(
                 "simulate_crash\n" +
-                        "false\n"
+                        "false\n", "select simulate_crash('0')"
         ));
 
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select simulate_crash('M')",
-                sink,
+        assertMemoryLeak(() -> assertSql(
                 "simulate_crash\n" +
-                        "false\n"
+                        "false\n", "select simulate_crash('M')"
         ));
     }
 }

@@ -25,7 +25,7 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -36,7 +36,7 @@ import java.util.Locale;
 import static io.questdb.cairo.ColumnType.*;
 
 
-public class GroupByFunctionCaseTest extends AbstractGriffinTest {
+public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
     StringSink planSink = new StringSink();
     StringSink sqlSink = new StringSink();

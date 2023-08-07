@@ -24,28 +24,19 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MaxDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MaxDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
 
-        assertQuery13(
-                "avg\n" +
-                        "5261.376146789\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b date",
-                "avg\n" +
-                        "5261.376146789\n",
-                false,
-                true
-        );
+        assertQuery("avg\n" +
+                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b date", "avg\n" +
+                        "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tmax\n" +
@@ -60,18 +51,9 @@ public class MaxDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "max\n" +
-                        "\n",
-                "select max(f) from tab",
-                "create table tab as (select cast(null as date) f from long_sequence(33))",
-                null,
-                "insert into tab select 99999999999995L from long_sequence(1)",
-                "max\n" +
-                        "5138-11-16T09:46:39.995Z\n",
-                false,
-                true
-        );
+        assertQuery("max\n" +
+                        "\n", "select max(f) from tab", "create table tab as (select cast(null as date) f from long_sequence(33))", null, "insert into tab select 99999999999995L from long_sequence(1)", "max\n" +
+                        "5138-11-16T09:46:39.995Z\n", false, true, false);
     }
 
     @Test

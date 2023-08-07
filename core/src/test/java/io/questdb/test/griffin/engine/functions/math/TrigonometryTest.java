@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class TrigonometryTest extends AbstractGriffinTest {
+public class TrigonometryTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {
@@ -133,9 +133,9 @@ public class TrigonometryTest extends AbstractGriffinTest {
     @Test
     public void testSimpleFromTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table angle (x double)", sqlExecutionContext);
+            ddl("create table angle (x double)", sqlExecutionContext);
             for (int i = 0; i <= 90; i++) {
-                executeInsert("insert into angle values(" + i * Math.PI / 180.0 + ')');
+                insert("insert into angle values(" + i * Math.PI / 180.0 + ')');
             }
             printSqlResult(
                     "angleDec\tsin\tcos\ttan\n" +
