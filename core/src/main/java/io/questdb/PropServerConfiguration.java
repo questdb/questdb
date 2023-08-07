@@ -84,7 +84,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
-    private final int cairoPageFrameReduceTaskPoolCapacity;
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -317,7 +316,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int connectionPoolInitialCapacity;
     private int connectionStringPoolCapacity;
     private int dateAdapterPoolCapacity;
-    private FactoryProvider factoryProvider = null;
+    private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private boolean httpAllowDeflateBeforeSend;
     private boolean httpFrozenClock;
@@ -863,7 +862,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
             this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
-            this.cairoPageFrameReduceTaskPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY, 4);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
@@ -1564,6 +1562,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE
             );
+            registerDeprecated(
+                    PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY
+            );
         }
 
         public ValidationResult validate(Properties properties) {
@@ -1704,7 +1705,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getAttachPartitionSuffix() {
+        public @NotNull String getAttachPartitionSuffix() {
             return cairoAttachPartitionSuffix;
         }
 
@@ -1724,7 +1725,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getBackupTempDirName() {
+        public @NotNull CharSequence getBackupTempDirName() {
             return backupTempDirName;
         }
 
@@ -1739,12 +1740,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public BuildInformation getBuildInformation() {
+        public @NotNull BuildInformation getBuildInformation() {
             return buildInformation;
         }
 
         @Override
-        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+        public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
         }
 
@@ -1789,12 +1790,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getConfRoot() {
+        public @NotNull CharSequence getConfRoot() {
             return confRoot;
         }
 
         @Override
-        public LongSupplier getCopyIDSupplier() {
+        public @NotNull LongSupplier getCopyIDSupplier() {
             return copyIDSupplier;
         }
 
@@ -1839,17 +1840,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getDbDirectory() {
+        public @NotNull CharSequence getDbDirectory() {
             return dbDirectory;
         }
 
         @Override
-        public DateLocale getDefaultDateLocale() {
+        public @NotNull DateLocale getDefaultDateLocale() {
             return locale;
         }
 
         @Override
-        public CharSequence getDefaultMapType() {
+        public @NotNull CharSequence getDefaultMapType() {
             return defaultMapType;
         }
 
@@ -1874,7 +1875,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public FactoryProvider getFactoryProvider() {
+        public @Nullable FactoryProvider getFactoryProvider() {
             return factoryProvider;
         }
 
@@ -1884,7 +1885,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public FilesFacade getFilesFacade() {
+        public @NotNull FilesFacade getFilesFacade() {
             return filesFacade;
         }
 
@@ -2059,11 +2060,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPageFrameReduceTaskPoolCapacity() {
-            return cairoPageFrameReduceTaskPoolCapacity;
-        }
-
-        @Override
         public int getParallelIndexThreshold() {
             return parallelIndexThreshold;
         }
@@ -2109,7 +2105,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getRoot() {
+        public @NotNull String getRoot() {
             return root;
         }
 
@@ -2124,12 +2120,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getSnapshotInstanceId() {
+        public @NotNull CharSequence getSnapshotInstanceId() {
             return snapshotInstanceId;
         }
 
         @Override
-        public CharSequence getSnapshotRoot() {
+        public @NotNull CharSequence getSnapshotRoot() {
             return snapshotRoot;
         }
 
@@ -2404,7 +2400,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getSystemTableNamePrefix() {
+        public @NotNull CharSequence getSystemTableNamePrefix() {
             return systemTableNamePrefix;
         }
 
@@ -2418,7 +2414,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return cairoTableRegistryCompactionThreshold;
         }
 
-        public TelemetryConfiguration getTelemetryConfiguration() {
+        public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
 
@@ -2428,7 +2424,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public TextConfiguration getTextConfiguration() {
+        public @NotNull TextConfiguration getTextConfiguration() {
             return textConfiguration;
         }
 
@@ -2443,7 +2439,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public VolumeDefinitions getVolumeDefinitions() {
+        public @NotNull VolumeDefinitions getVolumeDefinitions() {
             return volumeDefinitions;
         }
 

@@ -50,6 +50,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+    // Empty list means that all tables should be checked.
+    private final ObjHashSet<TableToken> tablesToCheck = new ObjHashSet<>();
     private final TxReader txReader;
     private long lastProcessedCount = 0;
     private RenameTrackingMetadataService renameTrackingMetadataService = new RenameTrackingMetadataService();
@@ -66,12 +68,19 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         checkNotifyOutstandingTxnInWalRef = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
     }
 
+    public void addTableToCheck(TableToken tableToken) {
+        tablesToCheck.add(tableToken);
+    }
+
     public void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
     public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long seqTxn) {
+        if (!tablesToCheck.isEmpty() && !tablesToCheck.contains(tableToken)) {
+            return;
+        }
         if (
                 seqTxn < 0 && TableUtils.exists(
                         ff,
@@ -156,7 +165,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         private CharSequence tableName;
 
         @Override
-        public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SqlExecutionContext executionContext) {
+        public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
         }
 
         @Override

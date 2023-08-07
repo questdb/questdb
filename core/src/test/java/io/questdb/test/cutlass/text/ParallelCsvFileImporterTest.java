@@ -43,6 +43,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
@@ -2979,12 +2980,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
 
                     @Override
-                    public IOURingFacade getIOURingFacade() {
+                    public @NotNull IOURingFacade getIOURingFacade() {
                         return ioURingFacade;
                     }
 
@@ -3014,12 +3015,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 // we need to create entire engine
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
 
                     @Override
-                    public IOURingFacade getIOURingFacade() {
+                    public @NotNull IOURingFacade getIOURingFacade() {
                         return ioURingFacade;
                     }
 

@@ -176,7 +176,7 @@ public class Bootstrap {
                             if (cairoConf == null) {
                                 cairoConf = new PropCairoConfiguration() {
                                     @Override
-                                    public FilesFacade getFilesFacade() {
+                                    public @NotNull FilesFacade getFilesFacade() {
                                         return ffOverride;
                                     }
                                 };

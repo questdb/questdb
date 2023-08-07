@@ -37,7 +37,6 @@ import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -65,6 +64,7 @@ public class WalWriter implements TableWriterAPI {
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
+    private final DdlListener ddlListener;
     private final WalWriterEvents events;
     private final FilesFacade ff;
     private final AtomicIntList initialSymbolCounts;
@@ -115,6 +115,10 @@ public class WalWriter implements TableWriterAPI {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
+        final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
+        this.ddlListener = sysTable || configuration.getFactoryProvider() == null
+                ? DdlListenerImpl.INSTANCE
+                : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
@@ -156,7 +160,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void addColumn(@NotNull CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         addColumn(
                 columnName,
                 columnType,
@@ -164,7 +168,8 @@ public class WalWriter implements TableWriterAPI {
                 configuration.getDefaultSymbolCacheFlag(),
                 false,
                 configuration.getIndexValueBlockSize(),
-                false
+                false,
+                securityContext
         );
     }
 
@@ -178,21 +183,16 @@ public class WalWriter implements TableWriterAPI {
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
-        alterOp.clear();
-        alterOp.ofAddColumn(
-                getMetadata().getTableId(),
-                tableToken,
-                0,
+        addColumn(
                 columnName,
-                0,
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                isDedupKey
+                isDedupKey,
+                null
         );
-        apply(alterOp, true);
     }
 
     @Override
@@ -658,6 +658,34 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    private void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isDedupKey,
+            SecurityContext securityContext
+    ) {
+        alterOp.clear();
+        alterOp.ofAddColumn(
+                getMetadata().getTableId(),
+                tableToken,
+                0,
+                columnName,
+                0,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                isDedupKey
+        );
+        alterOp.withSecurityContext(securityContext);
+        apply(alterOp, true);
+    }
+
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableToken, getColumnStructureVersion())) {
             long structVer = getColumnStructureVersion();
@@ -1107,7 +1135,8 @@ public class WalWriter implements TableWriterAPI {
         try {
             final MemoryMA mem1 = getPrimaryColumn(columnIndex);
             mem1.close(true, Vm.TRUNCATE_TO_POINTER);
-            mem1.of(ff,
+            mem1.of(
+                    ff,
                     dFile(path.trimTo(pathTrimToLen), name),
                     configuration.getWalDataAppendPageSize(),
                     -1,
@@ -1119,7 +1148,8 @@ public class WalWriter implements TableWriterAPI {
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
             if (mem2 != null) {
                 mem2.close(true, Vm.TRUNCATE_TO_POINTER);
-                mem2.of(ff,
+                mem2.of(
+                        ff,
                         iFile(path.trimTo(pathTrimToLen), name),
                         configuration.getWalDataAppendPageSize(),
                         -1,
@@ -1470,7 +1500,7 @@ public class WalWriter implements TableWriterAPI {
                 boolean isIndexed,
                 int indexValueBlockCapacity,
                 boolean isSequential,
-                SqlExecutionContext executionContext
+                SecurityContext securityContext
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1578,7 +1608,7 @@ public class WalWriter implements TableWriterAPI {
                 boolean isIndexed,
                 int indexValueBlockCapacity,
                 boolean isSequential,
-                SqlExecutionContext executionContext
+                SecurityContext securityContext
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
@@ -1616,8 +1646,8 @@ public class WalWriter implements TableWriterAPI {
                         setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
                     }
 
-                    if (executionContext != null) {
-                        executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), metadata.getTableToken(), columnName);
+                    if (securityContext != null) {
+                        ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {

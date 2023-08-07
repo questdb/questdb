@@ -40,7 +40,10 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -114,6 +117,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final CairoConfiguration configuration;
+    private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
@@ -182,7 +186,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
-    private CommitListener commitListener;
     private long committedMasterRef;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private String designatedTimestampColumnName;
@@ -248,6 +251,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
+        final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
+        this.ddlListener = sysTable || configuration.getFactoryProvider() == null
+                ? DdlListenerImpl.INSTANCE
+                : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
@@ -383,7 +390,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void addColumn(@NotNull CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         addColumn(
                 columnName,
                 columnType,
@@ -391,7 +398,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 configuration.getDefaultSymbolCacheFlag(),
                 false,
                 0,
-                false
+                false,
+                false,
+                securityContext
         );
     }
 
@@ -427,7 +436,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isDedupKey,
-            SqlExecutionContext executionContext
+            SecurityContext securityContext
     ) {
         addColumn(
                 columnName,
@@ -438,7 +447,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
-                executionContext
+                securityContext
         );
     }
 
@@ -481,7 +490,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
-            SqlExecutionContext executionContext
+            SecurityContext securityContext
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -572,8 +581,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
         }
 
-        if (executionContext != null) {
-            executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), tableToken, columnName);
+        if (securityContext != null) {
+            ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
     }
 
@@ -985,10 +994,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
             shrinkO3Mem();
-
-            if (commitListener != null) {
-                commitListener.onCommit(txWriter.getTxn(), rowsAdded);
-            }
             return rowsAdded;
         }
 
@@ -2120,11 +2125,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    @SuppressWarnings("unused")
-    public void setCommitListener(CommitListener commitListener) {
-        this.commitListener = commitListener;
-    }
-
     public void setExtensionListener(ExtensionListener listener) {
         txWriter.setExtensionListener(listener);
     }
@@ -3116,12 +3116,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            final long txn = getTxn();
-
-            if (commitListener != null) {
-                commitListener.onCommit(txn, rowsAdded);
-            }
-            return txn;
+            return getTxn();
         }
         return TableSequencer.NO_TXN;
     }
@@ -3515,7 +3510,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(partitionFrameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
-        commitListener = Misc.free(commitListener);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
@@ -5479,7 +5473,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff,
+            mem1.of(
+                    ff,
                     dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
                     configuration.getDataAppendPageSize(),
                     -1,
