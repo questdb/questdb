@@ -433,11 +433,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getPageFrameReduceTaskPoolCapacity() {
-        return delegate.getPageFrameReduceTaskPoolCapacity();
-    }
-
-    @Override
     public int getParallelIndexThreshold() {
         return delegate.getParallelIndexThreshold();
     }

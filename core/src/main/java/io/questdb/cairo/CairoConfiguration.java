@@ -262,8 +262,6 @@ public interface CairoConfiguration {
 
     int getPageFrameReduceShardCount();
 
-    int getPageFrameReduceTaskPoolCapacity();
-
     int getParallelIndexThreshold();
 
     long getPartitionO3SplitMinSize();
@@ -277,8 +275,9 @@ public interface CairoConfiguration {
         Rnd rnd = RANDOM.get();
         if (rnd == null) {
             RANDOM.set(rnd = new Rnd(
-                    getNanosecondClock().getTicks(),
-                    getMicrosecondClock().getTicks())
+                            getNanosecondClock().getTicks(),
+                            getMicrosecondClock().getTicks()
+                    )
             );
         }
         return rnd;
