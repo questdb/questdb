@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.Vm;
@@ -66,9 +67,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull RecordCursorFactory base,
             @NotNull ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
+            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull CompiledFilter compiledFilter,
-            @NotNull @Transient WeakClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             boolean preTouchColumns,
@@ -80,8 +81,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.base = base;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
-        MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
-                configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
+        MemoryCARW bindVarMemory = Vm.getCARWInstance(
+                configuration.getSqlJitBindVarsMemoryPageSize(),
+                configuration.getSqlJitBindVarsMemoryMaxPages(),
+                MemoryTag.NATIVE_JIT
+        );
         IntList preTouchColumnTypes = null;
         if (preTouchColumns) {
             preTouchColumnTypes = new IntList();
@@ -99,7 +103,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 bindVarFunctions,
                 preTouchColumnTypes
         );
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
@@ -358,6 +362,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     return;
                 case ColumnType.INT:
                     bindVarMemory.putLong(function.getInt(null));
+                    return;
+                case ColumnType.IPv4:
+                    bindVarMemory.putLong(function.getIPv4(null));
                     return;
                 case ColumnType.GEOINT:
                     bindVarMemory.putLong(function.getGeoInt(null));

@@ -25,12 +25,12 @@
 package io.questdb.test.griffin.engine.functions.eq;
 
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class EqLong256StrFunctionFactoryTest extends AbstractGriffinTest {
+public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLong256Decode1() throws Exception {
         assertQuery(

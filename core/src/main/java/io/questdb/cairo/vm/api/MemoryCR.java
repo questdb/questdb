@@ -70,6 +70,10 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getFloat(addressOf(offset));
     }
 
+    default int getIPv4(long offset) {
+        return getInt(offset);
+    }
+
     default int getInt(long offset) {
         assert addressOf(offset + Integer.BYTES) > 0;
         return Unsafe.getUnsafe().getInt(addressOf(offset));

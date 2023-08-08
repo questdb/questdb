@@ -25,14 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
  * Checks that implicit string/symbol -> timestamp conversion works only for literals.
  */
-public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
+public class ImplicitToTimestampCastTest extends AbstractCairoTest {
 
     @Test
     public void testImplicitIntegerToSymbolConversionFails() throws Exception {

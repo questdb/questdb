@@ -28,11 +28,17 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public interface TableWriterAPI extends Closeable {
-    void addColumn(@NotNull CharSequence columnName, int columnType);
+
+    default void addColumn(@NotNull CharSequence columnName, int columnType) {
+        addColumn(columnName, columnType, null);
+    }
+
+    void addColumn(@NotNull CharSequence columnName, int columnType, @Nullable SecurityContext securityContext);
 
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns

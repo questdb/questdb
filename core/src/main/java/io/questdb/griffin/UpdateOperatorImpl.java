@@ -50,10 +50,10 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;
-    private final TableWriter tableWriter;
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
-    private IndexBuilder indexBuilder;
+    private final TableWriter tableWriter;
     private final IntList updateColumnIndexes = new IntList();
+    private IndexBuilder indexBuilder;
 
     public UpdateOperatorImpl(
             CairoConfiguration configuration,
@@ -355,7 +355,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             final int columnIndex = updateColumnIndexes.get(i);
             final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
             final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);
-            final int columnType = tableMetadata.getColumnType(columnIndex);
+            final int toType = tableMetadata.getColumnType(columnIndex);
 
             if (currentRow > prevRow) {
                 copyColumn(
@@ -367,12 +367,15 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         dstVarMem,
                         newColumnTop,
                         oldColumnTop,
-                        columnType
+                        toType
                 );
             }
-            switch (ColumnType.tagOf(columnType)) {
+            switch (ColumnType.tagOf(toType)) {
                 case ColumnType.INT:
                     dstFixMem.putInt(masterRecord.getInt(i));
+                    break;
+                case ColumnType.IPv4:
+                    dstFixMem.putInt(masterRecord.getIPv4(i));
                     break;
                 case ColumnType.FLOAT:
                     dstFixMem.putFloat(masterRecord.getFloat(i));
@@ -436,7 +439,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     break;
                 default:
                     throw CairoException.nonCritical()
-                            .put("Column type ").put(ColumnType.nameOf(columnType))
+                            .put("Column type ").put(ColumnType.nameOf(toType))
                             .put(" not supported for updates");
             }
         }

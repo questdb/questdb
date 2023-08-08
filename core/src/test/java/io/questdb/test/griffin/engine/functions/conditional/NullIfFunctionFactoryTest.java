@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
+public class NullIfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCharSimple() throws Exception {

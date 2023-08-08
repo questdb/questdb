@@ -25,19 +25,20 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CreateTableAsSelectTest extends AbstractGriffinTest {
+public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreateNonPartitionedTableAsSelectTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            assertFailure(
+            assertException(
+                    "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
+                    13,
+                    "Could not create table. See log for details."
             );
         });
     }
@@ -57,30 +58,20 @@ public class CreateTableAsSelectTest extends AbstractGriffinTest {
         testCreatePartitionedTableAsSelectWithOrderBy("");
     }
 
-    private void assertFailure() {
-        try {
-            compiler.compile("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);", sqlExecutionContext);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table. See log for details.");
-            Assert.assertEquals(13, e.getPosition());
-        }
-    }
-
     private void createSrcTable() throws SqlException {
-        compiler.compile("create table src (ts timestamp, v long) timestamp(ts) partition by day;", sqlExecutionContext);
-        executeInsert("insert into src values (0, 0);");
-        executeInsert("insert into src values (10000, 1);");
-        executeInsert("insert into src values (20000, 2);");
-        executeInsert("insert into src values (30000, 3);");
-        executeInsert("insert into src values (40000, 4);");
+        ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
+        insert("insert into src values (0, 0);");
+        insert("insert into src values (10000, 1);");
+        insert("insert into src values (20000, 2);");
+        insert("insert into src values (30000, 3);");
+        insert("insert into src values (40000, 4);");
     }
 
     private void testCreatePartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            compiler.compile("create table dest as (select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl("create table dest as (select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;");
 
             String expected = "ts\tv\n" +
                     "1970-01-01T00:00:00.000000Z\t0\n" +

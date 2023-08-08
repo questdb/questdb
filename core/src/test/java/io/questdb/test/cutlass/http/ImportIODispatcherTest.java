@@ -26,10 +26,6 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
@@ -331,7 +327,6 @@ public class ImportIODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
 
-    private SqlCompiler compiler;
     private SqlExecutionContext sqlExecutionContext;
 
     @Test
@@ -442,7 +437,6 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts3"));
                         Assert.assertFalse(meta.isColumnIndexed(4));
                     }
-                    compiler.close();
                 });
     }
 
@@ -496,7 +490,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine) -> {
                     setupSql(engine);
-                    compiler.compile("create table trips as (" +
+                    engine.ddl("create table trips as (" +
                             "select cast('b' as SYMBOL) Col1, " +
                             "timestamp_sequence(0, 100000L) Pickup_DateTime," +
                             "timestamp_sequence(100000000L, 10000L)" +
@@ -577,8 +571,6 @@ public class ImportIODispatcherTest extends AbstractTest {
                                         "\r\n"
                         );
                     });
-
-                    compiler.close();
                 });
     }
 
@@ -742,7 +734,6 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts"));
                         Assert.assertFalse(meta.isColumnIndexed(4));
                     }
-                    compiler.close();
                 });
     }
 
@@ -882,7 +873,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withFilesFacade(ff)
                 .run((engine) -> {
                     setupSql(engine);
-                    compiler.compile("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", sqlExecutionContext);
+                    engine.ddl("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", sqlExecutionContext);
 
                     // Cache query plan
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n",
@@ -892,7 +883,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "\r\n");
 
                     // Add new commit
-                    compiler.compile("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", sqlExecutionContext);
+                    engine.insert("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", sqlExecutionContext);
 
                     // Here fail expected
                     new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
@@ -909,8 +900,6 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.assertEquals(2, txnScoreboard.getMin());
                         Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(2));
                     }
-
-                    compiler.close();
                 });
     }
 
@@ -941,7 +930,6 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     private void setupSql(CairoEngine engine) {
-        compiler = new SqlCompiler(engine);
         sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(engine.getConfiguration()));
     }
 
@@ -953,7 +941,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine) -> {
                     setupSql(engine);
-                    compiler.compile("create table trips(" +
+                    engine.ddl("create table trips(" +
                             "timestamp TIMESTAMP," +
                             "str STRING," +
                             "i STRING" +
@@ -977,15 +965,9 @@ public class ImportIODispatcherTest extends AbstractTest {
                                             "00\r\n" +
                                             "\r\n");
 
-                    CompiledQuery compiledQuery = compiler.compile("insert into trips values (" +
+                    engine.insert("insert into trips values (" +
                             "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
                             ")", sqlExecutionContext);
-                    final InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                        insertMethod.execute();
-                        insertMethod.commit();
-                    }
-                    compiler.close();
                 });
     }
 

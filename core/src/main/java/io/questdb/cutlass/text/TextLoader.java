@@ -25,8 +25,8 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
@@ -35,10 +35,7 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
@@ -53,7 +50,7 @@ public class TextLoader implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(TextLoader.class);
     private final JsonLexer jsonLexer;
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
-    private final Path path = new Path();
+    private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration;
     private final TextDelimiterScanner textDelimiterScanner;

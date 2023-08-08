@@ -261,7 +261,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob,
             LineTcpConnectionContext ctx,
             LineTcpParser parser
-    ) {
+    ) throws Exception {
         DirectByteCharSequence measurementName = parser.getMeasurementName();
         TableUpdateDetails tud;
         try {
@@ -393,8 +393,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             securityContext.authorizeLineAlterTableAddColumn(writer.getTableToken());
                             tud.commit(false);
                             try {
-                                writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
-                                tud.getEngine().onColumnAdded(securityContext, tud.getTableToken(), columnNameUtf16);
+                                writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                             } catch (CairoException e) {
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
@@ -533,6 +532,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         final DirectByteCharSequence entityValue = ent.getValue();
                         if (geoHashBits == 0) { // not geohash
                             switch (ColumnType.tagOf(colType)) {
+                                case ColumnType.IPv4:
+                                    try {
+                                        int value = Numbers.parseIPv4Nl(entityValue);
+                                        r.putInt(columnIndex, value);
+                                    } catch (NumericException e) {
+                                        throw castError("string", i, colType, ent.getName());
+                                    }
+                                    break;
+
                                 case ColumnType.STRING:
                                     r.putStrUtf8AsUtf16(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;

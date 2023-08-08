@@ -42,6 +42,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Ignore;
@@ -51,9 +52,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void test2Between() throws Exception {
-        assertQuery("select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
+        assertQuery(
+                "select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
                 "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -123,16 +126,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAliasWithKeyword() throws Exception {
-        assertQuery("select-choose x from (select [x] from x as where x > 1) as",
+        assertQuery(
+                "select-choose x from (select [x] from x as where x > 1) as",
                 "x \"as\" where x > 1",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testAliasWithSpaceDoubleQuote() throws Exception {
-        assertQuery("select-choose x from (select [x] from x 'b a' where x > 1) 'b a'",
+        assertQuery(
+                "select-choose x from (select [x] from x 'b a' where x > 1) 'b a'",
                 "x \"b a\" where x > 1",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -241,7 +248,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAsOfJoin() throws SqlException {
-        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp] from quotes q timestamp (timestamp) where tag = null) t",
+        assertQuery(
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp] from quotes q timestamp (timestamp) where tag = null) t",
                 "trades t ASOF JOIN quotes q WHERE tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
@@ -269,7 +277,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " join orders o on c.customerId = o.customerId",
                 modelOf("customers").col("customerId", ColumnType.SYMBOL),
                 modelOf("employees").col("employeeId", ColumnType.STRING),
-                modelOf("orders").col("customerId", ColumnType.SYMBOL));
+                modelOf("orders").col("customerId", ColumnType.SYMBOL)
+        );
     }
 
     @Test
@@ -390,7 +399,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsColumnAlias() throws Exception {
-        assertQuery("select-choose l at from (select [l] from testat timestamp (ts))",
+        assertQuery(
+                "select-choose l at from (select [l] from testat timestamp (ts))",
                 "select l at from testat",
                 modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
         );
@@ -398,7 +408,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsColumnName() throws Exception {
-        assertQuery("select-choose at from (select [at] from testat timestamp (ts))",
+        assertQuery(
+                "select-choose at from (select [at] from testat timestamp (ts))",
                 "select at from testat",
                 modelOf("testat").col("at", ColumnType.INT).timestamp("ts")
         );
@@ -406,7 +417,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsTableAlias() throws Exception {
-        assertQuery("select-choose l, ts from (select [l, ts] from testat at timestamp (ts)) at",
+        assertQuery(
+                "select-choose l, ts from (select [l, ts] from testat at timestamp (ts)) at",
                 "select at.l, at.ts from testat at",
                 modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
         );
@@ -414,7 +426,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsTableAliasInJoin() throws Exception {
-        assertQuery("select-choose at.l l, at.ts ts, at2.l l1, at2.ts ts1 from (select [l, ts] from testat at timestamp (ts) join select [l, ts] from testat at2 timestamp (ts) on at2.l = at.l) at",
+        assertQuery(
+                "select-choose at.l l, at.ts ts, at2.l l1, at2.ts ts1 from (select [l, ts] from testat at timestamp (ts) join select [l, ts] from testat at2 timestamp (ts) on at2.l = at.l) at",
                 "select * from testat at join testat at2 on at.l = at2.l",
                 modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
         );
@@ -422,7 +435,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsTableAliasSingleColumn() throws Exception {
-        assertQuery("select-choose l from (select [l] from testat at timestamp (ts)) at",
+        assertQuery(
+                "select-choose l from (select [l] from testat at timestamp (ts)) at",
                 "select at.l from testat as at",
                 modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
         );
@@ -430,7 +444,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsTableAliasStar() throws Exception {
-        assertQuery("select-choose l, ts from (select [l, ts] from testat at timestamp (ts)) at",
+        assertQuery(
+                "select-choose l, ts from (select [l, ts] from testat at timestamp (ts)) at",
                 "select at.* from testat at",
                 modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
         );
@@ -438,7 +453,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsTableName() throws Exception {
-        assertQuery("select-choose at from (select [at] from at timestamp (ts))",
+        assertQuery(
+                "select-choose at from (select [at] from at timestamp (ts))",
                 "select at.at from at",
                 modelOf("at").col("at", ColumnType.INT).timestamp("ts")
         );
@@ -446,7 +462,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsTableNameAndExpr() throws Exception {
-        assertQuery("select-virtual at1 + at column from (select-choose [at, at at1] at, at at1 from (select [at] from at timestamp (ts)))",
+        assertQuery(
+                "select-virtual at1 + at column from (select-choose [at, at at1] at, at at1 from (select [at] from at timestamp (ts)))",
                 "select (at.at + at) from at",
                 modelOf("at").col("at", ColumnType.INT).timestamp("ts")
         );
@@ -454,7 +471,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAtAsWithAlias() throws Exception {
-        assertQuery("select-choose l, ts from (select-choose [l, ts] l, ts from (select [l, ts] from testat timestamp (ts))) at",
+        assertQuery(
+                "select-choose l, ts from (select-choose [l, ts] l, ts from (select [l, ts] from testat timestamp (ts))) at",
                 "with at as (select * from testat )  selecT * from at",
                 modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
         );
@@ -491,52 +509,66 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testBetween() throws Exception {
-        assertQuery("select-choose t from (select [t] from x where t between ('2020-01-01','2021-01-02'))",
+        assertQuery(
+                "select-choose t from (select [t] from x where t between ('2020-01-01','2021-01-02'))",
                 "x where t between '2020-01-01' and '2021-01-02'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testBetweenInsideCast() throws Exception {
-        assertQuery("select-virtual cast(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),INT) + 1 column from (select [t] from x)",
+        assertQuery(
+                "select-virtual cast(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),INT) + 1 column from (select [t] from x)",
                 "select CAST(t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' AS INT) + 1 from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testBetweenUnfinished() throws Exception {
-        assertSyntaxError("select tt from x where t between '2020-01-01'",
+        assertSyntaxError(
+                "select tt from x where t between '2020-01-01'",
                 25,
                 "too few arguments for 'between' [found=2,expected=3]",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testBetweenWithCase() throws Exception {
-        assertQuery("select-virtual case(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),'a','b') case from (select [t] from x)",
+        assertQuery(
+                "select-virtual case(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),'a','b') case from (select [t] from x)",
                 "select case when t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' then 'a' else 'b' end from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testBetweenWithCast() throws Exception {
-        assertQuery("select-choose t from (select [t] from x where t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'))",
+        assertQuery(
+                "select-choose t from (select [t] from x where t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'))",
                 "select t from x where t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testBetweenWithCastAndSum() throws Exception {
-        assertQuery("select-choose tt from (select [tt, t] from x where t between ('2020-01-01',now() + cast(NULL,LONG)))",
+        assertQuery(
+                "select-choose tt from (select [tt, t] from x where t between ('2020-01-01',now() + cast(NULL,LONG)))",
                 "select tt from x where t between '2020-01-01' and (now() + CAST(NULL AS LONG))",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testBetweenWithCastAndSum2() throws Exception {
-        assertQuery("select-choose tt from (select [tt, t] from x where t between (now() + cast(NULL,LONG),'2020-01-01'))",
+        assertQuery(
+                "select-choose tt from (select [tt, t] from x where t between (now() + cast(NULL,LONG),'2020-01-01'))",
                 "select tt from x where t between (now() + CAST(NULL AS LONG)) and '2020-01-01'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -546,16 +578,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(x where /*this is a random comment */a > 1) 'b a' where x > 1",
                 modelOf("x")
                         .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
+                        .col("a", ColumnType.INT)
+        );
     }
 
     @Test
     public void testBlockCommentNested() throws Exception {
-        assertQuery("select-choose x, a from (select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a'",
+        assertQuery(
+                "select-choose x, a from (select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a'",
                 "(x where a > 1) /* comment /* ok */  whatever */'b a' where x > 1",
                 modelOf("x")
                         .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
+                        .col("a", ColumnType.INT)
+        );
     }
 
     @Test
@@ -565,7 +600,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(x where a > 1) 'b a' where x > 1 /* this block comment",
                 modelOf("x")
                         .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
+                        .col("a", ColumnType.INT)
+        );
     }
 
     @Test
@@ -643,9 +679,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testColumnAliasDoubleQuoted() throws Exception {
-        assertQuery("select-choose x aaaasssss from (select [x] from x where x > 1)",
+        assertQuery(
+                "select-choose x aaaasssss from (select [x] from x where x > 1)",
                 "select x \"aaaasssss\" from x where x > 1",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -719,7 +757,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testConstantFunctionAsArg() throws Exception {
-        assertQuery("select-choose customerId from (select [customerId] from customers where f(1.2) > 1)",
+        assertQuery(
+                "select-choose customerId from (select [customerId] from customers where f(1.2) > 1)",
                 "select * from customers where f(1.2) > 1",
                 modelOf("customers").col("customerId", ColumnType.INT)
         );
@@ -773,7 +812,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCount() throws Exception {
-        assertQuery("select-group-by customerId, count() count from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c",
+        assertQuery(
+                "select-group-by customerId, count() count from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c",
                 "select c.customerId, count() from customers c" +
                         " left join orders o on c.customerId = o.customerId " +
                         " where o.customerId = NaN",
@@ -866,9 +906,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateLikeTableInvalidSyntax() throws Exception {
-        assertSyntaxError("create table x (like y), index(s1)",
+        assertSyntaxError(
+                "create table x (like y), index(s1)",
                 23,
-                "unexpected token: ");
+                "unexpected token: "
+        );
     }
 
     @Test
@@ -876,7 +918,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table newtab ( like . )",
                 27,
-                "'.' is an invalid table name");
+                "'.' is an invalid table name"
+        );
     }
 
     @Test
@@ -884,7 +927,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like '../../../')",
                 21,
-                "'.' is not allowed");
+                "'.' is not allowed"
+        );
     }
 
     @Test
@@ -892,7 +936,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like Y.z)",
                 22,
-                "unexpected token: .");
+                "unexpected token: ."
+        );
     }
 
     @Test
@@ -964,7 +1009,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH");
+                        "partition by MONTH"
+        );
     }
 
     @Test
@@ -1039,7 +1085,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableCacheCapacity() throws SqlException {
-        assertCreateTable("create table x (" +
+        assertCreateTable(
+                "create table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -1068,7 +1115,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "TIMESTAMP(t) " +
-                        "PARTITION BY YEAR");
+                        "PARTITION BY YEAR"
+        );
     }
 
     @Test
@@ -1302,7 +1350,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "\"idFloat\" REAL NOT NULL,\n" +
                         "\"idDouble\" DOUBLE PRECISION NOT NULL,\n" +
                         "\"idBytes\" BYTEA NOT NULL,\n" +
-                        "\"msg\" TEXT NULL)");
+                        "\"msg\" TEXT NULL)"
+        );
     }
 
     @Test
@@ -1327,7 +1376,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableInPlaceIndex() throws SqlException {
-        assertCreateTable("create table x (" +
+        assertCreateTable(
+                "create table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -1356,7 +1406,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by YEAR");
+                        "partition by YEAR"
+        );
     }
 
     @Test
@@ -1389,7 +1440,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH");
+                        "partition by MONTH"
+        );
     }
 
     @Test
@@ -1514,7 +1566,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH");
+                        "partition by MONTH"
+        );
     }
 
     @Test
@@ -1522,43 +1575,53 @@ public class SqlParserTest extends AbstractSqlParserTest {
         Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
         assertCreateTable(
                 "create table tst0 (i INT) in volume 'volume'",
-                "create table tst0 (i int) in volume 'volume'");
+                "create table tst0 (i int) in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst1 (i INT) in volume 'volume'",
-                "create table tst1 (i int) in volume volume");
+                "create table tst1 (i int) in volume volume"
+        );
 
         assertCreateTable(
                 "create table tst2 (i INT, ts TIMESTAMP) timestamp(ts) in volume 'volume'",
-                "create table tst2 (i int, ts timestamp) timestamp(ts) in volume 'volume'");
+                "create table tst2 (i int, ts timestamp) timestamp(ts) in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day in volume 'volume'");
+                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, in volume 'volume'");
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst7 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
-                "create table tst7 (i symbol, ts timestamp), index(i capacity 32) in volume 'volume'");
+                "create table tst7 (i symbol, ts timestamp), index(i capacity 32) in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
-                "create table tst8 (i symbol, ts timestamp), index(i capacity 32) with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+                "create table tst8 (i symbol, ts timestamp), index(i capacity 32) with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst8 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+                "create table tst8 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+        );
     }
 
     @Test
@@ -1567,26 +1630,30 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         assertCreateTable(
                 "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day bypass wal in volume 'volume'");
+                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day bypass wal in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, in volume 'volume'");
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
-                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+        );
     }
 
     @Test
     public void testCreateTableInVolumeFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compile("create table tst0 (" +
+                ddl("create table tst0 (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c CHAR, " +
@@ -1615,7 +1682,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR VOLUME peterson",
                 86,
-                "unexpected token: VOLUME");
+                "unexpected token: VOLUME"
+        );
 
         assertSyntaxError(
                 "create table tst0 (" +
@@ -1626,7 +1694,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR IN peterson",
                 97,
-                "expected 'volume'");
+                "expected 'volume'"
+        );
 
         assertSyntaxError(
                 "create table tst0 (" +
@@ -1637,7 +1706,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR IN VOLUME",
                 95,
-                "path for volume expected");
+                "path for volume expected"
+        );
     }
 
     @Test
@@ -1646,19 +1716,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         assertCreateTable(
                 "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day wal in volume 'volume'");
+                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day wal in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, in volume 'volume'");
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+        );
 
         assertCreateTable(
                 "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
+        );
     }
 
     @Test
@@ -1770,8 +1844,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableLike() throws Exception {
-        assertCreateTable("create table x (like y)",
-                "create table x (like y)");
+        assertCreateTable(
+                "create table x (like y)",
+                "create table x (like y)"
+        );
     }
 
     @Test
@@ -1836,7 +1912,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableNoCache() throws SqlException {
-        assertCreateTable("create table x (" +
+        assertCreateTable(
+                "create table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -1865,12 +1942,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "TIMESTAMP(t) " +
-                        "PARTITION by YEAR");
+                        "PARTITION by YEAR"
+        );
     }
 
     @Test
     public void testCreateTableNoCacheIndex() throws SqlException {
-        assertCreateTable("create table x (" +
+        assertCreateTable(
+                "create table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -1899,7 +1978,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by YEAR");
+                        "partition by YEAR"
+        );
     }
 
     @Test
@@ -1936,7 +2016,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (a) " +
                         ", index (x) " +
                         "timestamp(t) " +
-                        "partition by MONTH");
+                        "partition by MONTH"
+        );
     }
 
     @Test
@@ -1973,7 +2054,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (a capacity 16) " +
                         ", index (x capacity 24) " +
                         "timestamp(t) " +
-                        "partition by MONTH");
+                        "partition by MONTH"
+        );
     }
 
     @Test
@@ -1997,7 +2079,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by MONTH",
                 176,
-                "max index block capacity is");
+                "max index block capacity is"
+        );
     }
 
     @Test
@@ -2021,7 +2104,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by MONTH",
                 177,
-                "bad integer");
+                "bad integer"
+        );
     }
 
     @Test
@@ -2045,7 +2129,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by MONTH",
                 176,
-                "min index block capacity is");
+                "min index block capacity is"
+        );
     }
 
     @Test
@@ -2069,7 +2154,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by MONTH",
                 176,
-                "min index block capacity is");
+                "min index block capacity is"
+        );
     }
 
     @Test
@@ -2104,7 +2190,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH");
+                        "partition by MONTH"
+        );
     }
 
     @Test
@@ -2206,7 +2293,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=asif,",
                 95,
-                "could not parse maxUncommittedRows value \"asif\"");
+                "could not parse maxUncommittedRows value \"asif\""
+        );
     }
 
     @Test
@@ -2214,56 +2302,64 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxLag=asif,",
                 89,
-                "invalid interval qualifier asif");
+                "invalid interval qualifier asif"
+        );
     }
 
     @Test
     public void testCreateTableWithGeoHash1() throws Exception {
         assertCreateTable(
                 "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
+                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
+        );
     }
 
     @Test
     public void testCreateTableWithGeoHash2() throws Exception {
         assertCreateTable(
                 "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
+                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
+        );
     }
 
     @Test
     public void testCreateTableWithGeoHashNoSizeUnit() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(12), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
+                26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits"
+        );
     }
 
     @Test
     public void testCreateTableWithGeoHashVariablePrecisionIsNotSupportedYet() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(), t TIMESTAMP) timestamp(t) partition by DAY",
-                27, "literal expected");
+                27, "literal expected"
+        );
     }
 
     @Test
     public void testCreateTableWithGeoHashWrongSize1() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(0b), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "invalid GEOHASH type precision range, must be [1, 60] bits, provided=0");
+                26, "invalid GEOHASH type precision range, must be [1, 60] bits, provided=0"
+        );
     }
 
     @Test
     public void testCreateTableWithGeoHashWrongSize2() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(61b), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "invalid GEOHASH type precision range, must be [1, 60] bits, provided=61");
+                26, "invalid GEOHASH type precision range, must be [1, 60] bits, provided=61"
+        );
     }
 
     @Test
     public void testCreateTableWithGeoHashWrongSizeUnit() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(12s), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
+                26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits"
+        );
     }
 
     @Test
@@ -2271,7 +2367,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3invalid=250ms",
                 112,
-                "unrecognized o3invalid after WITH");
+                "unrecognized o3invalid after WITH"
+        );
     }
 
     @Test
@@ -2279,14 +2376,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
                 96,
-                "unexpected token: x");
+                "unexpected token: x"
+        );
     }
 
     @Test
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
+        );
     }
 
     @Test
@@ -2294,7 +2393,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=",
                 105,
-                "too few arguments for '=' [found=1,expected=2]");
+                "too few arguments for '=' [found=1,expected=2]"
+        );
     }
 
     @Test
@@ -2302,7 +2402,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag",
                 105,
-                "expected parameter after WITH");
+                "expected parameter after WITH"
+        );
     }
 
     @Test
@@ -2310,7 +2411,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000,",
                 95,
-                "unexpected token: ,");
+                "unexpected token: ,"
+        );
     }
 
     @Test
@@ -2339,7 +2441,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a.x x from (select [x] from a a cross join b z) a",
                 "select a.x from a a cross join b z",
                 modelOf("a").col("x", ColumnType.INT),
-                modelOf("b").col("x", ColumnType.INT));
+                modelOf("b").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -2357,13 +2460,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCrossJoinNoAlias() throws Exception {
-        assertQuery("select-choose a.x x from (select [x] from a a join select [x] from c on c.x = a.x cross join b) a",
+        assertQuery(
+                "select-choose a.x x from (select [x] from a a join select [x] from c on c.x = a.x cross join b) a",
                 "select a.x from a a " +
                         "cross join b " +
                         "join c on a.x = c.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT),
-                modelOf("c").col("x", ColumnType.INT));
+                modelOf("c").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -2417,9 +2522,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCursorInSelectConfusingAliases() throws Exception {
-        assertFailure(
+        assertException(
                 "select (pg_catalog.pg_class()).n, (pg_catalog.pg_description()).z, pg_catalog.pg_class() x, pg_catalog.pg_description() x from long_sequence(2)",
-                null,
                 120,
                 "Duplicate column [name=x]"
         );
@@ -2452,7 +2556,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCursorInSelectOneColumnSansAlias() throws SqlException {
         assertQuery
-                ("select-choose pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
+                (
+                        "select-choose pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
                         "select pg_catalog.pg_class() from long_sequence(2)"
                 );
     }
@@ -2512,7 +2617,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select pg_catalog.pg_class() cc, pg_catalog.pg_description() cc from long_sequence(2)",
                 61,
-                "Duplicate column [name=cc]");
+                "Duplicate column [name=cc]"
+        );
     }
 
     @Test
@@ -2590,9 +2696,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDuplicateColumnErrorPos() throws Exception {
-        assertFailure(
+        assertException(
                 "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
-                null,
                 79,
                 "Duplicate column [name=col4]"
         );
@@ -2679,7 +2784,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testEmptyWhere() throws Exception {
-        assertFailure(
+        assertException(
                 "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where",
                 "create table tab (\n" +
                         "    tag string,\n" +
@@ -2876,66 +2981,76 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testExplainWithBadFormat() throws Exception {
         assertSyntaxError("explain (format xyz) select * from x", 16, "unexpected explain format found",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithBadOption() throws Exception {
         assertSyntaxError("explain (xyz) select * from x", 21, "unexpected token: *",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithBadSql1() throws Exception {
         assertSyntaxError("explain select 1)", 16, "unexpected token: )",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithBadSql2() throws Exception {
         assertSyntaxError("explain select 1))", 16, "unexpected token: )",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithDefaultFormat() throws Exception {
         assertModel("EXPLAIN (FORMAT TEXT) ",
                 "explain select * from x", ExecutionModel.EXPLAIN,
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithJsonFormat() throws Exception {
         assertModel("EXPLAIN (FORMAT JSON) ",
                 "explain (format json) select * from x", ExecutionModel.EXPLAIN,
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithMissingFormat() throws Exception {
         assertSyntaxError("explain (format) select * from x", 15, "unexpected explain format found",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithQueryInParentheses1() throws Exception {
         assertModel("EXPLAIN (FORMAT TEXT) ",
                 "explain (select x from x) ", ExecutionModel.EXPLAIN,
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithQueryInParentheses2() throws Exception {
         assertModel("EXPLAIN (FORMAT TEXT) ",
                 "explain (x) ", ExecutionModel.EXPLAIN,
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testExplainWithTextFormat() throws Exception {
         assertModel("EXPLAIN (FORMAT TEXT) ",
                 "explain (format text ) select * from x", ExecutionModel.EXPLAIN,
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -2986,7 +3101,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testFailureOrderByGroupByColPrefixed() throws Exception {
-        assertFailure(
+        assertException(
                 "select a, sum(b) b from tab order by tab.b, a",
                 "create table tab (\n" +
                         "    a int,\n" +
@@ -2999,7 +3114,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testFailureOrderByGroupByColPrefixed2() throws Exception {
-        assertFailure(
+        assertException(
                 "select a, sum(b) b from tab order by a, tab.b",
                 "create table tab (\n" +
                         "    a int,\n" +
@@ -3012,7 +3127,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testFailureOrderByGroupByColPrefixed3() throws Exception {
-        assertFailure(
+        assertException(
                 "select a, sum(b) b from tab order by tab.a, tab.b",
                 "create table tab (\n" +
                         "    a int,\n" +
@@ -3025,7 +3140,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testFailureOrderByOnOuterResultWhenOrderByColumnIsNotSelected() throws Exception {
-        assertFailure(
+        assertException(
                 "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
                 "create table tab (\n" +
                         "    x double,\n" +
@@ -3046,7 +3161,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testFilter2() throws Exception {
-        assertQuery("select-virtual customerId + 1 column, name, count from (select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X')))",
+        assertQuery(
+                "select-virtual customerId + 1 column, name, count from (select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X')))",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -3094,7 +3210,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testForOrderByOnAliasedColumnNotOnSelect() throws Exception {
-        assertQuery("select-choose y from (select-choose [y, x] y, x from (select [y, x] from tab) order by x)",
+        assertQuery(
+                "select-choose y from (select-choose [y, x] y, x from (select [y, x] from tab) order by x)",
                 "select y from tab order by tab.x",
                 modelOf("tab").col("x", ColumnType.DOUBLE).col("y", ColumnType.INT)
         );
@@ -3128,7 +3245,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select * from (select * from t1 ) full join t1 on x",
                 34,
                 "unsupported join type",
-                modelOf("t1").col("x", ColumnType.INT));
+                modelOf("t1").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -3137,7 +3255,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select * from t1 full join t1 on x",
                 17,
                 "unsupported join type",
-                modelOf("t1").col("x", ColumnType.INT));
+                modelOf("t1").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -3146,12 +3265,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select * from t1 join t1 on x full join t1 on x",
                 30,
                 "unsupported join type",
-                modelOf("t1").col("x", ColumnType.INT));
+                modelOf("t1").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testFunctionWithoutAlias() throws SqlException {
-        assertQuery("select-virtual f(x) f, x from (select [x] from x where x > 1)",
+        assertQuery(
+                "select-virtual f(x) f, x from (select [x] from x where x > 1)",
                 "select f(x), x from x where x > 1",
                 modelOf("x")
                         .col("x", ColumnType.INT)
@@ -3183,7 +3304,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual 'nts' nts, now() now, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select 'nts', now(), min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3191,7 +3313,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual min, 'a' a from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select min(nts), 'a' from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3199,7 +3322,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual 1 + 1 column, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select 1+1, min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3207,7 +3331,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual min, 1 + 2 * 3 column from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select min(nts), 1 + 2 * 3 from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3215,7 +3340,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual min, 1 + now() * 3 column from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select min(nts), 1 + now() * 3 from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3223,7 +3349,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual now() + now() column, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select now() + now(), min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3231,7 +3358,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual now() now, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select now(), min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3239,7 +3367,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual 'nts' nts, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3247,7 +3376,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by min(nts) min, column from (select-virtual [nts, 1 + day(nts) * 3 column] nts, 1 + day(nts) * 3 column from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select min(nts), 1 + day(nts) * 3 from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -3257,7 +3387,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1 latest by x))",
                 "(t1 group by x)",
-                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -3330,7 +3461,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose customers.customerId customerId, orders.customerId customerId1, orders.productName productName from (select [customerId] from customers join (select [customerId, productName] from orders where productName = 'WTBHZVPVZZ') orders on orders.customerId = customers.customerId)",
                 "customers join orders on customers.customerId = orders.customerId where productName = 'WTBHZVPVZZ'",
                 modelOf("customers").col("customerId", ColumnType.INT),
-                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -3339,12 +3471,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose customers.customerId customerId, orders.customerId customerId1, orders.productName productName from (select [customerId] from customers join (select [customerId, productName] from orders where 'WTBHZVPVZZ' = productName) orders on orders.customerId = customers.customerId)",
                 "customers join orders on customers.customerId = orders.customerId where 'WTBHZVPVZZ' = productName",
                 modelOf("customers").col("customerId", ColumnType.INT),
-                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING)
+        );
     }
 
     @Test
     public void testInnerJoinPostFilter() throws SqlException {
-        assertQuery("select-virtual c, a, b, d, d - b column from (select-choose [z.c c, x.a a, b, d] z.c c, x.a a, b, d from (select [a, c] from x join (select [b, m] from y where b < 20) y on y.m = x.c join select [c, d] from z on z.c = x.c))",
+        assertQuery(
+                "select-virtual c, a, b, d, d - b column from (select-choose [z.c c, x.a a, b, d] z.c c, x.a a, b, d from (select [a, c] from x join (select [b, m] from y where b < 20) y on y.m = x.c join select [c, d] from z on z.c = x.c))",
                 "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
                 modelOf("x")
                         .col("c", ColumnType.INT)
@@ -3360,7 +3494,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInnerJoinSubQuery() throws Exception {
-        assertQuery("select-choose customerName, productName, orderId from (select [customerName, productName, orderId, productId] from (select-choose [customerName, productName, orderId, productId] customerName, orderId, productId, productName from (select [customerName, customerId] from customers join (select [productName, orderId, productId, customerId] from orders where productName ~ 'WTBHZVPVZZ') orders on orders.customerId = customers.customerId)) x join select [productId] from products p on p.productId = x.productId) x",
+        assertQuery(
+                "select-choose customerName, productName, orderId from (select [customerName, productName, orderId, productId] from (select-choose [customerName, productName, orderId, productId] customerName, orderId, productId, productName from (select [customerName, customerId] from customers join (select [productName, orderId, productId, customerId] from orders where productName ~ 'WTBHZVPVZZ') orders on orders.customerId = customers.customerId)) x join select [productId] from products p on p.productId = x.productId) x",
                 "select customerName, productName, orderId from (" +
                         "select \"customerName\", orderId, productId, productName " +
                         "from \"customers\" join orders on \"customers\".\"customerId\" = orders.customerId where productName ~ 'WTBHZVPVZZ'" +
@@ -3371,7 +3506,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("products").col("productId", ColumnType.INT)
         );
 
-        assertQuery("select-choose customerName, productName, orderId from (select [customerName, customerId] from customers join (select [productName, orderId, customerId, productId] from orders o where productName ~ 'WTBHZVPVZZ') o on o.customerId = customers.customerId join select [productId] from products p on p.productId = o.productId)",
+        assertQuery(
+                "select-choose customerName, productName, orderId from (select [customerName, customerId] from customers join (select [productName, orderId, customerId, productId] from orders o where productName ~ 'WTBHZVPVZZ') o on o.customerId = customers.customerId join select [productId] from products p on p.productId = o.productId)",
                 "select customerName, productName, orderId " +
                         " from customers join orders o on customers.customerId = o.customerId " +
                         " join products p on p.productId = o.productId" +
@@ -3450,7 +3586,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.STRING),
                 modelOf("y")
                         .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING));
+                        .col("d", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -3477,7 +3614,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.STRING),
                 modelOf("y")
                         .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING));
+                        .col("d", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -3510,35 +3648,41 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInsertColumnValueMismatch() throws Exception {
-        assertSyntaxError("insert into x (a,b) values (?)",
+        assertSyntaxError(
+                "insert into x (a,b) values (?)",
                 29,
                 "value count does not match column count",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
     public void testInsertColumnsAndValues() throws SqlException {
-        assertModel("insert into x (a, b) values (3, ?)",
+        assertModel(
+                "insert into x (a, b) values (3, ?)",
                 "insert into x (a,b) values (3, ?)",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
     public void testInsertColumnsAndValuesQuoted() throws SqlException {
-        assertModel("insert into x (a, b) values (3, ?)",
+        assertModel(
+                "insert into x (a, b) values (3, ?)",
                 "insert into \"x\" (\"a\",\"b\") values (3, ?)",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -3570,22 +3714,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInsertMissingClosingBracket() throws Exception {
-        assertSyntaxError("insert into x values (?,?",
+        assertSyntaxError(
+                "insert into x values (?,?",
                 25,
                 "',' expected",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
     public void testInsertMissingClosingQuote() throws Exception {
-        assertSyntaxError("insert into x values ('abc)",
+        assertSyntaxError(
+                "insert into x values ('abc)",
                 22,
                 "unclosed quoted string?",
                 modelOf("x")
-                        .col("a", ColumnType.STRING));
+                        .col("a", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -3599,46 +3747,54 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInsertMissingValue() throws Exception {
-        assertSyntaxError("insert into x values ()",
+        assertSyntaxError(
+                "insert into x values ()",
                 22,
                 "Expression expected",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
     public void testInsertMissingValueAfterComma() throws Exception {
-        assertSyntaxError("insert into x values (?,",
+        assertSyntaxError(
+                "insert into x values (?,",
                 24,
                 "Expression expected",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
     public void testInsertMissingValues() throws Exception {
-        assertSyntaxError("insert into x values",
+        assertSyntaxError(
+                "insert into x values",
                 20,
                 "'(' expected",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
     public void testInsertValues() throws SqlException {
-        assertModel("insert into x values (3, 'abc', ?)",
+        assertModel(
+                "insert into x values (3, 'abc', ?)",
                 "insert into x values (3, 'abc', ?)",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -3663,7 +3819,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a + b x from tab",
                 11,
                 "Invalid column",
-                modelOf("tab").col("a", ColumnType.INT));
+                modelOf("tab").col("a", ColumnType.INT)
+        );
     }
 
     @Test
@@ -3793,7 +3950,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testInvalidTableName() throws Exception {
         assertSyntaxError("orders join customer on customerId = customerId", 12, "does not exist",
-                modelOf("orders").col("customerId", ColumnType.INT));
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
     }
 
     @Test
@@ -3847,7 +4005,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("tab").timestamp("ts").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
                 modelOf("tab3").col("b", ColumnType.INT),
-                modelOf("tab4").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT));
+                modelOf("tab4").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4059,7 +4218,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testJoinGroupBy() throws Exception {
-        assertQuery("select-group-by country, sum(quantity) sum from (select-choose [country, d.quantity quantity] country, d.quantity quantity from (select [customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [quantity, orderId] from orderDetails d on d.orderId = o.orderId) o) o",
+        assertQuery(
+                "select-group-by country, sum(quantity) sum from (select-choose [country, d.quantity quantity] country, d.quantity quantity from (select [customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [quantity, orderId] from orderDetails d on d.orderId = o.orderId) o) o",
                 "select country, sum(quantity) from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -4072,7 +4232,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testJoinGroupByFilter() throws Exception {
-        assertQuery("select-choose country, sum from (select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select-choose [country, o.quantity quantity] country, o.quantity quantity from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId) o) o where sum > 2)",
+        assertQuery(
+                "select-choose country, sum from (select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select-choose [country, o.quantity quantity] country, o.quantity quantity from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId) o) o where sum > 2)",
                 "(select country, sum(quantity) sum " +
                         "from orders o " +
                         "join customers c on c.customerId = o.customerId " +
@@ -4142,7 +4303,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a.x x from (select [x] from a a cross join b where switch(x,1,10,15)) a",
                 "select a.x from a a join b on (CASE WHEN a.x = 1 THEN 10 ELSE 15 END)",
                 modelOf("a").col("x", ColumnType.INT),
-                modelOf("b").col("x", ColumnType.INT));
+                modelOf("b").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4152,7 +4314,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 53,
                 "dangling expression",
                 modelOf("a").col("x", ColumnType.INT),
-                modelOf("b").col("x", ColumnType.INT));
+                modelOf("b").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4194,7 +4357,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testJoinOnExpression2() throws SqlException {
-        assertQuery("select-choose a.x x, b.x x1 from (select [x] from a cross join (select [x] from b where x) b where x + 1)",
+        assertQuery(
+                "select-choose a.x x, b.x x1 from (select [x] from a cross join (select [x] from b where x) b where x + 1)",
                 "a join b on a.x+1 and b.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
@@ -4434,7 +4598,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 66,
                 "missing argument",
                 modelOf("a").col("x", ColumnType.INT),
-                modelOf("b").col("x", ColumnType.INT));
+                modelOf("b").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4600,9 +4765,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testJoinWithFunction() throws SqlException {
-        assertQuery("select-choose x1.a a, x1.s s, x2.a a1, x2.s s1 from (select [a, s] from (select-virtual [rnd_int() a, rnd_symbol(4,4,4,2) s] rnd_int() a, rnd_symbol(4,4,4,2) s from (long_sequence(10))) x1 join select [a, s] from (select-virtual [rnd_int() a, rnd_symbol(4,4,4,2) s] rnd_int() a, rnd_symbol(4,4,4,2) s from (long_sequence(10))) x2 on x2.s = x1.s) x1",
+        assertQuery(
+                "select-choose x1.a a, x1.s s, x2.a a1, x2.s s1 from (select [a, s] from (select-virtual [rnd_int() a, rnd_symbol(4,4,4,2) s] rnd_int() a, rnd_symbol(4,4,4,2) s from (long_sequence(10))) x1 join select [a, s] from (select-virtual [rnd_int() a, rnd_symbol(4,4,4,2) s] rnd_int() a, rnd_symbol(4,4,4,2) s from (long_sequence(10))) x2 on x2.s = x1.s) x1",
                 "with x as (select rnd_int() a, rnd_symbol(4,4,4,2) s from long_sequence(10)) " +
-                        "select * from x x1 join x x2 on (s)");
+                        "select * from x x1 join x x2 on (s)"
+        );
     }
 
     @Test
@@ -4610,7 +4777,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose a, b from (select [a, b] from x latest by b where b = 'PEHN' and a < 22 and test_match())",
                 "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
-                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.STRING));
+                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -4682,7 +4850,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose ts, a from (select [ts, a] from x latest on ts partition by a)",
                 "select * from x latest on ts partition by a",
-                modelOf("x").timestamp("ts").col("a", ColumnType.STRING));
+                modelOf("x").timestamp("ts").col("a", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -4717,7 +4886,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1 latest by x))",
                 "(t1 latest by x)",
-                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4806,7 +4976,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose ts, a, b from (select [ts, a, b] from x where b = 'PEHN' and a < 22 and test_match() latest on ts partition by b)",
                 "select * from x where b = 'PEHN' and a < 22 and test_match() latest on ts partition by b",
-                modelOf("x").timestamp("ts").col("a", ColumnType.INT).col("b", ColumnType.STRING));
+                modelOf("x").timestamp("ts").col("a", ColumnType.INT).col("b", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -4842,12 +5013,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testLexerReset() {
         for (int i = 0; i < 10; i++) {
             try {
-                compiler.compile("select \n" +
-                        "-- ltod(Date)\n" +
-                        "count() \n" +
-                        "-- from acc\n" +
-                        "from acc(Date) sample by 1d\n" +
-                        "-- where x = 10\n", sqlExecutionContext);
+                select(
+                        "select \n" +
+                                "-- ltod(Date)\n" +
+                                "count() \n" +
+                                "-- from acc\n" +
+                                "from acc(Date) sample by 1d\n" +
+                                "-- where x = 10\n"
+                );
                 Assert.fail();
             } catch (SqlException e) {
                 // we now allow column reference from SQL although column access will fail
@@ -4861,7 +5034,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1) limit 5)",
                 "(t1 limit 5)",
-                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4871,18 +5045,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(x where a > 1) 'b a' where x > 1\n--this is comment",
                 modelOf("x")
                         .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
+                        .col("a", ColumnType.INT)
+        );
     }
 
     @Test
     public void testLineCommentAtMiddle() throws Exception {
-        assertQuery("select-choose x, a from (select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a'",
+        assertQuery(
+                "select-choose x, a from (select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a'",
                 "(x where a > 1) \n" +
                         " -- this is a comment \n" +
                         "'b a' where x > 1",
                 modelOf("x")
                         .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
+                        .col("a", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4892,7 +5069,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "-- hello, this is a comment\n (x where a > 1) 'b a' where x > 1",
                 modelOf("x")
                         .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
+                        .col("a", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4947,7 +5125,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMissingWhere() {
         try {
-            compiler.compile("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
+            select("select id, x + 10, x from tab id ~ 'HBRO'");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -4959,7 +5137,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose x, y from (select-virtual [x, z + x y] x, z + x y from (select [x, z] from tab t2 where x > 100 latest on ts partition by x) t2 where y > 0) t1",
                 "select x, y from (select x,z + x y from tab t2 where x > 100 latest on ts partition by x) t1 where y > 0",
-                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("z", ColumnType.INT));
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5152,7 +5331,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testNonAnalyticFunctionInAnalyticContext() throws Exception {
-        assertFailure(
+        assertException(
                 "select avg(price) over (partition by symbol) from trades",
                 "create table trades " +
                         "(" +
@@ -5193,7 +5372,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testNoopGroupByFailureWhenMissingColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by ",
                 "create table x (\n" +
                         "    sym symbol,\n" +
@@ -5255,7 +5434,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOneAnalyticColumnAndLimit() throws Exception {
-        assertQuery("select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c, ts] from xyz timestamp (ts)) limit 200",
+        assertQuery(
+                "select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c, ts] from xyz timestamp (ts)) limit 200",
                 "select a,b, f(c) over (partition by b order by ts) from xyz limit 200",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -5286,7 +5466,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a = b and b = a)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5296,7 +5477,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a = b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5306,7 +5488,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a > b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5316,7 +5499,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a >= b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5326,7 +5510,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a < b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5336,7 +5521,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a <= b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5346,7 +5532,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5356,16 +5543,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a or b = a)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
     public void testOptimiseNotNotEqual() throws SqlException {
-        assertQuery("select-choose a, b from (select [a, b] from tab where a = b)",
+        assertQuery(
+                "select-choose a, b from (select [a, b] from tab where a = b)",
                 "select a, b from tab where not (a != b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5375,7 +5565,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not(not (a != b))",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5385,7 +5576,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a = b or b = a)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5395,7 +5587,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select a, b from tab where not (a or b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT));
+                        .col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5403,7 +5596,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose ts, x from (select [ts, x] from tab t2 where x > 100 latest on ts partition by x) t2",
                 "tab t2 where x > 100 latest on ts partition by x",
-                modelOf("tab").timestamp("ts").col("x", ColumnType.INT));
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -5615,7 +5809,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByOnSelectedAlias() throws SqlException {
-        assertQuery("select-choose y z from (select [y] from tab) order by z",
+        assertQuery(
+                "select-choose y z from (select [y] from tab) order by z",
                 "select y z from tab order by z",
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
@@ -5919,7 +6114,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOuterJoinColumnAlias() throws SqlException {
-        assertQuery("select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c) limit 10",
+        assertQuery(
+                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " left join orders o on c.customerId = o.customerId) " +
                         " where kk = NaN limit 10",
@@ -5948,7 +6144,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOuterJoinColumnAliasNull() throws SqlException {
-        assertQuery("select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
+        assertQuery(
+                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " left join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -5986,21 +6183,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // '2021-01-26'::date
         assertQuery(
                 "select-virtual to_pg_date('2021-01-26') to_pg_date from (long_sequence(1))",
-                "select '2021-01-26'::date");
+                "select '2021-01-26'::date"
+        );
     }
 
     @Test
     public void testPGCastToFloat4() throws SqlException {
         assertQuery(
                 "select-virtual cast(123,float) x from (long_sequence(1))",
-                "select 123::float4 x");
+                "select 123::float4 x"
+        );
     }
 
     @Test
     public void testPGCastToFloat8() throws SqlException {
         assertQuery(
                 "select-virtual cast(123,double) x from (long_sequence(1))",
-                "select 123::float8 x");
+                "select 123::float8 x"
+        );
     }
 
     @Test
@@ -6015,7 +6215,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
                         "WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'\n" +
                         "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
-                        "ORDER BY 2, 3;");
+                        "ORDER BY 2, 3;"
+        );
     }
 
     @Test
@@ -6063,9 +6264,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testPgCastRewrite() throws Exception {
-        assertQuery("select-virtual cast(t,varchar) cast from (select [t] from x)",
+        assertQuery(
+                "select-virtual cast(t,varchar) cast from (select [t] from x)",
                 "select t::varchar from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -6140,7 +6343,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
                 "select * from ( select sum(x) as sm from (select * from t1 union all select * from t2 ) ) where sm = 1",
                 modelOf("t1").col("x", ColumnType.INT),
-                modelOf("t2").col("x", ColumnType.INT));
+                modelOf("t2").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -6270,7 +6474,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select * from (select * from t1 ) right join t1 on x",
                 34,
                 "unsupported join type",
-                modelOf("t1").col("x", ColumnType.INT));
+                modelOf("t1").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -6279,7 +6484,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select * from t1 right join t1 on x",
                 17,
                 "unsupported join type",
-                modelOf("t1").col("x", ColumnType.INT));
+                modelOf("t1").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -6288,7 +6494,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select * from t1 join t1 on x right join t1 on x",
                 30,
                 "unsupported join type",
-                modelOf("t1").col("x", ColumnType.INT));
+                modelOf("t1").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -6352,7 +6559,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
                 "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR;",
-                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -6360,7 +6568,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
                 "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR",
-                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -6465,7 +6674,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByInvalidColumn() throws Exception {
-        assertSyntaxError("select x,sum(y) from tab timestamp(z) sample by 2m",
+        assertSyntaxError(
+                "select x,sum(y) from tab timestamp(z) sample by 2m",
                 35,
                 "Invalid column",
                 modelOf("tab")
@@ -6477,7 +6687,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByInvalidType() throws Exception {
-        assertSyntaxError("select x,sum(y) from tab timestamp(x) sample by 2m",
+        assertSyntaxError(
+                "select x,sum(y) from tab timestamp(x) sample by 2m",
                 35,
                 "not a TIMESTAMP",
                 modelOf("tab")
@@ -6503,7 +6714,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(t1 sample by 1m)",
                 14,
                 "at least one aggregation function must be present in 'select' clause",
-                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -6535,7 +6747,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByTimestampDescOrder() throws Exception {
-        assertSyntaxError("select x,sum(y) from (tab order by ts desc) sample by 2m",
+        assertSyntaxError(
+                "select x,sum(y) from (tab order by ts desc) sample by 2m",
                 0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
@@ -6547,7 +6760,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByTimestampDescOrderVirtualColumn() throws Exception {
-        assertSyntaxError("select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m",
+        assertSyntaxError(
+                "select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m",
                 0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
@@ -6559,7 +6773,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByTimestampDescOrderWithJoin() throws Exception {
-        assertSyntaxError("select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m",
+        assertSyntaxError(
+                "select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m",
                 0,
                 "ASC order over TIMESTAMP column is required but not provided",
                 modelOf("tab")
@@ -6574,7 +6789,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByUndefinedTimestamp() throws Exception {
-        assertSyntaxError("select x,sum(y) from tab sample by 2m",
+        assertSyntaxError(
+                "select x,sum(y) from tab sample by 2m",
                 0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
@@ -6585,7 +6801,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByUndefinedTimestampWithDistinct() throws Exception {
-        assertSyntaxError("select x,sum(y) from (select distinct x, y from tab) sample by 2m",
+        assertSyntaxError(
+                "select x,sum(y) from (select distinct x, y from tab) sample by 2m",
                 0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
@@ -6596,7 +6813,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByUndefinedTimestampWithJoin() throws Exception {
-        assertSyntaxError("select tab.x,sum(y) from tab join tab2 on (x) sample by 2m",
+        assertSyntaxError(
+                "select tab.x,sum(y) from tab join tab2 on (x) sample by 2m",
                 0,
                 "ASC order over TIMESTAMP column is required but not provided",
                 modelOf("tab")
@@ -6610,7 +6828,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectAfterOrderBy() throws SqlException {
-        assertQuery("select-distinct [Schema] Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
+        assertQuery(
+                "select-distinct [Schema] Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
                 "select distinct Schema from \n" +
                         "(SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
@@ -6685,7 +6904,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectColumnWithAlias() throws SqlException {
         assertQuery(
                 "select-virtual a, rnd_int() c from (select-choose [x a] x a from (select [x] from long_sequence(5)))",
-                "select x a, rnd_int() c from long_sequence(5)");
+                "select x a, rnd_int() c from long_sequence(5)"
+        );
     }
 
     @Test
@@ -6705,7 +6925,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectColumnsFromJoinSubQueries2() throws SqlException {
-        assertQuery("select-choose addr, count, sum_out, toAddress, count1, sum_in from (select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a)",
+        assertQuery(
+                "select-choose addr, count, sum_out, toAddress, count1, sum_in from (select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a)",
                 "(\n" +
                         "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
@@ -6719,7 +6940,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectColumnsFromJoinSubQueries3() throws SqlException {
-        assertQuery("select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a",
+        assertQuery(
+                "select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a",
                 "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n",
                 modelOf("transactions.csv")
@@ -6827,7 +7049,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
-        assertQuery("select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab))) limit 10",
+        assertQuery(
+                "select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab))) limit 10",
                 "select distinct a, sum(b)+sum(c) bb from tab limit 10",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -6838,7 +7061,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticOrderByLimit() throws SqlException {
-        assertQuery("select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from " +
+        assertQuery(
+                "select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from " +
                         "(select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 " +
                         "from (select [a, c, b] from tab))) order by a limit 10",
                 "select distinct a, sum(b)+sum(c) bb from tab order by a limit 10",
@@ -6851,7 +7075,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctUnion() throws SqlException {
-        assertQuery("select-choose c from (" +
+        assertQuery(
+                "select-choose c from (" +
                         "select-distinct [c, b] c, b from (select-choose [a c, b] a c, b from (select [a, b] from trips)) " +
                         "union all " +
                         "select-distinct [c, b] c, b from (select-choose [c, d b] c, d b from (select [c, d] from trips)))",
@@ -6886,23 +7111,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectEndsWithSemicolon() throws Exception {
-        assertQuery("select-choose x from (select [x] from x)",
+        assertQuery(
+                "select-choose x from (select [x] from x)",
                 "select * from x;",
-                modelOf("x").col("x", ColumnType.INT));
+                modelOf("x").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSelectEscapedQuotedIdentifier() throws SqlException {
         assertQuery(
                 "select-virtual 'test' quoted\"\"id from (long_sequence(1))",
-                "select 'test' as \"quoted\"\"id\"");
+                "select 'test' as \"quoted\"\"id\""
+        );
     }
 
     @Test
     public void testSelectEscapedStringLiteral() throws SqlException {
         assertQuery(
                 "select-virtual 'test''quotes' test''quotes from (long_sequence(1))",
-                "select 'test''quotes'");
+                "select 'test''quotes'"
+        );
     }
 
     @Test
@@ -6922,7 +7151,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectFromSubQuery() throws SqlException {
-        assertQuery("select-choose x from (select-choose [x] x, y from (select [x, y] from tab where y > 10)) a",
+        assertQuery(
+                "select-choose x from (select-choose [x] x, y from (select [x, y] from tab where y > 10)) a",
                 "select a.x from (tab where y > 10) a",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -6942,7 +7172,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectGroupByArithmetic() throws SqlException {
-        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by [sum(x) sum, sum(y) sum1] sum(x) sum, sum(y) sum1 from (select [x, y] from tab))",
+        assertQuery(
+                "select-virtual sum + 10 column, sum1 from (select-group-by [sum(x) sum, sum(y) sum1] sum(x) sum, sum(y) sum1 from (select [x, y] from tab))",
                 "select sum(x)+10, sum(y) from tab",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -6952,7 +7183,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectGroupByArithmeticAndLimit() throws SqlException {
-        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by [sum(x) sum, sum(y) sum1] sum(x) sum, sum(y) sum1 from (select [x, y] from tab)) limit 200",
+        assertQuery(
+                "select-virtual sum + 10 column, sum1 from (select-group-by [sum(x) sum, sum(y) sum1] sum(x) sum, sum(y) sum1 from (select [x, y] from tab)) limit 200",
                 "select sum(x)+10, sum(y) from tab limit 200",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -6962,7 +7194,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectGroupByUnion() throws SqlException {
-        assertQuery("select-choose b from (select-group-by [sum(b) b, a] a, sum(b) b from (select [b, a] from trips) union all select-group-by [avg(d) b, c] c, avg(d) b from (select [d, c] from trips))",
+        assertQuery(
+                "select-choose b from (select-group-by [sum(b) b, a] a, sum(b) b from (select [b, a] from trips) union all select-group-by [avg(d) b, c] c, avg(d) b from (select [d, c] from trips))",
                 "select b from (select a, sum(b) b from trips union all select c, avg(d) b from trips)",
                 modelOf("trips")
                         .col("a", ColumnType.INT)
@@ -6976,7 +7209,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectLatestByDeprecatedUnion() throws SqlException {
-        assertQuery("select-choose b from (select-choose [b] a, b from (select [b, c] from trips latest by c) union all select-choose [d b] c, d b from (select [d, a] from trips latest by a))",
+        assertQuery(
+                "select-choose b from (select-choose [b] a, b from (select [b, c] from trips latest by c) union all select-choose [d b] c, d b from (select [d, a] from trips latest by a))",
                 "select b from (select a, b b from trips latest by c union all select c, d b from trips latest by a)",
                 modelOf("trips")
                         .col("a", ColumnType.INT)
@@ -7045,7 +7279,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectOrderByWhereOnCount() throws SqlException {
-        assertQuery("select-choose a, c from (select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0 order by a)",
+        assertQuery(
+                "select-choose a, c from (select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0 order by a)",
                 "(select a, count() c from tab order by 1) where c > 0",
                 modelOf("tab").col("a", ColumnType.SYMBOL)
         );
@@ -7074,12 +7309,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual a + b * c x from (select [a, c, b] from t)",
                 "select a+b*c x from t",
-                modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT));
+                modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSelectSumFromSubQueryLimit() throws SqlException {
-        assertQuery("select-group-by sum(tip_amount) sum from (select-choose [tip_amount] a, b, c, d, tip_amount, e from (select [tip_amount] from trips) limit 100000000)",
+        assertQuery(
+                "select-group-by sum(tip_amount) sum from (select-choose [tip_amount] a, b, c, d, tip_amount, e from (select [tip_amount] from trips) limit 100000000)",
                 "select sum(tip_amount) from (trips limit 100000000)",
                 modelOf("trips")
                         .col("a", ColumnType.INT)
@@ -7110,7 +7347,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWhereOnCount() throws SqlException {
-        assertQuery("select-choose a, c from (select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0)",
+        assertQuery(
+                "select-choose a, c from (select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0)",
                 "(select a, count() c from tab) where c > 0",
                 modelOf("tab").col("a", ColumnType.SYMBOL)
         );
@@ -7190,7 +7428,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWildcardOnly() throws Exception {
-        assertFailure(
+        assertException(
                 "select *",
                 "create table tab (seq long)",
                 7,
@@ -7210,7 +7448,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWildcardPrefixed2() throws SqlException {
-        assertQuery("select-choose tab2.x x, tab2.z z, a.x x1, a.y y from (select [x, y] from tab1 a join select [x, z] from tab2 on tab2.x = a.x) a",
+        assertQuery(
+                "select-choose tab2.x x, tab2.z z, a.x x1, a.y y from (select [x, y] from tab1 a join select [x, z] from tab2 on tab2.x = a.x) a",
                 "select tab2.*, a.* from tab1 a join tab2 on (x)",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
@@ -7219,7 +7458,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWildcardTabNoFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select * tab",
                 "create table tab (seq long)",
                 9,
@@ -7285,12 +7524,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose x, y from (select [x, y] from tab) limit 100",
                 "select x x, y y from tab limit 100",
-                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT));
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSpliceJoin() throws SqlException {
-        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [timestamp] from quotes q timestamp (timestamp) where tag = null) t",
+        assertQuery(
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [timestamp] from quotes q timestamp (timestamp) where tag = null) t",
                 "trades t splice join quotes q where tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
@@ -7311,7 +7552,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSpliceJoinNullFilter() throws SqlException {
-        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.x x, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [x, timestamp] from quotes q timestamp (timestamp) post-join-where x = null) t",
+        assertQuery(
+                "select-choose t.timestamp timestamp, t.tag tag, q.x x, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [x, timestamp] from quotes q timestamp (timestamp) post-join-where x = null) t",
                 "trades t splice join quotes q where x = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").col("x", ColumnType.SYMBOL).timestamp()
@@ -7327,7 +7569,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " join orders o on c.customerId = o.customerId",
                 modelOf("customers").col("customerId", ColumnType.SYMBOL),
                 modelOf("employees").col("employeeId", ColumnType.STRING),
-                modelOf("orders").col("customerId", ColumnType.SYMBOL));
+                modelOf("orders").col("customerId", ColumnType.SYMBOL)
+        );
     }
 
     @Test
@@ -7407,7 +7650,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(x where a > 1) 'b a' where x > 1",
                 modelOf("x")
                         .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
+                        .col("a", ColumnType.INT)
+        );
     }
 
     @Test
@@ -7447,11 +7691,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTableListToCrossJoin() throws Exception {
-        assertQuery("select-choose a.x x from (select [x] from a a join select [x] from c on c.x = a.x) a",
+        assertQuery(
+                "select-choose a.x x from (select [x] from a a join select [x] from c on c.x = a.x) a",
                 "select a.x from a a, c where a.x = c.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT),
-                modelOf("c").col("x", ColumnType.INT));
+                modelOf("c").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -7478,7 +7724,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
 
@@ -7491,7 +7737,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration, Metrics.disabled());
-                    SqlCompiler compiler = new SqlCompiler(engine)
+                    SqlCompiler compiler = engine.getSqlCompiler()
             ) {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
                 try {
@@ -7541,7 +7787,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
                             CreateTableTestUtils.create(tableModels[i]);
                         }
-                        compiler.compile("select * from tab", sqlExecutionContext);
+                        select("select * from tab");
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
@@ -7587,9 +7833,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTimestampOnSubQuery() throws Exception {
-        assertQuery("select-choose x from (select-choose [x] x, y from (select [x, y] from a b where x > y) b) timestamp (x)",
+        assertQuery(
+                "select-choose x from (select-choose [x] x, y from (select [x, y] from a b where x > y) b) timestamp (x)",
                 "select x from (a b) timestamp(x) where x > y",
-                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT));
+                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
     }
 
     @Test
@@ -7599,28 +7847,35 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select x from a b timestamp(x) where x > y",
                 modelOf("a")
                         .col("x", ColumnType.TIMESTAMP)
-                        .col("y", ColumnType.TIMESTAMP));
+                        .col("y", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testTimestampWithTimezoneCast() throws Exception {
-        assertQuery("select-virtual cast(t,timestamp) cast from (select [t] from x)",
+        assertQuery(
+                "select-virtual cast(t,timestamp) cast from (select [t] from x)",
                 "select cast(t as timestamp with time zone) from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testTimestampWithTimezoneCastInSelect() throws Exception {
-        assertQuery("select-virtual cast('2005-04-02 12:00:00-07',timestamp) col from (x)",
+        assertQuery(
+                "select-virtual cast('2005-04-02 12:00:00-07',timestamp) col from (x)",
                 "select cast('2005-04-02 12:00:00-07' as timestamp with time zone) col from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testTimestampWithTimezoneConstPrefix() throws Exception {
-        assertQuery("select-choose t, tt from (select [t, tt] from x where t > cast('2005-04-02 12:00:00-07',timestamp))",
+        assertQuery(
+                "select-choose t, tt from (select [t, tt] from x where t > cast('2005-04-02 12:00:00-07',timestamp))",
                 "select * from x where t > timestamp with time zone '2005-04-02 12:00:00-07'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -7631,21 +7886,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTimestampWithTimezoneConstPrefixInSelect() throws Exception {
-        assertQuery("select-virtual cast('2005-04-02 12:00:00-07',timestamp) alias from (x)",
+        assertQuery(
+                "select-virtual cast('2005-04-02 12:00:00-07',timestamp) alias from (x)",
                 "select timestamp with time zone '2005-04-02 12:00:00-07' \"alias\" from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testTimestampWithTimezoneConstPrefixInsideCast() throws Exception {
-        assertQuery("select-choose t, tt from (select [t, tt] from x where t > cast(cast('2005-04-02 12:00:00-07',timestamp),DATE))",
+        assertQuery(
+                "select-choose t, tt from (select [t, tt] from x where t > cast(cast('2005-04-02 12:00:00-07',timestamp),DATE))",
                 "select * from x where t > CAST(timestamp with time zone '2005-04-02 12:00:00-07' as DATE)",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testTooManyArgumentsInAnalyticFunction() throws Exception {
-        assertFailure(
+        assertException(
                 "select row_number(1,2,3) over (partition by symbol) from trades",
                 "create table trades " +
                         "(" +
@@ -7675,8 +7934,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) compiler.testCompileModel(b, sqlExecutionContext);
-        Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            QueryModel st = (QueryModel) compiler.testCompileModel(b, sqlExecutionContext);
+            Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
+        }
     }
 
     @Test
@@ -7690,7 +7951,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
             b.append('f').append(i);
         }
         try {
-            compiler.compile(b, sqlExecutionContext);
+            select(b);
+            Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
@@ -7739,7 +8001,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testUnion() throws SqlException {
-        assertQuery("select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union select-choose [z] z from (select [z] from c)",
+        assertQuery(
+                "select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union select-choose [z] z from (select [z] from c)",
                 "select * from a union select * from b union select * from c",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
@@ -8011,7 +8274,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testWithFollowedByInvalidToken() throws Exception {
-        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
+        assertException("with x as (select * from long_sequence(1)) create", 43, "'select' | 'update' | 'insert' expected");
     }
 
     @Test
@@ -8123,7 +8386,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     private void assertPartitionByOverOrderByAcceptsDirection(String orderInQuery, String orderInModel) throws SqlException {
-        assertQuery("select-choose ts, temperature from " +
+        assertQuery(
+                "select-choose ts, temperature from " +
                         "(select-analytic [ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ")] ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ") " +
                         "from (select [ts, temperature] from weather) where rid = 0) inq order by ts",
                 "select ts, temperature from \n" +

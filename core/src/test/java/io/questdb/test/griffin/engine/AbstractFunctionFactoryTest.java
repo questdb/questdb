@@ -259,6 +259,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private boolean isNegative(int argType, Object arg) {
         switch (ColumnType.tagOf(argType)) {
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 return (int) arg < 0 && (int) arg != Numbers.INT_NaN;
             case ColumnType.LONG:
                 return (long) arg < 0 && (long) arg != Numbers.LONG_NaN;
@@ -348,6 +349,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 }
                 break;
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 sink.put((Integer) value);
                 break;
             case ColumnType.BOOLEAN:
@@ -418,18 +420,18 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
         try {
-            RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-            factory.getCursor(sqlExecutionContext);
-            Assert.fail();
+            assertException(sql);
         } catch (Exception e) {
-            Assert.assertEquals(expectedMsg, e.getMessage());
+            TestUtils.assertEquals(expectedMsg, e.getMessage());
         }
     }
 
     protected void assertQuery(CharSequence expected, CharSequence sql) throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            try (
+                    RecordCursorFactory factory = select(sql);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
                 assertCursor(expected, cursor, factory.getMetadata(), true);
             }
         });

@@ -75,6 +75,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Before
     public void setUp() {
+        super.setUp();
         // We disable mixed I/O on some OSes and FSes (wink-wink Windows).
         boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
         Assume.assumeFalse(allowMixedIO && !mixedIOSupported);
@@ -82,7 +83,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         configOverrideWriterMixedIOEnabled(allowMixedIO);
         configOverrideO3ColumnMemorySize(512 * 1024);
         setFuzzProperties(100, 1000, 2);
-        super.setUp();
     }
 
     @Test

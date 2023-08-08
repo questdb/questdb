@@ -30,8 +30,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.text.TextLoader;
@@ -148,6 +148,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean completed = true;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
+    private long cursorRowCount;
     private boolean isEmptyQuery = false;
     private boolean isPausedQuery = false;
     private long maxRows;
@@ -359,7 +360,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     public void handleClientOperation(
-            @Transient SqlCompiler compiler,
+            @Transient CairoEngine engine,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
             @Transient WeakSelfReturningObjectPool<TypesAndSelect> selectAndTypesPool,
             @Transient AssociativeCache<TypesAndUpdate> typesAndUpdateCache,
@@ -411,8 +412,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
                         parse(
                                 recvBuffer + recvBufferReadOffset,
-                                (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                                compiler
+                                (int) (recvBufferWriteOffset - recvBufferReadOffset)
                         );
 
                         // nothing changed?
@@ -715,6 +715,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private void appendIPv4Col(Record record, int columnIndex) {
+        int value = record.getIPv4(columnIndex);
+        if (value == Numbers.IPv4_NULL) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.intToIPv4Sink(responseAsciiSink, value);
+            responseAsciiSink.putLenEx(a);
+        }
+    }
+
     private void appendIntCol(Record record, int i) {
         final int intValue = record.getInt(i);
         if (intValue != Numbers.INT_NaN) {
@@ -794,6 +805,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     break;
                 case ColumnType.INT:
                     appendIntCol(record, i);
+                    break;
+                case ColumnType.IPv4:
+                    appendIPv4Col(record, i);
                     break;
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:
@@ -1145,7 +1159,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private boolean compileQuery(@Transient SqlCompiler compiler, boolean doLog) throws SqlException {
+    private boolean compileQuery(boolean doLog) throws SqlException {
         if (queryText != null && queryText.length() > 0) {
             // try insert, peek because this is our private cache
             // and we do not want to remove statement from it
@@ -1184,8 +1198,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
 
             // not cached - compile to see what it is
-            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-            processCompiledQuery(cc);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+                processCompiledQuery(cc);
+            }
         } else {
             logQuery(doLog);
             isEmptyQuery = true;
@@ -1194,7 +1210,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return true;
     }
 
-    private void configureContextFromNamedStatement(CharSequence statementName, @Nullable @Transient SqlCompiler compiler)
+    private void configureContextFromNamedStatement(CharSequence statementName, @Nullable @Transient CairoEngine engine)
             throws BadProtocolException, SqlException {
         this.sendParameterDescription = statementName != null;
 
@@ -1204,12 +1220,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         // make sure there is no current wrapper is set, so that we don't assign values
-        // from the wrapper back to context on the first pass where named statement is setup
+        // from the wrapper back to context on the first pass where named statement is set up
         if (statementName != null) {
             LOG.debug().$("named statement [name=").$(statementName).$(']').$();
             wrapper = namedStatementMap.get(statementName);
             if (wrapper != null) {
-                setupVariableSettersFromWrapper(wrapper, compiler);
+                setupVariableSettersFromWrapper(wrapper, engine);
             } else {
                 // todo: when we have nothing for prepared statement name we need to produce an error
                 LOG.error().$("statement does not exist [name=").$(statementName).$(']').$();
@@ -1303,7 +1319,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void executeInsert(SqlCompiler compiler) throws SqlException {
+    private void executeInsert() throws SqlException {
         TableWriterAPI writer;
         boolean recompileStale = true;
         for (int retries = 0; true; retries++) {
@@ -1344,8 +1360,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 LOG.info().$(ex.getFlyweightMessage()).$();
                 Misc.free(typesAndInsert);
-                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-                processCompiledQuery(cc);
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+                    processCompiledQuery(cc);
+                }
             } catch (Throwable e) {
                 if (transactionState == IN_TRANSACTION) {
                     transactionState = ERROR_TRANSACTION;
@@ -1385,7 +1403,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void executeUpdate(SqlCompiler compiler) throws SqlException {
+    private void executeUpdate() throws SqlException {
         boolean recompileStale = true;
         for (int retries = 0; recompileStale; retries++) {
             try {
@@ -1404,8 +1422,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
-                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-                processCompiledQuery(cc);
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+                    processCompiledQuery(cc);
+                }
             } catch (CairoException e) {
                 if (!e.isAuthorizationError()) {
                     typesAndUpdate = Misc.free(typesAndUpdate);
@@ -1587,8 +1607,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
      */
     private void parse(
             long address,
-            int len,
-            @Transient SqlCompiler compiler
+            int len
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, QueryPausedException, SqlException {
         // we will wait until we receive the entire header
         if (len < PREFIXED_MESSAGE_HEADER_LEN) {
@@ -1637,8 +1656,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 processParse(
                         address,
                         msgLo,
-                        msgLimit,
-                        compiler
+                        msgLimit
                 );
                 break;
             case 'X': // 'Terminate'
@@ -1650,11 +1668,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             case 'B': // bind
                 sendRNQ = true;
-                processBind(msgLo, msgLimit, compiler);
+                processBind(msgLo, msgLimit);
                 break;
             case 'E': // execute
                 sendRNQ = true;
-                processExec(msgLo, msgLimit, compiler);
+                processExec(msgLo, msgLimit);
                 break;
             case 'S': // sync
                 // At completion of each series of extended-query messages, the frontend should issue a Sync message.
@@ -1682,11 +1700,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             case 'D': // describe
                 sendRNQ = true;
-                processDescribe(msgLo, msgLimit, compiler);
+                processDescribe(msgLo, msgLimit);
                 break;
             case 'Q': // simple query
                 sendRNQ = true;
-                processQuery(msgLo, msgLimit, compiler);
+                processQuery(msgLo, msgLimit);
                 break;
             case 'd': // COPY data
                 break;
@@ -1696,11 +1714,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void parseQueryText(long lo, long hi, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
+    private void parseQueryText(long lo, long hi) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Chars.utf8toUtf16(lo, hi, e)) {
             queryText = characterStore.toImmutable();
-            compileQuery(compiler, true);
+            compileQuery(true);
             return;
         }
         LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -1872,7 +1890,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sink.putLen(addr);
     }
 
-    private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
+    private void processBind(long lo, long msgLimit)
             throws BadProtocolException, SqlException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
 
@@ -1888,7 +1906,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         hi = getStringLength(lo, msgLimit, "bad prepared statement name length [msgType='B']");
         final CharSequence statementName = getStatementName(lo, hi);
 
-        configureContextFromNamedStatement(statementName, compiler);
+        // clear currentCursor if it wasn't cleared by previous execute with maxRows or parse call
+        if (currentCursor != null) {
+            clearCursorAndFactory();
+        }
+
+        configureContextFromNamedStatement(statementName, engine);
         if (portalName != null) {
             configurePortal(portalName, statementName);
         }
@@ -2118,7 +2141,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
+    private void processDescribe(long lo, long msgLimit)
             throws SqlException, BadProtocolException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
 
@@ -2137,7 +2160,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
-        configureContextFromNamedStatement(target, compiler);
+        configureContextFromNamedStatement(target, engine);
 
         // initialize activeBindVariableTypes from bind variable service
         final int n = bindVariableService.getIndexedVariableCount();
@@ -2156,8 +2179,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void processExec(
             long lo,
-            long msgLimit,
-            SqlCompiler compiler
+            long msgLimit
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException, SqlException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
 
@@ -2171,31 +2193,30 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final int maxRows = getInt(lo, msgLimit, "could not read max rows value");
 
         processSyncActions();
-        processExecute(maxRows, compiler);
+        processExecute(maxRows);
         wrapper = null;
     }
 
     private void processExecute(
-            int maxRows,
-            SqlCompiler compiler
+            int maxRows
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
-            setupFactoryAndCursor(compiler);
+            setupFactoryAndCursor();
             sendCursor(maxRows, resumeCursorExecuteRef, resumeCommandCompleteRef);
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
-            executeInsert(compiler);
+            executeInsert();
         } else if (typesAndUpdate != null) {
             LOG.debug().$("executing update").$();
-            executeUpdate(compiler);
+            executeUpdate();
         } else { // this must be an OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
             prepareCommandComplete(false);
         }
     }
 
-    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
+    private void processParse(long address, long lo, long msgLimit) throws BadProtocolException, SqlException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
 
         // make sure there are no left-over sync actions
@@ -2217,8 +2238,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         //query text
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
+
+        // clear currentCursor and factory if they weren't cleared by previous execute with maxRows
+        if (currentCursor != null) {
+            clearCursorAndFactory();
+        }
+
         //TODO: parsePhaseBindVariableCount have to be checked before parseQueryText and fed into it to serve as type hints !
-        parseQueryText(lo, hi, compiler);
+        parseQueryText(lo, hi);
 
         //parameter type count
         lo = hi + 1;
@@ -2263,8 +2290,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
     private void processQuery(
             long lo,
-            long limit,
-            @Transient SqlCompiler compiler
+            long limit
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException {
         prepareForNewQuery();
         isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
@@ -2272,7 +2298,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         if (Chars.utf8toUtf16(lo, limit - 1, e)) {
             queryText = characterStore.toImmutable();
-            try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
                 if (isEmptyQuery) {
                     prepareEmptyQueryResponse();
@@ -2473,7 +2499,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final Record record = currentCursor.getRecord();
         final RecordMetadata metadata = currentFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
-        final long cursorRowCount = currentCursor.size();
+        cursorRowCount = currentCursor.size();
         if (maxRows > 0) {
             this.maxRows = cursorRowCount > 0 ? Long.min(maxRows, cursorRowCount) : maxRows;
         } else {
@@ -2520,7 +2546,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         }
 
-        completed = maxRows <= 0 || rowCount < maxRows;
+        completed = maxRows <= 0 || rowCount < maxRows || (cursorRowCount > -1 && rowCount == cursorRowCount);
         if (completed) {
             clearCursorAndFactory();
             // at this point buffer can contain unsent data,
@@ -2549,7 +2575,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bindVariableService.setUuid(index, lo, hi);
     }
 
-    private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
+    private void setupFactoryAndCursor() throws SqlException {
         if (currentCursor == null) {
             boolean recompileStale = true;
             SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
@@ -2571,7 +2597,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();
-                    compileQuery(compiler, false);
+                    compileQuery(false);
                     buildSelectColumnTypes();
                     applyLatestBindColumnFormats();
                 } catch (Throwable e) {
@@ -2584,7 +2610,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void setupVariableSettersFromWrapper(
             @Transient NamedStatementWrapper wrapper,
-            @Nullable @Transient SqlCompiler compiler
+            @Nullable @Transient CairoEngine engine
     ) throws SqlException {
         queryText = wrapper.queryText;
         if (!wrapper.queryContainsSecret) {
@@ -2593,7 +2619,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
-        if (!wrapper.alreadyExecuted && compileQuery(compiler, false) && typesAndSelect != null) {
+        if (!wrapper.alreadyExecuted && compileQuery(false) && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
         // We'll have to compile/execute the statement next time.
@@ -2772,13 +2798,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     buildSelectColumnTypes();
                     assert queryText != null;
                     queryTag = TAG_SELECT;
-                    setupFactoryAndCursor(compiler);
+                    setupFactoryAndCursor();
                     prepareRowDescription();
                     sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
                 } else if (typesAndInsert != null) {
-                    executeInsert(compiler);
+                    executeInsert();
                 } else if (typesAndUpdate != null) {
-                    executeUpdate(compiler);
+                    executeUpdate();
                 } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
                         cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
                     prepareCommandComplete(true);

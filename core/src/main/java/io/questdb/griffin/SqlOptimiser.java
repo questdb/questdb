@@ -442,8 +442,12 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void addOuterJoinExpression(QueryModel model, ExpressionNode node) {
+    private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
         model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
+        // add dependency to prevent previous model reordering (left joins are not symmetric)
+        if (joinIndex > 0) {
+            linkDependencies(parent, joinIndex - 1, joinIndex);
+        }
     }
 
     private void addPostJoinWhereClause(QueryModel model, ExpressionNode node) {
@@ -592,7 +596,7 @@ public class SqlOptimiser implements Mutable {
 
         JoinContext jc;
         boolean canMovePredicate = joinBarriers.excludes(joinModel.getJoinType());
-        int joinIdx = parent.getJoinModels().indexOf(joinModel);
+        int joinIndex = parent.getJoinModels().indexOf(joinModel);
 
         //switch code below assumes expression are simple column references  
         if (literalCollector.functionCount > 0) {
@@ -600,7 +604,7 @@ public class SqlOptimiser implements Mutable {
             if (canMovePredicate) {
                 parent.addParsedWhereNode(node, innerPredicate);
             } else {
-                addOuterJoinExpression(joinModel, node);
+                addOuterJoinExpression(parent, joinModel, joinIndex, node);
             }
             return;
         }
@@ -608,7 +612,7 @@ public class SqlOptimiser implements Mutable {
         switch (aSize) {
             case 0:
                 if (!canMovePredicate) {
-                    addOuterJoinExpression(joinModel, node);
+                    addOuterJoinExpression(parent, joinModel, joinIndex, node);
                     break;
                 }
                 if (bSize == 1
@@ -665,9 +669,9 @@ public class SqlOptimiser implements Mutable {
                         jc.parents.add(rhi);
                     }
 
-                    if (canMovePredicate || jc.slaveIndex == joinIdx) {
+                    if (canMovePredicate || jc.slaveIndex == joinIndex) {
                         //we can't push anything into other left join
-                        if (jc.slaveIndex != joinIdx && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
+                        if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                         } else {
                             addJoinContext(parent, jc);
@@ -676,14 +680,14 @@ public class SqlOptimiser implements Mutable {
                             }
                         }
                     } else {
-                        addOuterJoinExpression(joinModel, node);
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
                     }
                 } else if (bSize == 0
                         && literalCollector.nullCount == 0
                         && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())) {
                     // single table reference + constant
                     if (!canMovePredicate) {
-                        addOuterJoinExpression(joinModel, node);
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
                         break;
                     }
                     jc.slaveIndex = lhi;
@@ -698,7 +702,7 @@ public class SqlOptimiser implements Mutable {
                     if (canMovePredicate) {
                         parent.addParsedWhereNode(node, innerPredicate);
                     } else {
-                        addOuterJoinExpression(joinModel, node);
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
                     }
                 }
                 break;
@@ -707,7 +711,7 @@ public class SqlOptimiser implements Mutable {
                     node.innerPredicate = innerPredicate;
                     parent.addParsedWhereNode(node, innerPredicate);
                 } else {
-                    addOuterJoinExpression(joinModel, node);
+                    addOuterJoinExpression(parent, joinModel, joinIndex, node);
                 }
 
                 break;
@@ -783,11 +787,6 @@ public class SqlOptimiser implements Mutable {
                     if (qualifies) {
                         postFilterRemoved.add(k);
                         QueryModel m = parent.getJoinModels().getQuick(index);
-                        // it is possible that filter references only top query via alias
-                        // we will need to strip these aliases before assigning filter
-                        if (index == 0) {
-                            traversalAlgo.traverse(node, literalRewritingVisitor.of(m.getAliasToColumnNameMap()));
-                        }
                         m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), node));
                     }
                 }
@@ -1396,7 +1395,7 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, k = dependencies.size(); i < k; i++) {
                 int depIndex = dependencies.get(i);
                 JoinContext jc = joinModels.getQuick(depIndex).getContext();
-                if (--jc.inCount == 0) {
+                if (jc != null && --jc.inCount == 0) {
                     orderingStack.push(depIndex);
                 }
             }
@@ -2672,10 +2671,10 @@ public class SqlOptimiser implements Mutable {
             // optimiser can assign there correct nodes
 
             model.setWhereClause(null);
-            processJoinConditions(model, where, false, model);
+            processJoinConditions(model, where, false, model, -1);
 
             for (int i = 1; i < n; i++) {
-                processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria(), true, joinModels.getQuick(i));
+                processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria(), true, joinModels.getQuick(i), i);
             }
 
             processEmittedJoinClauses(model);
@@ -2799,7 +2798,7 @@ public class SqlOptimiser implements Mutable {
      *
      * @param node expression n
      */
-    private void processJoinConditions(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
+    private void processJoinConditions(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel, int joinIndex) throws SqlException {
         ExpressionNode n = node;
         // pre-order traversal
         sqlNodeStack.clear();
@@ -2819,7 +2818,7 @@ public class SqlOptimiser implements Mutable {
                     case JOIN_OP_REGEX:
                         analyseRegex(parent, n);
                         if (joinBarriers.contains(joinModel.getJoinType())) {
-                            addOuterJoinExpression(joinModel, n);
+                            addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
                         }
@@ -2827,7 +2826,7 @@ public class SqlOptimiser implements Mutable {
                         break;
                     default:
                         if (joinBarriers.contains(joinModel.getJoinType())) {
-                            addOuterJoinExpression(joinModel, n);
+                            addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
                         }
@@ -2917,6 +2916,11 @@ public class SqlOptimiser implements Mutable {
             }
 
             propagateTopDownColumns0(jm, false, model, true);
+        }
+
+        final ExpressionNode postJoinWhere = model.getPostJoinWhereClause();
+        if (postJoinWhere != null) {
+            emitLiteralsTopDown(postJoinWhere, model);
         }
 
         // If this is group by model we need to add all non-selected keys, only if this is sub-query
@@ -3458,6 +3462,7 @@ public class SqlOptimiser implements Mutable {
                     orderByDirection.setQuick(0, newOrder);
                 }
 
+                //noinspection ReplaceNullCheck
                 if (order != null) {
                     current.setNestedModel(order);
                 } else {

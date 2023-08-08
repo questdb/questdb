@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.TableWriterMetricsRecordCursorFactory;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -45,7 +45,7 @@ import java.util.Objects;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
-public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
+public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCursor() {
@@ -68,7 +68,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
         assertMemoryLeak(() -> {
             try (
                     CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
-                    SqlCompiler localCompiler = new SqlCompiler(localEngine, snapshotAgent);
+                    SqlCompiler localCompiler = localEngine.getSqlCompiler();
                     SqlExecutionContext localSqlExecutionContext = TestUtils.createSqlExecutionCtx(localEngine)
             ) {
                 MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);

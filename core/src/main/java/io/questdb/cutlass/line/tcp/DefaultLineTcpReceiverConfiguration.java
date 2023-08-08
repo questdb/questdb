@@ -121,6 +121,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
     }
@@ -163,11 +168,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public FactoryProvider getFactoryProvider() {
-        return DefaultFactoryProvider.INSTANCE;
     }
 
     @Override

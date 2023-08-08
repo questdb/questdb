@@ -24,13 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
  * These tests cover various distinct with order by and limit combinations.
  */
-public class DistinctWithLimitTest extends AbstractGriffinTest {
+public class DistinctWithLimitTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctOnIndexedSymbolColumnInSubqueryOrderByAscWithLimitInOuterQuery() throws Exception {

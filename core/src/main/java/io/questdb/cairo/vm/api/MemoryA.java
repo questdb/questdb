@@ -65,7 +65,7 @@ public interface MemoryA extends Closeable {
 
     // two longs are written back to back: little endian
     void putLong128(long lo, long hi);
-    
+
     void putLong256(long l0, long l1, long l2, long l3);
 
     void putLong256(Long256 value);

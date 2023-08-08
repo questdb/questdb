@@ -123,13 +123,13 @@ public class TypeManagerTest extends AbstractTest {
         File configFile = new File(root, "text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/text_loader.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
     }
 
     @Test
     public void testEmpty() throws JsonException {
         TypeManager typeManager = createTypeManager("/textloader/types/empty.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
     }
 
     @Test
@@ -157,7 +157,7 @@ public class TypeManagerTest extends AbstractTest {
         File configFile = new File(root, "my_awesome_text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/my_awesome_text_loader.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
     }
 
     @Test

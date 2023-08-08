@@ -37,6 +37,8 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.lang.ThreadLocal;
 import java.util.function.LongSupplier;
@@ -62,10 +64,12 @@ public interface CairoConfiguration {
     int getAnalyticColumnPoolCapacity();
 
     // the '+' is used to prevent overlap with table names
+    @NotNull
     default String getArchivedCrashFilePrefix() {
         return "crash+";
     }
 
+    @NotNull
     String getAttachPartitionSuffix();
 
     DateFormat getBackupDirTimestampFormat();
@@ -81,8 +85,10 @@ public interface CairoConfiguration {
 
     int getBindVariablePoolSize();
 
+    @NotNull
     BuildInformation getBuildInformation();
 
+    @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
     int getColumnCastModelPoolCapacity();
@@ -101,8 +107,10 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    @NotNull
     CharSequence getConfRoot(); // same as root/../conf
 
+    @NotNull
     LongSupplier getCopyIDSupplier();
 
     int getCopyPoolCapacity();
@@ -121,10 +129,13 @@ public interface CairoConfiguration {
 
     long getDatabaseIdLo();
 
+    @NotNull
     CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
 
+    @NotNull
     DateLocale getDefaultDateLocale();
 
+    @NotNull
     CharSequence getDefaultMapType();
 
     boolean getDefaultSymbolCacheFlag();
@@ -135,10 +146,12 @@ public interface CairoConfiguration {
 
     int getExplainPoolCapacity();
 
+    @Nullable
     FactoryProvider getFactoryProvider();
 
     int getFileOperationRetryCount();
 
+    @NotNull
     FilesFacade getFilesFacade();
 
     int getFloatToStrCastScale();
@@ -147,6 +160,7 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
+    @NotNull
     default IOURingFacade getIOURingFacade() {
         return IOURingFacadeImpl.INSTANCE;
     }
@@ -179,10 +193,12 @@ public interface CairoConfiguration {
 
     int getMetadataPoolCapacity();
 
+    @NotNull
     default MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
     }
 
+    @NotNull
     default MillisecondClock getMillisecondClock() {
         return MillisecondClockImpl.INSTANCE;
     }
@@ -191,6 +207,7 @@ public interface CairoConfiguration {
 
     int getMkDirMode();
 
+    @NotNull
     default NanosecondClock getNanosecondClock() {
         return NanosecondClockImpl.INSTANCE;
     }
@@ -232,6 +249,7 @@ public interface CairoConfiguration {
     int getO3PurgeDiscoveryQueueCapacity();
 
     // the '+' is used to prevent overlap with table names
+    @NotNull
     default String getOGCrashFilePrefix() {
         return "hs_err_pid+";
     }
@@ -244,8 +262,6 @@ public interface CairoConfiguration {
 
     int getPageFrameReduceShardCount();
 
-    int getPageFrameReduceTaskPoolCapacity();
-
     int getParallelIndexThreshold();
 
     long getPartitionO3SplitMinSize();
@@ -254,12 +270,14 @@ public interface CairoConfiguration {
 
     int getQueryCacheEventQueueCapacity();
 
+    @NotNull
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();
         if (rnd == null) {
             RANDOM.set(rnd = new Rnd(
-                    getNanosecondClock().getTicks(),
-                    getMicrosecondClock().getTicks())
+                            getNanosecondClock().getTicks(),
+                            getMicrosecondClock().getTicks()
+                    )
             );
         }
         return rnd;
@@ -275,8 +293,10 @@ public interface CairoConfiguration {
 
     int getRndFunctionMemoryPageSize();
 
+    @NotNull
     String getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
+    @NotNull
     default RostiAllocFacade getRostiAllocFacade() {
         return RostiAllocFacadeImpl.INSTANCE;
     }
@@ -292,8 +312,10 @@ public interface CairoConfiguration {
      *
      * @return instance id.
      */
+    @NotNull
     CharSequence getSnapshotInstanceId();
 
+    @NotNull
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 
     long getSpinLockTimeout();
@@ -410,20 +432,24 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    @NotNull
     CharSequence getSystemTableNamePrefix();
 
     long getTableRegistryAutoReloadFrequency();
 
     int getTableRegistryCompactionThreshold();
 
+    @NotNull
     TelemetryConfiguration getTelemetryConfiguration();
 
+    @NotNull
     TextConfiguration getTextConfiguration();
 
     int getTxnScoreboardEntryCount();
 
     int getVectorAggregateQueueCapacity();
 
+    @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
     int getWalApplyLookAheadTransactionCount();
@@ -433,6 +459,8 @@ public interface CairoConfiguration {
     long getWalDataAppendPageSize();
 
     boolean getWalEnabledDefault();
+
+    int getWalMaxLagTxnCount();
 
     long getWalPurgeInterval();
 

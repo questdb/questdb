@@ -26,12 +26,12 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
+public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullRegex() throws Exception {
@@ -66,9 +66,9 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
                     "example2.com\n" +
                     "\n" +
                     "example2.com\n";
-            compiler.compile("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
 
-            try (RecordCursorFactory factory = compiler.compile("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -96,7 +96,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
     private void assertFailure(CharSequence expectedMsg, CharSequence sql) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursorFactory factory = select(sql);
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 sink.clear();

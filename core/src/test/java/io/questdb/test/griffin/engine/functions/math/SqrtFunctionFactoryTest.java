@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class SqrtFunctionFactoryTest extends AbstractGriffinTest {
+public class SqrtFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSqrtDouble() throws Exception {
@@ -42,7 +42,7 @@ public class SqrtFunctionFactoryTest extends AbstractGriffinTest {
 
     private void assertSqrt(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 sql,
                 sink,

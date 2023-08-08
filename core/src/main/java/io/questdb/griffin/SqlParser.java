@@ -608,35 +608,33 @@ public class SqlParser {
 
             tok = optTok(lexer);
             if (tok == null || !isKeysKeyword(tok)) {
-                throw SqlException.position(lexer.getPosition()).put("expected 'keys'");
+                throw SqlException.position(lexer.lastTokenPosition()).put("expected 'keys'");
             }
 
             boolean timestampColumnFound = false;
-            int dedupColumns = 0;
 
             tok = optTok(lexer);
             if (tok != null && Chars.equals(tok, '(')) {
                 tok = optTok(lexer);
-                int columnListPos = lexer.getPosition();
+                int columnListPos = lexer.lastTokenPosition();
 
                 while (tok != null && !Chars.equals(tok, ')')) {
                     final CharSequence columnName = tok;
-                    validateLiteral(lexer.getPosition(), tok);
+                    validateLiteral(lexer.lastTokenPosition(), tok);
 
                     int colIndex = model.getColumnIndex(columnName);
                     if (colIndex < 0) {
-                        throw SqlException.position(lexer.getPosition() - tok.length()).put("deduplicate column not found [column=").put(columnName).put(']');
+                        throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
                     }
                     if (colIndex == model.getTimestampIndex()) {
                         timestampColumnFound = true;
                     } else {
                         int columnType = model.getColumnType(colIndex);
-                        if (!ColumnType.isInt(columnType) && !ColumnType.isSymbol(columnType)) {
-                            throw SqlException.position(lexer.getPosition() - tok.length()).put("deduplicate key column can only be INT or SYMBOL type [column=").put(columnName)
+                        if (ColumnType.isVariableLength(columnType)) {
+                            throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                     .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                         }
                     }
-                    dedupColumns++;
                     model.setDedupKeyFlag(colIndex);
 
                     tok = optTok(lexer);
@@ -647,10 +645,6 @@ public class SqlParser {
 
                 if (!timestampColumnFound) {
                     throw SqlException.position(columnListPos).put("deduplicate key list must include dedicated timestamp column");
-                }
-
-                if (dedupColumns > 1 && !configuration.isMultiKeyDedupEnabled()) {
-                    throw SqlException.position(columnListPos).put("deduplication on multiple columns is not supported");
                 }
 
                 tok = optTok(lexer);

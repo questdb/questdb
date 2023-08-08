@@ -27,10 +27,11 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.std.IntList;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,7 +40,7 @@ import org.junit.Test;
  * - with and without designated timestamps,
  * - non-partitioned and partitioned .
  */
-public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
+public class OrderByDescRowSkippingTest extends AbstractCairoTest {
 
     private static final String DATA = "10\t2022-01-13T10:00:00.000000Z\n" +
             "9\t2022-01-12T06:13:20.000000Z\n" +
@@ -531,16 +532,17 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInSelectAndOrderByWithAlias() throws Exception {
         preparePartitionPerRowTableWithLongNames();
-
-        assertQuery6(
-                compiler,
-                "record_Type\tcre_on\n" + DATA,
-                "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
-                "cre_on###DESC",
-                sqlExecutionContext,
-                true,
-                false
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertQuery(
+                    compiler,
+                    "record_Type\tcre_on\n" + DATA,
+                    "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
+                    "cre_on###DESC",
+                    true,
+                    sqlExecutionContext,
+                    false
+            );
+        }
     }
 
     @Test
@@ -839,7 +841,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext);
+                compile(query);
             }
         });
     }

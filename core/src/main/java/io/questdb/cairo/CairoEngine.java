@@ -30,25 +30,20 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
-import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
-import io.questdb.mp.Sequence;
-import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
@@ -63,6 +58,9 @@ import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
+import static io.questdb.griffin.CompiledQuery.*;
+
 public class CairoEngine implements Closeable, WriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
@@ -75,6 +73,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MetadataPool metadataPool;
     private final Metrics metrics;
     private final ReaderPool readerPool;
+    private final DatabaseSnapshotAgent snapshotAgent;
+    private final SqlCompilerPool sqlCompilerPool;
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
@@ -110,6 +110,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+        this.snapshotAgent = new DatabaseSnapshotAgent(this);
         this.walListener = WalListener.DEFAULT;
         try {
             this.tableIdGenerator.open();
@@ -119,7 +120,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         // Recover snapshot, if necessary.
         try {
-            DatabaseSnapshotAgent.recoverSnapshot(this);
+            snapshotAgent.recoverSnapshot();
         } catch (Throwable e) {
             close();
             throw e;
@@ -158,6 +159,83 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
         }
+        this.sqlCompilerPool = new SqlCompilerPool(this);
+    }
+
+    public static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+        switch (cq.getType()) {
+            default:
+                try (OperationFuture future = cq.execute(null)) {
+                    future.await();
+                }
+                break;
+            case INSERT:
+            case INSERT_AS_SELECT:
+                final InsertOperation insertOperation = cq.getInsertOperation();
+                if (insertOperation != null) {
+                    // for insert as select the operation is null
+                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                        insertMethod.execute();
+                        insertMethod.commit();
+                    }
+                }
+                break;
+            case DROP:
+                drop0(null, cq);
+                break;
+            case SELECT:
+                throw SqlException.$(0, "use select()");
+        }
+    }
+
+    public static void ddl(
+            SqlCompiler compiler,
+            CharSequence ddl,
+            SqlExecutionContext sqlExecutionContext,
+            @Nullable SCSequence eventSubSeq
+    ) throws SqlException {
+        CompiledQuery cc = compiler.compile(ddl, sqlExecutionContext);
+        switch (cc.getType()) {
+            default:
+                try (OperationFuture future = cc.execute(eventSubSeq)) {
+                    future.await();
+                }
+                break;
+            case INSERT:
+                throw SqlException.$(0, "use insert()");
+            case DROP:
+                throw SqlException.$(0, "use drop()");
+            case SELECT:
+                throw SqlException.$(0, "use select()");
+        }
+    }
+
+    public static void insert(SqlCompiler compiler, CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(insertSql, sqlExecutionContext);
+        switch (cq.getType()) {
+            case INSERT:
+            case INSERT_AS_SELECT:
+                final InsertOperation insertOperation = cq.getInsertOperation();
+                if (insertOperation != null) {
+                    // for insert as select the operation is null
+                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                        insertMethod.execute();
+                        insertMethod.commit();
+                    }
+                }
+                break;
+            case SELECT:
+                throw SqlException.$(0, "use select()");
+            case DROP:
+                throw SqlException.$(0, "use drop()");
+            default:
+                throw SqlException.$(0, "use ddl()");
+        }
+    }
+
+    public static RecordCursorFactory select(SqlCompiler compiler, CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
@@ -166,17 +244,19 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public boolean clear() {
+        snapshotAgent.clear();
+        messageBus.reset();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
         boolean b4 = metadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
-        messageBus.reset();
         return b1 & b2 & b3 & b4 & b5;
     }
 
     @Override
     public void close() {
+        Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
         Misc.free(readerPool);
         Misc.free(metadataPool);
@@ -187,11 +267,22 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(telemetry);
         Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
+        Misc.free(snapshotAgent);
     }
 
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
+    }
+
+    public void compile(CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            compile(compiler, sql, sqlExecutionContext);
+        }
+    }
+
+    public void completeSnapshot() throws SqlException {
+        snapshotAgent.completeSnapshot();
     }
 
     public @NotNull TableToken createTable(
@@ -277,8 +368,21 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.unlockTableName(tableToken);
         }
 
-        onTableCreated(securityContext, tableToken);
+        final boolean sysTable = Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix());
+        final DdlListener ddlListener = sysTable ? DdlListenerImpl.INSTANCE : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
+        ddlListener.onTableCreated(securityContext, tableToken);
+
         return tableToken;
+    }
+
+    public void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
+        ddl(ddl, executionContext, null);
+    }
+
+    public void ddl(CharSequence ddl, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            ddl(compiler, ddl, sqlExecutionContext, eventSubSeq);
+        }
     }
 
     public void drop(Path path, TableToken tableToken) {
@@ -308,6 +412,31 @@ public class CairoEngine implements Closeable, WriterSource {
                 return;
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken).put("' [reason='").put(lockedReason).put("']");
+        }
+    }
+
+    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            final CompiledQuery cq = compiler.compile(dropSql, sqlExecutionContext);
+            switch (cq.getType()) {
+                case UPDATE:
+                case DROP:
+                    drop0(eventSubSeq, cq);
+                    break;
+                case INSERT:
+                case INSERT_AS_SELECT:
+                    throw SqlException.$(0, "use insert()");
+                case SELECT:
+                    throw SqlException.$(0, "use select()");
+                default:
+                    throw SqlException.$(0, "use ddl()");
+            }
+        } catch (SqlException | CairoException ex) {
+            if (!Chars.contains(ex.getFlyweightMessage(), "table does not exist")) {
+                throw ex;
+            }
+        } catch (TableReferenceOutOfDateException e) {
+            // ignore
         }
     }
 
@@ -455,6 +584,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public SqlCompiler getSqlCompiler() {
+        return sqlCompilerPool.get();
+    }
+
+    public SqlCompilerFactory getSqlCompilerFactory() {
+        return SqlCompilerFactoryImpl.INSTANCE;
+    }
+
     public IDGenerator getTableIdGenerator() {
         return tableIdGenerator;
     }
@@ -572,6 +709,16 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(tableToken, lockReason);
     }
 
+    public void initialized() {
+
+    }
+
+    public void insert(CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            insert(compiler, insertSql, sqlExecutionContext);
+        }
+    }
+
     public boolean isTableDropped(TableToken tableToken) {
         return tableNameRegistry.isTableDropped(tableToken);
     }
@@ -626,34 +773,37 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyWalTxnCommitted(TableToken tableToken, long txn) {
+    public void notifyWalTxnCommitted(TableToken tableToken) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                task.of(tableToken, txn);
+                task.of(tableToken);
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
-                LOG.debug().$("cannot publish WAL notifications, queue is full [current=")
+                LOG.info().$("cannot publish WAL notifications, queue is full [current=")
                         .$(pubSeq.current()).$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
-                notifyWalTxnRepublisher();
+                notifyWalTxnRepublisher(tableToken);
                 return;
             }
         }
     }
 
-    public void notifyWalTxnRepublisher() {
+    public void notifyWalTxnRepublisher(TableToken tableToken) {
+        tableSequencerAPI.notifyCommitReadable(tableToken, -1);
         unpublishedWalTxnCount.incrementAndGet();
     }
 
-    public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+    public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
+        snapshotAgent.prepareSnapshot(executionContext);
     }
 
-    public void onTableCreated(SecurityContext securityContext, TableToken tableToken) {
+    public void recoverSnapshot() {
+        this.snapshotAgent.recoverSnapshot();
     }
 
     public void registerTableToken(TableToken tableToken) {
@@ -702,6 +852,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void removeTableToken(TableToken tableToken) {
         tableNameRegistry.purgeToken(tableToken);
+        tableSequencerAPI.purgeTxnTracker(tableToken.getDirName());
         PoolListener listener = getPoolListener();
         if (listener != null) {
             listener.onEvent(
@@ -807,6 +958,12 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.resetMemory();
     }
 
+    public RecordCursorFactory select(CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            return select(compiler, selectSql, sqlExecutionContext);
+        }
+    }
+
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.metadataPool.setPoolListener(poolListener);
@@ -822,6 +979,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setWalListener(@NotNull WalListener walListener) {
         this.walListener = walListener;
+    }
+
+    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
+        this.snapshotAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
     }
 
     public void unlock(
@@ -867,6 +1028,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         if (!tt.equals(tableToken)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
+        }
+    }
+
+    private static void drop0(@Nullable SCSequence eventSubSeq, CompiledQuery cq) throws SqlException {
+        try (OperationFuture fut = cq.execute(eventSubSeq)) {
+            if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
+                throw SqlException.$(0, "drop table timeout");
+            }
         }
     }
 
@@ -1010,4 +1179,5 @@ public class CairoEngine implements Closeable, WriterSource {
             return false;
         }
     }
+
 }

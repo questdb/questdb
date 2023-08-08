@@ -23,10 +23,10 @@
  ******************************************************************************/
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SymbolTest extends AbstractGriffinTest {
+public class SymbolTest extends AbstractCairoTest {
 
     @Test
     public void testSelectSymbolUsingBindVariable() throws Exception {
