@@ -1718,8 +1718,8 @@ public class JoinTest extends AbstractCairoTest {
                     "10\t598\t5\n" +
                     "10\t598\t74\n";
 
-            compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))", sqlExecutionContext);
-            compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
+            ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
+            ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
             assertQuery(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null, false, true);
@@ -1776,11 +1776,17 @@ public class JoinTest extends AbstractCairoTest {
                     "5\t251\t7\t279\t272\n" +
                     "5\t251\t7\t198\t191\n";
 
-            compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
-            compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))", sqlExecutionContext);
-            compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))", sqlExecutionContext);
+            ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)");
+            ddl("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
+            ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)", null, false, true);
+            assertQuery(
+                    expected,
+                    "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
+                    null,
+                    false,
+                    true
+            );
         });
     }
 
@@ -1820,7 +1826,7 @@ public class JoinTest extends AbstractCairoTest {
                     "5\t-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t77821642\tfalse\tG\t0.22122747948030208\t0.4873\t322\t2015-10-22T18:19:01.452Z\tNZZR\t-4117907293110263427\t1970-01-01T05:16:40.000000Z\t28\t00000000 25 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03 22 81\n" +
                     "00000010 b8 06\tQSPZPBHLNEJ\n";
 
-            compiler.compile(
+            ddl(
                     "create table x as (select" +
                             " cast(x as int) kk, " +
                             " rnd_int() a," +
@@ -1836,11 +1842,10 @@ public class JoinTest extends AbstractCairoTest {
                             " rnd_byte(2,50) l," +
                             " rnd_bin(10, 20, 2) m," +
                             " rnd_str(5,16,2) n" +
-                            " from long_sequence(5))",
-                    sqlExecutionContext
+                            " from long_sequence(5))"
             );
 
-            compiler.compile(
+            ddl(
                     "create table y as (select" +
                             " cast((x-1)/4 + 1 as int) kk," +
                             " rnd_int() a," +
@@ -1856,8 +1861,7 @@ public class JoinTest extends AbstractCairoTest {
                             " rnd_byte(2,50) l," +
                             " rnd_bin(10, 20, 2) m," +
                             " rnd_str(5,16,2) n" +
-                            " from long_sequence(20))",
-                    sqlExecutionContext
+                            " from long_sequence(20))"
             );
 
             // filter is applied to final join result
@@ -1928,9 +1932,9 @@ public class JoinTest extends AbstractCairoTest {
                     "5\t251\t7\t279\t272\n" +
                     "5\t251\t7\t198\t191\n";
 
-            compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))", sqlExecutionContext);
-            compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))", sqlExecutionContext);
-            compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))", sqlExecutionContext);
+            ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
+            ddl("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
+            ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
             assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, false, true);
         });
@@ -1977,16 +1981,16 @@ public class JoinTest extends AbstractCairoTest {
                     "5\t251\t7\t279\t272\n" +
                     "5\t251\t7\t198\t191\n";
 
-            compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))", sqlExecutionContext);
-            compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))", sqlExecutionContext);
-            compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
+            ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
+            ddl("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
+            ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
             assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20", null, true);
 
-            compiler.compile("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
-            compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)", sqlExecutionContext);
-            compiler.compile("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)", sqlExecutionContext);
+            insert("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
+            insert("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
+            insert("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
             assertQuery(expected +
                             "7\t253\t14\t228\t214\n" +
@@ -2127,13 +2131,13 @@ public class JoinTest extends AbstractCairoTest {
                     "10\t598\t5\n" +
                     "10\t598\t74\n";
 
-            compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))", sqlExecutionContext);
-            compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
+            ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
+            ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null, true);
 
-            compiler.compile("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)", sqlExecutionContext);
-            compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
+            insert("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
+            insert("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
             assertQuery(expected +
                             "12\t347\t7\n" +
@@ -2242,16 +2246,16 @@ public class JoinTest extends AbstractCairoTest {
                     "\t\t\t598\t53\t540\t487\n" +
                     "\t\t\t598\t53\t908\t855\n";
 
-            compiler.compile("create table x as (select rnd_symbol('A','B',null,'D') c, abs(rnd_int() % 650) a from long_sequence(5))", sqlExecutionContext);
-            compiler.compile("create table y as (select rnd_symbol('B','A',null,'D') m, abs(rnd_int() % 100) b from long_sequence(20))", sqlExecutionContext);
-            compiler.compile("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
+            ddl("create table x as (select rnd_symbol('A','B',null,'D') c, abs(rnd_int() % 650) a from long_sequence(5))");
+            ddl("create table y as (select rnd_symbol('B','A',null,'D') m, abs(rnd_int() % 100) b from long_sequence(20))");
+            ddl("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
             assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, true);
 
-            compiler.compile("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
-            compiler.compile("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
-            compiler.compile("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)", sqlExecutionContext);
+            ddl("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
+            ddl("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
+            ddl("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
 
             assertQuery(expected +
                             "L\tL\tL\t148\t38\t121\t83\n" +
@@ -2289,16 +2293,16 @@ public class JoinTest extends AbstractCairoTest {
                     "5\t251\t7\t279\t258\n" +
                     "5\t251\t7\t198\t258\n";
 
-            compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))", sqlExecutionContext);
-            compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))", sqlExecutionContext);
-            compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
+            ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
+            ddl("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
+            ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
             assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300", null, true);
 
-            compiler.compile("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
-            compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)", sqlExecutionContext);
-            compiler.compile("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)", sqlExecutionContext);
+            insert("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
+            insert("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
+            insert("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
             assertQuery(expected +
                             "7\t253\t35\t228\t288\n" +
@@ -4619,6 +4623,30 @@ public class JoinTest extends AbstractCairoTest {
         method.run(true);
     }
 
+    private void testJoinColumnPropagationIntoJoinModel0(String joinType, boolean expectSize) throws SqlException {
+        String query = ("SELECT amount, price1\n" +
+                "FROM\n" +
+                "(\n" +
+                "  SELECT *\n" +
+                "  FROM trades b \n" +
+                "  #JOIN_TYPE# \n" +
+                "  (\n" +
+                "    SELECT * \n" +
+                "    FROM trades \n" +
+                "    WHERE price > 1\n" +
+                "      AND symbol = 'ETH-USD'\n" +
+                "  ) a ON #JOIN_CLAUSE#\n" +
+                "  WHERE b.amount > 1\n" +
+                "    AND b.symbol = 'ETH-USD'\n" +
+                ")").replace("#JOIN_TYPE#", joinType);
+        String expected = "LT JOIN".equals(joinType) ? "amount\tprice1\n2.0\tNaN\n" : "amount\tprice1\n2.0\t2.0\n";
+
+        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, expectSize);
+        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, expectSize);
+        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, expectSize);
+        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, expectSize);
+    }
+
     private void testJoinConstantFalse0(boolean fullFatJoin) throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "c\ta\tb\tcolumn\n";
@@ -4655,32 +4683,15 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryFullFat(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null, false, false, fullFatJoin);
+            assertQueryFullFat(
+                    expected,
+                    "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10",
+                    null,
+                    false,
+                    true,
+                    fullFatJoin
+            );
         });
-    }
-
-    private void testJoinColumnPropagationIntoJoinModel0(String joinType, boolean expectSize) throws SqlException {
-        String query = ("SELECT amount, price1\n" +
-                "FROM\n" +
-                "(\n" +
-                "  SELECT *\n" +
-                "  FROM trades b \n" +
-                "  #JOIN_TYPE# \n" +
-                "  (\n" +
-                "    SELECT * \n" +
-                "    FROM trades \n" +
-                "    WHERE price > 1\n" +
-                "      AND symbol = 'ETH-USD'\n" +
-                "  ) a ON #JOIN_CLAUSE#\n" +
-                "  WHERE b.amount > 1\n" +
-                "    AND b.symbol = 'ETH-USD'\n" +
-                ")").replace("#JOIN_TYPE#", joinType);
-        String expected = "LT JOIN".equals(joinType) ? "amount\tprice1\n2.0\tNaN\n" : "amount\tprice1\n2.0\t2.0\n";
-
-        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, expectSize);
-        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, expectSize);
-        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, expectSize);
-        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, expectSize);
     }
 
     private void testJoinForCursorLeaks(String sql, boolean fullFatJoins) throws Exception {
@@ -4758,7 +4769,14 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryFullFat(expected, "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)", null, false, false, fullFatJoin);
+            assertQueryFullFat(
+                    expected,
+                    "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
+                    null,
+                    false,
+                    true,
+                    fullFatJoin
+            );
         });
     }
 
@@ -4836,7 +4854,14 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryFullFat(expected, "select * from x join y on (kk)", null, false, false, fullFatJoin);
+            assertQueryFullFat(
+                    expected,
+                    "select * from x join y on (kk)",
+                    null,
+                    false,
+                    true,
+                    fullFatJoin
+            );
         });
     }
 
@@ -4887,7 +4912,14 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
             ddl("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
-            assertQueryFullFat(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, false, false, fullFatJoin);
+            assertQueryFullFat(
+                    expected,
+                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
+                    null,
+                    false,
+                    true,
+                    fullFatJoin
+            );
         });
     }
 
@@ -4921,7 +4953,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
                     null,
                     false,
-                    false
+                    true
             );
 
             ddl("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
@@ -4941,7 +4973,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
                     null,
                     false,
-                    false,
+                    true,
                     fullFatJoin
             );
         });
@@ -5006,7 +5038,12 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
-            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null, false);
+            assertQueryAndCache(
+                    expected,
+                    "select x.c, x.a, b from x join y on y.m = x.c",
+                    null,
+                    true
+            );
 
             insert("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             insert("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
@@ -5124,7 +5161,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
                     null,
                     false,
-                    false
+                    true
             );
 
             insert("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
@@ -5138,7 +5175,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
                     null,
                     false,
-                    false,
+                    true,
                     fullFatJoin
             );
 
@@ -5173,7 +5210,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300",
                     null,
                     false,
-                    false
+                    true
             );
 
             insert("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
@@ -5197,7 +5234,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300",
                     null,
                     false,
-                    false,
+                    true,
                     fullFatJoin
             );
         });

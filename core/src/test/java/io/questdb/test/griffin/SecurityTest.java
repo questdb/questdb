@@ -334,7 +334,6 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                     null,
                     false,
-                    false,
                     readOnlyExecutionContext
             );
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
@@ -345,7 +344,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                         null,
-                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -449,7 +447,6 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym2, d from tb1 where d < 0.01 order by sym2",
                     null,
                     true,
-                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -459,7 +456,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "select sym2, d from tb1 order by sym2",
                         null,
                         true,
-                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -489,7 +485,6 @@ public class SecurityTest extends AbstractCairoTest {
                     "select distinct sym1, sym2 from tb1 where d < 0.07",
                     null,
                     true,
-                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -499,7 +494,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "select distinct sym1, sym2 from tb1",
                         null,
                         true,
-                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -512,42 +506,46 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testMemoryRestrictionsWithFullFatInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                sqlExecutionContext.getRandom().reset();
-                compiler.compile("create table tb1 as (select" +
-                        " rnd_symbol(4,4,4,20000) sym1," +
-                        " rnd_double(2) d1," +
-                        " timestamp_sequence(0, 1000000000) ts1" +
-                        " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
-                compiler.compile("create table tb2 as (select" +
-                        " rnd_symbol(3,3,3,20000) sym2," +
-                        " rnd_double(2) d2," +
-                        " timestamp_sequence(0, 1000000000) ts2" +
-                        " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+            sqlExecutionContext.getRandom().reset();
+            ddl(
+                    "create table tb1 as (select" +
+                            " rnd_symbol(4,4,4,20000) sym1," +
+                            " rnd_double(2) d1," +
+                            " timestamp_sequence(0, 1000000000) ts1" +
+                            " from long_sequence(10)) timestamp(ts1)"
+            );
 
-                compiler.setFullFatJoins(true);
+            ddl(
+                    "create table tb2 as (select" +
+                            " rnd_symbol(3,3,3,20000) sym2," +
+                            " rnd_double(2) d2," +
+                            " timestamp_sequence(0, 1000000000) ts2" +
+                            " from long_sequence(10)) timestamp(ts2)"
+            );
+
+            assertQueryFullFat(
+                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                    "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                    null,
+                    false,
+                    true,
+                    true
+            );
+            memoryRestrictedCompiler.setFullFatJoins(true);
+            try {
                 assertQuery(
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        memoryRestrictedCompiler,
+                        "TOO MUCH",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false,
-                        true,
-                        sqlExecutionContext
+                        readOnlyExecutionContext
                 );
-                try {
-                    assertQuery(
-                            memoryRestrictedCompiler,
-                            "TOO MUCH",
-                            "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                            null,
-                            false,
-                            false,
-                            readOnlyExecutionContext
-                    );
-                    Assert.fail();
-                } catch (Exception ex) {
-                    Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-                }
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+            } finally {
+                memoryRestrictedCompiler.setFullFatJoins(false);
             }
         });
     }
@@ -555,42 +553,46 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testMemoryRestrictionsWithFullFatOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                sqlExecutionContext.getRandom().reset();
-                compiler.compile("create table tb1 as (select" +
-                        " rnd_symbol(4,4,4,20000) sym1," +
-                        " rnd_double(2) d1," +
-                        " timestamp_sequence(0, 1000000000) ts1" +
-                        " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
-                compiler.compile("create table tb2 as (select" +
-                        " rnd_symbol(3,3,3,20000) sym2," +
-                        " rnd_double(2) d2," +
-                        " timestamp_sequence(0, 1000000000) ts2" +
-                        " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+            sqlExecutionContext.getRandom().reset();
+            ddl(
+                    "create table tb1 as (select" +
+                            " rnd_symbol(4,4,4,20000) sym1," +
+                            " rnd_double(2) d1," +
+                            " timestamp_sequence(0, 1000000000) ts1" +
+                            " from long_sequence(10)) timestamp(ts1)"
+            );
+            ddl(
+                    "create table tb2 as (select" +
+                            " rnd_symbol(3,3,3,20000) sym2," +
+                            " rnd_double(2) d2," +
+                            " timestamp_sequence(0, 1000000000) ts2" +
+                            " from long_sequence(10)) timestamp(ts2)"
+            );
 
-                compiler.setFullFatJoins(true);
+            assertQueryFullFat(
+                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                    null,
+                    false,
+                    false,
+                    true
+            );
+
+            memoryRestrictedCompiler.setFullFatJoins(true);
+            try {
                 assertQuery(
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        memoryRestrictedCompiler,
+                        "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false,
-                        false,
-                        sqlExecutionContext
+                        readOnlyExecutionContext
                 );
-                try {
-                    assertQuery(
-                            memoryRestrictedCompiler,
-                            "TOO MUCH",
-                            "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                            null,
-                            false,
-                            false,
-                            readOnlyExecutionContext
-                    );
-                    Assert.fail();
-                } catch (Exception ex) {
-                    Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-                }
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+            } finally {
+                memoryRestrictedCompiler.setFullFatJoins(false);
             }
         });
     }
@@ -614,8 +616,7 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
                     false,
-                    true,
-                    sqlExecutionContext
+                    true
             );
 
             try {
@@ -624,7 +625,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
-                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -652,7 +652,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "select ts, d from tb1 LATEST ON ts PARTITION BY d",
                         "ts",
                         true,
-                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -692,8 +691,7 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
                     false,
-                    false,
-                    sqlExecutionContext
+                    false
             );
 
             try {
@@ -702,7 +700,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
-                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -729,7 +726,6 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym, d from tb1 where d < 0.3 ORDER BY d",
                     null,
                     true,
-                    false,
                     readOnlyExecutionContext
             );
 
@@ -740,7 +736,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "select sym, d from tb1 where d < 0.5 ORDER BY d",
                         null,
                         true,
-                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -768,7 +763,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear)",
                         "ts",
                         true,
-                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -796,8 +790,8 @@ public class SecurityTest extends AbstractCairoTest {
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
                         null,
                         false,
-                        false,
-                        readOnlyExecutionContext);
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "limit of 2 resizes exceeded");
@@ -822,7 +816,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null)",
                         null,
-                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -851,7 +844,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev)",
                         null,
                         false,
-                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -878,7 +870,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0)",
                         null,
-                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -910,7 +901,6 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                     null,
                     false,
-                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -919,7 +909,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "TOO MUCH",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2",
                         null,
-                        false,
                         false,
                         readOnlyExecutionContext
                 );
@@ -951,7 +940,6 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.3 ORDER BY d1",
                     null,
                     true,
-                    false,
                     readOnlyExecutionContext
             );
             try {
@@ -961,7 +949,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1",
                         null,
                         true,
-                        false,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -1052,8 +1039,7 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
                     null,
                     false,
-                    false,
-                    sqlExecutionContext
+                    false
             );
             memoryRestrictedCompiler.setFullFatJoins(fullFat);
             try {
@@ -1062,7 +1048,6 @@ public class SecurityTest extends AbstractCairoTest {
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
                         null,
-                        false,
                         false,
                         readOnlyExecutionContext
                 );

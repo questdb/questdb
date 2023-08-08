@@ -1982,7 +1982,7 @@ public class WalWriter implements TableWriterAPI {
             if (columnIndex == timestampIndex) {
                 setTimestamp(value);
             } else {
-                TableWriter.Row.super.putTimestamp(columnIndex, value);
+                putLong(columnIndex, value);
             }
         }
 

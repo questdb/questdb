@@ -62,7 +62,7 @@ public class Long128Tests extends AbstractCairoTest {
                     "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
                     null,
                     false,
-                    false,
+                    true,
                     true
             );
         });
