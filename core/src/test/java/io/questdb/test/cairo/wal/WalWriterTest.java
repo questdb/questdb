@@ -94,7 +94,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableToken.getTableName())) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName1, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -125,7 +125,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName2, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -157,7 +157,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertFalse(eventCursor.hasNext());
                 }
                 model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(tableToken, walName1, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 1, 1)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -188,7 +188,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName2, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 1, 1)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -251,7 +251,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableToken.getTableName())) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -283,7 +283,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertFalse(eventCursor.hasNext());
                 }
                 model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 1)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -316,7 +316,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertFalse(eventCursor.hasNext());
                 }
                 model.col("d", ColumnType.SHORT);
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 2, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2, 1)) {
                     assertEquals(5, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -370,7 +370,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             try (TableModel model = defaultModel(tableToken.getTableName())) {
                 model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(tableToken, walName1, 0, 0)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 0)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -386,7 +386,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 model.col("d", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(tableToken, walName2, 0, 0)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 0)) {
                     assertEquals(5, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -428,7 +428,7 @@ public class WalWriterTest extends AbstractCairoTest {
             try (TableModel model = defaultModel(tableName)) {
                 model.col("c", ColumnType.INT);
                 model.col("d", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(tableToken, walName1, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 1)) {
                     assertEquals(5, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -459,7 +459,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName2, 0, 0)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 0)) {
                     assertEquals(5, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -511,7 +511,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -543,7 +543,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertFalse(eventCursor.hasNext());
                 }
                 model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 1, 2)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 2)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -594,7 +594,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 try {
-                    engine.getWalReader(tableToken, walName, 2, 1);
+                    engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2, 1);
                     assertException("Segment 2 should not exist");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
@@ -624,7 +624,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -758,7 +758,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 3)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 3)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -836,7 +836,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 44)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 44)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -894,7 +894,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 1, 7)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 7)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1008,7 +1008,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     final String walName = WAL_NAME_BASE + walId;
 
                     for (int i = 0; i < count; i++) {
-                        try (WalReader reader = engine.getWalReader(tableToken, walName, 2 * i, numOfRows)) {
+                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2 * i, numOfRows)) {
                             assertEquals(3, reader.getRealColumnCount());
                             assertEquals(walName, reader.getWalName());
                             assertEquals(tableName, reader.getTableName());
@@ -1044,7 +1044,7 @@ public class WalWriterTest extends AbstractCairoTest {
                             assertFalse(eventCursor.hasNext());
                         }
 
-                        try (WalReader reader = engine.getWalReader(tableToken, walName, 2 * i + 1, 0)) {
+                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2 * i + 1, 0)) {
                             assertEquals(3, reader.getRealColumnCount());
                             assertEquals(walName, reader.getWalName());
                             assertEquals(tableName, reader.getTableName());
@@ -1160,7 +1160,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     final String walName = WAL_NAME_BASE + walId;
 
                     for (int segmentId = 0; segmentId < count * numOfSegments; segmentId++) {
-                        try (WalReader reader = engine.getWalReader(tableToken, walName, segmentId, maxRowCount)) {
+                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, segmentId, maxRowCount)) {
                             assertEquals(3, reader.getColumnCount());
                             assertEquals(walName, reader.getWalName());
                             assertEquals(tableName, reader.getTableName());
@@ -1661,7 +1661,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     walWriter.commit();
                 }
 
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, rowsToInsertTotal)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
                     assertEquals(32, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1795,7 +1795,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName1, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1826,7 +1826,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName2, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1863,7 +1863,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .wal()
             ) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName1, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(2, reader.getRealColumnCount());
                     assertEquals(walName1, reader.getWalName());
@@ -1894,7 +1894,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName2, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(2, reader.getRealColumnCount());
                     assertEquals(walName2, reader.getWalName());
@@ -1946,7 +1946,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1979,7 +1979,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 try {
-                    engine.getWalReader(tableToken, walName, 1, 0);
+                    engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 0);
                     assertException("Segment 1 should not exist");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only [file=" + engine.getConfiguration().getRoot() +
@@ -2020,7 +2020,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 2)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 2)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2122,7 +2122,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("c", ColumnType.SYMBOL)
                     .timestamp("ts")
             ) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2180,7 +2180,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("c", ColumnType.SYMBOL)
                     .timestamp("ts")
             ) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 1)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2256,7 +2256,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName1, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2287,7 +2287,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName2, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2325,7 +2325,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .wal()
             ) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName1, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2356,7 +2356,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName2, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2421,7 +2421,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 2)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 2)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2455,7 +2455,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, walName, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2575,7 +2575,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(tableToken, wal1Name, 0, 44)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, wal1Name, 0, 44)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(wal1Name, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2633,7 +2633,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, wal1Name, 1, 7)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, wal1Name, 1, 7)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(wal1Name, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2667,7 +2667,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, wal2Name, 0, 34)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, wal2Name, 0, 34)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(wal2Name, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2725,7 +2725,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(tableToken, wal2Name, 1, 7)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, wal2Name, 1, 7)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(wal2Name, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2841,7 +2841,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertNull(reader.getSymbolMapReader(3).valueOf(2));
             }
 
-            try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 10L)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 10L)) {
                 assertEquals(5, reader.getColumnCount());
                 assertEquals(10, reader.size());
                 RecordCursor cursor = reader.getDataCursor();
@@ -3156,7 +3156,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 walWriter.commit();
             }
 
-            try (WalReader reader = engine.getWalReader(tableToken, walName, 0, 3)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 3)) {
                 assertEquals(3, reader.getColumnCount());
                 assertEquals(walName, reader.getWalName());
                 assertEquals(tableName, reader.getTableName());

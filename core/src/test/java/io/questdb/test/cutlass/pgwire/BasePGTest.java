@@ -233,24 +233,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
         return rows;
     }
 
-    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
-        assertResultSet(null, expected, sink, rs, map);
-    }
-
-    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        assertResultSet(null, expected, sink, rs);
-    }
-
-    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
-        printToSink(sink, rs, map);
-        TestUtils.assertEquals(message, expected, sink);
-    }
-
-    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        printToSink(sink, rs, null);
-        TestUtils.assertEquals(message, expected, sink);
-    }
-
     private static void toSink(InputStream is, CharSink sink) throws IOException {
         // limit what we print
         byte[] bb = new byte[1];
@@ -284,6 +266,15 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
             i++;
         }
+    }
+
+    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs, map);
+    }
+
+    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        printToSink(sink, rs, map);
+        TestUtils.assertEquals(message, expected, sink);
     }
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {

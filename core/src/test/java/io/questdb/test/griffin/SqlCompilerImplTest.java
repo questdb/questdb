@@ -5665,7 +5665,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         void run(CairoEngine engine);
     }
 
-    static class SqlCompilerWrapper extends SqlCompiler {
+    static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
         boolean unknownDropStatementCalled;

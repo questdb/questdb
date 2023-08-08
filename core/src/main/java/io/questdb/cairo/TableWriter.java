@@ -412,7 +412,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
+            boolean isDedupKey
     ) {
         addColumn(
                 columnName,
@@ -481,7 +481,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
-    @Override
     public void addColumn(
             CharSequence columnName,
             int columnType,

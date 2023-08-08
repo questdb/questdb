@@ -7803,7 +7803,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     }
                 }
             } finally {
-                engine.unlock(tableToken, null, false);
+                engine.unlock(securityContext, tableToken, null, false);
             }
         });
     }
