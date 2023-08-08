@@ -447,7 +447,7 @@ public final class IntervalUtils {
                                 int micr = 0;
                                 for (; p < mlim; p++) {
                                     char c = seq.charAt(p);
-                                    if (c < '0' || c > '9') {
+                                    if (Numbers.notDigit(c)) {
                                         // Timezone
                                         break;
                                     }
