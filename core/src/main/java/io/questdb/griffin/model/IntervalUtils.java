@@ -456,6 +456,15 @@ public final class IntervalUtils {
                                 }
                                 micr *= tenPow(micrLim - p);
 
+                                // truncate remaining nanos if any
+                                for (int nlim = Math.min(lim, p + 3); p < nlim; p++) {
+                                    char c = seq.charAt(p);
+                                    if (Numbers.notDigit(c)) {
+                                        // Timezone
+                                        break;
+                                    }
+                                }
+
                                 // micros
                                 ts = Timestamps.yearMicros(year, l)
                                         + Timestamps.monthOfYearMicros(month, l)
