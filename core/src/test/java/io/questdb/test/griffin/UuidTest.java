@@ -1008,7 +1008,7 @@ public class UuidTest extends AbstractCairoTest {
         update("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
         assertSql(
                 "i\tu\n" +
-                        "42\ta0eebc11-110b-11f8-116d-11b9bd380a11\n2",
+                        "42\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
                 "select i, u from x"
         );
     }
