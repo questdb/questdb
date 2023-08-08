@@ -3417,6 +3417,10 @@ public class SqlOptimiser {
             ObjList<ExpressionNode> orderBy;
             long limitValue;
 
+            if (model.getLimitLo() != null) {
+                System.out.println("ok");
+            }
+
             if (
                     model.getLimitLo() != null
                             && model.getLimitHi() == null
@@ -3507,14 +3511,12 @@ public class SqlOptimiser {
                     orderByDirection.setQuick(0, newOrder);
                 }
 
-                //noinspection ReplaceNullCheck
                 if (order == null) {
                     model.setNestedModel(limitModel);
                 }
-
-                // assign different nested model because it might need to be re-written
-                rewriteNegativeLimit(nested, executionContext);
             }
+            // assign different nested model because it might need to be re-written
+            rewriteNegativeLimit(nested, executionContext);
         }
     }
 
