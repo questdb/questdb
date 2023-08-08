@@ -990,7 +990,7 @@ public class UuidTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUpdateByUuid() throws Exception {
+    public void testUpdateByUuid_nonPartitionedTable() throws Exception {
         ddl("create table x (i INT, u UUID)");
         insert("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
         update("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
@@ -998,6 +998,18 @@ public class UuidTest extends AbstractCairoTest {
                 "i\tu\n" +
                         "42\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
                 "select * from x"
+        );
+    }
+
+    @Test
+    public void testUpdateByUuid_partitionedTable() throws Exception {
+        ddl("create table x (ts TIMESTAMP, i INT, u UUID) timestamp(ts) partition by DAY");
+        insert("insert into x values (now(), 0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+        update("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
+        assertSql(
+                "i\tu\n" +
+                        "42\ta0eebc11-110b-11f8-116d-11b9bd380a11\n2",
+                "select i, u from x"
         );
     }
 
