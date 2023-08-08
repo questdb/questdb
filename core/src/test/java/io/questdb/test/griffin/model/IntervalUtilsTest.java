@@ -26,6 +26,7 @@ package io.questdb.test.griffin.model;
 
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -92,6 +93,24 @@ public class IntervalUtilsTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void testParseFloorPartialTimestamp_truncateNanos() throws NumericException {
+        long expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567Z");
+
+        // with offset
+        expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567+01:00");
+    }
+
+    private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
+        Assert.assertEquals(expectedTimestamp, IntervalUtils.parseFloorPartialTimestamp(actual));
     }
 
     @Test
