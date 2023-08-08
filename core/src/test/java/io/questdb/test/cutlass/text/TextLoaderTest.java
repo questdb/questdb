@@ -39,6 +39,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -964,7 +965,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public TextConfiguration getTextConfiguration() {
+                public @NotNull TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
             };
@@ -1237,7 +1238,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1342,7 +1343,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1403,7 +1404,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1492,7 +1493,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public TextConfiguration getTextConfiguration() {
+                public @NotNull TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
             };
@@ -2065,7 +2066,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -3167,7 +3168,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -3325,7 +3326,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         };
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
 
@@ -3340,7 +3341,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return new DefaultTextConfiguration() {
                     @Override
                     public int getTextAnalysisMaxLines() {

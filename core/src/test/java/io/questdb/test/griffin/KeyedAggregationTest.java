@@ -41,6 +41,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1690,7 +1691,7 @@ public class KeyedAggregationTest extends AbstractCairoTest {
 
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public RostiAllocFacade getRostiAllocFacade() {
+                    public @NotNull RostiAllocFacade getRostiAllocFacade() {
                         return rostiAllocFacade;
                     }
 

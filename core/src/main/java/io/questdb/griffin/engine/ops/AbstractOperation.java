@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.SqlExecutionContext;
@@ -35,6 +36,7 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
     protected @Nullable TableToken tableToken;
+    @Nullable SecurityContext securityContext;
     @Nullable SqlExecutionContext sqlExecutionContext;
     @Nullable CharSequence sqlText;
     int tableNamePosition;
@@ -109,6 +111,11 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
+        this.securityContext = sqlExecutionContext.getSecurityContext();
+    }
+
+    public void withSecurityContext(@Nullable SecurityContext securityContext) {
+        this.securityContext = securityContext;
     }
 
     public void withSqlStatement(String sqlStatement) {
