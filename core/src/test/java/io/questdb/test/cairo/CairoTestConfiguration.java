@@ -381,11 +381,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public boolean isWalSupported() {
-        return true;
-    }
-
-    @Override
     public boolean isWriterMixedIOEnabled() {
         return overrides.isWriterMixedIOEnabled() != null ? overrides.isWriterMixedIOEnabled() : super.isWriterMixedIOEnabled();
     }

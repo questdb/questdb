@@ -618,10 +618,6 @@ public final class Chars {
         return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
-    public static int lastIndexOf(CharSequence sequence, int fromIndex, CharSequence term) {
-        return -1;
-    }
-
     public static int lastIndexOf(CharSequence s, char c) {
         for (int i = s.length() - 1; i > -1; i--) {
             if (s.charAt(i) == c) {
