@@ -130,7 +130,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         ff.close(metaFd);
     }
 
-    private void runFuzz(Rnd rnd) throws Exception {
+    @Override
+    protected void runFuzz(Rnd rnd) throws Exception {
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
         assertMemoryLeak(() -> {
@@ -155,8 +156,13 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
             mergeAllPartitions(merged);
 
             String limit = "";
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext,
-                    tableName + limit, tableNameMerged + limit, LOG);
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    tableName + limit,
+                    tableNameMerged + limit,
+                    LOG
+            );
             assertRandomIndexes(tableName, tableNameMerged, rnd);
         });
     }

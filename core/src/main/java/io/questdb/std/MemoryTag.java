@@ -46,7 +46,6 @@ public final class MemoryTag {
     public static final int NATIVE_CB3 = 30;
     public static final int NATIVE_CB4 = 31;
     public static final int NATIVE_CB5 = 32;
-    public static final int NATIVE_COLUMN_PURGE = 42;
     public static final int NATIVE_COMPACT_MAP = 8;
     public static final int NATIVE_DEFAULT = 1;
     public static final int NATIVE_DIRECT_CHAR_SINK = 51;
@@ -74,6 +73,7 @@ public final class MemoryTag {
     public static final int NATIVE_REPL = 17;
     public static final int NATIVE_ROSTI = 35;
     public static final int NATIVE_SAMPLE_BY_LONG_LIST = 18;
+    public static final int NATIVE_SQL_COMPILER = 42;
     public static final int NATIVE_TABLE_READER = 25;
     public static final int NATIVE_TABLE_WRITER = 26;
     public static final int NATIVE_TEXT_PARSER_RSS = 48;
@@ -129,7 +129,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_PARALLEL_IMPORT, "MMAP_PARALLEL_IMPORT");
         tagNameMap.extendAndSet(NATIVE_PARALLEL_IMPORT, "NATIVE_PARALLEL_IMPORT");
         tagNameMap.extendAndSet(NATIVE_JOIN_MAP, "NATIVE_JOIN_MAP");
-        tagNameMap.extendAndSet(NATIVE_COLUMN_PURGE, "NATIVE_COLUMN_PURGE");
         tagNameMap.extendAndSet(NATIVE_LOGGER, "NATIVE_LOGGER");
         tagNameMap.extendAndSet(NATIVE_MIG, "NATIVE_MIG");
         tagNameMap.extendAndSet(NATIVE_MIG_MMAP, "NATIVE_MIG_MMAP");
@@ -141,5 +140,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_DIRECT_CHAR_SINK, "NATIVE_DIRECT_CHAR_SINK");
         tagNameMap.extendAndSet(MMAP_TX_LOG_CURSOR, "MMAP_TX_LOG_CURSOR");
         tagNameMap.extendAndSet(MMAP_TX_LOG, "MMAP_TX_LOG");
+        tagNameMap.extendAndSet(NATIVE_SQL_COMPILER, "NATIVE_SQL_COMPILER");
     }
 }

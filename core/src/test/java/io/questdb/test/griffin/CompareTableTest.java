@@ -24,7 +24,8 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -51,20 +52,18 @@ public class CompareTableTest {
         String root = "/Users/alpel/questdb-root/db";
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1).with(
-                            AllowAllSecurityContext.INSTANCE,
-                            new BindVariableServiceImpl(configuration),
-                            null,
-                            -1,
-                            null
-                    )) {
-
-
-                TestUtils.assertSqlCursors(compiler, executionContext, table1Name, table2Name, LOG);
-            }
+        try (
+                CairoEngine engine = new CairoEngine(configuration);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1).with(
+                        AllowAllSecurityContext.INSTANCE,
+                        new BindVariableServiceImpl(configuration),
+                        null,
+                        -1,
+                        null
+                )
+        ) {
+            TestUtils.assertSqlCursors(compiler, executionContext, table1Name, table2Name, LOG);
         }
     }
 }

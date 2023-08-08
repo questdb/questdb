@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -47,6 +48,7 @@ class LineTcpMeasurementEvent implements Closeable {
     private final MicrosecondClock clock;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int maxColumnNameLength;
+    private final PrincipalOnlySecurityContext principalOnlySecurityContext = new PrincipalOnlySecurityContext();
     private final boolean stringToCharCastAllowed;
     private final LineProtoTimestampAdapter timestampAdapter;
     private boolean commitOnWriterClose;
@@ -125,7 +127,7 @@ class LineTcpMeasurementEvent implements Closeable {
     void append() throws CommitFailedException {
         TableWriter.Row row = null;
         try {
-            TableWriterAPI writer = tableUpdateDetails.getWriter();
+            final TableWriterAPI writer = tableUpdateDetails.getWriter();
             long offset = buffer.getAddress();
             final long metadataVersion = buffer.readLong(offset);
             offset += Long.BYTES;
@@ -168,6 +170,11 @@ class LineTcpMeasurementEvent implements Closeable {
                     // Column name will be UTF16 encoded already
                     final CharSequence columnName = buffer.readUtf16Chars(offset, -colIndex);
                     offset += -colIndex * 2L;
+                    // Column name is followed with the principal name.
+                    int principalLen = buffer.readInt(offset);
+                    offset += Integer.BYTES;
+                    final CharSequence principal = buffer.readUtf16CharsB(offset, principalLen);
+                    offset += principalLen * 2L;
 
                     entityType = buffer.readByte(offset);
                     offset += Byte.BYTES;
@@ -181,7 +188,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         // we have to commit before adding a new column as WalWriter doesn't do that automatically
                         writer.commit();
                         try {
-                            writer.addColumn(columnName, colType);
+                            writer.addColumn(columnName, colType, principalOnlySecurityContext.of(principal));
                         } catch (CairoException e) {
                             colIndex = writer.getMetadata().getColumnIndexQuiet(columnName);
                             if (colIndex < 0) {
@@ -300,7 +307,8 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
-        this.tableUpdateDetails = tud;
+        tableUpdateDetails = tud;
+        securityContext.authorizeLineInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -314,7 +322,7 @@ class LineTcpMeasurementEvent implements Closeable {
             LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
             byte entityType = entity.getType();
             int colType;
-            int columnWriterIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
+            int columnWriterIndex = localDetails.getColumnWriterIndex(entity.getName(), parser.hasNonAsciiChars());
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
                 if (columnWriterIndex == tud.getTimestampIndex()) {
@@ -328,8 +336,8 @@ class LineTcpMeasurementEvent implements Closeable {
                 // send column by name
                 final String colNameUtf16 = localDetails.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
-                    securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
-                    offset = buffer.addColumnName(offset, colNameUtf16);
+                    securityContext.authorizeLineAlterTableAddColumn(tud.getTableToken());
+                    offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
                 } else if (!autoCreateNewColumns) {
                     throw newColumnsNotAllowed(tableUpdateDetails, colNameUtf16);
@@ -454,6 +462,14 @@ class LineTcpMeasurementEvent implements Closeable {
                     final DirectByteCharSequence entityValue = entity.getValue();
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.IPv4:
+                                try {
+                                    int value = Numbers.parseIPv4Nl(entityValue);
+                                    offset = buffer.addInt(offset, value);
+                                } catch (NumericException e) {
+                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                }
+                                break;
                             case ColumnType.STRING:
                                 offset = buffer.addString(offset, entityValue, parser.hasNonAsciiChars());
                                 break;
@@ -617,5 +633,19 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER;
         this.tableUpdateDetails = tableUpdateDetails;
         this.commitOnWriterClose = commitOnWriterClose;
+    }
+
+    private static class PrincipalOnlySecurityContext extends DenyAllSecurityContext {
+        private CharSequence principal;
+
+        @Override
+        public CharSequence getPrincipal() {
+            return principal;
+        }
+
+        public PrincipalOnlySecurityContext of(CharSequence principal) {
+            this.principal = principal;
+            return this;
+        }
     }
 }

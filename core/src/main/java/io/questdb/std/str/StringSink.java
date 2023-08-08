@@ -86,6 +86,14 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
         return Chars.indexOf(this, 0, pos, s);
     }
 
+    public int indexOf(String s, int fromIndex) {
+        return builder.indexOf(s, fromIndex);
+    }
+
+    public int lastIndexOf(String s, int fromIndex) {
+        return builder.lastIndexOf(s, fromIndex);
+    }
+
     @Override
     public int length() {
         return pos;

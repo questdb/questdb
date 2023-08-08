@@ -24,23 +24,21 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class AvgBooleanGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class AvgBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)",
                 "avg\tmax\tmin\n" +
-                        "0.7\t1.0\t0.0\n"
+                        "0.7\t1.0\t0.0\n", "select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)"
         ));
 
         assertMemoryLeak(() -> assertSql(
-                "select avg(rnd_double() >= 0.5) from long_sequence(10)",
                 "avg\n" +
-                        "0.4\n"
+                        "0.4\n", "select avg(rnd_double() >= 0.5) from long_sequence(10)"
         ));
     }
 }

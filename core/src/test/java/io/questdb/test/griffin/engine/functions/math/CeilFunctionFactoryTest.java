@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
-public class CeilFunctionFactoryTest extends AbstractGriffinTest {
+public class CeilFunctionFactoryTest extends AbstractCairoTest {
 
 
     @Test

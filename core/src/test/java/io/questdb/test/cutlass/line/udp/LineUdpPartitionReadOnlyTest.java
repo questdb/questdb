@@ -41,12 +41,25 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.createTable;
 import static io.questdb.test.tools.TestUtils.*;
 
 public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                        "cairo.max.uncommitted.rows=500",
+                        "cairo.commit.lag=2000",
+                        "cairo.o3.max.lag=2000",
+                        "line.udp.enabled=true"
+                )
+        );
+    }
 
     @Test
     public void testActivePartitionReadOnlyAndNoO3UDP() throws Exception {
@@ -183,7 +196,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -205,7 +218,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     Assert.assertNotNull(tableToken);
                     engine.registerTableToken(tableToken);
                     createTable(cairoConfig, mem, path.concat(tableToken), tableModel, 1, tableToken.getDirName());
-                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
+                    engine.insert(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
                     engine.unlockTableName(tableToken);
                 }
                 Assert.assertNotNull(tableToken);

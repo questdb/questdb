@@ -36,7 +36,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     private ReaderListener readerListener;
 
     public ReaderPool(CairoConfiguration configuration, MessageBus messageBus) {
-        super(configuration);
+        super(configuration, configuration.getReaderPoolMaxSegments(), configuration.getInactiveReaderTTL());
         this.messageBus = messageBus;
     }
 

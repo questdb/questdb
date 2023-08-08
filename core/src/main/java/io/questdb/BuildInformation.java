@@ -29,5 +29,7 @@ public interface BuildInformation {
 
     CharSequence getJdkVersion();
 
-    CharSequence getQuestDbVersion();
+    CharSequence getSwName();
+
+    CharSequence getSwVersion();
 }

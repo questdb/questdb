@@ -93,9 +93,17 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         switchTo(path, pathLen);
     }
 
+    public void disableDeduplication() {
+        structureVersion.incrementAndGet();
+    }
+
     public void dropTable() {
         this.structureVersion.set(DROP_TABLE_STRUCTURE_VERSION);
         syncToMetaFile();
+    }
+
+    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        structureVersion.incrementAndGet();
     }
 
     @Override
@@ -163,12 +171,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void renameTable(CharSequence toTableName) {
         if (!Chars.equalsIgnoreCaseNc(toTableName, tableToken.getTableName())) {
-            tableToken = new TableToken(
-                    Chars.toString(toTableName),
-                    tableToken.getDirName(),
-                    tableToken.getTableId(),
-                    tableToken.isWal()
-            );
+            tableToken = tableToken.renamed(Chars.toString(toTableName));
         }
         structureVersion.incrementAndGet();
     }
@@ -195,7 +198,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         0,
                         false,
                         null,
-                        columnMetadata.size()
+                        columnMetadata.size(),
+                        false
                 )
         );
         columnCount++;

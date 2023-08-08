@@ -26,13 +26,13 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import org.junit.Test;
 
-public class MaxFloatGroupByFunctionTest extends AbstractGriffinTest {
+public class MaxFloatGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithFill() throws SqlException, NumericException {
         try (TableModel tm = new TableModel(configuration, "tab", PartitionBy.DAY)) {
@@ -41,10 +41,9 @@ public class MaxFloatGroupByFunctionTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) LIMIT 2",
                 "ts\tmin\tmax\tfirst\tlast\tcount\n" +
                         "2020-01-01T00:28:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n" +
-                        "2020-01-01T00:29:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n"
+                        "2020-01-01T00:29:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) LIMIT 2"
         );
     }
 }

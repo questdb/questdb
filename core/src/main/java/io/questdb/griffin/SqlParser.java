@@ -596,6 +596,63 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
+        if (tok != null && (isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+            if (!model.isWalEnabled()) {
+                throw SqlException.position(lexer.getPosition()).put("deduplication is possible only on WAL tables");
+            }
+
+            tok = optTok(lexer);
+            if (tok == null || !isUpsertKeyword(tok)) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert'");
+            }
+
+            tok = optTok(lexer);
+            if (tok == null || !isKeysKeyword(tok)) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("expected 'keys'");
+            }
+
+            boolean timestampColumnFound = false;
+
+            tok = optTok(lexer);
+            if (tok != null && Chars.equals(tok, '(')) {
+                tok = optTok(lexer);
+                int columnListPos = lexer.lastTokenPosition();
+
+                while (tok != null && !Chars.equals(tok, ')')) {
+                    final CharSequence columnName = tok;
+                    validateLiteral(lexer.lastTokenPosition(), tok);
+
+                    int colIndex = model.getColumnIndex(columnName);
+                    if (colIndex < 0) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
+                    }
+                    if (colIndex == model.getTimestampIndex()) {
+                        timestampColumnFound = true;
+                    } else {
+                        int columnType = model.getColumnType(colIndex);
+                        if (ColumnType.isVariableLength(columnType)) {
+                            throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
+                                    .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                        }
+                    }
+                    model.setDedupKeyFlag(colIndex);
+
+                    tok = optTok(lexer);
+                    if (tok != null && Chars.equals(tok, ',')) {
+                        tok = optTok(lexer);
+                    }
+                }
+
+                if (!timestampColumnFound) {
+                    throw SqlException.position(columnListPos).put("deduplicate key list must include dedicated timestamp column");
+                }
+
+                tok = optTok(lexer);
+            } else {
+                throw SqlException.position(lexer.getPosition()).put("column list expected");
+            }
+        }
+
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
         }
@@ -1962,7 +2019,7 @@ public class SqlParser {
                 node.args.remove(paramCount - 1);
                 node.paramCount = paramCount - 1;
 
-                // 2 args 'case', e.g. case when x>0 then 1   
+                // 2 args 'case', e.g. case when x>0 then 1
                 if (node.paramCount < 3) {
                     node.rhs = node.args.get(0);
                     node.lhs = node.args.get(1);
@@ -2005,7 +2062,7 @@ public class SqlParser {
                 // this can be simplified to "expression" only
 
                 ExpressionNode that = node.rhs;
-                if (Chars.equals(that.token, '*')) {
+                if (Chars.equalsNc(that.token, '*')) {
                     if (that.rhs == null && node.lhs == null) {
                         that.paramCount = 0;
                         node.rhs = null;
@@ -2141,19 +2198,6 @@ public class SqlParser {
                     c == '$')) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
             }
-        }
-    }
-
-    private void validateLiteral(int pos, CharSequence tok) throws SqlException {
-        switch (tok.charAt(0)) {
-            case '(':
-            case ')':
-            case ',':
-            case '`':
-            case '\'':
-                throw SqlException.position(pos).put("literal expected");
-            default:
-                break;
         }
     }
 

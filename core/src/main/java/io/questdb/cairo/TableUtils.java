@@ -169,6 +169,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_NOT_INDEXED = 0;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = META_FLAG_BIT_SEQUENTIAL << 1;
+    static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -642,6 +643,44 @@ public final class TableUtils {
         return type;
     }
 
+    public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
+        // In theory, we can have a column type where `NULL` value will be different `LONG` values,
+        // then this should return different values on longIndex. At the moment there are no such types.
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+                return 0L;
+            case ColumnType.SYMBOL:
+                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, 0);
+            case ColumnType.FLOAT:
+                return Float.floatToIntBits(Float.NaN);
+            case ColumnType.DOUBLE:
+                return Double.doubleToLongBits(Double.NaN);
+            case ColumnType.LONG256:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+                // Long128 and UUID are null when all 2 longs are NaNs
+                // Long256 is null when all 4 longs are NaNs
+                return Numbers.LONG_NaN;
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOLONG:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+                return GeoHashes.NULL;
+            case ColumnType.IPv4:
+                return Numbers.IPv4_NULL;
+            default:
+                assert false : "Invalid column type: " + columnType;
+                return 0;
+        }
+    }
+
     public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
         return partitionTableOffset + 4 + index * 8L;
     }
@@ -721,6 +760,10 @@ public final class TableUtils {
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
+    }
+
+    public static boolean isSysTable(TableToken tableToken, CairoConfiguration configuration) {
+        return Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix());
     }
 
     public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
@@ -1355,6 +1398,9 @@ public final class TableUtils {
             case ColumnType.INT:
                 Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
                 break;
+            case ColumnType.IPv4:
+                Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
+                break;
             case ColumnType.GEOINT:
                 Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);
                 break;
@@ -1461,6 +1507,12 @@ public final class TableUtils {
                 final int type = Math.abs(getColumnType(metaMem, i));
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+
+                if (isColumnDedupKey(metaMem, i)) {
+                    if (ColumnType.isVariableLength(type)) {
+                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
+                    }
                 }
 
                 if (isColumnIndexed(metaMem, i)) {
@@ -1576,6 +1628,10 @@ public final class TableUtils {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
             }
 
+            if (tableStruct.isDedupKey(i)) {
+                flags |= META_FLAG_BIT_DEDUP_KEY;
+            }
+
             mem.putLong(flags);
             mem.putInt(tableStruct.getIndexBlockCapacity(i));
             mem.putInt(tableStruct.getSymbolCapacity(i));
@@ -1645,6 +1701,10 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static boolean isColumnDedupKey(MemoryMR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {

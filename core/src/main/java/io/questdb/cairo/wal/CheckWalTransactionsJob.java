@@ -40,6 +40,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+    // Empty list means that all tables should be checked.
+    private final ObjHashSet<TableToken> tablesToCheck = new ObjHashSet<>();
     private final TxReader txReader;
     private long lastProcessedCount = 0;
     private Path threadLocalPath;
@@ -54,14 +56,21 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         checkNotifyOutstandingTxnInWalRef = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
     }
 
+    public void addTableToCheck(TableToken tableToken) {
+        tablesToCheck.add(tableToken);
+    }
+
     public void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
-    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long txn) {
+    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long seqTxn) {
+        if (!tablesToCheck.isEmpty() && !tablesToCheck.contains(tableToken)) {
+            return;
+        }
         if (
-                txn < 0 && TableUtils.exists(
+                seqTxn < 0 && TableUtils.exists(
                         ff,
                         threadLocalPath,
                         dbRoot,
@@ -69,20 +78,26 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 ) == TableUtils.TABLE_EXISTS
         ) {
             // Dropped table
-            engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+            engine.notifyWalTxnCommitted(tableToken);
         } else {
-            threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
-            if (ff.exists(threadLocalPath)) {
-                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
-                    TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                    if (txReader2.getSeqTxn() < txn) {
-                        engine.notifyWalTxnCommitted(tableToken, txn);
-                    }
+            if (engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
+                if (engine.getTableSequencerAPI().notifyOnCheck(tableToken, seqTxn)) {
+                    engine.notifyWalTxnCommitted(tableToken);
                 }
             } else {
-                // table is dropped, notify the JOB to delete the data
-                engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                if (ff.exists(threadLocalPath)) {
+                    threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                    try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
+                        TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                        if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader2.getSeqTxn(), seqTxn)) {
+                            engine.notifyWalTxnCommitted(tableToken);
+                        }
+                    }
+                } else {
+                    // table is dropped, notify the JOB to delete the data
+                    engine.notifyWalTxnCommitted(tableToken);
+                }
             }
         }
     }

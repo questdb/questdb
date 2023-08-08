@@ -64,7 +64,7 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueFiltered");
-        sink.child((Plannable) cursor);
+        sink.child(cursor);
         sink.child(dataFrameCursorFactory);
     }
 

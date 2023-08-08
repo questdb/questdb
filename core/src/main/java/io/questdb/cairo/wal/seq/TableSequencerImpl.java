@@ -54,15 +54,17 @@ public class TableSequencerImpl implements TableSequencer {
     private final Path path;
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
+    private final SeqTxnTracker seqTxnTracker;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
     private boolean distressed;
     private TableToken tableToken;
 
-    TableSequencerImpl(CairoEngine engine, TableToken tableToken) {
+    TableSequencerImpl(CairoEngine engine, TableToken tableToken, SeqTxnTracker txnTracker) {
         this.engine = engine;
         this.tableToken = tableToken;
+        this.seqTxnTracker = txnTracker;
 
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -107,9 +109,11 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void dropTable() {
         checkDropped();
-        tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
+        final long timestamp = microClock.getTicks();
+        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, timestamp);
         metadata.dropTable();
-        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+        notifyTxnCommitted(Long.MAX_VALUE);
+        engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
 
     @Override
@@ -153,7 +157,8 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.isColumnIndexed(i),
                     metadata.getIndexValueBlockCapacity(i),
                     metadata.isSymbolTableStatic(i),
-                    i
+                    i,
+                    metadata.isDedupKey(i)
             );
             if (columnType > -1) {
                 if (i == timestampIndex) {
@@ -217,7 +222,10 @@ public class TableSequencerImpl implements TableSequencer {
         try {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
-                tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, microClock.getTicks());
+                final long timestamp = microClock.getTicks();
+                tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, timestamp);
+
+                final TableToken oldTableToken = tableToken;
 
                 // Re-read serialised change to ensure it can be read.
                 AlterOperation deserializedAlter = tableTransactionLog.readTableMetadataChangeLog(expectedStructureVersion, alterCommandWalFormatter);
@@ -234,6 +242,15 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+
+                if (!metadata.isSuspended()) {
+                    notifyTxnCommitted(txn);
+                    if (!tableToken.equals(oldTableToken)) {
+                        engine.getWalListener().tableRenamed(tableToken, txn, timestamp, oldTableToken);
+                    } else {
+                        engine.getWalListener().nonDataTxnCommitted(tableToken, txn, timestamp);
+                    }
+                }
             } else {
                 return NO_TXN;
             }
@@ -244,10 +261,6 @@ public class TableSequencerImpl implements TableSequencer {
                     .I$();
             throw th;
         }
-
-        if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(tableToken, txn);
-        }
         return txn;
     }
 
@@ -257,10 +270,11 @@ public class TableSequencerImpl implements TableSequencer {
         assert !closed;
         checkDropped();
         long txn;
+        final long timestamp = microClock.getTicks();
         try {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
-                txn = nextTxn(walId, segmentId, segmentTxn);
+                txn = nextTxn(walId, segmentId, segmentTxn, timestamp);
             } else {
                 return NO_TXN;
             }
@@ -273,26 +287,10 @@ public class TableSequencerImpl implements TableSequencer {
         }
 
         if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(tableToken, txn);
+            notifyTxnCommitted(txn);
+            engine.getWalListener().dataTxnCommitted(tableToken, txn, timestamp, walId, segmentId, segmentTxn);
         }
         return txn;
-    }
-
-    @Override
-    public TableToken reload() {
-        tableTransactionLog.reload(path);
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getTableToken(), metadata.getMetadataVersion(), alterCommandWalFormatter)) {
-            boolean updated = false;
-            while (metaChangeCursor.hasNext()) {
-                TableMetadataChange change = metaChangeCursor.next();
-                change.apply(metadataSvc, true);
-                updated = true;
-            }
-            if (updated) {
-                metadata.syncToMetaFile();
-            }
-        }
-        return tableToken = metadata.getTableToken();
     }
 
     public void open(TableToken tableToken) {
@@ -328,9 +326,27 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
+    public TableToken reload() {
+        tableTransactionLog.reload(path);
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getTableToken(), metadata.getMetadataVersion(), alterCommandWalFormatter)) {
+            boolean updated = false;
+            while (metaChangeCursor.hasNext()) {
+                TableMetadataChange change = metaChangeCursor.next();
+                change.apply(metadataSvc, true);
+                updated = true;
+            }
+            if (updated) {
+                metadata.syncToMetaFile();
+            }
+        }
+        return tableToken = metadata.getTableToken();
+    }
+
+    @Override
     public void resumeTable() {
         metadata.resumeTable();
-        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+        notifyTxnCommitted(Long.MAX_VALUE);
+        seqTxnTracker.setUnsuspended();
     }
 
     @TestOnly
@@ -375,8 +391,14 @@ public class TableSequencerImpl implements TableSequencer {
         path.trimTo(rootLen);
     }
 
-    private long nextTxn(int walId, int segmentId, int segmentTxn) {
-        return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, microClock.getTicks());
+    private long nextTxn(int walId, int segmentId, int segmentTxn, long timestamp) {
+        return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, timestamp);
+    }
+
+    private void notifyTxnCommitted(long txn) {
+        if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
+            engine.notifyWalTxnCommitted(tableToken);
+        }
     }
 
     void create(int tableId, TableStructure tableStruct) {

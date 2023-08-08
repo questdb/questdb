@@ -30,15 +30,16 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class PartitionDeleteTest extends AbstractGriffinTest {
+public class PartitionDeleteTest extends AbstractCairoTest {
+
     @Test
     public void testBCSequence() throws SqlException, NumericException {
-        compiler.compile("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY", sqlExecutionContext);
+        ddl("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY");
         engine.releaseAllWriters();
 
         try (TableWriter w = newTableWriter(configuration, "events", metrics)) {

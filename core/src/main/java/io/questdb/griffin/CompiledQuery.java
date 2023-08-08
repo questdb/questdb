@@ -28,7 +28,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
@@ -36,32 +35,35 @@ import io.questdb.mp.SCSequence;
 public interface CompiledQuery {
 
     // these values should be covered in both JsonQueryProcessor and PGConnectionContext
-    short ALTER = 4;
-    short BACKUP_TABLE = 13;
-    short BEGIN = 18;
-    short COMMIT = 19;
-    short COPY_REMOTE = 11;
-    short CREATE_TABLE = 9;
-    short CREATE_TABLE_AS_SELECT = 21;
-    short DEALLOCATE = 24;
-    short DROP = 7;
-    short EXPLAIN = 25;
-    short INSERT = 2;
-    short INSERT_AS_SELECT = 10;
-    short PSEUDO_SELECT = 8; // used for pseudo-SELECT statements such as COPY
-    short RENAME_TABLE = 12;
-    short REPAIR = 5;
-    short ROLLBACK = 20;
+
     short SELECT = 1;
-    short SET = 6;
-    short SNAPSHOT_DB_COMPLETE = 23;
-    short SNAPSHOT_DB_PREPARE = 22;
-    short TABLE_RESUME = 26;
-    short TABLE_SET_TYPE = 27;
-    short TRUNCATE = 3;
-    short TYPES_COUNT = TABLE_SET_TYPE;
-    short UPDATE = 14;
-    short VACUUM = 17;
+    short INSERT = SELECT + 1;//2
+    short TRUNCATE = INSERT + 1;//3
+    short ALTER = TRUNCATE + 1;//4
+    short REPAIR = ALTER + 1;//5
+    short SET = REPAIR + 1;//6
+    short DROP = SET + 1;//7
+    short PSEUDO_SELECT = DROP + 1; //8 used for pseudo-SELECT statements such as COPY
+    short CREATE_TABLE = PSEUDO_SELECT + 1;//9
+    short INSERT_AS_SELECT = CREATE_TABLE + 1;//10
+    short COPY_REMOTE = INSERT_AS_SELECT + 1;//11
+    short RENAME_TABLE = COPY_REMOTE + 1;//12
+    short BACKUP_TABLE = RENAME_TABLE + 1;// 13
+    short UPDATE = BACKUP_TABLE + 1;// 14
+    short VACUUM = UPDATE + 3;//17 , gap
+    short BEGIN = VACUUM + 1;//18
+    short COMMIT = BEGIN + 1;//19
+    short ROLLBACK = COMMIT + 1;// 20
+    short CREATE_TABLE_AS_SELECT = ROLLBACK + 1;// 21
+    short SNAPSHOT_DB_PREPARE = CREATE_TABLE_AS_SELECT + 1;//22
+    short SNAPSHOT_DB_COMPLETE = SNAPSHOT_DB_PREPARE + 1;//23
+    short DEALLOCATE = SNAPSHOT_DB_COMPLETE + 1;//24
+    short EXPLAIN = DEALLOCATE + 1;//25
+    short TABLE_RESUME = EXPLAIN + 1;//26
+    short TABLE_SET_TYPE = TABLE_RESUME + 1;//27
+    short CREATE_USER = TABLE_SET_TYPE + 1;//28
+    short ALTER_USER = CREATE_USER + 1;//29
+    short TYPES_COUNT = ALTER_USER;
 
     /***
      * Executes the query.
@@ -99,8 +101,6 @@ public interface CompiledQuery {
     CharSequence getStatementName();
 
     TableToken getTableToken();
-
-    TextLoader getTextLoader();
 
     short getType();
 

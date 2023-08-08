@@ -24,13 +24,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
 
-public class GroupByTest extends AbstractGriffinTest {
+public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
@@ -205,7 +205,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             String query = "select x+1, count(*) " +
                     "from t " +
@@ -232,7 +232,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             String query = "select case when x < 0 then -1 when x = 0 then 0 else 1 end, count(*) " +
                     "from t " +
@@ -257,7 +257,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             String query = "select case when x+1 < 0 then -1 when x+1 = 0 then 0 else 1 end, count(*) " +
                     "from t " +
@@ -284,7 +284,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             String query = "select x, avg(y), avg(y) + min(y), x+10, avg(x), avg(x) + 10 " +
                     "from t " +
@@ -308,7 +308,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumnsAndBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             bindVariableService.clear();
             bindVariableService.setStr("bv", "x");
@@ -334,7 +334,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2SuccessOnSelectWithExplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t group by x ";
             assertPlan(query,
                     "VirtualRecord\n" +
@@ -354,7 +354,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2SuccessOnSelectWithoutExplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t";
             assertPlan(query,
                     "VirtualRecord\n" +
@@ -787,7 +787,7 @@ public class GroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByInvalidOrderByExpression() throws Exception {
-        assertFailure(
+        assertException(
                 "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
                 "CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);",
                 69,
@@ -1056,11 +1056,11 @@ public class GroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
-        assertCompile("create table tst ( ts timestamp ) timestamp(ts);");
-        assertCompile("insert into tst values ('2023-05-29T15:30:00.000000Z')");
+        ddl("create table tst ( ts timestamp ) timestamp(ts);");
+        insert("insert into tst values ('2023-05-29T15:30:00.000000Z')");
 
-        assertCompile("create table data ( dts timestamp, s symbol ) timestamp(dts);");
-        assertCompile("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
+        ddl("create table data ( dts timestamp, s symbol ) timestamp(dts);");
+        insert("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
 
         //single table 
         assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
@@ -1107,8 +1107,8 @@ public class GroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
-        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
-        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
         drainWalQueue();
 
         String query = "SELECT DISTINCT tab.created AS ref0 " +
@@ -1142,8 +1142,8 @@ public class GroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
-        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
-        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
         drainWalQueue();
 
         String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
@@ -1177,8 +1177,8 @@ public class GroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
-        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
-        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
         drainWalQueue();
 
         String query = "SELECT DISTINCT tab.created " +
@@ -1211,12 +1211,12 @@ public class GroupByTest extends AbstractGriffinTest {
     @Test
     public void testSelectMatchingButInDifferentOrderThanGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x (" +
+            ddl("create table x (" +
                     "    sym symbol," +
                     "    bid double, " +
                     "    ts timestamp " +
                     ") timestamp(ts) partition by DAY");
-            compile("insert into x " +
+            ddl("insert into x " +
                     " select rnd_symbol('A', 'B'), rnd_double(), dateadd('m', x::int, 0::timestamp) " +
                     " from long_sequence(20)");
 

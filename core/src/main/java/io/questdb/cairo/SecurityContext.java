@@ -24,139 +24,112 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@SuppressWarnings("unused")
 public interface SecurityContext {
 
-    default void assumeRole(CharSequence roleName) {
-    }
+    void assumeServiceAccount(CharSequence serviceAccountName);
 
-    default void authorizeAddPassword() {
-    }
+    void authorizeAddPassword();
 
-    default void authorizeAddUser() {
-    }
+    void authorizeAddUser();
 
-    default void authorizeAlterTableAddColumn(TableToken tableToken) {
-    }
+    void authorizeAlterTableAddColumn(TableToken tableToken);
 
-    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableAttachPartition(TableToken tableToken) {
-    }
+    void authorizeAlterTableAttachPartition(TableToken tableToken);
 
-    default void authorizeAlterTableDetachPartition(TableToken tableToken) {
-    }
+    void authorizeAlterTableDetachPartition(TableToken tableToken);
 
-    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableDropIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableDropPartition(TableToken tableToken) {
-    }
+    void authorizeAlterTableDropPartition(TableToken tableToken);
 
     // the names are pairs from-to
-    default void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableSetType(TableToken tableToken) {
-    }
+    void authorizeAlterTableSetDedup(TableToken tableToken);
 
-    default void authorizeAssignRole() {
-    }
+    void authorizeAlterTableSetType(TableToken tableToken);
 
-    default void authorizeCopy() {
-    }
+    void authorizeAssignServiceAccount();
 
-    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
-    }
+    void authorizeCopy();
 
-    default void authorizeCreateGroup() {
-    }
+    void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
-    default void authorizeCreateJwk() {
-    }
+    void authorizeCreateGroup();
 
-    default void authorizeCreateRole() {
-    }
+    void authorizeCreateJwk();
 
-    default void authorizeCreateUser() {
-    }
+    void authorizeCreateServiceAccount();
 
-    default void authorizeDatabaseSnapshot() {
-    }
+    void authorizeCreateUser();
 
-    default void authorizeDisableUser() {
-    }
+    void authorizeDatabaseSnapshot();
 
-    default void authorizeDropGroup() {
-    }
+    void authorizeDisableUser();
 
-    default void authorizeDropJwk() {
-    }
+    void authorizeDropGroup();
 
-    default void authorizeDropRole() {
-    }
+    void authorizeDropJwk();
 
-    default void authorizeDropUser() {
-    }
+    void authorizeDropServiceAccount();
 
-    default void authorizeEnableUser() {
-    }
+    void authorizeDropUser();
 
-    @SuppressWarnings("unused")
-    default void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
-    }
+    void authorizeEnableUser();
+
+    void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
     // columnNames.size() = 0 means all columns
-    default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeRemovePassword() {
-    }
+    // Add column over ILP/TCP.
+    void authorizeLineAlterTableAddColumn(TableToken tableToken);
 
-    default void authorizeRemoveUser() {
-    }
+    // Insert over ILP/TCP.
+    void authorizeLineInsert(TableToken tableToken);
 
-    default void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    // Create table over ILP/TCP.
+    void authorizeLineTableCreate();
 
-    default void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
-    }
+    void authorizeRemovePassword();
 
-    default void authorizeTableCreate() {
-    }
+    void authorizeRemoveUser();
 
-    default void authorizeTableDrop(TableToken tableToken) {
-    }
+    void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
+
+    void authorizeTableCreate();
+
+    void authorizeTableDrop(TableToken tableToken);
 
     // columnName = null means all columns
-    default void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
-    }
+    void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName);
 
-    default void authorizeTableRename(TableToken tableToken) {
-    }
+    void authorizeTableRename(TableToken tableToken);
 
-    default void authorizeTableTruncate(TableToken tableToken) {
-    }
+    void authorizeTableTruncate(TableToken tableToken);
 
-    default void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeTableVacuum(TableToken tableToken) {
-    }
+    void authorizeTableVacuum(TableToken tableToken);
 
-    default void authorizeUnassignRole() {
-    }
+    void authorizeUnassignServiceAccount();
 
-    default void exitRole(CharSequence roleName) {
-    }
+    void exitServiceAccount(CharSequence serviceAccountName);
+
+    CharSequence getPrincipal();
 }

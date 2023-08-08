@@ -31,7 +31,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -262,7 +261,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob,
             LineTcpConnectionContext ctx,
             LineTcpParser parser
-    ) {
+    ) throws Exception {
         DirectByteCharSequence measurementName = parser.getMeasurementName();
         TableUpdateDetails tud;
         try {
@@ -340,7 +339,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
         throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
     }
 
-    private void appendToWal(SecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException {
+    private void appendToWal(
+            SecurityContext securityContext,
+            NetworkIOJob netIoJob,
+            LineTcpParser parser,
+            TableUpdateDetails tud
+    ) throws CommitFailedException, MetadataChangedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
@@ -348,8 +352,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
         ld.resetStateIfNecessary();
         ld.clearColumnTypes();
 
-        WalWriter ww = (WalWriter) tud.getWriter();
-        TableRecordMetadata metadata = ww.getMetadata();
+        final TableWriterAPI writer = tud.getWriter();
+        assert writer.supportsMultipleWriters();
+        TableRecordMetadata metadata = writer.getMetadata();
         long initialMetadataVersion = ld.getMetadataVersion();
 
         long timestamp = parser.getTimestamp();
@@ -362,54 +367,65 @@ public class LineTcpMeasurementScheduler implements Closeable {
         final int entCount = parser.getEntityCount();
         for (int i = 0; i < entCount; i++) {
             final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
-            int columnIndex = ld.getColumnIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
-            int columnType = ColumnType.UNDEFINED;
-            if (columnIndex == COLUMN_NOT_FOUND) {
-                final String columnNameUtf16 = ld.getColNameUtf16();
-                if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
-                    columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                    if (columnIndex < 0) {
-                        securityContext.authorizeAlterTableAddColumn(ww.getTableToken());
-                        tud.commit(false);
-                        try {
-                            ww.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
-                            columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                        } catch (CairoException e) {
-                            columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
-                            if (columnIndex < 0) {
-                                // the column is still not there, something must be wrong
-                                throw e;
-                            }
-                            // all good, someone added the column concurrently
+            int columnWriterIndex = ld.getColumnWriterIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
+
+            switch (columnWriterIndex) {
+                default:
+                    final int columnType = metadata.getColumnType(columnWriterIndex);
+                    if (columnType > -1) {
+                        if (columnWriterIndex == tud.getTimestampIndex()) {
+                            timestamp = timestampAdapter.getMicros(ent.getLongValue());
+                            ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
+                        } else {
+                            ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
                         }
+                        break;
+                    } else {
+                        // column has been deleted from the metadata, but it is in our utf8 cache
+                        ld.removeFromCaches(ent.getName(), parser.hasNonAsciiChars());
+                        // act as if we did not find this column and fall through
                     }
-                    if (ld.getMetadataVersion() != initialMetadataVersion) {
-                        // Restart the whole line,
-                        // some columns can be deleted or renamed in tud.commit and ww.addColumn calls
-                        throw MetadataChangedException.INSTANCE;
+                case COLUMN_NOT_FOUND:
+                    final String columnNameUtf16 = ld.getColNameUtf16();
+                    if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
+                        columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                        if (columnWriterIndex < 0) {
+                            securityContext.authorizeLineAlterTableAddColumn(writer.getTableToken());
+                            tud.commit(false);
+                            try {
+                                writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
+                                columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                            } catch (CairoException e) {
+                                columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                                if (columnWriterIndex < 0) {
+                                    // the column is still not there, something must be wrong
+                                    throw e;
+                                }
+                                // all good, someone added the column concurrently
+                            }
+                        }
+                        if (ld.getMetadataVersion() != initialMetadataVersion) {
+                            // Restart the whole line,
+                            // some columns can be deleted or renamed in tud.commit and ww.addColumn calls
+                            throw MetadataChangedException.INSTANCE;
+                        }
+                        ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
+                    } else if (!autoCreateNewColumns) {
+                        throw newColumnsNotAllowed(tud, columnNameUtf16);
+                    } else {
+                        throw invalidColNameError(tud, columnNameUtf16);
                     }
-                    columnType = metadata.getColumnType(columnIndex);
-                } else if (!autoCreateNewColumns) {
-                    throw newColumnsNotAllowed(tud, columnNameUtf16);
-                } else {
-                    throw invalidColNameError(tud, columnNameUtf16);
-                }
-            } else if (columnIndex > -1) {
-                if (columnIndex == tud.getTimestampIndex()) {
-                    timestamp = timestampAdapter.getMicros(ent.getLongValue());
-                    columnIndex = DUPLICATED_COLUMN;
-                }
-                columnType = columnIndex < 0 ? ColumnType.UNDEFINED : metadata.getColumnType(columnIndex);
+                    break;
+                case DUPLICATED_COLUMN:
+                    // indicate to the second loop that writer index does not exist
+                    ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
+                    break;
             }
-            ld.addColumnType(columnIndex, columnType);
         }
 
-        TableWriter.Row r = ww.newRow(timestamp);
+        TableWriter.Row r = writer.newRow(timestamp);
         try {
             for (int i = 0; i < entCount; i++) {
-                final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
-
-                short entType = ent.getType();
                 int colTypeAndIndex = ld.getColumnType(i);
                 int colType = Numbers.decodeLowShort(colTypeAndIndex);
                 int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);
@@ -418,7 +434,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     continue;
                 }
 
-                switch (entType) {
+                final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
+                switch (ent.getType()) {
                     case LineTcpParser.ENTITY_TYPE_TAG: {
                         if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
                             r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
@@ -515,6 +532,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         final DirectByteCharSequence entityValue = ent.getValue();
                         if (geoHashBits == 0) { // not geohash
                             switch (ColumnType.tagOf(colType)) {
+                                case ColumnType.IPv4:
+                                    try {
+                                        int value = Numbers.parseIPv4Nl(entityValue);
+                                        r.putInt(columnIndex, value);
+                                    } catch (NumericException e) {
+                                        throw castError("string", i, colType, ent.getName());
+                                    }
+                                    break;
+
                                 case ColumnType.STRING:
                                     r.putStrUtf8AsUtf16(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;
@@ -731,7 +757,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
-                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
+                    securityContext.authorizeLineTableCreate();
+                    tableToken = engine.createTableInsecure(securityContext, ddlMem, path, true, tsa, false, false);
                     LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
                 }
 
@@ -757,13 +784,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     // check if table on disk is WAL
                     path.of(engine.getConfiguration().getRoot());
                     if (engine.isWalTable(tableToken)) {
-                        // create WAL-oriented TUD and NOT add it to the global cache
+                        // create WAL-oriented TUD and DON'T add it to the global cache
                         tud = new TableUpdateDetails(
                                 configuration,
                                 engine,
-                                engine.getWalWriter(
-                                        tableToken
-                                ),
+                                securityContext,
+                                engine.getWalWriter(tableToken),
                                 -1,
                                 netIoJobs,
                                 defaultColumnTypes,
@@ -809,6 +835,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         final TableUpdateDetails tud = new TableUpdateDetails(
                 configuration,
                 engine,
+                null,
                 // get writer here to avoid constructing
                 // object instance and potentially leaking memory if
                 // writer allocation fails

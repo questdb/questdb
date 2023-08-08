@@ -51,14 +51,15 @@ public class AlterOperationBuilder {
             int symbolCapacity,
             boolean cache,
             boolean indexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean dedupKey
     ) {
         assert columnName != null && columnName.length() > 0;
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(indexed ? 1 : -1);
+        extraInfo.add(getFlags(indexed, dedupKey));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -80,6 +81,10 @@ public class AlterOperationBuilder {
         tableToken = null;
         tableId = -1;
         tableNamePosition = -1;
+    }
+
+    public ObjList<CharSequence> getExtraStrInfo() {
+        return extraStrInfo;
     }
 
     public AlterOperationBuilder ofAddColumn(int tableNamePosition, TableToken tableToken, int tableId) {
@@ -104,7 +109,7 @@ public class AlterOperationBuilder {
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(indexed ? 1 : -1);
+        extraInfo.add(getFlags(indexed, false));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -139,6 +144,22 @@ public class AlterOperationBuilder {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
+        return this;
+    }
+
+    public AlterOperationBuilder ofDedupDisable(int tableNamePosition, TableToken tableToken) {
+        this.command = SET_DEDUP_DISABLE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableToken.getTableId();
+        return this;
+    }
+
+    public AlterOperationBuilder ofDedupEnable(int tableNamePosition, TableToken tableToken) {
+        this.command = SET_DEDUP_ENABLE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableToken.getTableId();
         return this;
     }
 
@@ -223,15 +244,15 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public ObjList<CharSequence> getExtraStrInfo() {
-        return extraStrInfo;
-    }
-
     public AlterOperationBuilder ofSquashPartitions(int tableNamePosition, TableToken tableToken) {
         this.command = SQUASH_PARTITIONS;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableToken.getTableId();
         return this;
+    }
+
+    public void setDedupKeyFlag(int writerColumnIndex) {
+        extraInfo.add(writerColumnIndex);
     }
 }

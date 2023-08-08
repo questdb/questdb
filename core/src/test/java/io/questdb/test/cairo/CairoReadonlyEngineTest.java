@@ -32,6 +32,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -42,6 +43,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        super.setUp();
         currentMicros = 0;
         roConfig = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -50,7 +52,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
             }
 
             @Override
-            public MillisecondClock getMillisecondClock() {
+            public @NotNull MillisecondClock getMillisecondClock() {
                 return () -> testMicrosClock.getTicks() / 1000L;
             }
 
@@ -63,7 +65,6 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 return true;
             }
         };
-        super.setUp();
     }
 
     @Test

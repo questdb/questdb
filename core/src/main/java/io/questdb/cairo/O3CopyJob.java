@@ -124,18 +124,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     mergeCopy(
                             columnType,
                             timestampMergeIndexAddr,
+                            timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
                             // this is a hack, when we have column top we can have only of the two:
                             // srcDataFixOffset, when we had to shift data to back-fill nulls or
                             // srcDataTopOffset - if we kept the column top
                             // when one value is present the other will be 0
                             srcDataFixAddr + srcDataFixOffset - srcDataTop,
                             srcDataVarAddr + srcDataVarOffset,
-                            srcDataLo,
-                            srcDataHi,
                             srcOooFixAddr,
                             srcOooVarAddr,
-                            srcOooLo,
-                            srcOooHi,
                             dstFixAddr + dstFixOffset,
                             dstVarAddr,
                             dstVarOffset,
@@ -606,35 +603,31 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void mergeCopy(
             int columnType,
             long timestampMergeIndexAddr,
+            long mergeCount,
             long srcDataFixAddr,
             long srcDataVarAddr,
-            long srcDataLo,
-            long srcDataHi,
             long srcOooFixAddr,
             long srcOooVarAddr,
-            long srcOooLo,
-            long srcOooHi,
             long dstFixAddr,
             long dstVarAddr,
             long dstVarOffset,
             long dstVarOffsetEnd
     ) {
-        final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
-                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
+                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
                 break;
             case ColumnType.SHORT:
             case ColumnType.CHAR:
             case ColumnType.GEOSHORT:
-                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
+                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
                 break;
             case ColumnType.STRING:
                 Vect.oooMergeCopyStrColumn(
                         timestampMergeIndexAddr,
-                        rowCount,
+                        mergeCount,
                         srcDataFixAddr,
                         srcDataVarAddr,
                         srcOooFixAddr,
@@ -645,12 +638,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
                 // multiple threads could be writing to this location as var index segments overlap,
                 // but they will be writing the same value
-                Unsafe.getUnsafe().putLong(dstFixAddr + rowCount * 8, dstVarOffsetEnd);
+                Unsafe.getUnsafe().putLong(dstFixAddr + mergeCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.BINARY:
                 Vect.oooMergeCopyBinColumn(
                         timestampMergeIndexAddr,
-                        rowCount,
+                        mergeCount,
                         srcDataFixAddr,
                         srcDataVarAddr,
                         srcOooFixAddr,
@@ -659,34 +652,35 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
-                Unsafe.getUnsafe().putLong(dstFixAddr + rowCount * 8, dstVarOffsetEnd);
+                Unsafe.getUnsafe().putLong(dstFixAddr + mergeCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.INT:
+            case ColumnType.IPv4:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
             case ColumnType.GEOINT:
-                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
+                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
                 break;
             case ColumnType.DOUBLE:
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.GEOLONG:
-                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
+                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
                 break;
             case ColumnType.TIMESTAMP:
                 final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
                 if (designated) {
-                    Vect.oooCopyIndex(timestampMergeIndexAddr, rowCount, dstFixAddr);
+                    Vect.oooCopyIndex(timestampMergeIndexAddr, mergeCount, dstFixAddr);
                 } else {
-                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
+                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
                 }
                 break;
             case ColumnType.UUID:
             case ColumnType.LONG128:
-                Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
+                Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
                 break;
             case ColumnType.LONG256:
-                Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
+                Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
                 break;
             default:
                 break;
@@ -885,7 +879,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } finally {
             if (timestampMergeIndexAddr != 0) {
-                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);
+                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
             }
             tableWriter.o3CountDownDoneLatch();
         }
@@ -930,7 +924,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
             O3Utils.close(ff, srcTimestampFd);
             if (timestampMergeIndexAddr != 0) {
-                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);
+                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
             }
         } finally {
             tableWriter.o3ClockDownPartitionUpdateCount();
@@ -1105,6 +1099,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
                 break;
             case ColumnType.INT:
+            case ColumnType.IPv4:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
             case ColumnType.GEOINT:

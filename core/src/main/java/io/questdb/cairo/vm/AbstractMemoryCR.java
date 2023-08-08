@@ -40,8 +40,10 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     protected long lim;
     protected long pageAddress = 0;
     protected long size = 0;
+    private long shiftAddressRight = 0;
 
     public long addressOf(long offset) {
+        offset -= shiftAddressRight;
         assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
         return pageAddress + offset;
     }
@@ -107,6 +109,10 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     public long resize(long size) {
         extend(size);
         return pageAddress;
+    }
+
+    public void shiftAddressRight(long shiftRightOffset) {
+        this.shiftAddressRight = shiftRightOffset;
     }
 
     @Override

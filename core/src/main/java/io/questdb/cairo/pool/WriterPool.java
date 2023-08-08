@@ -99,6 +99,7 @@ public class WriterPool extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
+    @TestOnly
     public int countFreeWriters() {
         int count = 0;
         for (Entry e : entries.values()) {

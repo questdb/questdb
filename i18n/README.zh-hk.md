@@ -1,9 +1,5 @@
 <div align="center">
-  <img
-    alt="QuestDB Logo"
-    src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png"
-    width="305px"
-  />
+   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
@@ -28,7 +24,7 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | 繁體中文 | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本](./README.ja-ja.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | 繁體中文 | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](./README.ja-ja.md)
 
 # QuestDB
 
@@ -130,7 +126,8 @@ questdb stop  // To stop questdb
   <a href="https://questdb.io/time-series-benchmark-suite/">
     <img
       alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"
+      src="../.github/readme-benchmark.png"
+      width="600"
     />
   </a>
 </div>

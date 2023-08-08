@@ -64,6 +64,7 @@ public class WalWriter implements TableWriterAPI {
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
+    private final DdlListener ddlListener;
     private final WalWriterEvents events;
     private final FilesFacade ff;
     private final AtomicIntList initialSymbolCounts;
@@ -115,6 +116,10 @@ public class WalWriter implements TableWriterAPI {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
+        final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
+        this.ddlListener = sysTable || configuration.getFactoryProvider() == null
+                ? DdlListenerImpl.INSTANCE
+                : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
@@ -157,14 +162,16 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void addColumn(@NotNull CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         addColumn(
                 columnName,
                 columnType,
                 configuration.getDefaultSymbolCapacity(),
                 configuration.getDefaultSymbolCacheFlag(),
                 false,
-                configuration.getIndexValueBlockSize()
+                configuration.getIndexValueBlockSize(),
+                false,
+                securityContext
         );
     }
 
@@ -175,22 +182,19 @@ public class WalWriter implements TableWriterAPI {
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isDedupKey
     ) {
-        alterOp.clear();
-        alterOp.ofAddColumn(
-                getMetadata().getTableId(),
-                tableToken,
-                0,
+        addColumn(
                 columnName,
-                0,
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
                 isIndexed,
-                indexValueBlockCapacity
+                indexValueBlockCapacity,
+                isDedupKey,
+                null
         );
-        apply(alterOp, true);
     }
 
     @Override
@@ -261,7 +265,7 @@ public class WalWriter implements TableWriterAPI {
                     sync(commitMode);
                 }
                 final long seqTxn = getSequencerTxn();
-                LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
                         .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
@@ -590,6 +594,9 @@ public class WalWriter implements TableWriterAPI {
             case ColumnType.INT:
                 nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
                 break;
+            case ColumnType.IPv4:
+                nullers.add(() -> mem1.putInt(Numbers.IPv4_NULL));
+                break;
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
@@ -660,6 +667,34 @@ public class WalWriter implements TableWriterAPI {
         } finally {
             path.trimTo(segmentPathLen);
         }
+    }
+
+    private void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isDedupKey,
+            SecurityContext securityContext
+    ) {
+        alterOp.clear();
+        alterOp.ofAddColumn(
+                getMetadata().getTableId(),
+                tableToken,
+                0,
+                columnName,
+                0,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                isDedupKey
+        );
+        alterOp.withSecurityContext(securityContext);
+        apply(alterOp, true);
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {
@@ -1111,7 +1146,8 @@ public class WalWriter implements TableWriterAPI {
         try {
             final MemoryMA mem1 = getPrimaryColumn(columnIndex);
             mem1.close(true, Vm.TRUNCATE_TO_POINTER);
-            mem1.of(ff,
+            mem1.of(
+                    ff,
                     dFile(path.trimTo(pathTrimToLen), name),
                     configuration.getWalDataAppendPageSize(),
                     -1,
@@ -1123,7 +1159,8 @@ public class WalWriter implements TableWriterAPI {
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
             if (mem2 != null) {
                 mem2.close(true, Vm.TRUNCATE_TO_POINTER);
-                mem2.of(ff,
+                mem2.of(
+                        ff,
                         iFile(path.trimTo(pathTrimToLen), name),
                         configuration.getWalDataAppendPageSize(),
                         -1,
@@ -1197,6 +1234,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void releaseSegmentLock(int segmentId, int segmentLockFd) {
         if (ff.close(segmentLockFd)) {
+            sequencer.notifySegmentClosed(tableToken, walId, segmentId);
             LOG.debug().$("released segment lock [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .$(", fd=").$(segmentLockFd)
@@ -1465,7 +1503,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential
+                boolean isSequential,
+                SecurityContext securityContext
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1475,6 +1514,27 @@ public class WalWriter implements TableWriterAPI {
             }
             if (columnType <= 0) {
                 throw CairoException.nonCritical().put("invalid column type: ").put(columnType);
+            }
+            structureVersion++;
+        }
+
+        @Override
+        public void disableDeduplication() {
+            structureVersion++;
+        }
+
+        @Override
+        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            for (int i = 0, n = columnsIndexes.size(); i < n; i++) {
+                int columnIndex = (int) columnsIndexes.get(i);
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType < 0) {
+                    throw CairoException.nonCritical().put("cannot use dropped column for deduplication [column=").put(metadata.getColumnName(columnIndex)).put(']');
+                }
+                if (ColumnType.isVariableLength(columnType)) {
+                    throw CairoException.nonCritical().put("cannot use variable length column for deduplication [column=").put(metadata.getColumnName(columnIndex))
+                            .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                }
             }
             structureVersion++;
         }
@@ -1551,7 +1611,8 @@ public class WalWriter implements TableWriterAPI {
                 boolean symbolCacheFlag,
                 boolean isIndexed,
                 int indexValueBlockCapacity,
-                boolean isSequential
+                boolean isSequential,
+                SecurityContext securityContext
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
@@ -1588,6 +1649,10 @@ public class WalWriter implements TableWriterAPI {
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
                     }
+
+                    if (securityContext != null) {
+                        ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
+                    }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
@@ -1601,6 +1666,16 @@ public class WalWriter implements TableWriterAPI {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
             }
+        }
+
+        @Override
+        public void disableDeduplication() {
+            metadata.disableDeduplicate();
+        }
+
+        @Override
+        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            metadata.enableDeduplicationWithUpsertKeys(columnsIndexes);
         }
 
         @Override
@@ -1700,7 +1775,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
-            tableToken = new TableToken(Chars.toString(toTableName), metadata.getTableToken().getDirName(), metadata.getTableToken().getTableId(), metadata.getTableToken().isWal());
+            tableToken = metadata.getTableToken().renamed(Chars.toString(toTableName));
             metadata.renameTable(tableToken);
         }
     }
@@ -1750,6 +1825,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
@@ -1762,21 +1842,21 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, value, type, this);
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, value, type, this);
         }
 
         @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
         }
 
         @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoStr(index, hash, type, this);
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
         }
 
         @Override
@@ -1867,6 +1947,11 @@ public class WalWriter implements TableWriterAPI {
         public void putSym(int columnIndex, char value) {
             CharSequence str = SingleCharCharSequence.get(value);
             putSym(columnIndex, str);
+        }
+
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+            putInt(columnIndex, key);
         }
 
         public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {

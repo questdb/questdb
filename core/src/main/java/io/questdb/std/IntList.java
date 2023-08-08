@@ -153,13 +153,6 @@ public class IntList implements Mutable, Sinkable {
         buffer[index] = buffer[index] + 1;
     }
 
-    // increment at index and return previous value
-    public int postIncrement(int index) {
-        final int prev = buffer[index];
-        buffer[index] = prev + 1;
-        return prev;
-    }
-
     public void increment(int index, int delta) {
         assert delta > -1;
         buffer[index] = buffer[index] + delta;
@@ -181,6 +174,13 @@ public class IntList implements Mutable, Sinkable {
         ensureCapacity(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
         buffer[index] = element;
+    }
+
+    // increment at index and return previous value
+    public int postIncrement(int index) {
+        final int prev = buffer[index];
+        buffer[index] = prev + 1;
+        return prev;
     }
 
     public void remove(int key) {

@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
@@ -33,7 +33,7 @@ import org.junit.Test;
 import static io.questdb.test.tools.TestUtils.maxDayOfMonth;
 import static io.questdb.test.tools.TestUtils.putWithLeadingZeroIfNeeded;
 
-public class WeekOfYearFunctionFactoryTest extends AbstractGriffinTest {
+public class WeekOfYearFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
         assertQuery(

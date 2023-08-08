@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -37,7 +37,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
+public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
 
     @Test
     public void testBusyPollByDay() throws Exception {
@@ -151,7 +151,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
 
     private void testBusyPoll(long timestampIncrement, int n, String createStatement) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(createStatement, sqlExecutionContext);
+            ddl(createStatement);
             final AtomicInteger errorCount = new AtomicInteger();
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final CountDownLatch latch = new CountDownLatch(2);
@@ -239,10 +239,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
-                    sqlExecutionContext
-            );
+            ddl("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
 
             TableToken tableToken = engine.verifyTableName("xyz");
             try (TableWriter writer = getWriter(tableToken)) {
@@ -296,7 +293,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
                     sqlExecutionContext
             );

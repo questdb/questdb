@@ -40,22 +40,26 @@ import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
-    public final static short ADD_COLUMN = 1;
-    public final static short ADD_INDEX = 4;
-    public final static short ADD_SYMBOL_CACHE = 6;
-    public final static short ATTACH_PARTITION = 3;
     public final static String CMD_NAME = "ALTER TABLE";
-    public final static short DETACH_PARTITION = 12;
     public final static short DO_NOTHING = 0;
-    public final static short DROP_COLUMN = 8;
-    public final static short DROP_INDEX = 5;
-    public final static short DROP_PARTITION = 2;
-    public final static short REMOVE_SYMBOL_CACHE = 7;
-    public final static short RENAME_COLUMN = 9;
-    public final static short SET_PARAM_COMMIT_LAG = 11;
-    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
-    public final static short SQUASH_PARTITIONS = 13;
-    public final static short RENAME_TABLE = 14;
+    public final static short ADD_COLUMN = DO_NOTHING + 1; // 1
+    public final static short DROP_PARTITION = ADD_COLUMN + 1; // 2
+    public final static short ATTACH_PARTITION = DROP_PARTITION + 1; // 3
+    public final static short ADD_INDEX = ATTACH_PARTITION + 1; // 4
+    public final static short DROP_INDEX = ADD_INDEX + 1; // 5
+    public final static short ADD_SYMBOL_CACHE = DROP_INDEX + 1; // 6
+    public final static short REMOVE_SYMBOL_CACHE = ADD_SYMBOL_CACHE + 1; // 7
+    public final static short DROP_COLUMN = REMOVE_SYMBOL_CACHE + 1; // 8
+    public final static short RENAME_COLUMN = DROP_COLUMN + 1; // 9
+    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = RENAME_COLUMN + 1; // 10
+    public final static short SET_PARAM_COMMIT_LAG = SET_PARAM_MAX_UNCOMMITTED_ROWS + 1; // 11
+    public final static short DETACH_PARTITION = SET_PARAM_COMMIT_LAG + 1; // 12
+    public final static short SQUASH_PARTITIONS = DETACH_PARTITION + 1; // 13
+    public final static short RENAME_TABLE = SQUASH_PARTITIONS + 1; // 14
+    public final static short SET_DEDUP_ENABLE = RENAME_TABLE + 1; // 15
+    public final static short SET_DEDUP_DISABLE = SET_DEDUP_ENABLE + 1; // 16
+    private static final long BIT_INDEXED = 0x1L;
+    private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -74,6 +78,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.extraInfo = extraInfo;
         this.extraStrInfo = new ObjCharSequenceList(charSequenceObjList);
         this.command = DO_NOTHING;
+    }
+
+    public static long getFlags(boolean indexed, boolean dedupKey) {
+        long flags = 0;
+        if (indexed) {
+            flags |= BIT_INDEXED;
+        }
+        if (dedupKey) {
+            flags |= BIT_DEDUP_KEY;
+        }
+        return flags;
     }
 
     @Override
@@ -130,6 +145,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SQUASH_PARTITIONS:
                     squashPartitions(svc);
                     break;
+                case SET_DEDUP_ENABLE:
+                    enableDeduplication(svc);
+                    break;
+                case SET_DEDUP_DISABLE:
+                    svc.disableDeduplication();
+                    break;
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
@@ -154,6 +175,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public void clear() {
         command = DO_NOTHING;
+        sqlExecutionContext = null;
+        securityContext = null;
         extraStrInfo.clear();
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
@@ -220,6 +243,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case RENAME_COLUMN:
             case DROP_COLUMN:
             case RENAME_TABLE:
+            case SET_DEDUP_DISABLE:
+            case SET_DEDUP_ENABLE:
                 return true;
             default:
                 return false;
@@ -248,7 +273,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int symbolCapacity,
             boolean cache,
             boolean indexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean dedupKey
     ) {
         of(AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);
         assert columnName != null && columnName.length() > 0;
@@ -256,7 +282,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(columnType);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(indexed ? 1 : -1);
+        extraInfo.add(getFlags(indexed, dedupKey));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -309,7 +335,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int type = (int) extraInfo.get(lParam++);
             int symbolCapacity = (int) extraInfo.get(lParam++);
             boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
-            boolean isIndexed = extraInfo.get(lParam++) > 0;
+            long flags = extraInfo.get(lParam++);
+            boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
+            boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+            assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
             int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
             int columnNamePosition = (int) extraInfo.get(lParam++);
             try {
@@ -320,7 +349,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         symbolCacheFlag,
                         isIndexed,
                         indexValueBlockCapacity,
-                        false
+                        false,
+                        securityContext
                 );
             } catch (CairoException e) {
                 e.position(columnNamePosition);
@@ -448,6 +478,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 svc.getMetadata().getColumnIndex(columnName),
                 isCacheOn
         );
+    }
+
+    private void enableDeduplication(MetadataService svc) {
+        assert extraInfo.size() > 0;
+        svc.enableDeduplicationWithUpsertKeys(extraInfo);
     }
 
     private void squashPartitions(MetadataService svc) {

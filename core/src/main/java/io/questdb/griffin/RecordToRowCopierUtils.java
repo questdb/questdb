@@ -65,6 +65,7 @@ public class RecordToRowCopierUtils {
         // [                reference   one array dimension
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
@@ -112,6 +113,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsShort = asm.poolMethod(SqlUtil.class, "implicitCastStrAsShort", "(Ljava/lang/CharSequence;)S");
         int implicitCastStrAsChar = asm.poolMethod(SqlUtil.class, "implicitCastStrAsChar", "(Ljava/lang/CharSequence;)C");
         int implicitCastStrAsInt = asm.poolMethod(SqlUtil.class, "implicitCastStrAsInt", "(Ljava/lang/CharSequence;)I");
+        int implicitCastStrAsIPv4 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsIPv4", "(Ljava/lang/CharSequence;)I");
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
@@ -226,6 +228,17 @@ public class RecordToRowCopierUtils {
                         case ColumnType.DOUBLE:
                             asm.i2d();
                             asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            assert false;
+                            break;
+                    }
+                    break;
+                case ColumnType.IPv4:
+                    asm.invokeInterface(rGetIPv4);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.IPv4:
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         default:
                             assert false;
@@ -606,6 +619,10 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.INT:
                             asm.invokeStatic(implicitCastStrAsInt);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.IPv4:
+                            asm.invokeStatic(implicitCastStrAsIPv4);
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:

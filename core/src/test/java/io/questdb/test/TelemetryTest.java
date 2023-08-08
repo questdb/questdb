@@ -27,9 +27,9 @@ package io.questdb.test;
 import io.questdb.*;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -38,6 +38,7 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -52,7 +53,7 @@ public class TelemetryTest extends AbstractCairoTest {
     public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TelemetryConfiguration getTelemetryConfiguration() {
+            public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
                 return new DefaultTelemetryConfiguration() {
                     @Override
                     public boolean getEnabled() {
@@ -65,54 +66,40 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    TelemetryJob ignored = new TelemetryJob(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+                    TelemetryJob ignored = new TelemetryJob(engine)
             ) {
-                try {
-                    compiler.compile("drop table " + TELEMETRY, sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=" + TELEMETRY + "]");
-                }
+                assertException(
+                        "drop table telemetry",
+                        11,
+                        "table does not exist [table=" + TELEMETRY + "]"
+                );
             }
         });
     }
 
     @Test
     public void testTelemetryConfigUpgrade() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile(
-                        "CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)",
-                        sqlExecutionContext);
-                InsertOperation ist = compiler.compile(
-                        "INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)",
-                        sqlExecutionContext).getInsertOperation();
-                InsertMethod im = ist.createMethod(sqlExecutionContext);
-                im.execute();
-                im.commit();
-                im.close();
-                TelemetryJob telemetryJob = new TelemetryJob(engine);
-                String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated\n" +
-                        "id	LONG256	false	0	false	0	false\n" +
-                        "enabled	BOOLEAN	false	0	false	0	false\n" +
-                        "version	SYMBOL	false	256	true	128	false\n" +
-                        "os	SYMBOL	false	256	true	128	false\n" +
-                        "package	SYMBOL	false	256	true	128	false\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
-                expectedSql = "id\tversion\n" +
-                        "0x01\t\n" +
-                        "0x01\tUnknown Version\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink,
-                        expectedSql);
-                Misc.free(telemetryJob);
-            }
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)"
+            );
+            insert(
+                    "INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)"
+            );
+            TelemetryJob telemetryJob = new TelemetryJob(engine);
+            String expected = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated	upsertKey\n" +
+                    "id	LONG256	false	0	false	0	false	false\n" +
+                    "enabled	BOOLEAN	false	0	false	0	false	false\n" +
+                    "version	SYMBOL	false	256	true	128	false	false\n" +
+                    "os	SYMBOL	false	256	true	128	false	false\n" +
+                    "package	SYMBOL	false	256	true	128	false	false\n";
+            assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
+            expected = "id\tversion\n" +
+                    "0x01\t\n" +
+                    "0x01\t[DEVELOPMENT]\n";
+            assertSql(expected, "SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
 
+            Misc.free(telemetryJob);
         });
     }
 
@@ -206,20 +193,25 @@ public class TelemetryTest extends AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getQuestDbVersion() {
+            public CharSequence getSwName() {
+                return null;
+            }
+
+            @Override
+            public CharSequence getSwVersion() {
                 return refVersion.get();
             }
         };
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public BuildInformation getBuildInformation() {
+            public @NotNull BuildInformation getBuildInformation() {
                 return buildInformation;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 refVersion.set("1.0");
@@ -250,6 +242,7 @@ public class TelemetryTest extends AbstractCairoTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void assertEventAndOrigin(CharSequence expected) {
         try (TableReader reader = newTableReader(configuration, TELEMETRY)) {
             sink.clear();

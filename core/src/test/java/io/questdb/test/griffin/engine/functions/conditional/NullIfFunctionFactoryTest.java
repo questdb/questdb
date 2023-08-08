@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
+public class NullIfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCharSimple() throws Exception {
@@ -181,11 +181,11 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "str1\tstr2\tnullif\n" +
                         "cat\tcat\t\n" +
-                        "dog\t\t\n" +
+                        "dog\t\tdog\n" +
                         "\t\t\n" +
                         "\tdog\t\n" +
                         "cat\tdog\tcat\n" +
-                        "dog\t\t\n" +
+                        "dog\t\tdog\n" +
                         "dog\tdog\t\n" +
                         "dog\tcat\tdog\n" +
                         "cat\tdog\tcat\n" +

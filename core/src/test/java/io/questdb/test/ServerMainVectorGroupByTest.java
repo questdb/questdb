@@ -81,7 +81,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine())
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler()
             ) {
                 CairoEngine engine1 = qdb.getEngine();
                 try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
@@ -106,7 +106,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine())
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler()
             ) {
                 CairoEngine engine1 = qdb.getEngine();
                 try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)

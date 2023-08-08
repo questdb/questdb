@@ -38,11 +38,23 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.*;
 
 public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                        "cairo.max.uncommitted.rows=500",
+                        "cairo.commit.lag=2000",
+                        "cairo.o3.max.lag=2000"
+                )
+        );
+    }
 
     @Test
     public void testActivePartitionReadOnlyAndNoO3() throws Exception {
@@ -179,7 +191,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -195,8 +207,8 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                 .col("s", ColumnType.SYMBOL).symbolCapacity(32)
                                 .timestamp("ts")
                 ) {
-                    compiler.compile("create table "+tableName +" (l long, i int, s symbol, ts timestamp) timestamp(ts) partition by day bypass wal", context);
-                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
+                    engine.ddl("create table " + tableName + " (l long, i int, s symbol, ts timestamp) timestamp(ts) partition by day bypass wal", context);
+                    engine.insert(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
                 }
 
                 // set partition read-only state

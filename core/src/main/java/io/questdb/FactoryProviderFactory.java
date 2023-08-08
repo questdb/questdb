@@ -25,8 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
 
 public interface FactoryProviderFactory {
-    FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FunctionFactoryCache functionFactoryCache);
+    FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit);
 }

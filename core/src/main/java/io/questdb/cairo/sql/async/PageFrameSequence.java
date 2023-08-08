@@ -50,7 +50,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
     private final LongList frameRowCounts = new LongList();
-    private final WeakClosableObjectPool<PageFrameReduceTask> localTaskPool;
+    private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
     private final PageAddressCache pageAddressCache;
     private final AtomicInteger reduceCounter = new AtomicInteger(0);
@@ -80,13 +80,13 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             CairoConfiguration configuration,
             MessageBus messageBus,
             PageFrameReducer reducer,
-            WeakClosableObjectPool<PageFrameReduceTask> localTaskPool
+            PageFrameReduceTaskFactory localTaskFactory
     ) {
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
         this.reducer = reducer;
         this.clock = configuration.getMillisecondClock();
-        this.localTaskPool = localTaskPool;
+        this.localTaskFactory = localTaskFactory;
     }
 
     /**
@@ -148,7 +148,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public void cancel() {
-        this.valid.compareAndSet(true, false);
+        valid.compareAndSet(true, false);
     }
 
     public void clear() {
@@ -168,16 +168,15 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
         if (localTask != null) {
             localTask.resetCapacities();
-            localTaskPool.push(localTask);
-            localTask = null;
         }
     }
 
     @Override
     public void close() {
         clear();
-        Misc.freeIfCloseable(circuitBreaker);
-        Misc.free(record);
+        record = Misc.free(record);
+        circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
+        localTask = Misc.free(localTask);
     }
 
     public void collect(long cursor, boolean forceCollect) {
@@ -521,7 +520,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         assert dispatchStartFrameIndex < frameCount;
 
         if (localTask == null) {
-            localTask = localTaskPool.pop();
+            localTask = localTaskFactory.getInstance();
         }
         localTask.of(this, dispatchStartFrameIndex++);
 

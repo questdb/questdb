@@ -8,7 +8,7 @@ RUN_AS_ROOT=${RUN_AS_ROOT:-"false"}
 DO_CHOWN=${DO_CHOWN:-"true"}
 QUESTDB_UID="${QUESTDB_UID:-"$(id -u questdb)"}"
 QUESTDB_GID="${QUESTDB_GID:-"$(id -g questdb)"}"
-
+JAVA_COMMAND="/app/bin/java"
 
 # directories inside QUESTDB_DATA_DIR that we will chown
 DEFAULT_LOCAL_DIRS=${DEFAULT_LOCAL_DIRS:-"/conf /public /db /snapshot"}
@@ -38,15 +38,22 @@ if [ "$IGNORE_DATA_ROOT_MOUNT_CHECK" = "false" ] && mount | grep "/root/.questdb
     QUESTDB_DATA_DIR="/root/.questdb"
 fi
 
+# Check if on-demand JVM arguments are provided through environment variable
+if [ -n "$JVM_PREPEND" ]; then
+    echo "Found on-demand JVM arguments: $JVM_PREPEND, prepending to JVM args"
+    JAVA_COMMAND="$JAVA_COMMAND $JVM_PREPEND"
+fi
+
+# Check if arguments are provided in the configuration file
 if [ $# -eq 0 ]; then
-    echo "No arguments found, start with default arguments"
-    set -- /app/bin/java -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
+    echo "No arguments found in the configuration, start with default arguments"
+    set -- $JAVA_COMMAND -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
 else
     if [ "${1:0:1}" = '-' ]; then
         echo "Found config arguments $@"
-        set -- /app/bin/java "$@"
+        set -- $JAVA_COMMAND "$@"
     elif [ "$1" = "/app/bin/java" ]; then
-        echo "Java binary arguments found, Non default arguments config run"
+        echo "Java binary argument found in command, ignoring on-demand JVM arguments, start with fully-customized arguments"
         set -- "$@"
     fi
 fi

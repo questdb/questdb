@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
@@ -32,21 +33,25 @@ import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,7 +61,7 @@ import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
 
-public abstract class BasePGTest extends AbstractGriffinTest {
+public abstract class BasePGTest extends AbstractCairoTest {
 
     protected CopyRequestJob copyRequestJob = null;
 
@@ -64,8 +69,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             PGWireServer.PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
@@ -73,15 +76,13 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             return null;
         }
 
-        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory, registry);
+        return new PGWireServer(configuration, cairoEngine, workerPool, contextFactory, registry);
     }
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent
+            WorkerPool workerPool
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -94,8 +95,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 configuration,
                 cairoEngine,
                 workerPool,
-                functionFactoryCache,
-                snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,
@@ -141,18 +140,27 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         }
     }
 
+    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs, map);
+    }
+
     protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
         assertResultSet(null, expected, sink, rs);
     }
 
+    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        printToSink(sink, rs, map);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
     protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        printToSink(sink, rs);
+        printToSink(sink, rs, null);
         TestUtils.assertEquals(message, expected, sink);
     }
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
         TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
-        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount(), compiler.getFunctionFactoryCache());
+        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
         workerPool.assign(copyRequestJob);
         workerPool.freeOnExit(copyRequestJob);
@@ -160,9 +168,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return createPGWireServer(
                 configuration,
                 engine,
-                workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent
+                workerPool
         );
     }
 
@@ -202,11 +208,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
-            }
-
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
             }
 
             @Override
@@ -251,10 +252,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return DriverManager.getConnection(url, properties);
     }
 
-    protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
+    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", Boolean.toString(binary));
         properties.setProperty("preferQueryMode", mode.value);
         if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
@@ -268,11 +270,10 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return DriverManager.getConnection(url, properties);
     }
 
-    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
+    protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
-        properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", Boolean.toString(binary));
         properties.setProperty("preferQueryMode", mode.value);
         if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
@@ -354,7 +355,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         };
     }
 
-    protected long printToSink(StringSink sink, ResultSet rs) throws SQLException, IOException {
+    protected long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
         // dump metadata
         ResultSetMetaData metaData = rs.getMetaData();
         final int columnCount = metaData.getColumnCount();
@@ -364,7 +365,19 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
 
             sink.put(metaData.getColumnName(i + 1));
-            sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+            if (JDBCType.valueOf(metaData.getColumnType(i + 1)) == JDBCType.VARCHAR) {
+                if (map != null) {
+                    if (map.get(i + 1) == ColumnType.IPv4) {
+                        sink.put('[').put("IPv4").put(']');
+                    } else {
+                        sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+                    }
+                } else {
+                    sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+                }
+            } else {
+                sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+            }
         }
         sink.put('\n');
 

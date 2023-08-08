@@ -286,7 +286,7 @@ public class ExpressionParser {
                         // pop operators off the stack onto the output queue. If no left
                         // parentheses are encountered, either the separator was misplaced or
                         // parentheses were mismatched.
-                        while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
+                        while ((node = opStack.pop()) != null && node.token.length() > 0 && node.token.charAt(0) != '(') {
                             argStackDepth = onNode(listener, node, argStackDepth);
                         }
 
@@ -547,6 +547,9 @@ public class ExpressionParser {
                         if ((node = opStack.peek()) != null && (node.type == ExpressionNode.LITERAL || (node.type == ExpressionNode.SET_OPERATION))) {
                             if (!SqlKeywords.isBetweenKeyword(node.token) || betweenCount == betweenAndCount) {
                                 node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
+                                if (ExpressionNode.SET_OPERATION == node.type && node.paramCount < 2) {
+                                    throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put('\'');
+                                }
                                 node.type = ExpressionNode.FUNCTION;
                                 argStackDepth = onNode(listener, node, argStackDepth);
                                 opStack.pop();
@@ -808,7 +811,7 @@ public class ExpressionParser {
 
                                     // validate type
                                     final short columnType = ColumnType.tagOf(prevNode.token);
-                                    if (columnType < ColumnType.BOOLEAN || (columnType > ColumnType.LONG256 && columnType != ColumnType.UUID)) {
+                                    if ((columnType < ColumnType.BOOLEAN || (columnType > ColumnType.LONG256 && columnType != ColumnType.UUID)) && (columnType != ColumnType.IPv4)) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {
                                         ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lastPos);

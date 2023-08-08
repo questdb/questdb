@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class OrderByExpressionTest extends AbstractGriffinTest {
+public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByColumnInJoinedSubquery() throws Exception {

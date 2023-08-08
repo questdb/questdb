@@ -25,13 +25,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class DBeaverTest extends AbstractGriffinTest {
+public class DBeaverTest extends AbstractCairoTest {
     @Test
     public void testDotNetGetTypes() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "nspname\toid\ttypnamespace\ttypname\ttyptype\ttyprelid\ttypnotnull\trelkind\telemtypoid\telemtypname\telemrelkind\telemtyptype\tord\n" +
                         "public\t1043\t2200\tvarchar\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
                         "public\t1114\t2200\ttimestamp\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
@@ -92,20 +92,18 @@ public class DBeaverTest extends AbstractGriffinTest {
                         "ORDER BY ord",
                 null,
                 true,
-                sqlExecutionContext,
                 true
         );
     }
 
     @Test
     public void testFrequentSql() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "current_schema\tsession_user\n" +
                         "public\tadmin\n",
                 "SELECT current_schema(),session_user",
                 null,
                 true,
-                sqlExecutionContext,
                 true
         );
     }
@@ -113,10 +111,10 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListColumns() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz(a int, t timestamp)", sqlExecutionContext);
-            compiler.compile("create table tab2(b long, z binary)", sqlExecutionContext);
+            ddl("create table xyz(a int, t timestamp)");
+            ddl("create table tab2(b long, z binary)");
 
-            assertQuery12(
+            assertQuery(
                     "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
                             "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\t\t\n" +
                             "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\ttrue\t\t\n",
@@ -132,7 +130,6 @@ public class DBeaverTest extends AbstractGriffinTest {
                             "WHERE NOT a.attisdropped AND c.oid=1 ORDER BY a.attnum",
                     null,
                     true,
-                    sqlExecutionContext,
                     false
             );
         });
@@ -141,9 +138,9 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListTables() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz(a int)", sqlExecutionContext);
-            compiler.compile("create table tab2(b long)", sqlExecutionContext);
-            assertQuery12(
+            ddl("create table xyz(a int)");
+            ddl("create table tab2(b long)");
+            assertQuery(
                     "oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key\n" +
                             "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +
                             "1\t1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n",
@@ -153,7 +150,6 @@ public class DBeaverTest extends AbstractGriffinTest {
                             "WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c') order by relname",
                     null,
                     true,
-                    sqlExecutionContext,
                     false
             );
 
@@ -162,7 +158,7 @@ public class DBeaverTest extends AbstractGriffinTest {
 
     @Test
     public void testListTypes() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\trelkind\tbase_type_name\tdescription\n" +
                         "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
                         "17\t17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
@@ -184,14 +180,13 @@ public class DBeaverTest extends AbstractGriffinTest {
                         "ORDER by t.oid",
                 null,
                 true,
-                sqlExecutionContext,
                 false
         );
     }
 
     @Test
     public void testNamespaceListSql() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "n_oid\tnspname\toid\txmin\tnspowner\tdescription\n" +
                         "11\tpg_catalog\t11\t0\t1\t\n" +
                         "2200\tpublic\t2200\t0\t1\t\n",
@@ -200,20 +195,18 @@ public class DBeaverTest extends AbstractGriffinTest {
                         " ORDER BY nspname",
                 null,
                 true,
-                sqlExecutionContext,
                 false
         );
     }
 
     @Test
     public void testShowSearchPath() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "search_path\n" +
                         "\"$user\", public\n",
                 "SHOW search_path",
                 null,
                 false,
-                sqlExecutionContext,
                 true
         );
     }

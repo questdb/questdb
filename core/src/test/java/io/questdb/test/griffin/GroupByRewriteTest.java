@@ -24,18 +24,37 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
-public class GroupByRewriteTest extends AbstractGriffinTest {
+public class GroupByRewriteTest extends AbstractCairoTest {
+
+    @Test
+    public void testRewriteAggregateOnOrderBySumBadQuery() throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                compile("CREATE TABLE telemetry (created timestamp)");
+
+                assertQuery("sum\tsum1\tsum2\tsum3\n" +
+                                "3\t7\t23\t27\n",
+                        "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);", null, false, false, true);
+            });
+            throw new RuntimeException("query above should have thrown");
+        } catch (SqlException e) {
+            String expected = "[49] unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,BOOLEAN,INT constant)";
+            Assert.assertEquals(expected, e.getMessage());
+        }
+    }
 
     @Test
     public void testRewriteAggregateOnJoin1() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE taba ( ax int, aid int );");
-            compile("INSERT INTO taba values (1,1), (2,2)");
+            insert("INSERT INTO taba values (1,1), (2,2)");
             compile("CREATE TABLE tabb ( bx int, bid int );");
-            compile("INSERT INTO tabb values (3,1), (4,2)");
+            insert("INSERT INTO tabb values (3,1), (4,2)");
 
             assertQuery("sum\tsum1\tsum2\tsum3\n" +
                             "3\t7\t23\t27\n",
@@ -52,9 +71,9 @@ public class GroupByRewriteTest extends AbstractGriffinTest {
             compile("CREATE TABLE tabb ( x int, bid int );");
         });
 
-        assertFailure("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
+        assertException("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
                 "FROM taba " +
-                "join tabb on aid = bid", null, 11, "Invalid table name or alias");
+                "join tabb on aid = bid", 11, "Invalid table name or alias");
     }
 
     @Test
@@ -62,11 +81,10 @@ public class GroupByRewriteTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE taba ( x int, aid int );");
             compile("CREATE TABLE tabb ( x int, bid int );");
+            assertException("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
+                    "FROM taba " +
+                    "join tabb on aid = bid", 11, "Invalid column: taba.k");
         });
-
-        assertFailure("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
-                "FROM taba " +
-                "join tabb on aid = bid", null, 11, "Invalid column: taba.k");
     }
 
     @Test
@@ -74,10 +92,10 @@ public class GroupByRewriteTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE taba ( x int, aid int );");
             compile("  CREATE TABLE tabb ( x int, bid int );");
+            assertException("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
+                    "FROM taba " +
+                    "join tabb on aid = bid", 11, "Ambiguous column [name=x]");
         });
-        assertFailure("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
-                "FROM taba " +
-                "join tabb on aid = bid", null, 11, "Ambiguous column [name=x]");
     }
 
     @Test

@@ -49,6 +49,7 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
+    public static final String HIDDEN = "hidden";
     static final int QUERY_METADATA = 2;
     static final int QUERY_METADATA_SUFFIX = 3;
     static final int QUERY_PREFIX = 1;
@@ -60,7 +61,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = 7;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
-    private int queryTimestampIndex;
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
     private final StringSink columnsQueryParameter = new StringSink();
@@ -75,6 +75,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int columnCount;
     private int columnIndex;
     private long compilerNanos;
+    private boolean containsSecret;
     private long count;
     private boolean countRows = false;
     private RecordCursor cursor;
@@ -86,6 +87,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
     private int queryState = QUERY_PREFIX;
+    private int queryTimestampIndex;
     private short queryType;
     private boolean quoteLargeNum = false;
     private Record record;
@@ -150,6 +152,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         skip = 0;
         count = 0;
         stop = 0;
+        containsSecret = false;
     }
 
     @Override
@@ -210,6 +213,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return query;
     }
 
+    public CharSequence getQueryOrHidden() {
+        return containsSecret ? HIDDEN : query;
+    }
+
     public short getQueryType() {
         return queryType;
     }
@@ -245,7 +252,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void logSqlError(FlyweightMessageContainer container) {
-        info().$("sql error [q=`").utf8(query)
+        info().$("sql error [q=`").utf8(getQueryOrHidden())
                 .$("`, at=").$(container.getPosition())
                 .$(", message=`").utf8(container.getFlyweightMessage()).$('`').$(']').$();
     }
@@ -255,12 +262,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .$("[compiler: ").$(compilerNanos)
                 .$(", count: ").$(recordCountNanos)
                 .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
-                .$(", q=`").utf8(query)
+                .$(", q=`").utf8(getQueryOrHidden())
                 .$("`]").$();
     }
 
     public void setCompilerNanos(long compilerNanos) {
         this.compilerNanos = compilerNanos;
+    }
+
+    public void setContainsSecret(boolean containsSecret) {
+        this.containsSecret = containsSecret;
     }
 
     public void setOperationFuture(OperationFuture fut) {
@@ -340,6 +351,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
             }
             socket.put('\"');
+        }
+    }
+
+    private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final int i = rec.getIPv4(col);
+        if (i == Numbers.IPv4_NULL) {
+            socket.put("null");
+        } else {
+            socket.put('"');
+            Numbers.intToIPv4Sink(socket, i);
+            socket.put('"');
         }
     }
 
@@ -603,6 +625,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     throw new UnsupportedOperationException();
                 case ColumnType.UUID:
                     putUuidValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.IPv4:
+                    putIPv4Value(socket, record, columnIdx);
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);

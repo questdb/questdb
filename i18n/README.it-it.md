@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
+   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
@@ -15,7 +15,7 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本](./README.ja-ja.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](./README.ja-ja.md)
 
 # QuestDB
 
@@ -90,7 +90,7 @@ risultati ottenuti usando `cpu-only` con 6 workers su un AMD Ryzen 3970X:
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="Grafico che compara la massima portata di QuestDB, ClickHouse, TimescaleDB and InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
+    <img alt="Grafico che compara la massima portata di QuestDB, ClickHouse, TimescaleDB and InfluxDB." width="600" alt="tsbs-results" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png">
   </a>
 </div>
 

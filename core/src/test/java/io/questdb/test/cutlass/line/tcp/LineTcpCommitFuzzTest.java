@@ -26,9 +26,9 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.test.cutlass.line.tcp.load.TableData;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -43,7 +43,6 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedDefaultFractionZero() throws Exception {
-
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
         configOverrideMaxUncommittedRows(22);
 
@@ -102,7 +101,6 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     @Ignore("TableWriter.getSeqTxn() has been removed")
     @Test
     public void testCommitIntervalBasedFractionConstantLowRate() throws Exception {
-
         configOverrideMaxUncommittedRows(500_000);
 
         // idle table commit after 5 mins inactivity -> test would timeout
