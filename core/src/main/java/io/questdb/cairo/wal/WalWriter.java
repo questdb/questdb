@@ -117,9 +117,7 @@ public class WalWriter implements TableWriterAPI {
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
         final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
-        this.ddlListener = sysTable || configuration.getFactoryProvider() == null
-                ? DdlListenerImpl.INSTANCE
-                : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
+        this.ddlListener = sysTable ? DdlListenerImpl.INSTANCE : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();

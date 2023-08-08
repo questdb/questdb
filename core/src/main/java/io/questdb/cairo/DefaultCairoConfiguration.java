@@ -255,7 +255,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public @NotNull FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
 

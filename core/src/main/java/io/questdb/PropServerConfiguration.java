@@ -1874,7 +1874,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @Nullable FactoryProvider getFactoryProvider() {
+        public @NotNull FactoryProvider getFactoryProvider() {
             return factoryProvider;
         }
 

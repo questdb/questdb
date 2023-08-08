@@ -109,7 +109,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public @NotNull FactoryProvider getFactoryProvider() {
         return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
     }
 
