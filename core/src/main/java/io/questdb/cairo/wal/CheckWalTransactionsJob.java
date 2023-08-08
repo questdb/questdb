@@ -30,7 +30,6 @@ import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -93,7 +92,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             engine.notifyWalTxnCommitted(tableToken);
         } else {
             if (TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), engine.getConfiguration().getTempRenamePendingTablePrefix())) {
-                tableToken = tryRenameToReadTableName(tableToken);
+                tableToken = renameToExpectedTableName(tableToken);
             }
 
             if (engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
@@ -130,7 +129,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     }
 
     @NotNull
-    private TableToken tryRenameToReadTableName(TableToken tableToken) {
+    private TableToken renameToExpectedTableName(TableToken tableToken) {
         LOG.info().$("attempting to apply deferred table rename [name=").utf8(tableToken.getTableName()).I$();
 
         // Table name is temporary, because the real table name was occupied by another one at the point of creation

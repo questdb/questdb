@@ -352,7 +352,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     /**
-     * Check if the segment directory has any outstanding WalUtils.WAL_PENDING_FS_DIR marker files in a WalUtils.WAL_PENDING_FS_DIR directory.
+     * Check if the segment directory has any outstanding ".pending" marker files in the ".pending" directory.
      */
     private boolean segmentHasPendingTasks(int walId, int segmentId) {
         final Path pendingPath = setSegmentPendingPath(tableToken, walId, segmentId);
