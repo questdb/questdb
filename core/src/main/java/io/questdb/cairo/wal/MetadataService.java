@@ -115,7 +115,7 @@ public interface MetadataService {
         renameColumn(columnName, newName, null);
     }
 
-    void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SqlExecutionContext sqlExecutionContext);
+    void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext);
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
 

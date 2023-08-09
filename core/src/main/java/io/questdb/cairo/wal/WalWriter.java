@@ -1554,7 +1554,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SqlExecutionContext sqlExecutionContext) {
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
                 throw CairoException.nonCritical().put("cannot rename column, column does not exists [table=").put(tableToken.getTableName())
@@ -1720,9 +1720,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameColumn(@NotNull CharSequence columnName,
-                                 @NotNull CharSequence newColumnName,
-                                 SqlExecutionContext executionContext) {
+        public void renameColumn(
+                @NotNull CharSequence columnName,
+                @NotNull CharSequence newColumnName,
+                SecurityContext securityContext
+        ) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
                 int columnType = metadata.getColumnType(columnIndex);
@@ -1752,8 +1754,8 @@ public class WalWriter implements TableWriterAPI {
                         // if we did not have to roll uncommitted rows to a new segment
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
-                        if (executionContext != null) {
-                            executionContext.getCairoEngine().onColumnRenamed(executionContext.getSecurityContext(), metadata.getTableToken().getTableName(), columnName, newColumnName);
+                        if (securityContext != null) {
+                            ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
                         }
 
                         LOG.info().$("renamed column in WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();

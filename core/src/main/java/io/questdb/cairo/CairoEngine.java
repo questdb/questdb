@@ -936,7 +936,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
 
-            onTableRenamed(securityContext, fromTableName, toTableName);
+            final boolean sysTable = Chars.startsWith(fromTableName, configuration.getSystemTableNamePrefix());
+            final DdlListener ddlListener = sysTable ? DdlListenerImpl.INSTANCE : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
+            ddlListener.onTableRenamed(securityContext, fromTableToken, toTableToken);
 
             return toTableToken;
         } else {

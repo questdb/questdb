@@ -464,7 +464,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         while (i < n) {
             CharSequence columnName = activeExtraStrInfo.getStrA(i++);
             CharSequence newName = activeExtraStrInfo.getStrB(i++);
-            svc.renameColumn(columnName, newName, sqlExecutionContext);
+            svc.renameColumn(columnName, newName, securityContext);
         }
     }
 
