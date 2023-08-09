@@ -4248,12 +4248,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertTimestampAsStr() throws Exception {
         final String expected = "ts\n" +
+                "2020-01-10T12:00:01.111143Z\n" +
                 "2020-01-10T15:00:01.000143Z\n" +
                 "2020-01-10T18:00:01.800000Z\n" +
                 "\n";
 
         assertMemoryLeak(() -> {
             ddl("create table xy (ts timestamp)");
+            // execute insert with nanos - we expect the nanos to be truncated
+            insert("insert into xy(ts) values ('2020-01-10T12:00:01.111143123Z')");
+
             // execute insert with micros
             insert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
 
@@ -5183,6 +5187,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertQuery("c\n\n",
                 "select * from x where c in null",
                 "create table x as (select 1::timestamp c union all select null::timestamp )",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testTimestampWithNanosInWhereClause() throws Exception {
+        assertQuery("x\tts\n" +
+                        "2\t2019-10-17T00:00:00.200000Z\n" +
+                        "3\t2019-10-17T00:00:00.700000Z\n" +
+                        "4\t2019-10-17T00:00:00.800000Z\n",
+                "select * from x where ts between '2019-10-17T00:00:00.200000123Z' and '2019-10-17T00:00:00.800000123Z'",
+                "create table x as " +
+                        "(SELECT x, timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_short(1,5) * 100000L) as ts FROM long_sequence(5)" +
+                        ")",
                 null, true, false
         );
     }
