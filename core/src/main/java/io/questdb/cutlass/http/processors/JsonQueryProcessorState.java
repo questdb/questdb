@@ -354,6 +354,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
+    private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final int i = rec.getIPv4(col);
+        if (i == Numbers.IPv4_NULL) {
+            socket.put("null");
+        } else {
+            socket.put('"');
+            Numbers.intToIPv4Sink(socket, i);
+            socket.put('"');
+        }
+    }
+
     private static void putIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final int i = rec.getInt(col);
         if (i == Integer.MIN_VALUE) {
@@ -613,6 +624,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     throw new UnsupportedOperationException();
                 case ColumnType.UUID:
                     putUuidValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.IPv4:
+                    putIPv4Value(socket, record, columnIdx);
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);

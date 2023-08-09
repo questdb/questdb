@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class LengthFunctionFactoryTest extends AbstractGriffinTest {
+public class LengthFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBinSimple() throws Exception {

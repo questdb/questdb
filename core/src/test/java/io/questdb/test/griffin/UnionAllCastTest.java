@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class UnionAllCastTest extends AbstractGriffinTest {
+public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testAllNoCast() throws Exception {
@@ -605,13 +605,13 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptDoubleFloat() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            ddl("create table events1 (contact symbol, groupid float, eventid string)");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -628,15 +628,15 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            ddl("create table events1 (contact symbol, groupid float, eventid string)");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.6, 'stand')");
+            insert("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -655,13 +655,13 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptFloatDouble() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            ddl("create table events1 (contact symbol, groupid double, eventid string)");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            ddl("create table events2 (contact symbol, groupid float, eventid string)");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -678,15 +678,15 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            ddl("create table events1 (contact symbol, groupid double, eventid string)");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.6, 'stand')");
+            insert("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -1445,15 +1445,15 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testIntersectDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            ddl("create table events1 (contact symbol, groupid float, eventid string)");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.6, 'stand')");
+            insert("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -1472,15 +1472,15 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testIntersectSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            ddl("create table events1 (contact symbol, groupid double, eventid string)");
+            insert("insert into events1 values ('1', 1.5, 'flash')");
+            insert("insert into events1 values ('2', 1.5, 'stand')");
+            insert("insert into events1 values ('1', 1.6, 'stand')");
+            insert("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            ddl("create table events2 (contact symbol, groupid double, eventid string)");
+            insert("insert into events2 values ('1', 1.5, 'flash')");
+            insert("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery(
                     // Empty table expected
@@ -2257,7 +2257,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
         compile(ddlY);
         engine.releaseAllWriters();
-        assertFailure("x union all y",
+        assertException("x union all y",
                 ddlX,
                 pos,
                 "unsupported cast"

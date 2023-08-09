@@ -24,10 +24,11 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
 public class SequencerMetadataService implements MetadataServiceStub {
@@ -48,9 +49,19 @@ public class SequencerMetadataService implements MetadataServiceStub {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
-            SqlExecutionContext executionContext
+            SecurityContext securityContext
     ) {
         metadata.addColumn(name, type);
+    }
+
+    @Override
+    public void disableDeduplication() {
+        metadata.disableDeduplication();
+    }
+
+    @Override
+    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        metadata.enableDeduplicationWithUpsertKeys(columnsIndexes);
     }
 
     public TableRecordMetadata getMetadata() {

@@ -35,7 +35,10 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -45,6 +48,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.BrokenBarrierException;
 import java.util.function.LongSupplier;
@@ -104,7 +108,7 @@ public class HttpQueryTestBuilder {
             if (cairoConfiguration == null) {
                 cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
                     @Override
-                    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                         return new DefaultSqlExecutionCircuitBreakerConfiguration() {
                             @Override
                             public long getTimeout() {
@@ -116,16 +120,16 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
-                    public LongSupplier getCopyIDSupplier() {
+                    public @NotNull LongSupplier getCopyIDSupplier() {
                         return () -> 0;
                     }
 
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return filesFacade;
                     }
 
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
                     }
 
@@ -170,7 +174,7 @@ public class HttpQueryTestBuilder {
                 }
 
                 if (cairoConfiguration.getSqlCopyInputRoot() != null) {
-                    CopyRequestJob copyRequestJob = new CopyRequestJob(engine, workerCount, null);
+                    CopyRequestJob copyRequestJob = new CopyRequestJob(engine, workerCount);
                     workerPool.assign(copyRequestJob);
                     workerPool.freeOnExit(copyRequestJob);
                 }
@@ -221,7 +225,6 @@ public class HttpQueryTestBuilder {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                new SqlCompiler(engine),
                                 sqlExecutionContext
                         );
                     }

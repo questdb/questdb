@@ -22,10 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.functions.groupby;
 
-import java.io.Closeable;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
+import org.jetbrains.annotations.NotNull;
 
-public interface CommitListener extends Closeable {
-    void onCommit(long txn, long rowsAdded);
+public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
+
+    public CountIPv4GroupByFunction(@NotNull Function arg) {
+        super(arg);
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        final int value = arg.getIPv4(record);
+        if (value != Numbers.IPv4_NULL) {
+            mapValue.putLong(valueIndex, 1);
+        } else {
+            mapValue.putLong(valueIndex, 0);
+        }
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        final int value = arg.getIPv4(record);
+        if (value != Numbers.IPv4_NULL) {
+            mapValue.addLong(valueIndex, 1);
+        }
+    }
 }

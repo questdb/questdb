@@ -125,7 +125,9 @@ public interface ConfigurationOverrides {
 
     MicrosecondClock getTestMicrosClock();
 
-    long getWalApplyTableTimeQuote();
+    long getWalApplyTableTimeQuota();
+
+    int getWalMaxLagTxnCount();
 
     long getWalPurgeInterval();
 
@@ -261,7 +263,9 @@ public interface ConfigurationOverrides {
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 
-    void setWalApplyTableTimeQuote(long walApplyTableTimeQuote);
+    void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
+
+    void setWalMaxLagTxnCount(int walMaxLagTxnCount);
 
     void setWalPurgeInterval(long walPurgeInterval);
 

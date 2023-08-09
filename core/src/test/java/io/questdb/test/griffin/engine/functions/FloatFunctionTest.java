@@ -99,6 +99,9 @@ public class FloatFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() { function.getIPv4(null); }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
     }

@@ -31,6 +31,8 @@ public interface FrameColumn extends Closeable {
 
     void addTop(long value);
 
+    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
+
     void appendNulls(long offset, long count, int commitMode);
 
     void close();
@@ -46,6 +48,4 @@ public interface FrameColumn extends Closeable {
     int getSecondaryFd();
 
     int getStorageType();
-
-    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
 }

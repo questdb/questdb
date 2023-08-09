@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 import java.io.Closeable;
@@ -43,9 +42,9 @@ public class PageFrameReduceTask implements Closeable {
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
 
-    public PageFrameReduceTask(CairoConfiguration configuration) {
-        this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-        this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+    public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
+        this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+        this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
         this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
     }
 

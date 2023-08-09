@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.mp.WorkerPool;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -42,7 +43,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         queryCacheEventQueueCapacity = 1;
-        BasePGTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
     }
 

@@ -92,7 +92,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     public void toPlan(PlanSink sink) {
         sink.type("LatestBySubQuery");
         sink.child("Subquery", recordCursorFactory);
-        sink.child((Plannable) cursor);
+        sink.child(cursor);
         sink.child(dataFrameCursorFactory);
     }
 

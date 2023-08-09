@@ -55,6 +55,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final Properties PG_CONNECTION_PROPERTIES = new Properties();
     protected static final int PG_PORT = 8822;
     protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
+    protected static int ILP_WORKER_COUNT = 1;
     protected static Path auxPath;
     protected static Path dbPath;
     protected static int dbPathLen;
@@ -125,7 +126,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("http.min.worker.count=1");
             writer.println("pg.worker.count=1");
             writer.println("line.tcp.writer.worker.count=1");
-            writer.println("line.tcp.io.worker.count=1");
+            writer.println("line.tcp.io.worker.count=" + ILP_WORKER_COUNT);
 
             // extra
             if (extra != null) {
@@ -160,7 +161,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     protected static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
             walApplyJob.drain(0);
             new CheckWalTransactionsJob(engine).run(0);
             // run once again as there might be notifications to handle now
@@ -168,11 +169,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         }
     }
 
-    static void dropTable(
-            SqlCompiler compiler,
-            SqlExecutionContext context,
-            TableToken tableToken
-    ) throws Exception {
+    static void dropTable(SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken) throws Exception {
         compiler.compile("DROP TABLE '" + tableToken.getTableName() + '\'', context);
     }
 

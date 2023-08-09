@@ -24,27 +24,18 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
-        assertQuery13(
-                "avg\n" +
-                        "5261.376146789\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b timestamp",
-                "avg\n" +
-                        "5261.376146789\n",
-                false,
-                true
-        );
+        assertQuery("avg\n" +
+                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b timestamp", "avg\n" +
+                        "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tmin\n" +
@@ -59,50 +50,23 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "min\n" +
-                        "\n",
-                "select min(f) from tab",
-                "create table tab as (select cast(null as timestamp) f from long_sequence(33))",
-                null,
-                "insert into tab select 99999999999999999L from long_sequence(1)",
-                "min\n" +
-                        "5138-11-16T09:46:39.999999Z\n",
-                false,
-                true
-        );
+        assertQuery("min\n" +
+                        "\n", "select min(f) from tab", "create table tab as (select cast(null as timestamp) f from long_sequence(33))", null, "insert into tab select 99999999999999999L from long_sequence(1)", "min\n" +
+                        "5138-11-16T09:46:39.999999Z\n", false, true, false);
     }
 
     @Test
     public void testKeyedMaxTimestampOrNullThenMaxLong() throws Exception {
-        assertQuery13(
-                "i\tmin\n" +
-                        "1\t\n",
-                "select i, min(f) from tab",
-                "create table tab as (select cast(1 as int) i, cast(null as timestamp) f from long_sequence(33))",
-                null,
-                "insert into tab select 1, 9223372036854775807L from long_sequence(1)",
-                "i\tmin\n" +
-                        "1\t294247-01-10T04:00:54.775807Z\n",
-                true,
-                true
-        );
+        assertQuery("i\tmin\n" +
+                        "1\t\n", "select i, min(f) from tab", "create table tab as (select cast(1 as int) i, cast(null as timestamp) f from long_sequence(33))", null, "insert into tab select 1, 9223372036854775807L from long_sequence(1)", "i\tmin\n" +
+                        "1\t294247-01-10T04:00:54.775807Z\n", true, true, false);
     }
 
     @Test
     public void testMaxTimestampOrNullThenMaxLong() throws Exception {
-        assertQuery13(
-                "min\n" +
-                        "\n",
-                "select min(f) from tab",
-                "create table tab as (select cast(null as timestamp) f from long_sequence(33))",
-                null,
-                "insert into tab select 9223372036854775807L from long_sequence(1)",
-                "min\n" +
-                        "294247-01-10T04:00:54.775807Z\n",
-                false,
-                true
-        );
+        assertQuery("min\n" +
+                        "\n", "select min(f) from tab", "create table tab as (select cast(null as timestamp) f from long_sequence(33))", null, "insert into tab select 9223372036854775807L from long_sequence(1)", "min\n" +
+                        "294247-01-10T04:00:54.775807Z\n", false, true, false);
     }
 
     @Test

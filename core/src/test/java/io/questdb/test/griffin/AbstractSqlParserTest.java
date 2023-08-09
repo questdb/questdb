@@ -24,28 +24,26 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-public class AbstractSqlParserTest extends AbstractGriffinTest {
-    private static void assertSyntaxError(
-            SqlCompiler compiler,
+public class AbstractSqlParserTest extends AbstractCairoTest {
+    private static void assertSyntaxError0(
             String query,
             int position,
             String contains,
@@ -53,16 +51,10 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
     ) throws Exception {
         try {
             assertMemoryLeak(() -> {
-                try {
-                    for (int i = 0, n = tableModels.length; i < n; i++) {
-                        CreateTableTestUtils.create(tableModels[i]);
-                    }
-                    compiler.compile(query, sqlExecutionContext);
-                    Assert.fail("Exception expected");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), contains);
-                    Assert.assertEquals("position", position, e.getPosition());
+                for (int i = 0, n = tableModels.length; i < n; i++) {
+                    CreateTableTestUtils.create(tableModels[i]);
                 }
+                assertException(query, position, contains);
             });
         } finally {
             for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -118,16 +110,6 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertColumnNames(SqlCompiler compiler, String query, String... columns) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
-            RecordMetadata metadata = factory.getMetadata();
-            for (int idx = 0; idx < columns.length; idx++) {
-                TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
-            }
-        }
-    }
-
     private void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -178,7 +160,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
 
     protected static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
         refreshTablesInBaseEngine();
-        AbstractSqlParserTest.assertSyntaxError(compiler, query, position, contains, tableModels);
+        assertSyntaxError0(query, position, contains, tableModels);
     }
 
     protected static TableModel modelOf(String tableName) {
@@ -186,7 +168,12 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
     }
 
     protected void assertColumnNames(String query, String... columns) throws SqlException {
-        assertColumnNames(compiler, query, columns);
+        try (RecordCursorFactory factory = select(query)) {
+            RecordMetadata metadata = factory.getMetadata();
+            for (int idx = 0; idx < columns.length; idx++) {
+                TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
+            }
+        }
     }
 
     protected void assertInsertQuery(TableModel... tableModels) throws SqlException {
@@ -201,12 +188,14 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
     protected void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
-            Assert.assertEquals(model.getModelType(), modelType);
-            ((Sinkable) model).toSink(sink);
-            TestUtils.assertEquals(expected, sink);
-            if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
-                validateTopDownColumns((QueryModel) model);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
+                Assert.assertEquals(model.getModelType(), modelType);
+                ((Sinkable) model).toSink(sink);
+                TestUtils.assertEquals(expected, sink);
+                if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
+                    validateTopDownColumns((QueryModel) model);
+                }
             }
         }, tableModels);
     }

@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {
@@ -60,7 +60,7 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
         );
         // multiplication shouldn't affect the number of distinct values,
         // so the result should stay the same
-        assertSql("select a, count_distinct(s) from x", expected);
+        assertSql(expected, "select a, count_distinct(s) from x");
     }
 
     @Test
@@ -107,9 +107,9 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
                 true
         );
 
-        executeInsert("insert into x values(cast(null as LONG), '2021-05-21')");
-        executeInsert("insert into x values(cast(null as LONG), '1970-01-01')");
-        assertSql("select count_distinct(s) from x", expected);
+        insert("insert into x values(cast(null as LONG), '2021-05-21')");
+        insert("insert into x values(cast(null as LONG), '1970-01-01')");
+        assertSql(expected, "select count_distinct(s) from x");
     }
 
     @Test
@@ -152,11 +152,10 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "with x as (select * from (select rnd_long(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                        "select ts, count_distinct(s) from x sample by 2s",
                 "ts\tcount_distinct\n" +
                         "1970-01-01T00:00:00.050000Z\t8\n" +
-                        "1970-01-01T00:00:02.050000Z\t8\n"
+                        "1970-01-01T00:00:02.050000Z\t8\n", "with x as (select * from (select rnd_long(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                        "select ts, count_distinct(s) from x sample by 2s"
         ));
     }
 

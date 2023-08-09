@@ -245,4 +245,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     default long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars) {
         throw new UnsupportedOperationException();
     }
+
+    void shiftAddressRight(long shiftRightOffset);
 }

@@ -29,8 +29,6 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -63,8 +61,6 @@ public class PGWireServer implements Closeable {
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
@@ -79,7 +75,7 @@ public class PGWireServer implements Closeable {
         workerPool.assign(dispatcher);
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            final PGJobContext jobContext = new PGJobContext(configuration, engine, functionFactoryCache, snapshotAgent);
+            final PGJobContext jobContext = new PGJobContext(configuration, engine);
 
             final SCSequence queryCacheEventSubSeq = new SCSequence();
             final FanOut queryCacheEventFanOut = engine.getMessageBus().getQueryCacheEventFanOut();

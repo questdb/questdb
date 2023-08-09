@@ -26,18 +26,18 @@ package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MatchStrBindVariableTest extends AbstractGriffinTest {
+public class MatchStrBindVariableTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(1) where '1GQO2' ~ $1", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select x from long_sequence(1) where '1GQO2' ~ $1")) {
                 bindVariableService.setStr(0, "GQO");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
@@ -67,7 +67,7 @@ public class MatchStrBindVariableTest extends AbstractGriffinTest {
 
     @Test
     public void testDynamicRegexFailure() throws Exception {
-        assertFailure(
+        assertException(
                 "x where s ~ s",
                 "create table x as (select rnd_str() s from long_sequence(100))",
                 12,
@@ -78,9 +78,9 @@ public class MatchStrBindVariableTest extends AbstractGriffinTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() s from long_sequence(100))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() s from long_sequence(100))");
 
-            try (RecordCursorFactory factory = compiler.compile("x where s ~ $1", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("x where s ~ $1")) {
                 bindVariableService.setStr(0, "GQO");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);

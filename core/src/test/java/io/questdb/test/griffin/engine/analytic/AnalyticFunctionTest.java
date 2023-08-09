@@ -24,18 +24,18 @@
 
 package io.questdb.test.griffin.engine.analytic;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AnalyticFunctionTest extends AbstractGriffinTest {
+public class AnalyticFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testAnalyticContextCleanup() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table trades as " +
+            ddl("create table trades as " +
                     "(" +
                     "select" +
                     " rnd_int(1,2,3) price," +
@@ -51,12 +51,12 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                     "AA\t2\t1\n" +
                     "CC\t1\t1\n" +
                     "BB\t2\t2\n";
-            assertSql(query, expected);
+            assertSql(expected, query);
 
             // AnalyticContext should be properly clean up when we try to execute the next query.
 
             try {
-                compile("select row_number() from trades", sqlExecutionContext);
+                ddl("select row_number() from trades", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(7, e.getPosition());
@@ -67,7 +67,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testRankFailsInNonAnalyticContext() throws Exception {
-        assertFailure(
+        assertException(
                 "select rank(), * from trades",
                 "create table trades as " +
                         "(" +
@@ -392,7 +392,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testRowNumberFailsInNonAnalyticContext() throws Exception {
-        assertFailure(
+        assertException(
                 "select row_number(), * from trades",
                 "create table trades as " +
                         "(" +

@@ -96,6 +96,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public int getInsertCacheBlockCount() {
         return 4;
     }
@@ -154,11 +159,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getRecvBufferSize() {
         return 1024 * 1024;
-    }
-
-    @Override
-    public FactoryProvider getFactoryProvider() {
-        return DefaultFactoryProvider.INSTANCE;
     }
 
     @Override

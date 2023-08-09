@@ -24,15 +24,15 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class PowerTest extends AbstractGriffinTest {
+public class PowerTest extends AbstractCairoTest {
     @Test
     public void testPowerDouble() throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 "select power(10.2, 3)",
                 sink,
@@ -44,7 +44,7 @@ public class PowerTest extends AbstractGriffinTest {
     @Test
     public void testPowerDoubleLeftNull() throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 "select power(NaN, 3)",
                 sink,
@@ -56,7 +56,7 @@ public class PowerTest extends AbstractGriffinTest {
     @Test
     public void testPowerDoubleRightNull() throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 "select power(1.5, NaN)",
                 sink,

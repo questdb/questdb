@@ -33,7 +33,10 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -42,7 +45,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -57,9 +59,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
-    private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final int doubleScale;
+    private final CairoEngine engine;
     private final int floatScale;
     private final Metrics metrics;
     private final SqlExecutionContextImpl sqlExecutionContext;
@@ -70,30 +72,27 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, workerCount, null, null);
+        this(configuration, engine, workerCount, workerCount);
     }
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent
+            int sharedWorkerCount
     ) {
         this.configuration = configuration;
-        this.compiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
         this.doubleScale = configuration.getDoubleScale();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
+        this.engine = engine;
     }
 
     @Override
     public void close() {
-        Misc.free(compiler);
         Misc.free(circuitBreaker);
     }
 
@@ -115,17 +114,19 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     circuitBreaker.of(context.getFd())
             );
             if (state.recordCursorFactory == null) {
-                final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
-                    state.recordCursorFactory = cc.getRecordCursorFactory();
-                } else if (isExpRequest) {
-                    throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                    if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
+                        state.recordCursorFactory = cc.getRecordCursorFactory();
+                    } else if (isExpRequest) {
+                        throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                    }
+                    info(state).$("execute-new [q=`").utf8(state.query)
+                            .$("`, skip: ").$(state.skip)
+                            .$(", stop: ").$(state.stop)
+                            .I$();
+                    sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
                 }
-                info(state).$("execute-new [q=`").utf8(state.query)
-                        .$("`, skip: ").$(state.skip)
-                        .$(", stop: ").$(state.stop)
-                        .I$();
-                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
             } else {
                 info(state).$("execute-cached [q=`").utf8(state.query)
                         .$("`, skip: ").$(state.skip)
@@ -147,12 +148,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             }
                             info(state).$(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
-                            final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                            if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
-                                throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                                final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                                if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
+                                    throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                                }
+                                state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
-
-                            state.recordCursorFactory = cc.getRecordCursorFactory();
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
@@ -247,6 +249,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
             }
             socket.put('\"');
+        }
+    }
+
+    private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final int ip = rec.getIPv4(col);
+        if (ip != Numbers.IPv4_NULL) {
+            Numbers.intToIPv4Sink(socket, ip);
         }
     }
 
@@ -602,6 +611,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
+            case ColumnType.IPv4:
+                putIPv4Value(socket, rec, col);
+                break;
             default:
                 assert false;
         }

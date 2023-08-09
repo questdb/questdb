@@ -447,7 +447,7 @@ public final class IntervalUtils {
                                 int micr = 0;
                                 for (; p < mlim; p++) {
                                     char c = seq.charAt(p);
-                                    if (c < '0' || c > '9') {
+                                    if (Numbers.notDigit(c)) {
                                         // Timezone
                                         break;
                                     }
@@ -455,6 +455,15 @@ public final class IntervalUtils {
                                     micr += c - '0';
                                 }
                                 micr *= tenPow(micrLim - p);
+
+                                // truncate remaining nanos if any
+                                for (int nlim = Math.min(lim, p + 3); p < nlim; p++) {
+                                    char c = seq.charAt(p);
+                                    if (Numbers.notDigit(c)) {
+                                        // Timezone
+                                        break;
+                                    }
+                                }
 
                                 // micros
                                 ts = Timestamps.yearMicros(year, l)

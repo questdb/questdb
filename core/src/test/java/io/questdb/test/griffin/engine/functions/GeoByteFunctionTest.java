@@ -28,14 +28,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.NumericException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GeoByteFunctionTest extends AbstractGriffinTest {
+public class GeoByteFunctionTest extends AbstractCairoTest {
     private static final long hash;
     private static final GeoByteFunction function = new GeoByteFunction(
             ColumnType.getGeoHashTypeWithBits(5)
