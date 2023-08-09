@@ -247,14 +247,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean lock,
             LifecycleManager lifecycleManager,
             CharSequence root,
+            DdlListener ddlListener,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
-        final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
-        this.ddlListener = sysTable || configuration.getFactoryProvider() == null
-                ? DdlListenerImpl.INSTANCE
-                : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
+        this.ddlListener = ddlListener;
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
@@ -357,12 +355,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @TestOnly
     public TableWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics) {
-        this(configuration, tableToken, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+        this(configuration, tableToken, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, metrics);
     }
 
     @TestOnly
     public TableWriter(CairoConfiguration configuration, TableToken tableToken, MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+        this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, metrics);
     }
 
     @TestOnly

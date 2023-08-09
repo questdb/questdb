@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.Path;
@@ -58,7 +59,7 @@ public class WalListenerTest extends AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        engine.setWalListener(WalListener.DEFAULT);
+        engine.setWalListener(DefaultWalListener.INSTANCE);
         if (!listener.events.isEmpty()) {
             System.err.println("Unexpected or unasserted WalListener events:");
             for (WalListenerEvent event : listener.events) {
@@ -92,7 +93,8 @@ public class WalListenerTest extends AbstractCairoTest {
                                 0,
                                 null
                         ),
-                        listener.events.remove());
+                        listener.events.remove()
+                );
                 Assert.assertEquals(0, listener.events.size());
 
                 final String newTableName = tableToken1.get().getTableName() + "_new";
@@ -120,7 +122,8 @@ public class WalListenerTest extends AbstractCairoTest {
                                     -1,
                                     tableToken1.get()
                             ),
-                            listener.events.remove());
+                            listener.events.remove()
+                    );
 
                     drainWalQueue();
                     releaseInactive(engine);
@@ -135,7 +138,8 @@ public class WalListenerTest extends AbstractCairoTest {
                                     -1,
                                     null
                             ),
-                            listener.events.remove());
+                            listener.events.remove()
+                    );
                 }
             }
 
@@ -151,7 +155,8 @@ public class WalListenerTest extends AbstractCairoTest {
                             -1,
                             null
                     ),
-                    listener.events.remove());
+                    listener.events.remove()
+            );
 
             try (WalWriter walWriter2 = engine.getWalWriter(tableToken2.get())) {
                 walWriter2.addColumn("c", ColumnType.INT);
@@ -166,7 +171,8 @@ public class WalListenerTest extends AbstractCairoTest {
                                 -1,
                                 null
                         ),
-                        listener.events.remove());
+                        listener.events.remove()
+                );
             }
 
             releaseInactive(engine);
@@ -181,7 +187,8 @@ public class WalListenerTest extends AbstractCairoTest {
                             -1,
                             null
                     ),
-                    listener.events.remove());
+                    listener.events.remove()
+            );
 
             engine.drop(Path.getThreadLocal(""), tableToken2.get());
 
@@ -195,8 +202,152 @@ public class WalListenerTest extends AbstractCairoTest {
                             -1,
                             null
                     ),
-                    listener.events.remove());
+                    listener.events.remove()
+            );
         });
+    }
+
+    static TableToken createTable(String tableName) {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.STRING)
+                .timestamp("ts")
+                .wal()) {
+            return createTable(model);
+        }
+    }
+
+    enum WalListenerEventType {
+        DATA_TXN_COMMITTED,
+        NON_DATA_TXN_COMMITTED,
+        SEGMENT_CLOSED,
+        TABLE_DROPPED,
+        TABLE_RENAMED
+    }
+
+    static class TestWalListener implements WalListener {
+        public Deque<WalListenerEvent> events = new ArrayDeque<>();
+
+        @Override
+        public void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.DATA_TXN_COMMITTED,
+                    tableToken,
+                    txn,
+                    walId,
+                    segmentId,
+                    segmentTxn,
+                    null
+            ));
+        }
+
+        @Override
+        public void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.NON_DATA_TXN_COMMITTED,
+                    tableToken,
+                    txn,
+                    -1,
+                    -1,
+                    -1,
+                    null
+            ));
+        }
+
+        @Override
+        public void segmentClosed(TableToken tabletoken, int walId, int segmentId) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.SEGMENT_CLOSED,
+                    tabletoken,
+                    -1,
+                    walId,
+                    segmentId,
+                    -1,
+                    null
+            ));
+        }
+
+        @Override
+        public void tableDropped(TableToken tableToken, long txn, long timestamp) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.TABLE_DROPPED,
+                    tableToken,
+                    txn,
+                    -1,
+                    -1,
+                    -1,
+                    null
+            ));
+        }
+
+        @Override
+        public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.TABLE_RENAMED,
+                    tableToken,
+                    txn,
+                    -1,
+                    -1,
+                    -1,
+                    oldTableToken
+            ));
+        }
+    }
+
+    static class WalListenerEvent {
+        public final TableToken oldTableToken;
+        public final int segmentId;
+        public final int segmentTxn;
+        public final TableToken tableToken;
+        public final long txn;
+        public final WalListenerEventType type;
+        public final int walId;
+
+        WalListenerEvent(
+                WalListenerEventType type,
+                TableToken tableToken,
+                long txn,
+                int walId,
+                int segmentId,
+                int segmentTxn,
+                TableToken oldTableToken
+        ) {
+            this.type = type;
+            this.tableToken = tableToken;
+            this.txn = txn;
+            this.walId = walId;
+            this.segmentId = segmentId;
+            this.segmentTxn = segmentTxn;
+            this.oldTableToken = oldTableToken;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof WalListenerEvent) {
+                WalListenerEvent that = (WalListenerEvent) obj;
+                return this.type == that.type &&
+                        Objects.equals(this.tableToken, that.tableToken) &&
+                        this.txn == that.txn &&
+                        this.walId == that.walId &&
+                        this.segmentId == that.segmentId &&
+                        this.segmentTxn == that.segmentTxn &&
+                        Objects.equals(this.oldTableToken, that.oldTableToken);
+            }
+            return false;
+        }
+
+        @Override
+        public String toString() {
+            return "WalListenerEvent{" +
+                    "type=" + type +
+                    ", tableToken=" + tableToken +
+                    ", txn=" + txn +
+                    ", walId=" + walId +
+                    ", segmentId=" + segmentId +
+                    ", segmentTxn=" + segmentTxn +
+                    ", oldTableToken=" + oldTableToken +
+                    '}';
+        }
     }
 
     static TableToken createTable(String tableName) {
