@@ -190,7 +190,7 @@ public class SendAndReceiveRequestBuilder {
                 String expected = expectedResponse.toString();
                 if (compareLength > 0) {
                     expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
-                    actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
+                    actual = !actual.isEmpty() ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
                 }
                 if (!expectSendDisconnect) {
                     // expectSendDisconnect means that test expect disconnect during send or straight after
@@ -310,17 +310,11 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeWithStandardHeaders(
-            String request,
-            String response
-    ) throws InterruptedException {
+    public void executeWithStandardHeaders(String request, String response) {
         execute(request + requestHeaders(), ResponseHeaders + response);
     }
 
-    public void executeWithStandardRequestHeaders(
-            String request,
-            CharSequence response
-    ) throws InterruptedException {
+    public void executeWithStandardRequestHeaders(String request, CharSequence response) {
         execute(request + requestHeaders(), response);
     }
 
@@ -415,18 +409,12 @@ public class SendAndReceiveRequestBuilder {
 
     @FunctionalInterface
     public interface RequestAction {
-        void run(RequestExecutor executor) throws InterruptedException, BrokenBarrierException;
+        void run(RequestExecutor executor);
     }
 
     public interface RequestExecutor {
-        void execute(
-                String request,
-                String response
-        ) throws InterruptedException;
+        void execute(String request, String response);
 
-        void executeWithStandardHeaders(
-                String request,
-                String response
-        ) throws InterruptedException;
+        void executeWithStandardHeaders(String request, String response);
     }
 }

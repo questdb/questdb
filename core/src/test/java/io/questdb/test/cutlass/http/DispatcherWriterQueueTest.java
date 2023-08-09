@@ -415,10 +415,10 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 String tableName = "x";
                 engine.ddl(
                         "create table IF NOT EXISTS " + tableName + " as (" +
-                        " select rnd_symbol('a', 'b', 'c') as s," +
-                        " cast(x as timestamp) ts" +
-                        " from long_sequence(10)" +
-                        " )",
+                                " select rnd_symbol('a', 'b', 'c') as s," +
+                                " cast(x as timestamp) ts" +
+                                " from long_sequence(10)" +
+                                " )",
                         sqlExecutionContext
                 );
                 writer = TestUtils.getWriter(engine, tableName);
@@ -520,11 +520,11 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             try {
                 String tableName = "x";
                 engine.ddl("create table IF NOT EXISTS " + tableName + " as (" +
-                        " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
-                        " x," +
-                        " cast(x as timestamp) ts" +
-                        " from long_sequence(9)" +
-                        " )",
+                                " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
+                                " x," +
+                                " cast(x as timestamp) ts" +
+                                " from long_sequence(9)" +
+                                " )",
                         sqlExecutionContext
                 );
                 writer = TestUtils.getWriter(engine, tableName);
@@ -766,7 +766,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
 
     @FunctionalInterface
     interface AlterVerifyAction {
-        void run(TableWriter writer, TableReader rdr) throws InterruptedException;
+        void run(TableWriter writer, TableReader rdr);
     }
 
     @FunctionalInterface

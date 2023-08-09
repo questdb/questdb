@@ -431,7 +431,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setIPv4(int index, int value) throws SqlException {
+    public void setIPv4(int index, int value) {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
@@ -444,7 +444,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setIPv4(int index, CharSequence value) throws SqlException {
+    public void setIPv4(int index, CharSequence value) {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
@@ -878,8 +878,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
+    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name)  {
         ((IPv4BindVariable) function).value = value;
     }
 

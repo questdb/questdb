@@ -64,7 +64,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
     }

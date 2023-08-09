@@ -47,6 +47,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class WalListenerTest extends AbstractCairoTest {
 
+    private static final TestWalListener listener = new TestWalListener();
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
@@ -55,7 +57,7 @@ public class WalListenerTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         engine.setWalListener(WalListener.DEFAULT);
         if (!listener.events.isEmpty()) {
             System.err.println("Unexpected or unasserted WalListener events:");
@@ -66,151 +68,6 @@ public class WalListenerTest extends AbstractCairoTest {
         }
         AbstractCairoTest.tearDownStatic();
     }
-
-    enum WalListenerEventType {
-        DATA_TXN_COMMITTED,
-        NON_DATA_TXN_COMMITTED,
-        SEGMENT_CLOSED,
-        TABLE_DROPPED,
-        TABLE_RENAMED
-    }
-
-    static class WalListenerEvent {
-        public final WalListenerEventType type;
-        public final TableToken tableToken;
-        public final long txn;
-        public final int walId;
-        public final int segmentId;
-        public final int segmentTxn;
-        public final TableToken oldTableToken;
-
-        WalListenerEvent(
-                WalListenerEventType type,
-                TableToken tableToken,
-                long txn,
-                int walId,
-                int segmentId,
-                int segmentTxn,
-                TableToken oldTableToken
-        ) {
-            this.type = type;
-            this.tableToken = tableToken;
-            this.txn = txn;
-            this.walId = walId;
-            this.segmentId = segmentId;
-            this.segmentTxn = segmentTxn;
-            this.oldTableToken = oldTableToken;
-        }
-
-        @Override
-        public String toString() {
-            return "WalListenerEvent{" +
-                    "type=" + type +
-                    ", tableToken=" + tableToken +
-                    ", txn=" + txn +
-                    ", walId=" + walId +
-                    ", segmentId=" + segmentId +
-                    ", segmentTxn=" + segmentTxn +
-                    ", oldTableToken=" + oldTableToken +
-                    '}';
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (obj instanceof WalListenerEvent) {
-                WalListenerEvent that = (WalListenerEvent) obj;
-                return this.type == that.type &&
-                        Objects.equals(this.tableToken, that.tableToken) &&
-                        this.txn == that.txn &&
-                        this.walId == that.walId &&
-                        this.segmentId == that.segmentId &&
-                        this.segmentTxn == that.segmentTxn &&
-                        Objects.equals(this.oldTableToken, that.oldTableToken);
-            }
-            return false;
-        }
-    }
-
-    static class TestWalListener implements WalListener {
-        public Deque<WalListenerEvent> events = new ArrayDeque<>();
-
-        @Override
-        public void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {
-            events.add(new WalListenerEvent(
-                    WalListenerEventType.DATA_TXN_COMMITTED,
-                    tableToken,
-                    txn,
-                    walId,
-                    segmentId,
-                    segmentTxn,
-                    null
-            ));
-        }
-
-        @Override
-        public void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp) {
-            events.add(new WalListenerEvent(
-                    WalListenerEventType.NON_DATA_TXN_COMMITTED,
-                    tableToken,
-                    txn,
-                    -1,
-                    -1,
-                    -1,
-                    null
-            ));
-        }
-
-        @Override
-        public void segmentClosed(TableToken tabletoken, int walId, int segmentId) {
-            events.add(new WalListenerEvent(
-                    WalListenerEventType.SEGMENT_CLOSED,
-                    tabletoken,
-                    -1,
-                    walId,
-                    segmentId,
-                    -1,
-                    null
-            ));
-        }
-
-        @Override
-        public void tableDropped(TableToken tableToken, long txn, long timestamp) {
-            events.add(new WalListenerEvent(
-                    WalListenerEventType.TABLE_DROPPED,
-                    tableToken,
-                    txn,
-                    -1,
-                    -1,
-                    -1,
-                    null
-            ));
-        }
-
-        @Override
-        public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
-            events.add(new WalListenerEvent(
-                    WalListenerEventType.TABLE_RENAMED,
-                    tableToken,
-                    txn,
-                    -1,
-                    -1,
-                    -1,
-                    oldTableToken
-            ));
-        }
-    }
-
-    static TableToken createTable(String tableName) {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                .col("a", ColumnType.BYTE)
-                .col("b", ColumnType.STRING)
-                .timestamp("ts")
-                .wal()) {
-            return createTable(model);
-        }
-    }
-
-    private static final TestWalListener listener = new TestWalListener();
 
     @Test
     public void testWalListener() throws Exception {
@@ -340,5 +197,148 @@ public class WalListenerTest extends AbstractCairoTest {
                     ),
                     listener.events.remove());
         });
+    }
+
+    static TableToken createTable(String tableName) {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.STRING)
+                .timestamp("ts")
+                .wal()) {
+            return createTable(model);
+        }
+    }
+
+    enum WalListenerEventType {
+        DATA_TXN_COMMITTED,
+        NON_DATA_TXN_COMMITTED,
+        SEGMENT_CLOSED,
+        TABLE_DROPPED,
+        TABLE_RENAMED
+    }
+
+    static class TestWalListener implements WalListener {
+        public Deque<WalListenerEvent> events = new ArrayDeque<>();
+
+        @Override
+        public void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.DATA_TXN_COMMITTED,
+                    tableToken,
+                    txn,
+                    walId,
+                    segmentId,
+                    segmentTxn,
+                    null
+            ));
+        }
+
+        @Override
+        public void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.NON_DATA_TXN_COMMITTED,
+                    tableToken,
+                    txn,
+                    -1,
+                    -1,
+                    -1,
+                    null
+            ));
+        }
+
+        @Override
+        public void segmentClosed(TableToken tabletoken, int walId, int segmentId) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.SEGMENT_CLOSED,
+                    tabletoken,
+                    -1,
+                    walId,
+                    segmentId,
+                    -1,
+                    null
+            ));
+        }
+
+        @Override
+        public void tableDropped(TableToken tableToken, long txn, long timestamp) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.TABLE_DROPPED,
+                    tableToken,
+                    txn,
+                    -1,
+                    -1,
+                    -1,
+                    null
+            ));
+        }
+
+        @Override
+        public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.TABLE_RENAMED,
+                    tableToken,
+                    txn,
+                    -1,
+                    -1,
+                    -1,
+                    oldTableToken
+            ));
+        }
+    }
+
+    static class WalListenerEvent {
+        public final TableToken oldTableToken;
+        public final int segmentId;
+        public final int segmentTxn;
+        public final TableToken tableToken;
+        public final long txn;
+        public final WalListenerEventType type;
+        public final int walId;
+
+        WalListenerEvent(
+                WalListenerEventType type,
+                TableToken tableToken,
+                long txn,
+                int walId,
+                int segmentId,
+                int segmentTxn,
+                TableToken oldTableToken
+        ) {
+            this.type = type;
+            this.tableToken = tableToken;
+            this.txn = txn;
+            this.walId = walId;
+            this.segmentId = segmentId;
+            this.segmentTxn = segmentTxn;
+            this.oldTableToken = oldTableToken;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof WalListenerEvent) {
+                WalListenerEvent that = (WalListenerEvent) obj;
+                return this.type == that.type &&
+                        Objects.equals(this.tableToken, that.tableToken) &&
+                        this.txn == that.txn &&
+                        this.walId == that.walId &&
+                        this.segmentId == that.segmentId &&
+                        this.segmentTxn == that.segmentTxn &&
+                        Objects.equals(this.oldTableToken, that.oldTableToken);
+            }
+            return false;
+        }
+
+        @Override
+        public String toString() {
+            return "WalListenerEvent{" +
+                    "type=" + type +
+                    ", tableToken=" + tableToken +
+                    ", txn=" + txn +
+                    ", walId=" + walId +
+                    ", segmentId=" + segmentId +
+                    ", segmentTxn=" + segmentTxn +
+                    ", oldTableToken=" + oldTableToken +
+                    '}';
+        }
     }
 }

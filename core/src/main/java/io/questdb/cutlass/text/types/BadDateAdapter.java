@@ -37,11 +37,6 @@ public final class BadDateAdapter extends DateAdapter {
     }
 
     @Override
-    public int getType() {
-        return ColumnType.DATE;
-    }
-
-    @Override
     public boolean probe(DirectByteCharSequence text) {
         throw new UnsupportedOperationException();
     }

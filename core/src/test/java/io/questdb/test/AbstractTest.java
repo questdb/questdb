@@ -80,7 +80,7 @@ public class AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         TestUtils.removeTestPath(root);
     }
 

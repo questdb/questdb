@@ -99,10 +99,6 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
         return true;
     }
 
-    public boolean excludes(long key) {
-        return keyIndex(key) > -1;
-    }
-
     public long get(int index) {
         return list.getQuick(index);
     }

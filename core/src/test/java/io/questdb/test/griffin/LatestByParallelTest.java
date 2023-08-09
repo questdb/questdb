@@ -271,20 +271,12 @@ public class LatestByParallelTest extends AbstractTest {
                 WorkerPool pool = new WorkerPool(() -> workerCount);
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public @NotNull FilesFacade getFilesFacade() {
-                        return TestFilesFacadeImpl.INSTANCE;
-                    }
                 };
 
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public @NotNull FilesFacade getFilesFacade() {
-                        return TestFilesFacadeImpl.INSTANCE;
-                    }
 
                     @Override
                     public int getLatestByQueueCapacity() {

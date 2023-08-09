@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -55,7 +54,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);
         return new CursorFunction(new DataUnavailableRecordCursorFactory(totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
@@ -138,7 +137,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.reset();
             return cursor;
         }

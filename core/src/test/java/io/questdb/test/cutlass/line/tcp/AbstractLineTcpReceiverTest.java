@@ -395,8 +395,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public void close() throws Exception {
-            tlSocket.set(null);
+        public void close() {
+            tlSocket.remove();
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
         }

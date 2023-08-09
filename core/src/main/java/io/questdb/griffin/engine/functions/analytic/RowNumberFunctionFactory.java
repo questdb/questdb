@@ -112,11 +112,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next++);
         }
@@ -176,11 +171,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override

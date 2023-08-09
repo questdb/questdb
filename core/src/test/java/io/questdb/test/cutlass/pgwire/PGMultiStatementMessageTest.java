@@ -38,7 +38,6 @@ import org.postgresql.jdbc.PgConnection;
 import org.postgresql.util.PSQLException;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.sql.*;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1746,7 +1745,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             try {
                 statement.close();
             } catch (SQLException e) {

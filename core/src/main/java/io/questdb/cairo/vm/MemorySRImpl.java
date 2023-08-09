@@ -57,11 +57,6 @@ public class MemorySRImpl extends MemoryPARWImpl {
         return page == pageIndex ? pageAddress : mapPage(page);
     }
 
-    @Override
-    public long getPageSize() {
-        return getExtendSegmentSize();
-    }
-
     public void of(MemoryMA parent, int memoryTag) {
         close();
         this.memoryTag = memoryTag;

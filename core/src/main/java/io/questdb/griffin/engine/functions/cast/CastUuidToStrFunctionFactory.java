@@ -29,7 +29,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -45,7 +44,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
@@ -64,11 +63,6 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
 
         public Func(Function arg) {
             super(arg);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
         @Override

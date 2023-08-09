@@ -180,11 +180,6 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
         return ColumnType.SYMBOL;
     }
 
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
     public abstract boolean isSymbolTableStatic();
 
     /**

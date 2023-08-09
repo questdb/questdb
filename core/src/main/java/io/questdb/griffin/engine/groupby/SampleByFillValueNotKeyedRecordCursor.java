@@ -66,11 +66,6 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
     }
 
     @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
     public boolean hasNext() {
         initTimestamps();
 

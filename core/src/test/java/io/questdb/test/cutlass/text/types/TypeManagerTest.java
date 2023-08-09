@@ -57,7 +57,7 @@ public class TypeManagerTest extends AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         Misc.free(utf8Sink);
         Misc.free(jsonLexer);
         AbstractTest.tearDownStatic();
@@ -143,13 +143,13 @@ public class TypeManagerTest extends AbstractTest {
     }
 
     @Test
-    public void testIllegalMethodParameterTimestamp() {
-        testIllegalParameterForGetTypeAdapter(ColumnType.TIMESTAMP);
+    public void testIllegalMethodParameterGeoInt() {
+        testIllegalParameterForGetTypeAdapter(ColumnType.GEOINT);
     }
 
     @Test
-    public void testIllegalMethodParameterGeoInt() {
-        testIllegalParameterForGetTypeAdapter(ColumnType.GEOINT);
+    public void testIllegalMethodParameterTimestamp() {
+        testIllegalParameterForGetTypeAdapter(ColumnType.TIMESTAMP);
     }
 
     @Test

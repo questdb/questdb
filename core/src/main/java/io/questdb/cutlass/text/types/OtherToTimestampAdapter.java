@@ -41,11 +41,6 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
         return compatibleAdapter.getTimestamp(value);
     }
 
-    @Override
-    public int getType() {
-        return ColumnType.TIMESTAMP;
-    }
-
     public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter) {
         this.compatibleAdapter = compatibleAdapter;
         return this;

@@ -6462,14 +6462,14 @@ nodejs code:
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
             ddl(
                     "create table table (" +
-                    "id symbol, " +
-                    "timestamp timestamp) " +
-                    "timestamp(timestamp) partition by day"
+                            "id symbol, " +
+                            "timestamp timestamp) " +
+                            "timestamp(timestamp) partition by day"
             );
             insert(
                     "insert into table " +
-                    " select rnd_symbol(16, 10,10,0), dateadd('s', x::int, '2023-03-23T00:00:00.000000Z') " +
-                    " from long_sequence(10000)"
+                            " select rnd_symbol(16, 10,10,0), dateadd('s', x::int, '2023-03-23T00:00:00.000000Z') " +
+                            " from long_sequence(10000)"
             );
 
             conn.setAutoCommit(false);
@@ -8277,7 +8277,7 @@ create table tab as (
     }
 
     @Test
-    public void testSquashPartitionsReturnsOk() throws Exception {
+    public void testSquashPartitionsReturnsOk() {
         final ConnectionAwareRunnable runnable = (connection, binary) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();

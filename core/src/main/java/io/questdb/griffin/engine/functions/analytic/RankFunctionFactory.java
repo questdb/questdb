@@ -113,11 +113,6 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             if (recordComparator == null) {
                 // order dismiss
@@ -202,11 +197,6 @@ public class RankFunctionFactory implements FunctionFactory {
         @Override
         public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
             this.recordComparator = recordComparatorCompiler.compile(chainTypes, order);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override
@@ -295,11 +285,6 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override

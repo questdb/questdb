@@ -130,11 +130,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public boolean supportsUpdateRowId(TableToken tableToken) {
-        return dataFrameCursorFactory.supportTableRowId(tableToken);
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("DataFrame");
         toPlanInner(sink);

@@ -27,9 +27,6 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.GcUtf8String;
 import org.junit.Assert;
 import org.junit.Test;
 

@@ -90,10 +90,6 @@ public class CompactLongHashSet extends AbstractLongHashSet {
         return true;
     }
 
-    public boolean excludes(long key) {
-        return keyIndex(key) > -1;
-    }
-
     @Override
     public int hashCode() {
         int hashCode = 0;

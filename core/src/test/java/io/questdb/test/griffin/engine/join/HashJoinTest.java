@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;

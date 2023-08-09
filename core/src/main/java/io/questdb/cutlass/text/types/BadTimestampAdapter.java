@@ -42,11 +42,6 @@ public final class BadTimestampAdapter extends TimestampAdapter {
     }
 
     @Override
-    public int getType() {
-        return ColumnType.TIMESTAMP;
-    }
-
-    @Override
     public boolean probe(DirectByteCharSequence text) {
         throw new UnsupportedOperationException();
     }

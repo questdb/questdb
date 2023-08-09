@@ -35,7 +35,6 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 

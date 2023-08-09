@@ -175,7 +175,7 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         memoryRestrictedCompiler = Misc.free(memoryRestrictedCompiler);
         memoryRestrictedEngine = Misc.free(memoryRestrictedEngine);
         AbstractCairoTest.tearDownStatic();

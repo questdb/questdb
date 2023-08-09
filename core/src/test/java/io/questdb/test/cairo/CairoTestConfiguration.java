@@ -35,7 +35,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
