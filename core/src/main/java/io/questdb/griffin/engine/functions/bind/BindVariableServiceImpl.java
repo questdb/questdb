@@ -426,7 +426,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setIPv4(int index) throws SqlException {
+    public void setIPv4(int index) {
         setIPv4(index, Numbers.IPv4_NULL);
     }
 

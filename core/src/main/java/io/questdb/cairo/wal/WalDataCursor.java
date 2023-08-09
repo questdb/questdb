@@ -26,7 +26,6 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 
 public class WalDataCursor implements RecordCursor {

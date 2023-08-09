@@ -112,7 +112,7 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
         int hashCode = 0;
         for (int i = 0, n = keys.length; i < n; i++) {
             if (keys[i] != noEntryKeyValue) {
-                hashCode += keys[i];
+                hashCode += (int) keys[i];
             }
         }
         return hashCode;

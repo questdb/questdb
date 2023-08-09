@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.text.types;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectByteCharSequence;
