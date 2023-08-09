@@ -8277,8 +8277,8 @@ create table tab as (
     }
 
     @Test
-    public void testSquashPartitionsReturnsOk() {
-        final ConnectionAwareRunnable runnable = (connection, binary) -> {
+    public void testSquashPartitionsReturnsOk() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
             connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
@@ -8289,7 +8289,7 @@ create table tab as (
             try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
                 Assert.assertFalse(dropPartition.execute());
             }
-        };
+        });
     }
 
     @Test
@@ -11152,11 +11152,11 @@ create table tab as (
         private final int initialAllowedSendCalls;
         // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
         // we also *read* it from a test thread -> volatile is needed
-        private volatile int remainingAllowedSendCalls;
+        private AtomicInteger remainingAllowedSendCalls = new AtomicInteger();
         private volatile boolean socketClosed = false;
 
         private DisconnectOnSendNetworkFacade(int allowedSendCount) {
-            this.remainingAllowedSendCalls = allowedSendCount;
+            this.remainingAllowedSendCalls.set(allowedSendCount);
             this.initialAllowedSendCalls = allowedSendCount;
         }
 
@@ -11168,8 +11168,8 @@ create table tab as (
 
         @Override
         public int recv(int fd, long buffer, int bufferLen) {
-            if (remainingAllowedSendCalls < 0) {
-                remainingAllowedSendCalls--;
+            if (remainingAllowedSendCalls.get() < 0) {
+                remainingAllowedSendCalls.decrementAndGet();
                 return -1;
             }
             return super.recv(fd, buffer, bufferLen);
@@ -11177,18 +11177,17 @@ create table tab as (
 
         @Override
         public int send(int fd, long buffer, int bufferLen) {
-            remainingAllowedSendCalls--;
-            if (remainingAllowedSendCalls < 0) {
+            if (remainingAllowedSendCalls.decrementAndGet() < 0) {
                 return -1;
             }
             return super.send(fd, buffer, bufferLen);
         }
 
         int getAfterDisconnectInteractions() {
-            if (remainingAllowedSendCalls >= 0) {
+            if (remainingAllowedSendCalls.get() >= 0) {
                 return 0;
             }
-            return -(remainingAllowedSendCalls + 1);
+            return -(remainingAllowedSendCalls.get() + 1);
         }
 
         boolean isSocketClosed() {
@@ -11196,7 +11195,7 @@ create table tab as (
         }
 
         void reset() {
-            remainingAllowedSendCalls = initialAllowedSendCalls;
+            remainingAllowedSendCalls.set(initialAllowedSendCalls);
             socketClosed = false;
         }
     }

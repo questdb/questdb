@@ -31,7 +31,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -91,8 +90,7 @@ public class LogFactoryTest {
 
         final int messageCount = 20;
         AtomicInteger counter = new AtomicInteger();
-        LogFactory factory = new LogFactory();
-        try {
+        try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
                 @Override
                 public void bindProperties(LogFactory factory) {
@@ -131,8 +129,6 @@ public class LogFactoryTest {
             for (int i = 0; i < messageCount; i++) {
                 logger1.criticalW().$("test ").$(i).$();
             }
-        } finally {
-            factory.close(true);
         }
         Assert.assertEquals(messageCount, counter.get());
     }
@@ -229,11 +225,8 @@ public class LogFactoryTest {
             Log logger = factory.create("x");
 
             try {
-                logger.info().$("message 1").$(new Sinkable() {
-                    @Override
-                    public void toSink(CharSink sink) {
-                        throw new NullPointerException();
-                    }
+                logger.info().$("message 1").$(sink1 -> {
+                    throw new NullPointerException();
                 }).$(" message 2").$();
                 Assert.fail();
             } catch (NullPointerException npe) {

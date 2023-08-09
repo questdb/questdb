@@ -1098,8 +1098,8 @@ public class CopyTask {
                             long nextOffset = nextLengthAndOffset & MASK;
 
                             // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
-                            long diff = nextOffset - offset - bytesToRead;
-                            long nextBytesToRead = diff + nextLineLength;
+                            int diff = ((int) (nextOffset - offset)) - bytesToRead;
+                            int nextBytesToRead = diff + nextLineLength;
                             if (diff > -1 && diff < 2 && addr + bytesToRead + nextBytesToRead <= lim) {
                                 bytesToRead += nextBytesToRead;
                                 additionalLines++;
@@ -1183,8 +1183,8 @@ public class CopyTask {
                         long nextOffset = nextLengthAndOffset & MASK;
 
                         // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
-                        long diff = nextOffset - offset - bytesToRead;
-                        long nextBytesToRead = diff + nextLineLength;
+                        int diff = ((int) (nextOffset - offset)) - bytesToRead;
+                        int nextBytesToRead = diff + nextLineLength;
                         if (diff > -1 && diff < 2 && bytesToRead + nextBytesToRead <= fileBufSize) {
                             bytesToRead += diff + nextLineLength;
                             additionalLines++;

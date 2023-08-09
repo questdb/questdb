@@ -406,8 +406,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp3").$()) {
             ff.touch(path);
             try {
-                MemoryMARW mem = Vm.getMARWInstance();
-                try {
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
                     mem.of(ff, TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts()), null, -1, MemoryTag.MMAP_DEFAULT);
 
                     mem.extend(ff.getMapPageSize() * 2);
@@ -416,8 +415,6 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     Assert.assertEquals(999, mem.getLong(ff.getMapPageSize()));
 
                     mem.jumpTo(1024);
-                } finally {
-                    mem.close();
                 }
 
                 Assert.assertEquals(ff.length(path), Files.PAGE_SIZE);
@@ -705,8 +702,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp1").$()) {
             ff.touch(path);
             try {
-                MemoryMARW mem = Vm.getMARWInstance();
-                try {
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
                     mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
@@ -716,8 +712,6 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     mem.truncate();
                     Assert.assertEquals(FilesFacadeImpl._16M, mem.size());
                     Assert.assertEquals(0, mem.getAppendOffset());
-                } finally {
-                    mem.close();
                 }
 
                 Assert.assertEquals(0, ff.length(path));
@@ -754,8 +748,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp4").$()) {
             ff.touch(path);
             try {
-                MemoryMARW mem = Vm.getMARWInstance();
-                try {
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
                     mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
@@ -768,8 +761,6 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
                     }
-                } finally {
-                    mem.close();
                 }
 
                 long fileLen = ff.length(path);

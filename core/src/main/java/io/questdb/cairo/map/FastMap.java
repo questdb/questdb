@@ -378,7 +378,7 @@ public class FastMap implements Map, Reopenable {
         }
         offsets.close();
         offsets = newOffsets;
-        free += (capacity - keyCapacity) * loadFactor;
+        free += (int) ((capacity - keyCapacity) * loadFactor);
         keyCapacity = capacity;
     }
 

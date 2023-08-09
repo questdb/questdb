@@ -1502,11 +1502,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public Row newRowDeferTimestamp() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public Row newRow(long timestamp) {
         switch (rowAction) {
             case ROW_ACTION_OPEN_PARTITION:
@@ -1564,6 +1559,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         txWriter.append();
         return row;
+    }
+
+    @Override
+    public Row newRowDeferTimestamp() {
+        throw new UnsupportedOperationException();
     }
 
     public void o3BumpErrorCount() {
@@ -4167,11 +4167,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int n = o3LastTimestampSpreads.length - 1;
 
                     if (lagError > 0) {
-                        o3EffectiveLag += lagError * configuration.getO3LagIncreaseFactor();
+                        o3EffectiveLag += (long) (lagError * configuration.getO3LagIncreaseFactor());
                         o3EffectiveLag = Math.min(o3EffectiveLag, o3MaxLag);
                     } else {
                         // avoid using negative o3EffectiveLag
-                        o3EffectiveLag += lagError * configuration.getO3LagDecreaseFactor();
+                        o3EffectiveLag += (long) (lagError * configuration.getO3LagDecreaseFactor());
                         o3EffectiveLag = Math.max(0, o3EffectiveLag);
                     }
 
@@ -7561,7 +7561,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
         } else {
-            if (dedupColumnCommitAddresses == null) {
+            if (dedupColumnCommitAddresses != null) {
                 dedupColumnCommitAddresses.clear();
                 dedupColumnCommitAddresses.setDedupColumnCount(0);
             }
