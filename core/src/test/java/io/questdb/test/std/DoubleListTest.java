@@ -80,7 +80,7 @@ public class DoubleListTest {
     public void testBinarySearch3() {
         DoubleList a = new DoubleList();
         for (int i = 0; i < 100; i++) {
-            a.add((i / 10.));
+            a.add((i / 10));
         }
 
 
