@@ -84,11 +84,17 @@ public final class SimpleWaitingLock {
 
     /**
      * Releases the lock, allowing other threads to acquire it.
-     * If the lock is not currently owned, an IllegalStateException is thrown.
+     * <p>
+     * If the lock is not currently owned by any thread, an IllegalStateException is thrown.
      * If there is another thread waiting to acquire the lock, it is unparked.
-     * If there are no waiting threads, the method returns without any additional action.
+     * If there is no waiting thread, the method returns without any additional action.
+     * <p>
+     * Implementation note: This method does not validate the calling thread is the owner of the lock. The method
+     * releases the lock regardless of the calling thread. This makes it somewhat similar to a single permit semaphore.
+     * In such case it may set the unpark flag for the formerly owning thread. The unpark flag should have no negative
+     * side effect on the formerly owning thread as programs must be designed to handle spurious wakeups anyway.
      *
-     * @throws IllegalStateException if the lock is not owned by the calling thread
+     * @throws IllegalStateException if the lock is not owned by any thread
      */
     public void unlock() {
         Thread currentThread = Thread.currentThread();
