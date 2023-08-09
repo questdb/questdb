@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.client;
+package io.questdb.cutlass.http.client;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.client.ser.JsonDataParser;
+import io.questdb.cutlass.http.client.ser.JsonToTableSerializer;
 import io.questdb.cutlass.json.JsonException;
 
 public class HttpClientMain {
@@ -36,7 +36,7 @@ public class HttpClientMain {
 
         try (
                 CairoEngine engine = new CairoEngine(configuration);
-                JsonDataParser jsonDataParser = new JsonDataParser(engine);
+                JsonToTableSerializer jsonToTableSerializer = new JsonToTableSerializer(engine);
                 HttpClient client = HttpClientFactory.newInstance()
         ) {
 
@@ -57,14 +57,14 @@ public class HttpClientMain {
 
                 if (rsp.isChunked()) {
 
-                    jsonDataParser.clear();
+                    jsonToTableSerializer.clear();
 
                     HttpClient.Response.Chunk chunk;
 
                     long t = System.currentTimeMillis();
                     int chunkCount = 0;
                     while ((chunk = rsp.recv()) != null) {
-                        jsonDataParser.parse(chunk.addr, chunk.addr + chunk.available);
+                        jsonToTableSerializer.parse(chunk.addr, chunk.addr + chunk.available);
                         chunkCount++;
                     }
                     System.out.println(System.currentTimeMillis() - t);

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.client;
+package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
@@ -60,17 +60,19 @@ public abstract class HttpClient implements QuietCloseable {
 
     @Override
     public void close() {
+        disconnect();
         if (bufLo != 0) {
             Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
             bufLo = 0;
         }
+        response = Misc.free(response);
+    }
 
+    public void disconnect() {
         if (fd != -1) {
             nf.close(fd);
             fd = -1;
         }
-
-        response = Misc.free(response);
     }
 
     public Request newRequest() {
@@ -120,10 +122,10 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         if (n == 0) {
-            throw new HttpClientException("timed out [errno=").errno(nf.errno()).put(']');
+            throw new HttpClientException("timed out [errno=").put(nf.errno()).put(']');
         }
 
-        throw new HttpClientException("kqueue error [errno=").errno(nf.errno()).put(']');
+        throw new HttpClientException("queue error [errno=").put(nf.errno()).put(']');
     }
 
     protected abstract void ioWait(int timeout, int op);
@@ -137,6 +139,7 @@ public abstract class HttpClient implements QuietCloseable {
         private static final int STATE_URL = 1;
         private static final int STATE_URL_DONE = 2;
         private int state;
+        private boolean urlEncode = false;
 
         public Request GET() {
             assert state == STATE_REQUEST;
@@ -153,7 +156,124 @@ public abstract class HttpClient implements QuietCloseable {
             } else {
                 crlf();
             }
-            return put(name).put(": ").put(value).crlf();
+            encodeUtf8(name).put(": ").encodeUtf8(value);
+            return crlf();
+        }
+
+        @Override
+        public void putUtf8Special(char c) {
+            if (urlEncode) {
+                putUrlEncoded(c);
+            } else {
+                put(c);
+            }
+        }
+
+        private void putUrlEncoded(char c) {
+            switch (c) {
+                case ' ':
+                    put("%20");
+                    break;
+                case '!':
+                    put("%21");
+                    break;
+                case '"':
+                    put("%22");
+                    break;
+                case '#':
+                    put("%23");
+                    break;
+                case '$':
+                    put("%24");
+                    break;
+                case '%':
+                    put("%25");
+                    break;
+                case '&':
+                    put("%26");
+                    break;
+                case '\'':
+                    put("%27");
+                    break;
+                case '(':
+                    put("%28");
+                    break;
+                case ')':
+                    put("%29");
+                    break;
+                case '*':
+                    put("%2A");
+                    break;
+                case '+':
+                    put("%2B");
+                    break;
+                case ',':
+                    put("%2C");
+                    break;
+                case '-':
+                    put("%2D");
+                    break;
+                case '.':
+                    put("%2E");
+                    break;
+                case '/':
+                    put("%2F");
+                    break;
+                case ':':
+                    put("%3A");
+                    break;
+                case ';':
+                    put("%3B");
+                    break;
+                case '<':
+                    put("%3C");
+                    break;
+                case '=':
+                    put("%3D");
+                    break;
+                case '>':
+                    put("%3E");
+                    break;
+                case '?':
+                    put("%3F");
+                    break;
+                case '@':
+                    put("%40");
+                    break;
+                case '[':
+                    put("%5B");
+                    break;
+                case '\\':
+                    put("%5C");
+                    break;
+                case ']':
+                    put("%5D");
+                    break;
+                case '^':
+                    put("%5E");
+                    break;
+                case '_':
+                    put("%5F");
+                    break;
+                case '`':
+                    put("%60");
+                    break;
+
+                case '{':
+                    put("%7B");
+                    break;
+                case '|':
+                    put("%7C");
+                    break;
+                case '}':
+                    put("%7D");
+                    break;
+                default:
+                    // there are symbols to escape, but those we do not tend to use at all
+                    // https://www.w3schools.com/tags/ref_urlencode.ASP
+                    put(c);
+                    break;
+            }
         }
 
         @Override
@@ -179,7 +299,12 @@ public abstract class HttpClient implements QuietCloseable {
                 put('&');
             }
             state = STATE_QUERY;
-            put(name).put('=').put(value);
+            urlEncode = true;
+            try {
+                encodeUtf8(name).put('=').encodeUtf8(value);
+            } finally {
+                urlEncode = false;
+            }
             return this;
         }
 
@@ -373,7 +498,7 @@ public abstract class HttpClient implements QuietCloseable {
                             chunk.endOfChunk = len == chunk.available;
                             chunk.consumed = 0;
 
-                            assert chunk.available > 0;
+//                            assert chunk.available > 0;
 
                             // if chunk size is smaller that the unprocessed data size
                             // we will reduce unprocessed data size by chunk size; otherwise
@@ -412,6 +537,14 @@ public abstract class HttpClient implements QuietCloseable {
             @Override
             public void clear() {
                 endOfChunk = true;
+            }
+
+            public long lo() {
+                return addr;
+            }
+
+            public long hi() {
+                return addr + available;
             }
         }
     }

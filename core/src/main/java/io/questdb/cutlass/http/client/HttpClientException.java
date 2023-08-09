@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.client;
+package io.questdb.cutlass.http.client;
 
 import io.questdb.std.str.StringSink;
 

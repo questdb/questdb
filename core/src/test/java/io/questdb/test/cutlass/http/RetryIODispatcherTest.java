@@ -840,7 +840,7 @@ public class RetryIODispatcherTest extends AbstractTest {
         return writer;
     }
 
-    protected void assertNRowsInserted(final int nRows) throws InterruptedException {
+    protected void assertNRowsInserted(final int nRows) {
         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                 "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
                 "92\r\n" +

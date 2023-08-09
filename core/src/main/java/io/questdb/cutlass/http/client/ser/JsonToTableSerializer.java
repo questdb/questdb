@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.client.ser;
+package io.questdb.cutlass.http.client.ser;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
@@ -44,7 +44,7 @@ import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.ColumnType.*;
 
-public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
+public class JsonToTableSerializer implements JsonParser, Mutable, QuietCloseable {
     private static final int STATE_DATA_ARRAY = 4;
     private static final int STATE_DATA_CELL = 10;
     private static final int STATE_DATA_ROW = 6;
@@ -74,7 +74,7 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
     private int state = STATE_START;
     private TableWriterAPI writer;
 
-    public JsonDataParser(CairoEngine engine) {
+    public JsonToTableSerializer(CairoEngine engine) {
         this.engine = engine;
         // wire up the model
         createTableModel.setName(tableName);
@@ -132,7 +132,6 @@ public class JsonDataParser implements JsonParser, Mutable, QuietCloseable {
                 switch (state) {
                     case STATE_MAIN_ATTR_NAMES: // the end
                         state = STATE_START;
-                        System.out.println("done");
                         break;
                     case STATE_METADATA_ATTR_NAMES: // column definition end
                         state = STATE_METADATA_OBJ;

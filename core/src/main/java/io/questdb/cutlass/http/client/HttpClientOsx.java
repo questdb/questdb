@@ -22,45 +22,46 @@
  *
  ******************************************************************************/
 
-package io.questdb.client;
+package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
-import io.questdb.network.FDSet;
 import io.questdb.network.IOOperation;
-import io.questdb.network.SelectFacade;
+import io.questdb.network.Kqueue;
 import io.questdb.std.Misc;
 
-public class HttpClientWindows extends HttpClient {
-    private final SelectFacade sf;
-    private FDSet fdSet;
+public class HttpClientOsx extends HttpClient {
+    private Kqueue kqueue;
 
-    public HttpClientWindows(HttpClientConfiguration configuration) {
+    public HttpClientOsx(HttpClientConfiguration configuration) {
         super(configuration);
-        this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
-        this.sf = configuration.getSelectFacade();
+        this.kqueue = new Kqueue(
+                configuration.getKQueueFacade(),
+                configuration.getWaitQueueCapacity()
+        );
     }
 
     @Override
     public void close() {
         super.close();
-        this.fdSet = Misc.free(fdSet);
+        this.kqueue = Misc.free(kqueue);
     }
 
     @Override
     protected void ioWait(int timeout, int op) {
-        final long readAddr;
-        final long writeAddr;
-        fdSet.clear();
-        fdSet.add(fd);
-        fdSet.setCount(1);
+        kqueue.setWriteOffset(0);
         if (op == IOOperation.READ) {
-            readAddr = fdSet.address();
-            writeAddr = 0;
+            kqueue.readFD(fd, 0);
         } else {
-            readAddr = 0;
-            writeAddr = fdSet.address();
+            kqueue.writeFD(fd, 0);
         }
-        dieWaiting(sf.select(readAddr, writeAddr, 0, timeout));
+
+        // 1 = always one FD, we are a single threaded network client
+        if (kqueue.register(1) != 0) {
+            throw new HttpClientException("could not register with kqueue [op=").put(op)
+                    .put(", errno=").errno(nf.errno())
+                    .put(']');
+        }
+        dieWaiting(kqueue.poll(timeout));
     }
 
     @Override

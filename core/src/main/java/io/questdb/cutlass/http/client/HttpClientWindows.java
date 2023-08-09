@@ -22,50 +22,48 @@
  *
  ******************************************************************************/
 
-package io.questdb.client;
+package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
+import io.questdb.network.FDSet;
 import io.questdb.network.IOOperation;
-import io.questdb.network.Kqueue;
+import io.questdb.network.SelectFacade;
 import io.questdb.std.Misc;
 
-public class HttpClientOsx extends HttpClient {
-    private Kqueue kqueue;
+public class HttpClientWindows extends HttpClient {
+    private final SelectFacade sf;
+    private FDSet fdSet;
 
-    public HttpClientOsx(HttpClientConfiguration configuration) {
+    public HttpClientWindows(HttpClientConfiguration configuration) {
         super(configuration);
-        this.kqueue = new Kqueue(
-                configuration.getKQueueFacade(),
-                configuration.getWaitQueueCapacity()
-        );
+        this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
+        this.sf = configuration.getSelectFacade();
     }
 
     @Override
     public void close() {
         super.close();
-        this.kqueue = Misc.free(kqueue);
+        this.fdSet = Misc.free(fdSet);
     }
 
     @Override
     protected void ioWait(int timeout, int op) {
-        kqueue.setWriteOffset(0);
+        final long readAddr;
+        final long writeAddr;
+        fdSet.clear();
+        fdSet.add(fd);
+        fdSet.setCount(1);
         if (op == IOOperation.READ) {
-            kqueue.readFD(fd, 0);
+            readAddr = fdSet.address();
+            writeAddr = 0;
         } else {
-            kqueue.writeFD(fd, 0);
+            readAddr = 0;
+            writeAddr = fdSet.address();
         }
-
-        // 1 = always one FD, we are a single threaded network client
-        if (kqueue.register(1) != 0) {
-            throw new HttpClientException("could not register with kqueue [op=").put(op)
-                    .put(", errno=").errno(nf.errno())
-                    .put(']');
-        }
-        dieWaiting(kqueue.poll(timeout));
+        dieWaiting(sf.select(readAddr, writeAddr, 0, timeout));
     }
 
     @Override
     protected void setupIoWait() {
-        // noop on OSX
     }
 }

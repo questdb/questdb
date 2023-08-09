@@ -44,64 +44,6 @@ public class Rnd {
         reset();
     }
 
-    /**
-     * Creates a set to be used for generating fixed numbers from 0 to valueCount with variable, non-uniform
-     * probability. The lower numbers have the highest probability.
-     *
-     * @param valueCount         number of values to generate probabilities for
-     * @param diminishingScale   the scale at which probability should be diminishing
-     * @param initialProbability the initial probability, the one assigned to the first value
-     * @return an of ints. To generate number with calculated probabilities use value=set[rnd.nextInt(valueCount)]
-     */
-    public static int[] computeDiminishingFrequencyDistribution(int valueCount, double diminishingScale, double initialProbability) {
-
-        assert diminishingScale < 1 && diminishingScale > 0;
-
-        double lastProbability = initialProbability / diminishingScale;
-        double[] probabilities = new double[valueCount];
-        for (int i = 0; i < valueCount; i++) {
-            final double prob = lastProbability * diminishingScale;
-            probabilities[i] = prob;
-            lastProbability = prob;
-        }
-
-
-        // find out scale of last probability
-        double minProb = probabilities[valueCount - 1];
-        int distScale = 1;
-        while (((int) minProb / 100) == 0) {
-            minProb *= 10;
-            distScale *= 10;
-        }
-
-        // compute distribution set size
-        int ccyDistSize = 0;
-        for (int i = 0; i < valueCount; i++) {
-            ccyDistSize += (int) (distScale * probabilities[i] / 100);
-        }
-
-        int[] ccyDist = new int[ccyDistSize];
-
-        int x = 0;
-        for (int i = 0; i < valueCount; i++) {
-            final int len = (int) (distScale * probabilities[i] / 100);
-            assert len > 0;
-            int n = Math.min(x + len, ccyDistSize);
-            for (; x < n; x++) {
-                ccyDist[x] = i;
-            }
-        }
-        return ccyDist;
-    }
-
-    public String[] createValues(int count, int len) {
-        String[] ccy = new String[count];
-        for (int i = 0; i < count; i++) {
-            ccy[i] = nextString(len);
-        }
-        return ccy;
-    }
-
     public long getSeed0() {
         return s0;
     }

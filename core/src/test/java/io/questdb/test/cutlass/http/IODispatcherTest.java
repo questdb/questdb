@@ -92,6 +92,7 @@ public class IODispatcherTest extends AbstractTest {
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
     private static final String UTF_8 = "UTF-8";
     private static final Metrics metrics = Metrics.enabled();
+    private static TestHttpClient testHttpClient = new TestHttpClient();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -122,6 +123,12 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+
+    @AfterClass
+    public static void tearDownStatic() {
+        testHttpClient = Misc.free(testHttpClient);
+        AbstractTest.tearDownStatic();
+    }
 
     @Before
     public void setUp3() {
@@ -3564,29 +3571,8 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testJsonQueryGeoHashColumnChars() throws Exception {
         testHttpQueryGeoHashColumnChars(
-                "GET /query?query=SELECT+*+FROM+y HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "0175\r\n" +
-                        "{\"query\":\"SELECT * FROM y\",\"columns\":[{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"},{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"},{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"},{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"},{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}],\"timestamp\":-1,\"dataset\":[[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"],[\"u\",\"u10\",\"questd\",null,\"1\"],[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]],\"count\":3}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                "{\"query\":\"SELECT * FROM y\",\"columns\":[{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"},{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"},{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"},{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"},{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}],\"timestamp\":-1,\"dataset\":[[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"],[\"u\",\"u10\",\"questd\",null,\"1\"],[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]],\"count\":3}",
+                "/query"
         );
     }
 
@@ -5745,14 +5731,10 @@ public class IODispatcherTest extends AbstractTest {
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
-                            "cf\r\n" +
-                                    "{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
+                    testHttpClient.assertGet(
+                            "{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}",
+                            "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")"
                     );
-
                     stopDelayThread.set(true);
                     delayThread.join();
 
@@ -5817,12 +5799,9 @@ public class IODispatcherTest extends AbstractTest {
                 .run(engine -> {
                     // select 1 as "select"
                     // with select being the column name to check double quote parsing
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
-                            "76\r\n" +
-                                    "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}\r\n"
-                                    + "00\r\n"
-                                    + "\r\n"
+                    testHttpClient.assertGet(
+                            "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                            "SELECT 1 as \"select\""
                     );
                 });
     }
@@ -7136,32 +7115,11 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testTextQueryGeoHashColumnChars() throws Exception {
         testHttpQueryGeoHashColumnChars(
-                "GET /exp?query=SELECT+*+FROM+y HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: */*\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "90\r\n" +
-                        "\"geo1\",\"geo2\",\"geo4\",\"geo8\",\"geo01\"\r\n" +
+                "\"geo1\",\"geo2\",\"geo4\",\"geo8\",\"geo01\"\r\n" +
                         "null,null,\"questd\",\"u10m99dd3pbj\",\"1\"\r\n" +
                         "\"u\",\"u10\",\"questd\",null,\"1\"\r\n" +
-                        "\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                        "\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"\r\n",
+                "/exp"
         );
     }
 
@@ -8305,7 +8263,7 @@ public class IODispatcherTest extends AbstractTest {
                 });
     }
 
-    private void testHttpQueryGeoHashColumnChars(String request, String expectedResponse) throws Exception {
+    private void testHttpQueryGeoHashColumnChars(String expectedResponse, String url) throws Exception {
         new HttpQueryTestBuilder()
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
@@ -8317,17 +8275,18 @@ public class IODispatcherTest extends AbstractTest {
                     try (
                             SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                     ) {
-                        engine.ddl("create table y as (\n" +
-                                "select\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(3c)) geo2,\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(6c)) geo4,\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(12c)) geo8," +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1b)) geo01\n" +
-                                "from long_sequence(3)\n" +
-                                ")", executionContext);
-
-                        new SendAndReceiveRequestBuilder().execute(request, expectedResponse);
+                        engine.ddl(
+                                "create table y as (\n" +
+                                        "select\n" +
+                                        "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
+                                        "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(3c)) geo2,\n" +
+                                        "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(6c)) geo4,\n" +
+                                        "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(12c)) geo8," +
+                                        "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1b)) geo01\n" +
+                                        "from long_sequence(3)\n" +
+                                        ")", executionContext
+                        );
+                        testHttpClient.assertGet(url, expectedResponse, "SELECT * FROM y");
                     }
                 });
     }
