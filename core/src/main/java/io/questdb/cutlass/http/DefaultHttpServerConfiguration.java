@@ -122,7 +122,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration) {
-        this(httpContextConfiguration, new DefaultIODispatcherConfiguration());
+        this(httpContextConfiguration, DefaultIODispatcherConfiguration.INSTANCE);
     }
 
     public DefaultHttpServerConfiguration(

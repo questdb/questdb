@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
@@ -41,21 +42,9 @@ public class TestHttpClient implements QuietCloseable {
     }
 
     public void assertGet(CharSequence url, CharSequence expectedResponse, CharSequence sql) {
-        sink.clear();
         try {
-            HttpClient.Request req = httpClient.newRequest();
-            HttpClient.Response rsp = req
-                    .GET()
-                    .url(url)
-                    .query("query", sql)
-                    .send("localhost", 9001);
-
-            rsp.awaitHeaders();
-            HttpClient.Response.Chunk chunk;
-
-            while ((chunk = rsp.recv()) != null) {
-                Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
-            }
+            sink.clear();
+            toSink0(url, sql, sink);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             httpClient.disconnect();
@@ -65,5 +54,29 @@ public class TestHttpClient implements QuietCloseable {
     @Override
     public void close() {
         Misc.free(httpClient);
+    }
+
+    public void toSink(CharSequence url, CharSequence sql, CharSink sink) {
+        try {
+            toSink0(url, sql, sink);
+        } finally {
+            httpClient.disconnect();
+        }
+    }
+
+    private void toSink0(CharSequence url, CharSequence sql, CharSink sink) {
+        HttpClient.Request req = httpClient.newRequest();
+        HttpClient.Response rsp = req
+                .GET()
+                .url(url)
+                .query("query", sql)
+                .send("localhost", 9001);
+
+        rsp.awaitHeaders();
+        HttpClient.Response.Chunk chunk;
+
+        while ((chunk = rsp.recv()) != null) {
+            Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
+        }
     }
 }

@@ -60,6 +60,8 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cutlass.NetUtils;
+import io.questdb.test.cutlass.suspend.TestCase;
+import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
@@ -69,7 +71,6 @@ import org.junit.*;
 import org.junit.rules.Timeout;
 
 import java.io.InputStream;
-import java.net.URLEncoder;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -90,7 +91,6 @@ public class IODispatcherTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
-    private static final String UTF_8 = "UTF-8";
     private static final Metrics metrics = Metrics.enabled();
     private static TestHttpClient testHttpClient = new TestHttpClient();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
@@ -339,7 +339,7 @@ public class IODispatcherTest extends AbstractTest {
             AtomicInteger closeCount = new AtomicInteger(0);
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration(),
+                    DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
@@ -1014,37 +1014,15 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testIPv4JSON() throws Exception {
-        testJsonQuery(
-                1,
-                "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query="
-                        + URLEncoder.encode("select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)", UTF_8)
-                        + " HTTP/1.1\r\n" +
-                        "Accept: */*\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Host: 127.0.0.1:9000\r\n" +
-                        "Referer: http://127.0.0.1:9000/\r\n" +
-                        "Sec-Fetch-Dest: empty\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36\r\n" +
-                        "sec-ch-ua: \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"114\", \"Google Chrome\";v=\"114\"\r\n" +
-                        "sec-ch-ua-mobile: ?0\r\n" +
-                        "sec-ch-ua-platform: \"macOS\"\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "0314\r\n" +
-                        "{\"query\":\"select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)\",\"columns\":[{\"name\":\"cast\",\"type\":\"IPv4\"},{\"name\":\"ip2\",\"type\":\"IPv4\"},{\"name\":\"timestamp_sequence\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[\"0.0.0.3\",null,\"1970-01-01T00:00:00.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:01:40.000000Z\"],[\"0.0.0.3\",null,\"1970-01-01T00:03:20.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:05:00.000000Z\"],[\"0.0.0.2\",null,\"1970-01-01T00:06:40.000000Z\"],[\"0.0.0.1\",null,\"1970-01-01T00:08:20.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:10:00.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:11:40.000000Z\"],[\"0.0.0.1\",null,\"1970-01-01T00:13:20.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:15:00.000000Z\"]],\"count\":10,\"explain\":{\"jitCompiled\":false}}\r\n" +
-                        "00\r\n",
-                1
-        );
+        getSimpleTester()
+                .run(engine -> {
+                    // select 1 as "select"
+                    // with select being the column name to check double quote parsing
+                    testHttpClient.assertGet(
+                            "{\"query\":\"select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)\",\"columns\":[{\"name\":\"cast\",\"type\":\"IPv4\"},{\"name\":\"ip2\",\"type\":\"IPv4\"},{\"name\":\"timestamp_sequence\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[\"0.0.0.3\",null,\"1970-01-01T00:00:00.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:01:40.000000Z\"],[\"0.0.0.3\",null,\"1970-01-01T00:03:20.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:05:00.000000Z\"],[\"0.0.0.2\",null,\"1970-01-01T00:06:40.000000Z\"],[\"0.0.0.1\",null,\"1970-01-01T00:08:20.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:10:00.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:11:40.000000Z\"],[\"0.0.0.1\",null,\"1970-01-01T00:13:20.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:15:00.000000Z\"]],\"count\":10}",
+                            "select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)"
+                    );
+                });
     }
 
     @Test
@@ -4629,6 +4607,18 @@ public class IODispatcherTest extends AbstractTest {
         assertTelemetryEventAndOrigin(expected);
     }
 
+    /**
+     * Cold storage may lead to the initiation of suspend events when data is inaccessible to the local database instance.
+     * This disruption affects both the state machine's flow and the factory's data provision process. This test
+     * replicates a suspend event, comparing the query output after resumption with the output of a query that
+     * hasn't been suspended.
+     */
+    @Test
+    public void testJsonQuerySuspend() throws Exception {
+        testSuspend("/query");
+
+    }
+
     @Test
     public void testJsonQuerySyntaxError() throws Exception {
         assertMemoryLeak(() -> {
@@ -5729,8 +5719,6 @@ public class IODispatcherTest extends AbstractTest {
                     delayThread.start();
 
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                    final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     testHttpClient.assertGet(
                             "{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}",
                             "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")"
@@ -5791,19 +5779,14 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testQueryWithDoubleQuotesParsedCorrectly() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(engine -> {
-                    // select 1 as "select"
-                    // with select being the column name to check double quote parsing
-                    testHttpClient.assertGet(
-                            "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
-                            "SELECT 1 as \"select\""
-                    );
-                });
+        getSimpleTester().run(engine -> {
+            // select 1 as "select"
+            // with select being the column name to check double quote parsing
+            testHttpClient.assertGet(
+                    "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                    "SELECT 1 as \"select\""
+            );
+        });
     }
 
     @Test
@@ -6348,7 +6331,7 @@ public class IODispatcherTest extends AbstractTest {
             AtomicInteger closeCount = new AtomicInteger(0);
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration(),
+                    DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
@@ -6518,7 +6501,7 @@ public class IODispatcherTest extends AbstractTest {
             AtomicInteger closeCount = new AtomicInteger(0);
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration(),
+                    DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
@@ -7402,6 +7385,17 @@ public class IODispatcherTest extends AbstractTest {
                 });
     }
 
+    /**
+     * Cold storage may lead to the initiation of suspend events when data is inaccessible to the local database instance.
+     * This disruption affects both the state machine's flow and the factory's data provision process. This test
+     * replicates a suspend event, comparing the query output after resumption with the output of a query that
+     * hasn't been suspended.
+     */
+    @Test
+    public void testTextQuerySuspend() throws Exception {
+        testSuspend("/exp");
+    }
+
     @Test
     public void testTextQueryTimeout() throws Exception {
         new HttpQueryTestBuilder()
@@ -7922,6 +7916,46 @@ public class IODispatcherTest extends AbstractTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
+    private static void testSuspend(String url) throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    StringSink expected = new StringSink();
+                    StringSink actual = new StringSink();
+                    final TestCases testCases = new TestCases();
+
+                    // create tables
+                    testHttpClient.assertGet("{\"ddl\":\"OK\"}", testCases.getDdlX());
+                    testHttpClient.assertGet("{\"ddl\":\"OK\"}", testCases.getDdlY());
+
+                    for (int i = 0, n = testCases.size(); i < n; i++) {
+                        TestCase testCase = testCases.getQuick(i);
+                        // http does not support bind variables yet
+                        if (testCase.getBindVariableValues().length == 0) {
+                            System.out.println("************** SQL ******************");
+                            System.out.println(testCase.getQuery());
+                            System.out.println("*************************************");
+
+                            engine.releaseAllReaders();
+                            engine.setReaderListener(null);
+
+                            expected.clear();
+                            testHttpClient.toSink(url, testCase.getQuery(), expected);
+
+                            engine.releaseAllReaders();
+                            engine.setReaderListener(testCases.getSuspendingListener());
+
+                            actual.clear();
+                            testHttpClient.toSink(url, testCase.getQuery(), actual);
+                            TestUtils.assertEquals(expected, actual);
+                        }
+                    }
+                });
+    }
+
     private void assertMetadataAndData(
             String tableName,
             long expectedO3MaxLag,
@@ -8017,6 +8051,14 @@ public class IODispatcherTest extends AbstractTest {
                 .build();
         QueryCache.configure(httpConfiguration, metrics);
         return httpConfiguration;
+    }
+
+    private HttpQueryTestBuilder getSimpleTester() {
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false);
     }
 
     private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
@@ -8805,5 +8847,9 @@ public class IODispatcherTest extends AbstractTest {
 
     static class Status {
         boolean valid;
+    }
+
+    static {
+        LogFactory.configureSync();
     }
 }

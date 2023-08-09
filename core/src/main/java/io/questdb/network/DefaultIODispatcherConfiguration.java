@@ -29,6 +29,8 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
 
+    public static final IODispatcherConfiguration INSTANCE = new DefaultIODispatcherConfiguration();
+
     @Override
     public int getBindIPv4Address() {
         return 0;

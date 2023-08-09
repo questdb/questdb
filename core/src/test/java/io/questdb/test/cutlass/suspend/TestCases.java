@@ -22,53 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.pgwire;
+package io.questdb.test.cutlass.suspend;
 
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
-import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.SuspendEventFactory;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
 
-import java.io.Closeable;
-import java.sql.CallableStatement;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+public class TestCases {
+    private static final String TABLE_X_DDL = "create table x as ( " +
+            "  select " +
+            "    cast(x as int) i, " +
+            "    rnd_double(2) d, " +
+            "    rnd_long() l, " +
+            "    rnd_str('a','b','c') s, " +
+            "    rnd_symbol('a','b','c') sym, " +
+            "    rnd_symbol('a','b','c') isym, " +
+            "    timestamp_sequence(0, 100000000) ts " +
+            "   from long_sequence(100)" +
+            "), index(isym) timestamp(ts) partition by hour";
 
+    private static final String TABLE_Y_DDL = "create table y as (select * from x), index(isym) timestamp(ts) partition by hour";
+    private final SuspendingReaderListener suspendingListener = new SuspendingReaderListener();
+    private final ObjList<TestCase> testCases = new ObjList<>();
 
-/**
- * This test verifies record cursor factory suspendability. To do so, it runs the same query
- * with data available immediately and with simulated cold storage scenario and then compares
- * the result set.
- */
-@SuppressWarnings("SqlNoDataSourceInspection")
-public class PGQuerySuspendabilityTest extends BasePGTest {
-
-    private static final Log LOG = LogFactory.getLog(PGQuerySuspendabilityTest.class);
-    private static final IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration();
-    private static final StringSink sinkB = new StringSink();
-    private static final ObjList<TestCase> testCases = new ObjList<>();
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractCairoTest.setUpStatic();
-
+    public TestCases() {
         addTestCase("select * from x");
         addTestCase("select * from x order by ts desc");
 
@@ -316,105 +299,50 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("(select s sym from x) intersect (select sym from y)");
     }
 
-    @Test
-    public void testQuerySuspendability() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), false, true)) {
-                    CallableStatement stmt = connection.prepareCall(
-                            "create table x as ( " +
-                                    "  select " +
-                                    "    cast(x as int) i, " +
-                                    "    rnd_double(2) d, " +
-                                    "    rnd_long() l, " +
-                                    "    rnd_str('a','b','c') s, " +
-                                    "    rnd_symbol('a','b','c') sym, " +
-                                    "    rnd_symbol('a','b','c') isym, " +
-                                    "    timestamp_sequence(0, 100000000) ts " +
-                                    "   from long_sequence(100)" +
-                                    "), index(isym) timestamp(ts) partition by hour"
-                    );
-                    stmt.execute();
-                    stmt = connection.prepareCall("create table y as (select * from x), index(isym) timestamp(ts) partition by hour");
-                    stmt.execute();
-
-                    SuspendingReaderListener listener = null;
-                    try {
-                        for (int i = 0; i < testCases.size(); i++) {
-                            TestCase tc = testCases.getQuick(i);
-
-                            engine.releaseAllReaders();
-
-                            engine.setReaderListener(null);
-                            try (PreparedStatement statement = connection.prepareStatement(tc.query)) {
-                                sink.clear();
-                                if (tc.bindVariableValues != null) {
-                                    for (int j = 0; j < tc.bindVariableValues.length; j++) {
-                                        statement.setString(j + 1, tc.bindVariableValues[j]);
-                                    }
-                                }
-                                try (ResultSet rs = statement.executeQuery()) {
-                                    long rows = printToSink(sink, rs, null);
-                                    if (!tc.allowEmptyResultSet) {
-                                        Assert.assertTrue("Query " + tc.query + " is expected to return non-empty result set", rows > 0);
-                                    }
-                                }
-                            }
-
-                            engine.releaseAllReaders();
-
-                            listener = new SuspendingReaderListener();
-                            // Yes, this write is racy, but it's not an issue in the test scenario.
-                            engine.setReaderListener(listener);
-                            try (PreparedStatement statement = connection.prepareStatement(tc.query)) {
-                                sinkB.clear();
-                                if (tc.bindVariableValues != null) {
-                                    for (int j = 0; j < tc.bindVariableValues.length; j++) {
-                                        statement.setString(j + 1, tc.bindVariableValues[j]);
-                                    }
-                                }
-                                try (ResultSet rs = statement.executeQuery()) {
-                                    printToSink(sinkB, rs, null);
-                                }
-                            }
-
-                            TestUtils.assertEquals(tc.query, sink, sinkB);
-                        }
-                    } finally {
-                        Misc.free(listener);
-                    }
-                }
-            }
-        });
+    public String getDdlX() {
+        return TABLE_X_DDL;
     }
 
-    private static void addTestCase(String query) {
-        addTestCase(query, false);
+    public String getDdlY() {
+        return TABLE_Y_DDL;
     }
 
-    private static void addTestCase(String query, boolean allowEmptyResultSet) {
+    public TestCase getQuick(int i) {
+        return testCases.getQuick(i);
+    }
+
+    public ReaderPool.ReaderListener getSuspendingListener() {
+        suspendingListener.clear();
+        return suspendingListener;
+    }
+
+    public int size() {
+        return testCases.size();
+    }
+
+    private void addTestCase(String query, boolean allowEmptyResultSet) {
         testCases.add(new TestCase(query, allowEmptyResultSet));
     }
 
     @SuppressWarnings("SameParameterValue")
-    private static void addTestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
+    private void addTestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
         testCases.add(new TestCase(query, allowEmptyResultSet, bindVariableValues));
+    }
+
+    private void addTestCase(String query) {
+        addTestCase(query, false);
     }
 
     /**
      * This listener varies DataUnavailableException and successful execution of TableReader#openPartition()
      * in the following sequence: exception, success, exception, success, etc.
      */
-    private static class SuspendingReaderListener implements ReaderPool.ReaderListener, Closeable {
+    private static class SuspendingReaderListener implements ReaderPool.ReaderListener, Mutable {
 
         private final ConcurrentHashMap<SuspendEvent> suspendedPartitions = new ConcurrentHashMap<>();
 
         @Override
-        public void close() {
+        public void clear() {
             suspendedPartitions.forEach((charSequence, suspendEvent) -> suspendEvent.close());
         }
 
@@ -428,7 +356,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                     return null;
                 }
                 // Exception case.
-                SuspendEvent nextEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                SuspendEvent nextEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
                 // Mark the event as immediately fulfilled.
                 nextEvent.trigger();
                 return nextEvent;
@@ -436,18 +364,6 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
             if (computedEvent != null) {
                 throw DataUnavailableException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
             }
-        }
-    }
-
-    private static class TestCase {
-        final boolean allowEmptyResultSet;
-        final String[] bindVariableValues;
-        final String query;
-
-        public TestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
-            this.query = query;
-            this.allowEmptyResultSet = allowEmptyResultSet;
-            this.bindVariableValues = bindVariableValues;
         }
     }
 }

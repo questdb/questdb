@@ -3714,10 +3714,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, metadata);
             }
         } else {
-            try (TableReader reader = executionContext.getReader(
-                    tableToken,
-                    model.getTableVersion()
-            )) {
+            try (TableReader reader = executionContext.getReader(tableToken, model.getTableVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
         }

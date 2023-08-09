@@ -658,6 +658,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponseSocket socket,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // we no longer need cursor when we reached query suffix
+        // closing cursor here guarantees that by the time http client finished reading response the table
+        // is released
+        cursor = Misc.free(cursor);
         queryState = QUERY_SUFFIX;
         if (count > -1) {
             logTimings();

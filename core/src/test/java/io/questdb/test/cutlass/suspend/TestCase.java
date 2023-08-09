@@ -22,28 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.network;
+package io.questdb.test.cutlass.suspend;
 
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
-import org.junit.Assert;
-import org.junit.Test;
+public class TestCase {
+    final boolean allowEmptyResultSet;
+    final String[] bindVariableValues;
+    final String query;
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+    public TestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
+        this.query = query;
+        this.allowEmptyResultSet = allowEmptyResultSet;
+        this.bindVariableValues = bindVariableValues;
+    }
 
-public class SuspendEventTest {
+    public String[] getBindVariableValues() {
+        return bindVariableValues;
+    }
 
-    @Test
-    public void testSmoke() throws Exception {
-        assertMemoryLeak(() -> {
-            SuspendEvent event = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
-            Assert.assertFalse(event.checkTriggered());
-            event.trigger();
-            Assert.assertTrue(event.checkTriggered());
-            // We need to close the event two times as if it's closed by both waiting and sending sides.
-            event.close();
-            event.close();
-        });
+    public String getQuery() {
+        return query;
+    }
+
+    public boolean isAllowEmptyResultSet() {
+        return allowEmptyResultSet;
     }
 }
