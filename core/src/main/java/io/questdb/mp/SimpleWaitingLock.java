@@ -59,16 +59,15 @@ public final class SimpleWaitingLock {
         Thread expectedOwner = null;
         long deadline = System.nanoTime() + unit.toNanos(timeout); // this might overflow, but that's OK. we subtract current nanoTime and that makes it positive again
         for (long remainingNanos = deadline - System.nanoTime(); remainingNanos > 0; remainingNanos = deadline - System.nanoTime()) {
-            Thread actualOwner = ownerOrWaiter.compareAndExchange(expectedOwner, currentThread);
-            if (actualOwner == expectedOwner) {
+            if (ownerOrWaiter.compareAndSet(expectedOwner, currentThread)) {
                 if (expectedOwner == null) {
                     // there was no owner before -> we acquired the lock and we are the new owner. yay!
                     return true;
                 }
-                // we succeeded with exchange, but there was an owner before -> we are a waiter
+                // CAS succeeded, but there was an owner before -> we are a waiter
                 LockSupport.parkNanos(remainingNanos);
             }
-            expectedOwner = actualOwner;
+            expectedOwner = ownerOrWaiter.get();
         }
         return false;
     }
