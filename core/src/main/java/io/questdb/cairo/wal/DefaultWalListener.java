@@ -25,12 +25,27 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.str.Path;
 
-public class BasicWalInitializer implements WalInitializer {
-    public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
+public class DefaultWalListener implements WalListener {
+    public static final DefaultWalListener INSTANCE = new DefaultWalListener();
 
     @Override
-    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
+    public void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {
+    }
+
+    @Override
+    public void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp) {
+    }
+
+    @Override
+    public void segmentClosed(final TableToken tabletoken, int walId, int segmentId) {
+    }
+
+    @Override
+    public void tableDropped(TableToken tableToken, long txn, long timestamp) {
+    }
+
+    @Override
+    public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
     }
 }
