@@ -24,11 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.DdlListenerFactory;
-import io.questdb.cairo.DdlListenerFactoryImpl;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.BasicWalInitializerFactory;
-import io.questdb.cairo.wal.WalInitializerFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
@@ -76,15 +72,5 @@ public class FactoryProviderImpl implements FactoryProvider {
     @Override
     public SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
-    }
-
-    @Override
-    public WalInitializerFactory getWalInitializerFactory() {
-        return BasicWalInitializerFactory.INSTANCE;
-    }
-
-    @Override
-    public DdlListenerFactory getDdlListenerFactory() {
-        return DdlListenerFactoryImpl.INSTANCE;
     }
 }
