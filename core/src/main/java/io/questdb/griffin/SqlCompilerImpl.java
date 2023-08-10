@@ -82,6 +82,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
     private final SqlCodeGenerator codeGenerator;
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final DropStatementCompiler dropStmtCompiler = new DropStatementCompiler();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
@@ -199,6 +200,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         queryLogged = false;
         queryLogFd = -1;
         queryContainsSecret = false;
+        columnNames.clear();
     }
 
     @Override
@@ -1629,6 +1631,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                         false,
                         DefaultLifecycleManager.INSTANCE,
                         configuration.getRoot(),
+                        engine.getDdlListener(tableToken),
                         engine.getMetrics()
                 );
             } else {
@@ -2411,7 +2414,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             throw SqlException.$(lexer.getPosition(), "EOF expected");
         }
 
-        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnName);
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
         rebuildIndex.reindex(partition, columnName);
         return compiledQuery.ofRepair();
     }

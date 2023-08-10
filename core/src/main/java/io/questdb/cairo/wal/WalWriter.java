@@ -110,18 +110,17 @@ public class WalWriter implements TableWriterAPI {
             CairoConfiguration configuration,
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
+            DdlListener ddlListener,
+            WalInitializer walInitializer,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
-        final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
-        this.ddlListener = sysTable || configuration.getFactoryProvider() == null
-                ? DdlListenerImpl.INSTANCE
-                : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
+        this.ddlListener = ddlListener;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
-        this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
+        this.walInitializer = walInitializer;
         this.tableToken = tableToken;
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
@@ -771,6 +770,7 @@ public class WalWriter implements TableWriterAPI {
             LOG.error().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
         }
+
         return txn;
     }
 
@@ -1553,7 +1553,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
                 throw CairoException.nonCritical().put("cannot rename column, column does not exists [table=").put(tableToken.getTableName())
@@ -1719,7 +1719,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newColumnName) {
+        public void renameColumn(
+                @NotNull CharSequence columnName,
+                @NotNull CharSequence newColumnName,
+                SecurityContext securityContext
+        ) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
                 int columnType = metadata.getColumnType(columnIndex);
@@ -1749,6 +1753,9 @@ public class WalWriter implements TableWriterAPI {
                         // if we did not have to roll uncommitted rows to a new segment
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
+                        if (securityContext != null) {
+                            ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
+                        }
 
                         LOG.info().$("renamed column in WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();
                     } else {

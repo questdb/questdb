@@ -343,6 +343,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
+                    securityContext.authorizeTableDrop(tableToken);
                     engine.drop(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
@@ -361,6 +362,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     }
                     partitionBy = writer.getPartitionBy();
                     tableStructureAdapter.of(names, detectedTypes);
+                    securityContext.authorizeInsert(tableToken, names);
                 }
                 break;
             default:

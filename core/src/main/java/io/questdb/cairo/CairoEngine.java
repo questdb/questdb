@@ -32,9 +32,7 @@ import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.WalListener;
-import io.questdb.cairo.wal.WalReader;
-import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.*;
@@ -84,7 +82,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
-    private @NotNull WalListener walListener;
+    private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private @NotNull WalInitializer walInitializer = DefaultWalInitializer.INSTANCE;
+    private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -99,10 +99,11 @@ public class CairoEngine implements Closeable, WriterSource {
         );
         this.configuration = configuration;
         this.copyContext = new CopyContext(configuration);
-        this.metrics = metrics;
         this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
         this.messageBus = new MessageBusImpl(configuration);
-        this.writerPool = new WriterPool(configuration, messageBus, metrics);
+        this.metrics = metrics;
+        // Message bus and metrics must be initialized before the pools.
+        this.writerPool = new WriterPool(configuration, this);
         this.readerPool = new ReaderPool(configuration, messageBus);
         this.metadataPool = new MetadataPool(configuration, this);
         this.walWriterPool = new WalWriterPool(configuration, this);
@@ -111,7 +112,6 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         this.snapshotAgent = new DatabaseSnapshotAgent(this);
-        this.walListener = WalListener.DEFAULT;
         try {
             this.tableIdGenerator.open();
         } catch (Throwable e) {
@@ -368,9 +368,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.unlockTableName(tableToken);
         }
 
-        final boolean sysTable = Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix());
-        final DdlListener ddlListener = sysTable ? DdlListenerImpl.INSTANCE : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
-        ddlListener.onTableCreated(securityContext, tableToken);
+        getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
         return tableToken;
     }
@@ -451,6 +449,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 true,
                 DefaultLifecycleManager.INSTANCE,
                 backupDirName,
+                getDdlListener(tableToken),
                 Metrics.disabled()
         );
     }
@@ -475,6 +474,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CopyContext getCopyContext() {
         return copyContext;
+    }
+
+    public @NotNull DdlListener getDdlListener(TableToken tableToken) {
+        return isSysTable(tableToken) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
     public Job getEngineMaintenanceJob() {
@@ -658,6 +661,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
     }
 
+    public WalInitializer getWalInitializer() {
+        return walInitializer;
+    }
+
     public @NotNull WalListener getWalListener() {
         return walListener;
     }
@@ -706,6 +713,10 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             insert(compiler, insertSql, sqlExecutionContext);
         }
+    }
+
+    public boolean isSysTable(TableToken tableToken) {
+        return Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix());
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -935,6 +946,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     throw EntryUnavailableException.instance(lockedReason);
                 }
             }
+
+            getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
+
             return toTableToken;
         } else {
             LOG.error().$("cannot rename, table does not exist [table=").utf8(fromTableName).I$();
@@ -953,6 +967,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void setDdlListener(@NotNull DdlListener ddlListener) {
+        this.ddlListener = ddlListener;
+    }
+
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.metadataPool.setPoolListener(poolListener);
@@ -964,6 +982,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setReaderListener(ReaderPool.ReaderListener readerListener) {
         readerPool.setTableReaderListener(readerListener);
+    }
+
+    public void setWalInitializer(@NotNull WalInitializer walInitializer) {
+        this.walInitializer = walInitializer;
     }
 
     public void setWalListener(@NotNull WalListener walListener) {

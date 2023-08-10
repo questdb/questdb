@@ -205,6 +205,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
             task = requestQueue.get(cursor);
             try {
                 if (useParallelImport()) {
+                    parallelImporter.setStatusReporter(updateStatusRef);
                     parallelImporter.of(
                             task.getTableName(),
                             task.getFileName(),
@@ -218,7 +219,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
-                    parallelImporter.process();
+                    parallelImporter.process(task.getSecurityContext());
                 } else {
                     serialImporter.of(
                             task.getTableName(),
