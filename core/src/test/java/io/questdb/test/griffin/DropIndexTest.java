@@ -370,12 +370,13 @@ public class DropIndexTest extends AbstractCairoTest {
             final SOCountDownLatch endLatch = new SOCountDownLatch(1);
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
             final AtomicReference<Throwable> concurrentDropIndexFailure = new AtomicReference<>();
+            final String dropIndexDdl = dropIndexStatement();
 
             // drop index thread
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    ddl(dropIndexStatement());
+                    ddl(dropIndexDdl);
                 } catch (Throwable e) {
                     concurrentDropIndexFailure.set(e);
                 } finally {
@@ -388,7 +389,7 @@ public class DropIndexTest extends AbstractCairoTest {
             // drop the index concurrently
             startBarrier.await();
             try {
-                ddl(dropIndexStatement(), sqlExecutionContext);
+                ddl(dropIndexDdl);
                 endLatch.await();
                 // we didn't fail, check they did
                 Throwable fail = concurrentDropIndexFailure.get();
@@ -662,11 +663,13 @@ public class DropIndexTest extends AbstractCairoTest {
                     4
             );
             // other indexed column remains intact
-            Assert.assertEquals(expectedDFiles,
+            Assert.assertEquals(
+                    expectedDFiles,
                     countFiles("temperature", 0L, DropIndexTest::isDataFile)
             );
             // check index files exist
-            Assert.assertEquals(expectedDFiles * 2,
+            Assert.assertEquals(
+                    expectedDFiles * 2,
                     countFiles("temperature", 0L, DropIndexTest::isIndexFile)
             );
         });

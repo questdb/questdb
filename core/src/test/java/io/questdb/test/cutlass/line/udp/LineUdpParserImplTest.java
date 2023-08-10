@@ -40,6 +40,7 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -115,7 +116,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getMicrosecondClock() {
+            public @NotNull MicrosecondClock getMicrosecondClock() {
                 return TestUtils.unchecked(() -> new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10));
             }
         };
@@ -287,7 +288,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x",
                 new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
                 });
@@ -314,7 +315,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getMicrosecondClock() {
+            public @NotNull MicrosecondClock getMicrosecondClock() {
                 return TestUtils.unchecked(() -> new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10));
             }
         };
@@ -391,12 +392,12 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
 
             @Override
-            public MicrosecondClock getMicrosecondClock() {
+            public @NotNull MicrosecondClock getMicrosecondClock() {
                 return TestUtils.unchecked(() -> new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10));
             }
         };
@@ -423,7 +424,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x",
                 new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
                 });
@@ -442,7 +443,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x",
                 new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
                 });
@@ -461,7 +462,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x",
                 new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
                 });
@@ -479,7 +480,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x",
                 new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
                 });
@@ -498,7 +499,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x",
                 new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
                 });
@@ -764,7 +765,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getMicrosecondClock() {
+            public @NotNull MicrosecondClock getMicrosecondClock() {
                 return TestUtils.unchecked(() -> new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10));
             }
         };
@@ -894,7 +895,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getMicrosecondClock() {
+            public @NotNull MicrosecondClock getMicrosecondClock() {
                 try {
                     return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {

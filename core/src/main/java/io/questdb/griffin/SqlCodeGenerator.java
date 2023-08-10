@@ -30,6 +30,7 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.*;
@@ -114,8 +115,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final LongList prefixes = new LongList();
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
-    private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
-
+    private final PageFrameReduceTaskFactory reduceTaskFactory;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
@@ -143,16 +143,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.functionParser = functionParser;
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
-        this.jitIRMem = Vm.getCARWInstance(configuration.getSqlJitIRMemoryPageSize(),
-                configuration.getSqlJitIRMemoryMaxPages(), MemoryTag.NATIVE_SQL_COMPILER);
+        this.jitIRMem = Vm.getCARWInstance(
+                configuration.getSqlJitIRMemoryPageSize(),
+                configuration.getSqlJitIRMemoryMaxPages(),
+                MemoryTag.NATIVE_SQL_COMPILER
+        );
         // Pre-touch JIT IR memory to avoid false positive memory leak detections.
         jitIRMem.putByte((byte) 0);
         jitIRMem.truncate();
         this.expressionNodePool = expressionNodePool;
-        this.reduceTaskPool = new WeakClosableObjectPool<>(
-                () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER),
-                configuration.getPageFrameReduceTaskPoolCapacity()
-        );
+        this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
     }
 
     @Override
@@ -165,7 +165,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @Override
     public void close() {
         Misc.free(jitIRMem);
-        Misc.free(reduceTaskPool);
     }
 
     @NotNull
@@ -262,42 +261,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
-                                                             RecordMetadata metadata,
-                                                             RecordCursorFactory masterFactory,
-                                                             RecordCursorFactory slaveFactory,
-                                                             @Transient ColumnTypes mapKeyTypes,
-                                                             @Transient ColumnTypes mapValueTypes,
-                                                             @Transient ColumnTypes slaveColumnTypes,
-                                                             RecordSink masterKeySink,
-                                                             RecordSink slaveKeySink,
-                                                             int columnSplit,
-                                                             RecordValueSink slaveValueSink,
-                                                             IntList columnIndex,
-                                                             JoinContext joinContext,
-                                                             ColumnFilter masterTableKeyColumns) {
+    private static RecordCursorFactory createFullFatAsOfJoin(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory masterFactory,
+            RecordCursorFactory slaveFactory,
+            @Transient ColumnTypes mapKeyTypes,
+            @Transient ColumnTypes mapValueTypes,
+            @Transient ColumnTypes slaveColumnTypes,
+            RecordSink masterKeySink,
+            RecordSink slaveKeySink,
+            int columnSplit,
+            RecordValueSink slaveValueSink,
+            IntList columnIndex,
+            JoinContext joinContext,
+            ColumnFilter masterTableKeyColumns
+    ) {
         return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
                 mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex,
-                joinContext, masterTableKeyColumns);
+                joinContext, masterTableKeyColumns
+        );
     }
 
-    private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
-                                                           RecordMetadata metadata,
-                                                           RecordCursorFactory masterFactory,
-                                                           RecordCursorFactory slaveFactory,
-                                                           @Transient ColumnTypes mapKeyTypes,
-                                                           @Transient ColumnTypes mapValueTypes,
-                                                           @Transient ColumnTypes slaveColumnTypes,
-                                                           RecordSink masterKeySink,
-                                                           RecordSink slaveKeySink,
-                                                           int columnSplit,
-                                                           RecordValueSink slaveValueSink,
-                                                           IntList columnIndex,
-                                                           JoinContext joinContext,
-                                                           ColumnFilter masterTableKeyColumns) {
+    private static RecordCursorFactory createFullFatLtJoin(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory masterFactory,
+            RecordCursorFactory slaveFactory,
+            @Transient ColumnTypes mapKeyTypes,
+            @Transient ColumnTypes mapValueTypes,
+            @Transient ColumnTypes slaveColumnTypes,
+            RecordSink masterKeySink,
+            RecordSink slaveKeySink,
+            int columnSplit,
+            RecordValueSink slaveValueSink,
+            IntList columnIndex,
+            JoinContext joinContext,
+            ColumnFilter masterTableKeyColumns
+    ) {
         return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
                 mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink,
-                columnIndex, joinContext, masterTableKeyColumns);
+                columnIndex, joinContext, masterTableKeyColumns
+        );
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
@@ -1380,7 +1385,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
         final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportPageFrameCursor()) {
-
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
             final boolean canCompile = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
@@ -1410,6 +1414,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory,
                             bindVarFunctions,
                             filter,
+                            reduceTaskFactory,
                             compileWorkerFilterConditionally(
                                     !filter.isReadThreadSafe(),
                                     executionContext.getSharedWorkerCount(),
@@ -1418,7 +1423,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext
                             ),
                             jitFilter,
-                            reduceTaskPool,
                             limitLoFunction,
                             limitLoPos,
                             preTouchColumns,
@@ -1451,7 +1455,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext.getMessageBus(),
                     factory,
                     filter,
-                    reduceTaskPool,
+                    reduceTaskFactory,
                     compileWorkerFilterConditionally(
                             !filter.isReadThreadSafe(),
                             executionContext.getSharedWorkerCount(),
@@ -1751,7 +1755,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getMessageBus(),
                                 master,
                                 filter,
-                                reduceTaskPool,
+                                reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         !filter.isReadThreadSafe(),
                                         executionContext.getSharedWorkerCount(),
@@ -3285,7 +3289,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext.getSharedWorkerCount()
                     );
                     tempVaf.add(vaf);
-                    meta.add(indexInThis,
+                    meta.add(
+                            indexInThis,
                             new TableColumnMetadata(
                                     Chars.toString(columns.getQuick(indexInThis).getName()),
                                     vaf.getType(),
@@ -3709,7 +3714,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             try (TableReader reader = executionContext.getReader(
                     tableToken,
-                    model.getTableVersion())) {
+                    model.getTableVersion()
+            )) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
         }
@@ -4009,7 +4015,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                             if (filter == null) {
-                                rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex,
+                                rcf = new DeferredSymbolIndexRowCursorFactory(
+                                        keyColumnIndex,
                                         symbolFunc,
                                         true,
                                         indexDirection

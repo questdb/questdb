@@ -776,7 +776,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
 
         @Override
-        public void addColumn(@NotNull CharSequence columnName, int columnType) {
+        public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         }
 
         @Override

@@ -45,6 +45,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.function.LongSupplier;
 
@@ -176,13 +177,13 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         };
         this.cairoConfiguration = new DefaultCairoConfiguration(root) {
             @Override
-            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
             }
 
             // fix import ID
             @Override
-            public LongSupplier getCopyIDSupplier() {
+            public @NotNull LongSupplier getCopyIDSupplier() {
                 return () -> importID;
             }
 

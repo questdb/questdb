@@ -43,6 +43,7 @@ import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
@@ -271,7 +272,7 @@ public class LatestByParallelTest extends AbstractTest {
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return TestFilesFacadeImpl.INSTANCE;
                     }
                 };
@@ -281,7 +282,7 @@ public class LatestByParallelTest extends AbstractTest {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return TestFilesFacadeImpl.INSTANCE;
                     }
 

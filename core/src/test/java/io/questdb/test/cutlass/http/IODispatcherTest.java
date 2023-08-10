@@ -8073,7 +8073,7 @@ public class IODispatcherTest extends AbstractTest {
         final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return new TestFilesFacadeImpl() {
                     @Override
                     public void msync(long addr, long len, boolean async) {

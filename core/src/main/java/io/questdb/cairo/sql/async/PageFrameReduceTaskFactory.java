@@ -22,10 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.sql.async;
 
-import java.io.Closeable;
-
-public interface CommitListener extends Closeable {
-    void onCommit(long txn, long rowsAdded);
+public interface PageFrameReduceTaskFactory {
+    PageFrameReduceTask getInstance();
 }
