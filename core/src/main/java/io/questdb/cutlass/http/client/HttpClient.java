@@ -161,11 +161,109 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
+        public Request put(CharSequence str) {
+            int len = str.length();
+            Chars.asciiStrCpy(str, len, ptr);
+            ptr += len;
+            return this;
+        }
+
+        @Override
+        public CharSink put(char c) {
+            Unsafe.getUnsafe().putByte(ptr, (byte) c);
+            ptr++;
+            return this;
+        }
+
+        @Override
         public void putUtf8Special(char c) {
             if (urlEncode) {
                 putUrlEncoded(c);
             } else {
                 put(c);
+            }
+        }
+
+        public Request query(CharSequence name, CharSequence value) {
+            assert state == STATE_URL_DONE || state == STATE_QUERY;
+            if (state == STATE_URL_DONE) {
+                put('?');
+            } else {
+                put('&');
+            }
+            state = STATE_QUERY;
+            urlEncode = true;
+            try {
+                encodeUtf8(name).put('=').encodeUtf8(value);
+            } finally {
+                urlEncode = false;
+            }
+            return this;
+        }
+
+        public Response send(CharSequence host, int port) {
+            return send(host, port, defaultTimeout);
+        }
+
+        public Response send(CharSequence host, int port, int timeout) {
+            assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
+            if (fd == -1) {
+                connect(host, port);
+            }
+
+
+            if (state == STATE_URL_DONE || state == STATE_QUERY) {
+                put(" HTTP/1.1").crlf();
+            }
+
+            crlf();
+            doSend(timeout);
+            response.init();
+            return response;
+        }
+
+        public Request url(CharSequence url) {
+            assert state == STATE_URL;
+            state = STATE_URL_DONE;
+            return put(url);
+        }
+
+        private void connect(CharSequence host, int port) {
+            fd = nf.socketTcp(true);
+            if (fd < 0) {
+                throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
+            }
+            long addrInfo = nf.getAddrInfo(host, port);
+            if (addrInfo == -1) {
+                nf.close(fd, LOG);
+                throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
+            }
+            if (nf.connectAddrInfo(fd, addrInfo) != 0) {
+                int errno = nf.errno();
+                nf.close(fd, LOG);
+                nf.freeAddrInfo(addrInfo);
+                throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
+            }
+            nf.freeAddrInfo(addrInfo);
+        }
+
+        private Request crlf() {
+            String CRLF = "\r\n";
+            return put(CRLF);
+        }
+
+        private void doSend(int timeout) {
+            setupIoWait();
+            int len = (int) (ptr - bufLo);
+            if (len > 0) {
+                long p = bufLo;
+                do {
+                    final int sent = sendOrDie(p, len, timeout);
+                    if (sent > 0) {
+                        p += sent;
+                        len -= sent;
+                    }
+                } while (len > 0);
             }
         }
 
@@ -275,104 +373,6 @@ public abstract class HttpClient implements QuietCloseable {
                     break;
             }
         }
-
-        @Override
-        public Request put(CharSequence str) {
-            int len = str.length();
-            Chars.asciiStrCpy(str, len, ptr);
-            ptr += len;
-            return this;
-        }
-
-        @Override
-        public CharSink put(char c) {
-            Unsafe.getUnsafe().putByte(ptr, (byte) c);
-            ptr++;
-            return this;
-        }
-
-        public Request query(CharSequence name, CharSequence value) {
-            assert state == STATE_URL_DONE || state == STATE_QUERY;
-            if (state == STATE_URL_DONE) {
-                put('?');
-            } else {
-                put('&');
-            }
-            state = STATE_QUERY;
-            urlEncode = true;
-            try {
-                encodeUtf8(name).put('=').encodeUtf8(value);
-            } finally {
-                urlEncode = false;
-            }
-            return this;
-        }
-
-        public Response send(CharSequence host, int port) {
-            return send(host, port, defaultTimeout);
-        }
-
-        public Response send(CharSequence host, int port, int timeout) {
-            assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
-            if (fd == -1) {
-                connect(host, port);
-            }
-
-
-            if (state == STATE_URL_DONE || state == STATE_QUERY) {
-                put(" HTTP/1.1").crlf();
-            }
-
-            crlf();
-            doSend(timeout);
-            response.init();
-            return response;
-        }
-
-        public Request url(CharSequence url) {
-            assert state == STATE_URL;
-            state = STATE_URL_DONE;
-            return put(url);
-        }
-
-        private void connect(CharSequence host, int port) {
-            fd = nf.socketTcp(true);
-            if (fd < 0) {
-                throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
-            }
-            long addrInfo = nf.getAddrInfo(host, port);
-            if (addrInfo == -1) {
-                nf.close(fd, LOG);
-                throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
-            }
-            if (nf.connectAddrInfo(fd, addrInfo) != 0) {
-                int errno = nf.errno();
-                nf.close(fd, LOG);
-                nf.freeAddrInfo(addrInfo);
-                throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
-            }
-            nf.freeAddrInfo(addrInfo);
-        }
-
-        private Request crlf() {
-            String CRLF = "\r\n";
-            return put(CRLF);
-        }
-
-        private void doSend(int timeout) {
-            setupIoWait();
-            int len = (int) (ptr - bufLo);
-            if (len > 0) {
-                long p = bufLo;
-                do {
-                    final int sent = sendOrDie(p, len, timeout);
-                    if (sent > 0) {
-                        p += sent;
-                        len -= sent;
-                    }
-                } while (len > 0);
-            }
-        }
     }
 
     public class Response implements QuietCloseable {
@@ -433,11 +433,13 @@ public abstract class HttpClient implements QuietCloseable {
             // chunk size includes `\r\n\`, which must not be included in
             // "available" bytes of the last chunk
 
-            // configure chunk boundaries
-            boolean endOfChunk = chunk.size - chunk.consumed <= len;
+            // configure chunk boundaries, chunk size contains two extra bytes for CRLF
+            // we must consume and ignore them
+            long chunkBytesRemaining = chunk.size - chunk.consumed;
+            boolean endOfChunk = chunkBytesRemaining <= len;
             chunk.endOfChunk = endOfChunk;
             chunk.addr = dataHi;
-            chunk.available = endOfChunk ? chunk.size - chunk.consumed - 2 : len;
+            chunk.available = Math.min(chunkBytesRemaining - 2, len);
 
             if (endOfChunk) {
                 dataHi += len;
@@ -537,12 +539,12 @@ public abstract class HttpClient implements QuietCloseable {
                 endOfChunk = true;
             }
 
-            public long lo() {
-                return addr;
-            }
-
             public long hi() {
                 return addr + available;
+            }
+
+            public long lo() {
+                return addr;
             }
         }
     }

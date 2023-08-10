@@ -291,10 +291,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpConnectionContext context,
             SqlExecutionContext sqlExecutionContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
-        if (state.noCursor()) {
-            return;
-        }
-
         LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();

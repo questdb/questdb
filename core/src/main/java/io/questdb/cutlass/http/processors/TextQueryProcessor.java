@@ -287,7 +287,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         TextQueryProcessorState state = LV.get(context);
-        if (state == null || state.cursor == null) {
+        if (state == null) {
             return;
         }
 

@@ -4624,7 +4624,6 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testJsonQuerySuspend() throws Exception {
         testSuspend("/query");
-
     }
 
     @Test
