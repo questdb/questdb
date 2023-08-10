@@ -92,7 +92,7 @@ public class IODispatcherTest extends AbstractTest {
     private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
     private static final Metrics metrics = Metrics.enabled();
-    private static TestHttpClient testHttpClient = new TestHttpClient();
+    private static TestHttpClient testHttpClient;
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -124,6 +124,13 @@ public class IODispatcherTest extends AbstractTest {
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractTest.setUpStatic();
+        testHttpClient = Misc.free(testHttpClient);
+        testHttpClient = new TestHttpClient();
+    }
+
     @AfterClass
     public static void tearDownStatic() {
         testHttpClient = Misc.free(testHttpClient);
@@ -131,7 +138,8 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Before
-    public void setUp3() {
+    public void setUp() {
+        super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
     }
 
