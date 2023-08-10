@@ -599,15 +599,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
 
         if (isColumnIndexed(metaMem, columnIndex)) {
-            throw CairoException.nonCritical().put("already indexed [column=").put(columnName).put(']');
+            throw CairoException.nonCritical().put("column is already indexed [column=").put(columnName).put(']');
         }
 
         final int existingType = getColumnType(metaMem, columnIndex);
-        LOG.info().$("adding index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$(", path=").$(path).I$();
+        LOG.info().$("adding index to '").utf8(columnName).$("' [").$(ColumnType.nameOf(existingType)).$(", path=").$(path).I$();
 
         if (!ColumnType.isSymbol(existingType)) {
             LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).I$();
-            throw CairoException.nonCritical().put("cannot create index for [column='").put(columnName).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
+            throw CairoException.nonCritical().put("cannot create index for [column='").put(columnName).put("', type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
         }
 
         // create indexer
@@ -1192,11 +1192,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
         if (columnIndex == -1) {
-            throw CairoException.invalidMetadata("Column does not exist", columnName);
+            throw CairoException.invalidMetadata("column does not exist", columnName);
         }
         if (!isColumnIndexed(metaMem, columnIndex)) {
-            // if a column is indexed, it is al so of type SYMBOL
-            throw CairoException.invalidMetadata("Column is not indexed", columnName);
+            // if a column is indexed, it is also of type SYMBOL
+            throw CairoException.invalidMetadata("column is not indexed", columnName);
         }
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
@@ -1543,7 +1543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.nonCritical().put("Cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                    throw CairoException.nonCritical().put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
 
                 bumpMasterRef();
@@ -1940,7 +1940,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean timestamp = (index == timestampIndex);
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
-            throw CairoException.nonCritical().put("Cannot remove timestamp from partitioned table");
+            throw CairoException.nonCritical().put("cannot remove timestamp from partitioned table");
         }
 
         commit();
