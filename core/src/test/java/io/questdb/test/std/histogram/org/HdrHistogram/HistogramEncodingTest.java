@@ -165,7 +165,6 @@ public class HistogramEncodingTest {
 
         @Test
         public void testSimpleIntegerHistogramEncoding() {
-            //Assume.assumeTrue(type == HistogramType.HAC);
             AbstractHistogram histogram = constructHistogram(histoClass, 274877906943L, 3);
             histogram.recordValue(6147);
             histogram.recordValue(1024);
