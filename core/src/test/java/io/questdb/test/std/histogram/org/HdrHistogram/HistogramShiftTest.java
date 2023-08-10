@@ -11,29 +11,41 @@ package io.questdb.test.std.histogram.org.HdrHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.ConcurrentHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.Assert;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.Test;
+
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.test.std.histogram.org.HdrHistogram.HistogramTestUtils.constructHistogram;
 
 /**
  * JUnit test for Histogram
  */
+@RunWith(Parameterized.class)
 public class HistogramShiftTest {
     static final long highestTrackableValue = 3600L * 1000 * 1000; // e.g. for 1 hr in usec units
 
-    static final Class<?>[] histogramClassesNoAtomic = {
-            Histogram.class, ConcurrentHistogram.class
-    };
+    enum HistogramType {Histogram, Concurrent, Atomic}
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][] {{HistogramType.Histogram, Histogram.class},
+                {HistogramType.Concurrent, ConcurrentHistogram.class}});
+    }
 
-    @ParameterizedTest
-    @ValueSource(classes = {
-            Histogram.class,
-            ConcurrentHistogram.class
-    })
-    public void testHistogramShift(Class<?> histoClass) {
-        // Histogram h = new Histogram(1L, 1L << 32, 3);
+    private final HistogramType type;
+    private final Class<?> histoClass;
+
+    public HistogramShiftTest(HistogramType type, Class<?> histoClass) {
+        this.type = type;
+        this.histoClass = histoClass;
+    }
+
+    @Test
+    public void testHistogramShift() {
         AbstractHistogram histogram = constructHistogram(histoClass, highestTrackableValue, 3);
         testShiftLowestBucket(histogram);
         testShiftNonLowestBucket(histogram);
@@ -70,7 +82,7 @@ public class HistogramShiftTest {
             if (!histogram.equals(histogram2)) {
                 System.out.println("Not Equal for shift of " + shiftAmount);
             }
-            Assertions.assertEquals(histogram, histogram2);
+            Assert.assertEquals(histogram, histogram2);
         }
     }
 
@@ -106,11 +118,11 @@ public class HistogramShiftTest {
             if (!histogram.equals(histogram2)) {
                 System.out.println("Not Equal for shift of " + shiftAmount);
             }
-            Assertions.assertEquals(histogram, histogram2);
+            Assert.assertEquals(histogram, histogram2);
 
             histogram.shiftValuesRight(shiftAmount);
 
-            Assertions.assertEquals(histogram, origHistogram);
+            Assert.assertEquals(histogram, origHistogram);
         }
     }
 }
