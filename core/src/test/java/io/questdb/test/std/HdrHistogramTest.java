@@ -12,7 +12,7 @@
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
  *
- *  <a href="http://www.apache.org/licenses/LICENSE-2.0">...</a>
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,19 +22,38 @@
  *
  ******************************************************************************/
 
-open module io.questdb.test {
-    requires transitive io.questdb;
-    requires static junit;
-    requires transitive jdk.unsupported;
-    requires static org.jetbrains.annotations;
-    requires static java.sql;
-    requires static org.postgresql.jdbc;
-    requires static java.management;
-    requires org.junit.jupiter.api;
-    requires org.junit.jupiter.params;
+package io.questdb.test.std;
 
-    uses io.questdb.griffin.FunctionFactory;
+import io.questdb.std.histogram.org.HdrHistogram.Histogram;
+import org.junit.Test;
 
-    exports io.questdb.test;
-    exports io.questdb.test.cairo;
+public class HdrHistogramTest {
+    @Test
+    public void initialiseHist() {
+
+        Histogram hist = new Histogram(1000, 2000, 3);
+
+        for(int i = 1000; i < 2000; i++) {
+            hist.recordSingleValue(i);
+            //System.out.println(hist.getCountAtIndex(i));
+        }
+
+        for(int i = 1; i < 4; i++) {
+            System.out.println(hist.getCountAtIndex(i));
+        }
+
+//        for(int i = 0; i < 20; i++) {
+//            hist.recordSingleValue(2);
+//        }
+
+        //hist.recordSingleValue(506);
+
+//        for(int i = 0; i < 2000; i++) {
+//            //System.out.println(hist.getMaxValue());
+//        }
+//
+//        System.out.println("Total Count: " + hist.getTotalCount());
+//
+        System.out.println("99th Percentile: " + hist.getValueAtPercentile(99));
+    }
 }

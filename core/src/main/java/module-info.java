@@ -109,6 +109,7 @@ open module io.questdb {
     exports io.questdb.cutlass.line.tcp.auth;
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
+    exports io.questdb.std.histogram.org.HdrHistogram;
 
     provides FunctionFactory with
             // test functions
