@@ -946,6 +946,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     throw EntryUnavailableException.instance(lockedReason);
                 }
             }
+
+            getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
+
             return toTableToken;
         } else {
             LOG.error().$("cannot rename, table does not exist [table=").utf8(fromTableName).I$();
