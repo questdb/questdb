@@ -9326,7 +9326,7 @@ create table tab as (
     }
 
     @Test
-    public void testUuidType_update() throws Exception {
+    public void testUuidType_update_nonPartitionedTable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (u1 uuid)")) {
                 statement.execute();
@@ -9342,6 +9342,33 @@ create table tab as (
                     sink.clear();
                     String expected = "u1[OTHER]\n" +
                             "22222222-2222-2222-2222-222222222222\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUuidType_update_partitionedTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (ts timestamp, u1 uuid) timestamp(ts) partition by DAY")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?)")) {
+                    insert.setTimestamp(1, new Timestamp(0));
+                    insert.setObject(2, UUID.fromString("11111111-1111-1111-1111-111111111111"));
+                    insert.executeUpdate();
+                }
+                try (PreparedStatement update = connection.prepareStatement("update x set u1 = ?")) {
+                    update.setObject(1, UUID.fromString("12345678-1234-5467-9876-123321001987"));
+                    update.executeUpdate();
+                }
+                if (walEnabled) {
+                    drainWalQueue();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select u1  from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "u1[OTHER]\n" +
+                            "12345678-1234-5467-9876-123321001987\n";
                     assertResultSet(expected, sink, resultSet);
                 }
             }
