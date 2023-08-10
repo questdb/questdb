@@ -24,11 +24,13 @@
 
 package io.questdb.cairo.wal;
 
-public class BasicWalInitializerFactory implements WalInitializerFactory {
-    public static final BasicWalInitializerFactory INSTANCE = new BasicWalInitializerFactory();
+import io.questdb.cairo.TableToken;
+import io.questdb.std.str.Path;
+
+public class DefaultWalInitializer implements WalInitializer {
+    public static final DefaultWalInitializer INSTANCE = new DefaultWalInitializer();
 
     @Override
-    public WalInitializer getInstance() {
-        return BasicWalInitializer.INSTANCE;
+    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
     }
 }

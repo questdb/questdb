@@ -110,18 +110,17 @@ public class WalWriter implements TableWriterAPI {
             CairoConfiguration configuration,
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
+            DdlListener ddlListener,
+            WalInitializer walInitializer,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
-        final boolean sysTable = TableUtils.isSysTable(tableToken, configuration);
-        this.ddlListener = sysTable || configuration.getFactoryProvider() == null
-                ? DdlListenerImpl.INSTANCE
-                : configuration.getFactoryProvider().getDdlListenerFactory().getInstance();
+        this.ddlListener = ddlListener;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
-        this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
+        this.walInitializer = walInitializer;
         this.tableToken = tableToken;
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;

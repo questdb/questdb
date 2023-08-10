@@ -483,13 +483,15 @@ public class CopyTask {
 
             final int columnCount = metadata.getColumnCount();
             try (
-                    TableWriter w = new TableWriter(configuration,
+                    TableWriter w = new TableWriter(
+                            configuration,
                             tableToken,
                             cairoEngine.getMessageBus(),
                             null,
                             true,
                             DefaultLifecycleManager.INSTANCE,
                             root,
+                            cairoEngine.getDdlListener(tableToken),
                             cairoEngine.getMetrics()
                     )
             ) {
@@ -604,14 +606,15 @@ public class CopyTask {
             this.symbolCount = -1;
         }
 
-        public void of(CairoEngine cairoEngine,
-                       TableStructure tableStructure,
-                       int index,
-                       long partitionSize,
-                       long partitionTimestamp,
-                       CharSequence root,
-                       CharSequence columnName,
-                       int symbolCount
+        public void of(
+                CairoEngine cairoEngine,
+                TableStructure tableStructure,
+                int index,
+                long partitionSize,
+                long partitionTimestamp,
+                CharSequence root,
+                CharSequence columnName,
+                int symbolCount
         ) {
             this.cairoEngine = cairoEngine;
             this.tableStructure = tableStructure;
@@ -715,18 +718,19 @@ public class CopyTask {
             return partitionKeysAndSizes;
         }
 
-        public void of(long chunkStart,
-                       long chunkEnd,
-                       long lineNumber,
-                       int index,
-                       CharSequence inputFileName,
-                       CharSequence importRoot,
-                       int partitionBy,
-                       byte columnDelimiter,
-                       int timestampIndex,
-                       TimestampAdapter adapter,
-                       boolean ignoreHeader,
-                       int atomicity
+        public void of(
+                long chunkStart,
+                long chunkEnd,
+                long lineNumber,
+                int index,
+                CharSequence inputFileName,
+                CharSequence importRoot,
+                int partitionBy,
+                byte columnDelimiter,
+                int timestampIndex,
+                TimestampAdapter adapter,
+                boolean ignoreHeader,
+                int atomicity
         ) {
             assert chunkStart >= 0 && chunkEnd > chunkStart;
             assert lineNumber >= 0;
@@ -780,8 +784,8 @@ public class CopyTask {
         private final LongList offsets = new LongList();
         private final StringSink tableNameSink = new StringSink();
         private int atomicity;
-        private CairoEngine cairoEngine;
         private byte columnDelimiter;
+        private CairoEngine engine;
         private long errors;
         private int hi;
         private CharSequence importRoot;
@@ -801,7 +805,7 @@ public class CopyTask {
         private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         public void clear() {
-            this.cairoEngine = null;
+            this.engine = null;
             this.targetTableStructure = null;
             this.types = null;
             this.atomicity = -1;
@@ -851,25 +855,27 @@ public class CopyTask {
 
             this.utf8Sink = utf8Sink;
 
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
             tableNameSink.clear();
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);
+            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) engine.getTableIdGenerator().getNextId(), false);
             createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0);
 
             try (
                     TableWriter writer = new TableWriter(
                             configuration,
                             tableToken,
-                            cairoEngine.getMessageBus(),
+                            engine.getMessageBus(),
                             null,
                             true,
                             DefaultLifecycleManager.INSTANCE,
                             importRoot,
-                            cairoEngine.getMetrics())
+                            engine.getDdlListener(tableToken),
+                            engine.getMetrics()
+                    )
             ) {
                 tableWriterRef = writer;
                 AbstractTextLexer lexer = lf.getLexer(columnDelimiter);
@@ -1023,7 +1029,7 @@ public class CopyTask {
                 DirectCharSink utf8Sink,
                 Path tmpPath
         ) {
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
             offsets.clear();
@@ -1136,7 +1142,7 @@ public class CopyTask {
                 DirectCharSink utf8Sink,
                 Path tmpPath
         ) {
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
             lexer.setupBeforeExactLines(onFieldsPartitioned);
@@ -1402,7 +1408,7 @@ public class CopyTask {
                 int hi,
                 final ObjList<ParallelCsvFileImporter.PartitionInfo> partitions
         ) {
-            this.cairoEngine = cairoEngine;
+            this.engine = cairoEngine;
             this.targetTableStructure = targetTableStructure;
             this.types = types;
             this.atomicity = atomicity;

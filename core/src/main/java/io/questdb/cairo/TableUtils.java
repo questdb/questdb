@@ -740,10 +740,6 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
-    public static boolean isSysTable(TableToken tableToken, CairoConfiguration configuration) {
-        return Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix());
-    }
-
     public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
         int l = seq.length();
         if (l > fsFileNameLimit) {
