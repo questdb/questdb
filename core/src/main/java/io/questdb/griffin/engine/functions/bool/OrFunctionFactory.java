@@ -60,12 +60,14 @@ public class OrFunctionFactory implements FunctionFactory {
         }
 
         if (rightFunc.isConstant()) {
-            try (rightFunc) {
+            try {
                 if (rightFunc.getBool(null)) {
                     Misc.free(leftFunc);
                     return BooleanConstant.TRUE;
                 }
                 return leftFunc;
+            } finally {
+                Misc.free(rightFunc);
             }
         }
         return new MyBooleanFunction(leftFunc, rightFunc);
