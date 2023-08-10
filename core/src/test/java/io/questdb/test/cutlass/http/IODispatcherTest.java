@@ -8848,8 +8848,4 @@ public class IODispatcherTest extends AbstractTest {
     static class Status {
         boolean valid;
     }
-
-    static {
-        LogFactory.configureSync();
-    }
 }
