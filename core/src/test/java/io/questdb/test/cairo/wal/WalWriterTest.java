@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo.wal;
 
-import io.questdb.DefaultFactoryProvider;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -3027,18 +3026,13 @@ public class WalWriterTest extends AbstractCairoTest {
 
             assertTableExistence(true, tableToken);
 
-            node1.getConfigurationOverrides().setFactoryProvider(new DefaultFactoryProvider() {
-                @Override
-                public WalInitializerFactory getWalInitializerFactory() {
-                    return () -> (WalInitializer) (segmentDir, tableToken1, walId, segmentId) -> {
-                        final File segmentDirFile = new File(segmentDir.toString());
-                        final File customInitFile = new File(segmentDirFile, "customInitFile");
-                        try {
-                            customInitFile.createNewFile();
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    };
+            engine.setWalInitializer((segmentDir, tableToken1, walId, segmentId) -> {
+                final File segmentDirFile = new File(segmentDir.toString());
+                final File customInitFile = new File(segmentDirFile, "customInitFile");
+                try {
+                    customInitFile.createNewFile();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
             });
 

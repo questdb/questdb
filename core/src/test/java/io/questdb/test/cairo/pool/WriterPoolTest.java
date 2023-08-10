@@ -652,7 +652,6 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceWriterAfterUnlock() throws Exception {
-
         assertWithPool(pool -> {
             String x = "x";
             try (TableModel model = new TableModel(configuration, x, PartitionBy.NONE).col("ts", ColumnType.DATE)) {
@@ -670,6 +669,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     false,
                     DefaultLifecycleManager.INSTANCE,
                     configuration.getRoot(),
+                    engine.getDdlListener(tableToken),
                     metrics
             );
             for (int i = 0; i < 100; i++) {
@@ -963,7 +963,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, engine.getMessageBus(), metrics)) {
+            try (WriterPool pool = new WriterPool(configuration, engine)) {
                 code.run(pool);
             }
         });
