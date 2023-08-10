@@ -76,14 +76,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
     protected final CairoEngine engine;
-    protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor>();
+    protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
     protected final SqlOptimiser optimiser;
     protected final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
-    private final SqlCodeGenerator codeGenerator;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final DropStatementCompiler dropStmtCompiler = new DropStatementCompiler();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
