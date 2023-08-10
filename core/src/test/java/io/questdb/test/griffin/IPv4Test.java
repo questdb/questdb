@@ -3496,6 +3496,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullNetmask() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "\n",
+                "select netmask(null)"
+        );
+    }
+
+    @Test
     public void testBroadcastAddrUseCase() throws Exception {
         assertSql(
                 "column\n" +

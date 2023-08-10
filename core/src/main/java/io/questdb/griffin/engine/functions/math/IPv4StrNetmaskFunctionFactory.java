@@ -67,6 +67,9 @@ public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
+            if(arg.getStr(rec) == null) {
+                return Numbers.IPv4_NULL;
+            }
             final int val = Numbers.getIPv4Netmask(arg.getStr(rec));
             return val == -2 ? Numbers.IPv4_NULL : val;
         }
