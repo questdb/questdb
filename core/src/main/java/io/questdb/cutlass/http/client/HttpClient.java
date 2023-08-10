@@ -27,8 +27,6 @@ package io.questdb.cutlass.http.client;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
@@ -39,7 +37,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class HttpClient implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(HttpClient.class);
     protected final NetworkFacade nf;
     private final int bufferSize;
     private final int defaultTimeout;
@@ -235,12 +232,12 @@ public abstract class HttpClient implements QuietCloseable {
             }
             long addrInfo = nf.getAddrInfo(host, port);
             if (addrInfo == -1) {
-                nf.close(fd, LOG);
+                disconnect();
                 throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
             }
             if (nf.connectAddrInfo(fd, addrInfo) != 0) {
                 int errno = nf.errno();
-                nf.close(fd, LOG);
+                disconnect();
                 nf.freeAddrInfo(addrInfo);
                 throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
             }
