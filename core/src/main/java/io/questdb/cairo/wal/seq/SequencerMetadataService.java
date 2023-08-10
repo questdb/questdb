@@ -79,7 +79,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
+    public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
         metadata.renameColumn(columnName, newName);
     }
 

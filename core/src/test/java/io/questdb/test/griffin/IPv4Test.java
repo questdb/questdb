@@ -3487,6 +3487,33 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4StrBadStr() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "\n",
+                "select netmask('bdfsir/33')"
+        );
+    }
+
+    @Test
+    public void testNullNetmask() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "\n",
+                "select netmask(null)"
+        );
+    }
+
+    @Test
+    public void testBroadcastAddrUseCase() throws Exception {
+        assertSql(
+                "column\n" +
+                        "68.255.255.255\n",
+                "select (~ netmask('68.11.9.2/8')) | ipv4 '68.11.9.2'"
+        );
+    }
+
+    @Test
     public void testIPv4StrBitwiseOrHalfConst() throws Exception {
         assertQuery(
                 "column\n" +
@@ -3602,6 +3629,24 @@ public class IPv4Test extends AbstractCairoTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testIPv4StrNetmask() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "255.255.255.240\n",
+                "select netmask('68.11.22.1/28')"
+        );
+    }
+
+    @Test
+    public void testIPv4StrNetmaskNull() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "\n",
+                "select netmask('68.11.22.1/33')"
         );
     }
 

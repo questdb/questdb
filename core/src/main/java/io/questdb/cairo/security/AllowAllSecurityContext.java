@@ -31,7 +31,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class AllowAllSecurityContext implements SecurityContext {
     public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
@@ -196,7 +195,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
+    public void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
