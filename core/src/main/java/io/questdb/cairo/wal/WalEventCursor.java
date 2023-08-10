@@ -352,6 +352,7 @@ public class WalEventCursor {
                         bindVariableService.setChar(i, readChar());
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                         bindVariableService.setInt(i, readInt());
                         break;
                     case ColumnType.FLOAT:
@@ -409,6 +410,7 @@ public class WalEventCursor {
                         bindVariableService.setChar(name, readChar());
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                         bindVariableService.setInt(name, readInt());
                         break;
                     case ColumnType.FLOAT:

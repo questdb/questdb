@@ -144,6 +144,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         extend0(0);
         // reset append offset
         appendAddress = pageAddress;
+        shiftAddressRight(0);
     }
 
     @Override

@@ -25,10 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -218,6 +215,38 @@ public class TableUtilsTest extends AbstractTest {
 
         Assert.assertFalse(TableUtils.isValidTableName("abc", 2));
         Assert.assertTrue(TableUtils.isValidTableName("الْعَرَبِيَّة", 127));
+    }
+
+    @Test
+    public void testNullValue() {
+        long mem1 = Unsafe.getUnsafe().allocateMemory(32);
+        long mem2 = Unsafe.getUnsafe().allocateMemory(32);
+        try {
+            for (int columnType = 0; columnType < ColumnType.MAX; columnType++) {
+
+                if (!ColumnType.isVariableLength(columnType)) {
+                    int size = ColumnType.sizeOf(columnType);
+                    if (size > 0) {
+                        TableUtils.setNull(columnType, mem2, 1);
+                        Unsafe.getUnsafe().putLong(mem1 + 0, TableUtils.getNullLong(columnType, 0));
+                        Unsafe.getUnsafe().putLong(mem1 + 8, TableUtils.getNullLong(columnType, 1));
+                        Unsafe.getUnsafe().putLong(mem1 + 16, TableUtils.getNullLong(columnType, 2));
+                        Unsafe.getUnsafe().putLong(mem1 + 24, TableUtils.getNullLong(columnType, 3));
+
+                        String type = ColumnType.nameOf(columnType);
+                        for (int b = 0; b < size; b++) {
+                            Assert.assertEquals(
+                                    type,
+                                    Unsafe.getUnsafe().getByte(mem1 + b),
+                                    Unsafe.getUnsafe().getByte(mem1 + b));
+                        }
+                    }
+                }
+            }
+        } finally {
+            Unsafe.getUnsafe().freeMemory(mem1);
+            Unsafe.getUnsafe().freeMemory(mem2);
+        }
     }
 
     private void testIsValidColumnName(char c, boolean expected) {

@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
@@ -119,6 +120,14 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
 
     public void close(byte truncateMode) {
         clear(truncateMode);
+    }
+
+    public void disableDeduplicate() {
+        structureVersion++;
+    }
+
+    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        structureVersion++;
     }
 
     @Override

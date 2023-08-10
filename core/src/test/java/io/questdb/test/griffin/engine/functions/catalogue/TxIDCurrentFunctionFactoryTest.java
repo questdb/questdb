@@ -25,21 +25,16 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.engine.functions.catalogue.TxIDCurrentFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
+public class TxIDCurrentFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPrefixedTxIDCurrentFunc() throws Exception {
         assertMemoryLeak(
-                () -> TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select pg_catalog.txid_current();",
-                        sink,
-                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
+                () -> assertSql(
+                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", "select pg_catalog.txid_current();"
                 )
         );
     }
@@ -47,12 +42,8 @@ public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testTxIDCurrentFunc() throws Exception {
         assertMemoryLeak(
-                () -> TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select txid_current();",
-                        sink,
-                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
+                () -> assertSql(
+                        "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", "select txid_current();"
                 )
         );
     }

@@ -24,27 +24,18 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SumLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class SumLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
-        assertQuery13(
-                "avg\n" +
-                        "5261.376146789\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b long",
-                "avg\n" +
-                        "5261.376146789\n",
-                false,
-                true
-        );
+        assertQuery("avg\n" +
+                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", "avg\n" +
+                        "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tsum\n" +
@@ -59,18 +50,9 @@ public class SumLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "sum\n" +
-                        "NaN\n",
-                "select sum(f) from tab",
-                "create table tab as (select cast(null as long) f from long_sequence(33))",
-                null,
-                "insert into tab select 123L from long_sequence(1)",
-                "sum\n" +
-                        "123\n",
-                false,
-                true
-        );
+        assertQuery("sum\n" +
+                        "NaN\n", "select sum(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 123L from long_sequence(1)", "sum\n" +
+                        "123\n", false, true, false);
     }
 
     @Test

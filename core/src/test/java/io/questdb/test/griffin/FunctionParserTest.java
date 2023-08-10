@@ -1111,7 +1111,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = new FunctionParser(
                 new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public MillisecondClock getMillisecondClock() {
+                    public @NotNull MillisecondClock getMillisecondClock() {
                         return () -> {
                             try {
                                 return DateFormatUtils.parseUTCDate("2018-03-04T21:40:00.000Z");

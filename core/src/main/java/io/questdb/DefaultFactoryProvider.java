@@ -26,16 +26,12 @@ package io.questdb;
 
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.BasicWalInitializerFactory;
-import io.questdb.cairo.wal.WalInitializerFactory;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.griffin.SqlCompilerFactory;
-import io.questdb.griffin.SqlCompilerFactoryImpl;
 
 public class DefaultFactoryProvider implements FactoryProvider {
     public static final DefaultFactoryProvider INSTANCE = new DefaultFactoryProvider();
@@ -58,15 +54,5 @@ public class DefaultFactoryProvider implements FactoryProvider {
     @Override
     public SecurityContextFactory getSecurityContextFactory() {
         return AllowAllSecurityContextFactory.INSTANCE;
-    }
-
-    @Override
-    public SqlCompilerFactory getSqlCompilerFactory() {
-        return SqlCompilerFactoryImpl.INSTANCE;
-    }
-
-    @Override
-    public WalInitializerFactory getWalInitializerFactory() {
-        return BasicWalInitializerFactory.INSTANCE;
     }
 }

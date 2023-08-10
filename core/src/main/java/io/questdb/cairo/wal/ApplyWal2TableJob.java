@@ -31,7 +31,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -46,7 +45,6 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -65,7 +63,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final int WAL_APPLY_FAILED = -2;
     private static final int WAL_APPLY_IGNORE_ERROR = -1;
     private final CairoEngine engine;
-    private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
     private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
@@ -77,14 +74,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
 
-    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
+    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
-        operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount, ffCache);
+        operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());
@@ -218,7 +215,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     // Returns true if the application is finished and false if it's early terminated
-    private boolean applyOutstandingWalTransactions(
+    private void applyOutstandingWalTransactions(
             TableToken tableToken,
             TableWriter writer,
             CairoEngine engine,
@@ -232,9 +229,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
-
             try {
-
                 int iTransaction = 0;
                 int totalTransactionCount = 0;
                 long rowsAdded = 0;
@@ -303,7 +298,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                         case DROP_TABLE_WALID:
                             engine.notifyDropped(tableToken);
-                            return tryDestroyDroppedTable(tableToken, writer, engine, tempPath);
+                            tryDestroyDroppedTable(tableToken, writer, engine, tempPath);
+                            return;
 
                         case 0:
                             throw CairoException.critical(0)
@@ -329,7 +325,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     continue;
                                 }
                             }
-
 
                             isTerminating = runStatus.isTerminating();
                             final long added = processWalCommit(
@@ -372,7 +367,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("rows/s, physicalWrittenRowsMultiplier=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
                 }
-                return finishedAll;
             } finally {
                 Misc.free(structuralChangeCursor);
             }
@@ -403,7 +397,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 case DATA:
                     final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
                     if (writer.getWalTnxDetails().hasRecord(seqTxn)) {
-
                         long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();
                         final long start = microClock.getTicks();
                         walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
@@ -499,7 +492,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     /**
      * Returns transaction number, which is always > -1. Negative values are used as status code.
      */
-    long applyWAL(
+    long applyWal(
             TableToken tableToken,
             CairoEngine engine,
             OperationCompiler operationCompiler,
@@ -519,17 +512,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 return Long.MAX_VALUE;
             }
 
-            boolean finished;
             try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                finished = applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
-                lastWriterTxn = writer.getAppliedSeqTxn();
+                applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
+                lastWriterTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
                 //noinspection StringEquality
                 if (tableBusy.getReason() != NO_LOCK_REASON
                         && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
                         && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
                     LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
+                    // This is abnormal termination but table is not set to suspended state.
+                    // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
+                    engine.notifyWalTxnRepublisher(tableToken);
                 }
                 // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
                 // We don't suspend table by virtue of having initial value on lastWriterTxn. It will either be
@@ -537,10 +532,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 return lastWriterTxn;
             }
 
-            long updatedLastWriterTxn = -1;
-            if (!finished || lastWriterTxn < (updatedLastWriterTxn = engine.getTableSequencerAPI().lastTxn(tableToken))) {
-                long notifyTxn = updatedLastWriterTxn > -1 ? updatedLastWriterTxn : engine.getTableSequencerAPI().lastTxn(tableToken);
-                engine.notifyWalTxnCommitted(tableToken, notifyTxn);
+            if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn)) {
+                engine.notifyWalTxnCommitted(tableToken);
             }
         } catch (CairoException ex) {
             if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
@@ -561,36 +554,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final TableToken tableToken;
-        final long seqTxn;
 
         try {
             WalTxnNotificationTask task = queue.get(cursor);
             tableToken = task.getTableToken();
-            seqTxn = task.getTxn();
         } finally {
             // Don't hold the queue until the all the transactions applied to the table
             subSeq.done(cursor);
         }
 
-        final int tableId = tableToken.getTableId();
-        if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
-            // Check, maybe we already processed this table to higher txn.
-            final long txn = applyWAL(tableToken, engine, operationCompiler, runStatus);
-            if (txn > -1L) {
-                lastAppliedSeqTxns.put(tableId, txn);
-            } else if (txn == WAL_APPLY_FAILED) {
-                // Set processed transaction marker as Long.MAX_VALUE - 1
-                // so that when the table is unsuspended it's notified with transaction Long.MAX_VALUE
-                // and is picked up for processing by this apply job.
-                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE - 1);
-                try {
-                    engine.getTableSequencerAPI().suspendTable(tableToken);
-                } catch (CairoException e) {
-                    LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
-                }
+        final long txn = applyWal(tableToken, engine, operationCompiler, runStatus);
+        if (txn == WAL_APPLY_FAILED) {
+            try {
+                engine.getTableSequencerAPI().suspendTable(tableToken);
+            } catch (CairoException e) {
+                LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
             }
-        } else {
-            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableToken).$(", txn=").$(seqTxn).I$();
         }
         return true;
     }

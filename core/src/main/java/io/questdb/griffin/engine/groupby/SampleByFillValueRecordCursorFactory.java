@@ -119,6 +119,8 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.INT:
                     return IntConstant.newInstance(Numbers.parseInt(fillNode.token));
+                case ColumnType.IPv4:
+                    return IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
                 case ColumnType.LONG:
                     return LongConstant.newInstance(Numbers.parseLong(fillNode.token));
                 case ColumnType.FLOAT:

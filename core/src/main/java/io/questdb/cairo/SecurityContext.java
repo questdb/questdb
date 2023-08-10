@@ -130,5 +130,5 @@ public interface SecurityContext {
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
-    String getPrincipal();
+    CharSequence getPrincipal();
 }

@@ -30,16 +30,16 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
 import org.jetbrains.annotations.Nullable;
 
-public class CompiledQueryImpl implements CompiledQuery {
+public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
@@ -53,7 +53,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
     private TableToken tableToken;
-    private TextLoader textLoader;
     private short type;
     private UpdateOperation updateOp;
 
@@ -71,6 +70,18 @@ public class CompiledQueryImpl implements CompiledQuery {
                 return writerAPI.apply(operation, true);
             }
         };
+    }
+
+    @Override
+    public void clear() {
+        this.type = 0;
+        this.recordCursorFactory = null;
+        this.tableToken = null;
+        this.affectedRowsCount = -1;
+        this.insertOp = null;
+        this.alterOp = null;
+        this.updateOp = null;
+        this.statementName = null;
     }
 
     @Override
@@ -130,11 +141,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public TextLoader getTextLoader() {
-        return textLoader;
-    }
-
-    @Override
     public short getType() {
         return type;
     }
@@ -175,8 +181,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(COMMIT);
     }
 
-    public CompiledQuery ofCopyRemote(TextLoader textLoader) {
-        this.textLoader = textLoader;
+    public CompiledQuery ofCopyRemote() {
         return of(COPY_REMOTE);
     }
 

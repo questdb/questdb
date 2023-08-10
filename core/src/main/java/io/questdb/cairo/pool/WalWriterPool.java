@@ -27,7 +27,9 @@ package io.questdb.cairo.pool;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalInitializer;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
@@ -36,7 +38,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     private final CairoEngine engine;
 
     public WalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
-        super(configuration);
+        super(configuration, configuration.getReaderPoolMaxSegments(), configuration.getInactiveReaderTTL());
         this.engine = engine;
     }
 
@@ -47,7 +49,16 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
 
     @Override
     protected WalWriterTenant newTenant(TableToken tableToken, Entry<WalWriterTenant> entry, int index) {
-        return new WalWriterTenant(this, entry, index, tableToken, engine.getTableSequencerAPI(), engine.getMetrics());
+        return new WalWriterTenant(
+                this,
+                entry,
+                index,
+                tableToken,
+                engine.getTableSequencerAPI(),
+                engine.getDdlListener(tableToken),
+                engine.getWalInitializer(),
+                engine.getMetrics()
+        );
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant {
@@ -61,9 +72,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 int index,
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
+                DdlListener ddlListener,
+                WalInitializer walInitializer,
                 Metrics metrics
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, metrics);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walInitializer, metrics);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

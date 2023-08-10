@@ -306,6 +306,12 @@ public class CharsTest {
     }
 
     @Test
+    public void testIPv4ToString() {
+        Assert.assertEquals("255.255.255.255", TestUtils.ipv4ToString(0xffffffff));
+        Assert.assertEquals("0.0.0.25", TestUtils.ipv4ToString(25));
+    }
+
+    @Test
     public void testIsBlank() {
         Assert.assertTrue(Chars.isBlank(null));
         Assert.assertTrue(Chars.isBlank(""));

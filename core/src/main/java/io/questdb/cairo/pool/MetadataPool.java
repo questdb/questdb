@@ -32,7 +32,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
     private final CairoEngine engine;
 
     public MetadataPool(CairoConfiguration configuration, CairoEngine engine) {
-        super(configuration);
+        super(configuration, configuration.getReaderPoolMaxSegments(), configuration.getInactiveReaderTTL());
         this.engine = engine;
     }
 

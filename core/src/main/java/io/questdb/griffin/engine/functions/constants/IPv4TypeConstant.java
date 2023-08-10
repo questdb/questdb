@@ -22,8 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.griffin.engine.functions.constants;
 
-public interface WalInitializerFactory {
-    WalInitializer getInstance();
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.std.Numbers;
+
+public class IPv4TypeConstant extends IPv4Function implements TypeConstant {
+    public static final IPv4TypeConstant INSTANCE = new IPv4TypeConstant();
+
+    private IPv4TypeConstant() {
+        super();
+    }
+
+    @Override
+    public int getIPv4(Record rec) {
+        return Numbers.IPv4_NULL;
+    }
 }

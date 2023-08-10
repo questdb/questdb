@@ -22,15 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.str.Path;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
+import org.jetbrains.annotations.NotNull;
 
-public class BasicWalInitializer implements WalInitializer {
-    public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
+public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
+
+    public CountIPv4GroupByFunction(@NotNull Function arg) {
+        super(arg);
+    }
 
     @Override
-    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
+    public void computeFirst(MapValue mapValue, Record record) {
+        final int value = arg.getIPv4(record);
+        if (value != Numbers.IPv4_NULL) {
+            mapValue.putLong(valueIndex, 1);
+        } else {
+            mapValue.putLong(valueIndex, 0);
+        }
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        final int value = arg.getIPv4(record);
+        if (value != Numbers.IPv4_NULL) {
+            mapValue.addLong(valueIndex, 1);
+        }
     }
 }

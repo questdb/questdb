@@ -39,13 +39,13 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -67,7 +67,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        BasePGTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
 
         addTestCase("select * from x");
         addTestCase("select * from x order by ts desc");
@@ -356,7 +356,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                                     }
                                 }
                                 try (ResultSet rs = statement.executeQuery()) {
-                                    long rows = printToSink(sink, rs);
+                                    long rows = printToSink(sink, rs, null);
                                     if (!tc.allowEmptyResultSet) {
                                         Assert.assertTrue("Query " + tc.query + " is expected to return non-empty result set", rows > 0);
                                     }
@@ -376,7 +376,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                                     }
                                 }
                                 try (ResultSet rs = statement.executeQuery()) {
-                                    printToSink(sinkB, rs);
+                                    printToSink(sinkB, rs, null);
                                 }
                             }
 
@@ -411,7 +411,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         private final ConcurrentHashMap<SuspendEvent> suspendedPartitions = new ConcurrentHashMap<>();
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             suspendedPartitions.forEach((charSequence, suspendEvent) -> suspendEvent.close());
         }
 

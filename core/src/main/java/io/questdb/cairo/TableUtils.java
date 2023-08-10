@@ -621,6 +621,44 @@ public final class TableUtils {
         return type;
     }
 
+    public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
+        // In theory, we can have a column type where `NULL` value will be different `LONG` values,
+        // then this should return different values on longIndex. At the moment there are no such types.
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+                return 0L;
+            case ColumnType.SYMBOL:
+                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, 0);
+            case ColumnType.FLOAT:
+                return Float.floatToIntBits(Float.NaN);
+            case ColumnType.DOUBLE:
+                return Double.doubleToLongBits(Double.NaN);
+            case ColumnType.LONG256:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+                // Long128 and UUID are null when all 2 longs are NaNs
+                // Long256 is null when all 4 longs are NaNs
+                return Numbers.LONG_NaN;
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOLONG:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+                return GeoHashes.NULL;
+            case ColumnType.IPv4:
+                return Numbers.IPv4_NULL;
+            default:
+                assert false : "Invalid column type: " + columnType;
+                return 0;
+        }
+    }
+
     public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
         return partitionTableOffset + 4 + index * 8L;
     }
@@ -1282,6 +1320,9 @@ public final class TableUtils {
             case ColumnType.INT:
                 Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
                 break;
+            case ColumnType.IPv4:
+                Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
+                break;
             case ColumnType.GEOINT:
                 Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);
                 break;
@@ -1391,8 +1432,8 @@ public final class TableUtils {
                 }
 
                 if (isColumnDedupKey(metaMem, i)) {
-                    if (!ColumnType.isSymbol(type) && !ColumnType.isInt(type) && i != timestampIndex) {
-                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for SYMBOL and INT column types").put(" at [").put(i).put(']');
+                    if (ColumnType.isVariableLength(type)) {
+                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
                     }
                 }
 

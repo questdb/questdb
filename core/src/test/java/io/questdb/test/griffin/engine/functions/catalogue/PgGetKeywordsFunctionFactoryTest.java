@@ -25,10 +25,10 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
+public class PgGetKeywordsFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgGetKeywordsFunc() throws Exception {
@@ -37,7 +37,7 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
         for (CharSequence keyword : Constants.KEYWORDS) {
             sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
-        assertQuery12(sink.toString(), "pg_get_keywords;", null, false, sqlExecutionContext, true);
+        assertQuery(sink.toString(), "pg_get_keywords;", null, false, true);
     }
 
     @Test
@@ -47,6 +47,6 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
         for (CharSequence keyword : Constants.KEYWORDS) {
             sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
-        assertQuery12(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, true);
+        assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, true);
     }
 }

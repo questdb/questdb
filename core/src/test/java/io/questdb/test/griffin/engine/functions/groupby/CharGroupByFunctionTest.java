@@ -26,34 +26,34 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import org.junit.Test;
 
-public class CharGroupByFunctionTest extends AbstractGriffinTest {
+public class CharGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testNonNull() throws SqlException {
         sqlExecutionContext.setRandom(new Rnd());
-        compiler.compile("create table tab as ( select rnd_char() ch from long_sequence(100) )", sqlExecutionContext);
+        ddl("create table tab as ( select rnd_char() ch from long_sequence(100) )");
 
-        assertSql("select min(ch) from tab",
-                "min\n" +
-                        "B\n");
+        assertSql("min\n" +
+                "B\n", "select min(ch) from tab"
+        );
 
-        assertSql("select max(ch) from tab",
-                "max\n" +
-                        "Z\n");
+        assertSql("max\n" +
+                "Z\n", "select max(ch) from tab"
+        );
 
-        assertSql("select first(ch) from tab",
-                "first\n" +
-                        "V\n");
+        assertSql("first\n" +
+                "V\n", "select first(ch) from tab"
+        );
 
-        assertSql("select last(ch) from tab",
-                "last\n" +
-                        "J\n");
+        assertSql("last\n" +
+                "J\n", "select last(ch) from tab"
+        );
     }
 
     @Test
@@ -63,9 +63,9 @@ public class CharGroupByFunctionTest extends AbstractGriffinTest {
             createPopulateTable(tm, 100, "2020-01-01", 2);
         }
 
-        assertSql("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d",
-                "ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                        "2020-01-01T00:28:47.990000Z\t\u0001\t3\t\u0001\t3\t51\n" +
-                        "2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49\n");
+        assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                "2020-01-01T00:28:47.990000Z\t\u0001\t3\t\u0001\t3\t51\n" +
+                "2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d"
+        );
     }
 }

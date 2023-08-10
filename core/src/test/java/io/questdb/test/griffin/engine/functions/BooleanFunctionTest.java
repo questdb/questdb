@@ -145,6 +145,12 @@ public class BooleanFunctionTest {
         Assert.assertEquals(0, functionA.getInt(null));
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() {
+        Assert.assertEquals(1, functionB.getIPv4(null));
+        Assert.assertEquals(0, functionA.getIPv4(null));
+    }
+
     @Test
     public void testGetLong() {
         Assert.assertEquals(1, functionB.getLong(null));

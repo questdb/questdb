@@ -22,13 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.griffin.engine.functions.groupby;
 
-public class BasicWalInitializerFactory implements WalInitializerFactory {
-    public static final BasicWalInitializerFactory INSTANCE = new BasicWalInitializerFactory();
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+public class CountDistinctIPv4GroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "count_distinct(X)";
+    }
 
     @Override
-    public WalInitializer getInstance() {
-        return BasicWalInitializer.INSTANCE;
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CountDistinctIPv4GroupByFunction(args.getQuick(0));
     }
 }

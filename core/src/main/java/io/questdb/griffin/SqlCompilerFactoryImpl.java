@@ -25,21 +25,12 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import org.jetbrains.annotations.Nullable;
 
 public class SqlCompilerFactoryImpl implements SqlCompilerFactory {
     public static final SqlCompilerFactory INSTANCE = new SqlCompilerFactoryImpl();
 
     @Override
-    public SqlCompiler getInstance(
-            CairoEngine engine,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent
-    ) {
-        return new SqlCompiler(
-                engine,
-                functionFactoryCache,
-                snapshotAgent
-        );
+    public SqlCompilerImpl getInstance(CairoEngine engine) {
+        return new SqlCompilerImpl(engine);
     }
 }

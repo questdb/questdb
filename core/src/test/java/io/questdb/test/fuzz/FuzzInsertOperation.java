@@ -52,7 +52,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.GEOINT,
             ColumnType.GEOLONG,
             ColumnType.BOOLEAN,
-            ColumnType.UUID
+            ColumnType.UUID,
+            ColumnType.IPv4
     };
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
@@ -131,6 +132,10 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
                             case ColumnType.INT:
                                 row.putInt(index, isNull ? Numbers.INT_NaN : rnd.nextInt());
+                                break;
+
+                            case ColumnType.IPv4:
+                                row.putInt(index, isNull ? Numbers.IPv4_NULL : rnd.nextInt());
                                 break;
 
                             case ColumnType.LONG:

@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
@@ -32,7 +32,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
+public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -163,16 +163,18 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFailsWithSingleArg() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table alex as (" +
+            ddl("create table alex as (" +
                     "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
                     " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
                     " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
                     " from long_sequence(6)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             try {
-                compiler.compile("select coalesce(b)\n" +
-                        "from alex", sqlExecutionContext);
+                ddl(
+                        "select coalesce(b)\n" +
+                        "from alex"
+                );
                 Assert.fail("SqlException expected");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().contains("coalesce"));
@@ -183,15 +185,14 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFailsWithUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table alex as (" +
+            ddl("create table alex as (" +
                     "select CAST(NULL as binary) x, CAST(NULL as binary) a" +
                     " from long_sequence(6)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             try {
-                compiler.compile("select coalesce(x, a)\n" +
-                        "from alex", sqlExecutionContext);
-                Assert.fail("SqlException epected");
+                assertException("select coalesce(x, a)\n" +
+                        "from alex");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().contains("coalesce"));
             }
@@ -214,6 +215,30 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         " CASE WHEN x > 3 THEN CAST(x as float) ELSE CAST(NULL as float) END as x," +
                         " CASE WHEN x % 3 = 0 THEN 0.5f ELSE CAST(NULL as float) END as a," +
                         " CASE WHEN x % 3 = 1 THEN 10.0f ELSE CAST(NULL as float) END as b" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testIPv4Args() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "54.98.173.21\t54.98.173.21\t\t54.98.173.21\t1.1.96.238\n" +
+                        "54.132.76.40\t54.132.76.40\t\t54.132.76.40\t1.1.250.138\n" +
+                        "3.7.4.15\t3.7.4.15\t3.7.4.15\t\t1.1.20.236\n" +
+                        "54.62.93.114\t54.62.93.114\t\t54.62.93.114\t1.1.132.196\n" +
+                        "3.7.4.252\t3.7.4.252\t3.7.4.252\t54.22.249.199\t\n",
+                "select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
+                        "from test",
+                "create table test as (" +
+                        "select " +
+                        " rnd_ipv4('1.1.1.1/16', 2) x," +
+                        " rnd_ipv4('3.7.4.2/24', 2) a," +
+                        " rnd_ipv4('54.23.11.87/8', 2) b\n" +
                         " from long_sequence(5)" +
                         ")",
                 null,
@@ -319,26 +344,17 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testStrCoalesceSymbolNocacheSorted() throws Exception {
-        assertQuery13(
-                "coalesce\tx\ta\n",
-                "select coalesce(x, a) as coalesce, x, a\n" +
+        assertQuery("coalesce\tx\ta\n", "select coalesce(x, a) as coalesce, x, a\n" +
                         "from t\n" +
-                        "order by 1",
-                "create table t (x string, a symbol nocache)",
-                null,
-                "insert into t select " +
+                        "order by 1", "create table t (x string, a symbol nocache)", null, "insert into t select " +
                         " rnd_str(NULL, 'X', 'Y') as x,\n" +
                         " rnd_symbol('A', 'B', NULL) as a\n" +
-                        "from long_sequence(5)",
-                "coalesce\tx\ta\n" +
+                        "from long_sequence(5)", "coalesce\tx\ta\n" +
                         "A\t\tA\n" +
                         "B\t\tB\n" +
                         "X\tX\t\n" +
                         "Y\tY\tB\n" +
-                        "Y\tY\t\n",
-                true,
-                true
-        );
+                        "Y\tY\t\n", true, true, false);
     }
 
     @Test
@@ -457,43 +473,28 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSymbolNocache3ArgsSorted() throws Exception {
-        assertQuery13(
-                "coalesce\tx\ta\tb\n",
-                "select coalesce(x, a, b) coalesce, x, a, b " +
+        assertQuery("coalesce\tx\ta\tb\n", "select coalesce(x, a, b) coalesce, x, a, b " +
                         "from t\n" +
-                        "order by 1",
-                "create table t (x symbol nocache, a symbol nocache, b symbol nocache)",
-                null,
-                "insert into t select " +
+                        "order by 1", "create table t (x symbol nocache, a symbol nocache, b symbol nocache)", null, "insert into t select " +
                         " rnd_symbol('X', 'Y', NULL) as x,\n" +
                         " rnd_symbol('A', 'AA', NULL) as a,\n" +
                         " rnd_symbol('B', 'BB', NULL) as b\n" +
-                        "from long_sequence(5)",
-                "coalesce\tx\ta\tb\n" +
+                        "from long_sequence(5)", "coalesce\tx\ta\tb\n" +
                         "\t\t\t\n" +
                         "AA\t\tAA\tB\n" +
                         "X\tX\tA\tBB\n" +
                         "Y\tY\tAA\tBB\n" +
-                        "Y\tY\tAA\t\n",
-                true,
-                true
-        );
+                        "Y\tY\tAA\t\n", true, true, false);
     }
 
     @Test
     public void testSymbolNocacheCoalesceSorted() throws Exception {
-        assertQuery13(
-                "coalesce\tx\ta\n",
-                "select coalesce(a, x) as coalesce, x, a\n" +
+        assertQuery("coalesce\tx\ta\n", "select coalesce(a, x) as coalesce, x, a\n" +
                         "from t\n" +
-                        "order by 1",
-                "create table t (x symbol nocache, a symbol nocache)",
-                null,
-                "insert into t select " +
+                        "order by 1", "create table t (x symbol nocache, a symbol nocache)", null, "insert into t select " +
                         " rnd_symbol('X', 'Y', 'Z', NULL) as x,\n" +
                         " rnd_symbol('A', 'B', 'C', NULL) as a\n" +
-                        "from long_sequence(10)",
-                "coalesce\tx\ta\n" +
+                        "from long_sequence(10)", "coalesce\tx\ta\n" +
                         "A\tY\tA\n" +
                         "A\tX\tA\n" +
                         "A\tZ\tA\n" +
@@ -503,34 +504,22 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         "Y\tY\t\n" +
                         "Y\tY\t\n" +
                         "Z\tZ\t\n" +
-                        "Z\tZ\t\n",
-                true,
-                true
-        );
+                        "Z\tZ\t\n", true, true, false);
     }
 
     @Test
     public void testSymbolNocacheCoalesceStrSorted() throws Exception {
-        assertQuery13(
-                "coalesce\tx\ta\n",
-                "select coalesce(a, x) as coalesce, x, a\n" +
+        assertQuery("coalesce\tx\ta\n", "select coalesce(a, x) as coalesce, x, a\n" +
                         "from t\n" +
-                        "order by 1",
-                "create table t (x string, a symbol nocache)",
-                null,
-                "insert into t select " +
+                        "order by 1", "create table t (x string, a symbol nocache)", null, "insert into t select " +
                         " rnd_str('X', NULL) as x,\n" +
                         " rnd_symbol('A', 'AA') as a\n" +
-                        "from long_sequence(5)",
-                "coalesce\tx\ta\n" +
+                        "from long_sequence(5)", "coalesce\tx\ta\n" +
                         "A\tX\tA\n" +
                         "A\tX\tA\n" +
                         "AA\tX\tAA\n" +
                         "AA\t\tAA\n" +
-                        "AA\t\tAA\n",
-                true,
-                true
-        );
+                        "AA\t\tAA\n", true, true, false);
     }
 
     @Test

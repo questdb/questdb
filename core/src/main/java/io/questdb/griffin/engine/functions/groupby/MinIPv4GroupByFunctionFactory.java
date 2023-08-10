@@ -22,10 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.functions.groupby;
 
-import java.io.Closeable;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface CommitListener extends Closeable {
-    void onCommit(long txn, long rowsAdded);
+
+public class MinIPv4GroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "min(X)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new MinIPv4GroupByFunction(args.getQuick(0));
+    }
 }

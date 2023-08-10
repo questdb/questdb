@@ -57,6 +57,8 @@ public interface MapValue extends Record {
 
     float getFloat(int index);
 
+    int getIPv4(int index);
+
     int getInt(int index);
 
     long getLong(int index);

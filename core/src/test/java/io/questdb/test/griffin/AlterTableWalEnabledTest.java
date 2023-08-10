@@ -27,13 +27,13 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class AlterTableWalEnabledTest extends AbstractGriffinTest {
+public class AlterTableWalEnabledTest extends AbstractCairoTest {
 
 
     @Test
@@ -42,7 +42,6 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
             configOverrideDefaultTableWriteMode(SqlWalMode.WAL_ENABLED);
             createTableWrite("my_table_wal", null, "HOUR");
             assertWalEnabled("my_table_wal", true);
-
 
             createTableWrite("my_table_wal_none", null, "NONE");
             assertWalEnabled("my_table_wal_none", false);
@@ -188,18 +187,17 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     private void checkWalEnabledBeforeAfterAlter(String alterSuffix) throws SqlException {
         createTableWrite("my_table_wal", "WAL", "DAY");
         assertWalEnabled("my_table_wal", true);
-        compile("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
+        ddl("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_wal", true);
 
         createTableWrite("my_table_dir", "BYPASS WAL", "DAY");
         assertWalEnabled("my_table_dir", false);
-        compile("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
+        ddl("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_dir", false);
 
-        assertSql("select name, walEnabled from tables() order by name",
-                "name\twalEnabled\n" +
-                        "my_table_dir\tfalse\n" +
-                        "my_table_wal\ttrue\n"
+        assertSql("name\twalEnabled\n" +
+                "my_table_dir\tfalse\n" +
+                "my_table_wal\ttrue\n", "select name, walEnabled from tables() order by name"
         );
     }
 

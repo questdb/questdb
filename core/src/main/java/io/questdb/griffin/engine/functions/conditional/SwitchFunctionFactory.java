@@ -58,14 +58,16 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();
         final Function elseBranch;
+        int returnType = -1;
         if (n % 2 == 0) {
             elseBranch = args.getLast();
+            returnType = elseBranch.getType();
             n--;
         } else {
             elseBranch = null;
         }
 
-        int returnType = -1;
+
         for (int i = 1; i < n; i += 2) {
             final Function keyFunc = args.getQuick(i);
             final int keyArgType = keyFunc.getType();
@@ -103,6 +105,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             case ColumnType.CHAR:
                 return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
             case ColumnType.INT:
+            case ColumnType.IPv4:
                 return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
             case ColumnType.BYTE:
                 return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);

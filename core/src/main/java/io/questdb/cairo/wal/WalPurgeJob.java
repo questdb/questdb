@@ -198,7 +198,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();
                     // Ping ApplyWal2TableJob to clean up the table files
-                    engine.notifyWalTxnRepublisher();
+                    engine.notifyWalTxnCommitted(tableToken);
                 }
             }
         } catch (CairoException ce) {

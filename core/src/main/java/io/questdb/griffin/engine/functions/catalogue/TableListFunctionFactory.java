@@ -26,10 +26,8 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -43,6 +41,7 @@ import io.questdb.tasks.TelemetryTask;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
+    private static final int DEDUP_NAME_COLUMN;
     private static final int DESIGNATED_TIMESTAMP_COLUMN;
     private static final int DIRECTORY_NAME_COLUMN;
     private static final int ID_COLUMN;
@@ -120,7 +119,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             tableReaderMetadata = Misc.free(tableReaderMetadata);
         }
 
-        private class TableListRecordCursor implements RecordCursor {
+        private class TableListRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private int tableIndex = -1;
@@ -135,11 +134,6 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public Record getRecord() {
                 return record;
-            }
-
-            @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -159,11 +153,6 @@ public class TableListFunctionFactory implements FunctionFactory {
                 }
 
                 return tableIndex < n;
-            }
-
-            @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -188,6 +177,10 @@ public class TableListFunctionFactory implements FunctionFactory {
                     if (col == WAL_ENABLED_COLUMN) {
                         return tableReaderMetadata.isWalEnabled();
                     }
+                    if (col == DEDUP_NAME_COLUMN) {
+                        int timestampIndex = tableReaderMetadata.getTimestampIndex();
+                        return timestampIndex > 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
+                    }
                     return false;
                 }
 
@@ -196,18 +189,12 @@ public class TableListFunctionFactory implements FunctionFactory {
                     if (col == ID_COLUMN) {
                         return tableId;
                     }
-                    if (col == MAX_UNCOMMITTED_ROWS_COLUMN) {
-                        return maxUncommittedRows;
-                    }
-                    return Numbers.INT_NaN;
+                    return maxUncommittedRows;
                 }
 
                 @Override
                 public long getLong(int col) {
-                    if (col == O3MAXLAG_COLUMN) {
                         return o3MaxLag;
-                    }
-                    return Numbers.LONG_NaN;
                 }
 
                 @Override
@@ -289,6 +276,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         O3MAXLAG_COLUMN = 5;
         WAL_ENABLED_COLUMN = 6;
         DIRECTORY_NAME_COLUMN = 7;
+        DEDUP_NAME_COLUMN = 8;
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));
         metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
@@ -298,6 +286,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }
