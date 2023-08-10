@@ -87,9 +87,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_kqueue
 JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_kevent
         (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges, jlong eventlist, jint nEvents, jint timeout) {
     int tv_sec = timeout / 1000;
-    struct timespec dontBlock = {tv_sec, (timeout - tv_sec  * 1000) * 1000*1000};
-    return (jint) kevent(kq, (const struct kevent *) changelist, nChanges, (struct kevent *) eventlist, nEvents,
-                         &dontBlock);
+    struct timespec _timeout = {tv_sec, (timeout - tv_sec * 1000) * 1000 * 1000};
+    return (jint) kevent(
+            kq,
+            (const struct kevent *) changelist,
+            nChanges,
+            (struct kevent *) eventlist,
+            nEvents,
+            &_timeout
+    );
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_network_KqueueAccessor_pipe

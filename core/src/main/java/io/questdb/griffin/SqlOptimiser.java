@@ -3417,10 +3417,6 @@ public class SqlOptimiser {
             ObjList<ExpressionNode> orderBy;
             long limitValue;
 
-            if (model.getLimitLo() != null) {
-                System.out.println("ok");
-            }
-
             if (
                     model.getLimitLo() != null
                             && model.getLimitHi() == null

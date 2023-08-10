@@ -57,7 +57,7 @@ public class DefaultHttpClientConfiguration implements HttpClientConfiguration {
 
     @Override
     public int getTimeout() {
-        return 5000;
+        return 60_000;
     }
 
     @Override

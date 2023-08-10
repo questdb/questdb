@@ -498,8 +498,6 @@ public abstract class HttpClient implements QuietCloseable {
                             chunk.endOfChunk = len == chunk.available;
                             chunk.consumed = 0;
 
-//                            assert chunk.available > 0;
-
                             // if chunk size is smaller that the unprocessed data size
                             // we will reduce unprocessed data size by chunk size; otherwise
                             // we clear the unprocessed data
