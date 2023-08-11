@@ -185,6 +185,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         }
         sink.put('\n');
 
+        Timestamp timestamp;
         long rows = 0;
         while (rs.next()) {
             rows++;
@@ -219,7 +220,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                         }
                         break;
                     case TIMESTAMP:
-                        Timestamp timestamp = rs.getTimestamp(i);
+                        timestamp = rs.getTimestamp(i);
                         if (timestamp == null) {
                             sink.put("null");
                         } else {

@@ -39,9 +39,8 @@ import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlKeywordsTest {
 
-    @Test
-    public void testIs() throws Exception {
-        Map<String, String> specialCases = new HashMap<>();
+    protected static final Map<String, String> specialCases = new HashMap<>();
+    static {
         specialCases.put("isColonColon", "::");
         specialCases.put("isConcatOperator", "||");
         specialCases.put("isMaxIdentifierLength", "max_identifier_length");
@@ -51,18 +50,23 @@ public class SqlKeywordsTest {
         specialCases.put("isStandardConformingStrings", "standard_conforming_strings");
         specialCases.put("isTextArray", "text[]");
         specialCases.put("isTransactionIsolation", "transaction_isolation");
+    }
 
-        Method[] methods = SqlKeywords.class.getMethods();
+
+    @Test
+    public void testIs() throws Exception {
+        testIs(SqlKeywords.class.getMethods());
+    }
+
+    protected static void testIs(Method[] methods) throws Exception {
         Arrays.sort(methods, Comparator.comparing(Method::getName));
         for (Method method : methods) {
             String name;
             int m = method.getModifiers() & Modifier.methodModifiers();
             if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
-                String keyword;
-                if (name.endsWith("Keyword")) {
+                String keyword = specialCases.get(name);
+                if (keyword == null && name.endsWith("Keyword")) {
                     keyword = name.substring(2, name.length() - 7).toLowerCase();
-                } else {
-                    keyword = specialCases.get(name);
                 }
                 Assert.assertTrue((boolean) method.invoke(null, keyword));
             }

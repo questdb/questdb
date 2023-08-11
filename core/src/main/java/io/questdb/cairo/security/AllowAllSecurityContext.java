@@ -183,6 +183,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeListUsers() {
+    }
+
+    @Override
+    public void authorizeUserDetails() {
+    }
+
+    @Override
     public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
     }
 

@@ -109,6 +109,10 @@ public interface SecurityContext {
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    void authorizeListUsers();
+
+    void authorizeUserDetails();
+
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
     void authorizeTableCreate();
