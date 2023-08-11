@@ -38,7 +38,11 @@ public class DefaultWalListener implements WalListener {
     }
 
     @Override
-    public void segmentClosed(final TableToken tabletoken, int walId, int segmentId) {
+    public void segmentClosed(final TableToken tabletoken, long txn, long timestamp, int walId, int segmentId) {
+    }
+
+    @Override
+    public void tableCreated(TableToken tableToken, long txn, long timestamp) {
     }
 
     @Override
