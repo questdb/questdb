@@ -85,6 +85,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testBroadcastAddrUseCase() throws Exception {
+        assertSql(
+                "column\n" +
+                        "68.255.255.255\n",
+                "select (~ netmask('68.11.9.2/8')) | ipv4 '68.11.9.2'"
+        );
+    }
+
+    @Test
     public void testCaseIPv41() throws Exception {
         assertQuery(
                 "ip\tbytes\tcase\n" +
@@ -584,13 +593,20 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testExplicitCastIPv4ToStr() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col string)",
-                21,
-                "inconvertible types: IPv4 -> STRING [from=col, to=col]"
-        );
+        assertSql("cast\n" +
+                "1.1.1.1\n", "select ipv4 '1.1.1.1'::string");
     }
+
+    @Test
+    public void testExplicitCastIPv4ToStr2() throws Exception {
+        assertSql("cast\n" +
+                "1.1.1.1\n", "select '1.1.1.1'::ipv4::string");
+    }
+
+//    @Test
+//    public void testHeader() throws Exception {
+//        assertSql("", "select '.f.e.j.hve'");
+//    }
 
     @Test
     public void testExplicitCastIntToIPv4() throws Exception {
@@ -3496,24 +3512,6 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullNetmask() throws Exception {
-        assertSql(
-                "netmask\n" +
-                        "\n",
-                "select netmask(null)"
-        );
-    }
-
-    @Test
-    public void testBroadcastAddrUseCase() throws Exception {
-        assertSql(
-                "column\n" +
-                        "68.255.255.255\n",
-                "select (~ netmask('68.11.9.2/8')) | ipv4 '68.11.9.2'"
-        );
-    }
-
-    @Test
     public void testIPv4StrBitwiseOrHalfConst() throws Exception {
         assertQuery(
                 "column\n" +
@@ -4574,6 +4572,15 @@ public class IPv4Test extends AbstractCairoTest {
                 "min\n" +
                         "4.98.173.21\n",
                 "select min(ip) from test"
+        );
+    }
+
+    @Test
+    public void testNullNetmask() throws Exception {
+        assertSql(
+                "netmask\n" +
+                        "\n",
+                "select netmask(null)"
         );
     }
 
