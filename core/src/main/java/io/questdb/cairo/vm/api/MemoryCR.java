@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.NativeBinarySequence;
 
 //contiguous readable 
 public interface MemoryCR extends MemoryC, MemoryR {
@@ -127,7 +126,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return getInt(offset);
     }
 
-    class ByteSequenceView implements NativeBinarySequence, Mutable {
+    class ByteSequenceView implements BinarySequence, Mutable {
         private long address;
         private long len = -1;
 
@@ -146,11 +145,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
             long bytesRemaining = Math.min(length, this.len - start);
             long addr = this.address + start;
             Vect.memcpy(address, addr, bytesRemaining);
-        }
-
-        @Override
-        public long getAddress() {
-            return address;
         }
 
         @Override
