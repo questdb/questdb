@@ -186,7 +186,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
         Timestamp timestamp;
         long rows = 0;
-        Timestamp timestamp;
         while (rs.next()) {
             rows++;
             for (int i = 1; i <= columnCount; i++) {
