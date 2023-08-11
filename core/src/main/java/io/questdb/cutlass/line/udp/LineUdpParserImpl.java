@@ -350,7 +350,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
     }
 
-    @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType);
         if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null
@@ -364,7 +363,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         parseValue(value, ColumnType.SYMBOL, cache, false);
     }
 
-    @SuppressWarnings("unused")
     private void parseTagValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         parseValueNewTable(value, ColumnType.SYMBOL);
     }

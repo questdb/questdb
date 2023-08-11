@@ -33,6 +33,7 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
@@ -81,7 +82,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             snapshotMemoryUsage();
             final String sql = "select * from x where s in ('C','D') limit 10";
-            try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (final RecordCursorFactory factory = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getClass());
 
                 assertCursor(
@@ -289,7 +290,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool((engine, compiler, sqlExecutionContext) -> {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit $1";
-            try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
@@ -356,7 +357,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool((engine, compiler, sqlExecutionContext) -> {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit -5";
-            try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
@@ -420,7 +421,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
-            try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
@@ -444,7 +445,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool((engine, compiler, sqlExecutionContext) -> {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select sum(a) from x where a > 0.345747032 and a < 0.34575 limit 5";
-            try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (LimitRecordCursorFactory f = (LimitRecordCursorFactory) compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 Assert.assertEquals(io.questdb.griffin.engine.LimitRecordCursorFactory.class, f.getClass());
             }
 
@@ -503,7 +504,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             compiler.compile("create table x as (select rnd_symbol('A','B','C') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour", sqlExecutionContext);
 
             final String sql = "select * from x where s ~ $1 limit 10";
-            try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
@@ -604,8 +605,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     ") timestamp(t) partition by hour", sqlExecutionContext);
 
             try (
-                    RecordCursorFactory f1 = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursorFactory f2 = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+                    RecordCursorFactory f1 = (compiler.compile(query, sqlExecutionContext).getRecordCursorFactory());
+                    RecordCursorFactory f2 = (compiler.compile(query, sqlExecutionContext).getRecordCursorFactory())
             ) {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f1.getClass());
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f2.getClass());
@@ -646,7 +647,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(jitMode);
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575";
-            try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
                 Assert.assertEquals(expectedFactoryClass, f.getClass());
             }
 
@@ -671,7 +672,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(jitMode);
 
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
-            try (RecordCursorFactory f = compiler.compile("x where a > 0.34", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory f = (compiler.compile("x where a > 0.34", sqlExecutionContext).getRecordCursorFactory())) {
 
                 Assert.assertEquals(expectedFactoryClass, f.getClass());
                 SCSequence subSeq = new SCSequence();
@@ -702,7 +703,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             compiler.compile("create table x as (select rnd_symbol('A','B','C') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour", sqlExecutionContext);
 
             final String sql = "select * from x where s = $1 limit 10";
-            try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
                 Assert.assertEquals(expectedFactoryClass, f.getClass());
             }
 

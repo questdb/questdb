@@ -42,7 +42,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.model.ExpressionNode.*;
 
-public class SqlOptimiser {
+public class SqlOptimiser implements Mutable {
 
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
@@ -66,6 +66,7 @@ public class SqlOptimiser {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
@@ -88,7 +89,6 @@ public class SqlOptimiser {
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet literalCollectorAIndexes = new IntHashSet();
-    private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
@@ -112,7 +112,7 @@ public class SqlOptimiser {
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
 
-    SqlOptimiser(
+    public SqlOptimiser(
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
@@ -130,6 +130,32 @@ public class SqlOptimiser {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
+    }
+
+    public void clear() {
+        contextPool.clear();
+        intHashSetPool.clear();
+        joinClausesSwap1.clear();
+        joinClausesSwap2.clear();
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
+        literalCollectorAIndexes.clear();
+        literalCollectorBIndexes.clear();
+        literalCollectorANames.clear();
+        literalCollectorBNames.clear();
+        defaultAliasCount = 0;
+        expressionNodePool.clear();
+        characterStore.clear();
+        tablesSoFar.clear();
+        clausesToSteal.clear();
+        tmpCursorAliases.clear();
+        functionsInFlight.clear();
+        groupByAliases.clear();
+        groupByNodes.clear();
+        groupByUsed.clear();
+        tempColumnAlias = null;
+        tempQueryModel = null;
     }
 
     public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
@@ -767,51 +793,6 @@ public class SqlOptimiser {
             }
         }
         assert postFilterRemoved.size() == pc;
-    }
-
-    private void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
-        if (model != null) {
-            if (model.getTableName() != null) {
-                ExpressionNode tableNameExpr = model.getTableNameExpr();
-                switch (tableNameExpr.type) {
-                    case CONSTANT:
-                    case LITERAL:
-                        // adjust name in case of marker
-                        GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) tableNameExpr.token;
-                        int lo = tab.getLo();
-                        if (Chars.startsWith(tab, QueryModel.NO_ROWID_MARKER)) {
-                            tab.setLo(lo + QueryModel.NO_ROWID_MARKER.length());
-                        }
-                        try {
-                            // copy column names
-                            literalCollectorANames.clear();
-                            final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-                            for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-                                literalCollectorANames.add(topDownColumns.getQuick(i).getName());
-                            }
-
-                            executionContext.getSecurityContext().authorizeSelect(
-                                    executionContext.getTableToken(tab),
-                                    literalCollectorANames
-                            );
-                        } finally {
-                            tab.setLo(lo);
-                        }
-                        break;
-                    default:
-                        // todo: function call
-                        break;
-                }
-            } else {
-                authorizeColumnAccess(executionContext, model.getNestedModel());
-                ObjList<QueryModel> joinModels = model.getJoinModels();
-                for (int i = 1, n = joinModels.size(); i < n; i++) {
-                    // exclude 0 index, it is the same as "model"
-                    authorizeColumnAccess(executionContext, joinModels.getQuick(i));
-                }
-                authorizeColumnAccess(executionContext, model.getUnionModel());
-            }
-        }
     }
 
     // The model for the following SQL:
@@ -1762,7 +1743,7 @@ public class SqlOptimiser {
     }
 
     private void enumerateColumns(QueryModel model, TableRecordMetadata metadata) throws SqlException {
-        model.setTableVersion(metadata.getMetadataVersion());
+        model.setMetadataVersion(metadata.getMetadataVersion());
         model.setTableId(metadata.getTableId());
         copyColumnsFromMetadata(model, metadata, false);
         if (model.isUpdate()) {
@@ -4672,33 +4653,14 @@ public class SqlOptimiser {
         }
     }
 
-    void clear() {
-        contextPool.clear();
-        intHashSetPool.clear();
-        joinClausesSwap1.clear();
-        joinClausesSwap2.clear();
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
-        literalCollectorAIndexes.clear();
-        literalCollectorBIndexes.clear();
-        literalCollectorANames.clear();
-        literalCollectorBNames.clear();
-        defaultAliasCount = 0;
-        expressionNodePool.clear();
-        characterStore.clear();
-        tablesSoFar.clear();
-        clausesToSteal.clear();
-        tmpCursorAliases.clear();
-        functionsInFlight.clear();
-        groupByAliases.clear();
-        groupByNodes.clear();
-        groupByUsed.clear();
-        tempColumnAlias = null;
-        tempQueryModel = null;
+    protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
     }
 
-    QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
+
+    }
+
+    QueryModel optimise(@Transient final QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
         QueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
@@ -4792,9 +4754,7 @@ public class SqlOptimiser {
                 }
             }
 
-
             TableToken tableToken = metadata.getTableToken();
-
             sqlExecutionContext.getSecurityContext().authorizeTableUpdate(tableToken, literalCollectorANames);
 
             if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName())) {
@@ -4802,6 +4762,7 @@ public class SqlOptimiser {
                 throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
             }
             updateQueryModel.setUpdateTableToken(tableToken);
+            authorizeUpdate(updateQueryModel, tableToken);
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

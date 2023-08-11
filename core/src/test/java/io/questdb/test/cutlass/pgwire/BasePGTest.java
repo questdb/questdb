@@ -69,6 +69,21 @@ public abstract class BasePGTest extends AbstractCairoTest {
         assertResultSet(null, expected, sink, rs);
     }
 
+    public static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        printToSink(sink, rs, null);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
+    public static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, IntIntHashMap map) throws SQLException, IOException {
+        printToSink(sink, rs, map);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
+    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, IntIntHashMap map) throws SQLException, IOException {
+        printToSink(sink, rs, map);
+        TestUtils.assertEquals(null, expected, sink);
+    }
+
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
@@ -142,11 +157,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
             i++;
         }
-    }
-
-    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        printToSink(sink, rs, null);
-        TestUtils.assertEquals(message, expected, sink);
     }
 
     protected static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
@@ -278,15 +288,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             sink.put('\n');
         }
         return rows;
-    }
-
-    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
-        assertResultSet(null, expected, sink, rs, map);
-    }
-
-    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
-        printToSink(sink, rs, map);
-        TestUtils.assertEquals(message, expected, sink);
     }
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
@@ -486,13 +487,13 @@ public abstract class BasePGTest extends AbstractCairoTest {
         };
     }
 
-    enum Mode {
+    public enum Mode {
         SIMPLE("simple"),
         EXTENDED("extended"),
         EXTENDED_FOR_PREPARED("extendedForPrepared"),
         EXTENDED_CACHE_EVERYTHING("extendedCacheEverything");
 
-        final String value;
+        public final String value;
 
         Mode(String value) {
             this.value = value;

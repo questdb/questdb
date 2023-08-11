@@ -1578,7 +1578,7 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
             // this check deal with concurrency
-            if (fromNameTable == null || !Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName())) {
+            if (!Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName())) {
                 throw CairoException.tableDoesNotExist(fromNameTable);
             }
             structureVersion++;

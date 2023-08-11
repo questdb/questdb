@@ -410,62 +410,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUuidNullComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_uuid4() uuid1, " +
-                " rnd_uuid4() uuid2 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("uuid1", "uuid2")
-                .withEqualityOperator()
-                .withAnyOf("null")
-                .withBooleanOperator()
-                .withAnyOf("uuid1", "uuid2")
-                .withEqualityOperator()
-                .withAnyOf("null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testUuidConstantComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_uuid4() uuid1, " +
-                " rnd_uuid4() uuid2 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("uuid1", "uuid2")
-                .withEqualityOperator()
-                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'")
-                .withBooleanOperator()
-                .withOptionalNot()
-                .withAnyOf("uuid1", "uuid2")
-                .withEqualityOperator()
-                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testUuidConstantIntMixedComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int() int, " +
-                " rnd_uuid4() uuid " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("int")
-                .withEqualityOperator()
-                .withAnyOf("3", "-1", "null")
-                .withBooleanOperator()
-                .withOptionalNot()
-                .withAnyOf("uuid")
-                .withEqualityOperator()
-                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
-    }
-
-    @Test
     public void testNullValueComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -542,6 +486,62 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
         assertQueryNullable(query, ddl);
+    }
+
+    @Test
+    public void testUuidConstantComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1, " +
+                " rnd_uuid4() uuid2 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'")
+                .withBooleanOperator()
+                .withOptionalNot()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testUuidConstantIntMixedComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int() int, " +
+                " rnd_uuid4() uuid " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("int")
+                .withEqualityOperator()
+                .withAnyOf("3", "-1", "null")
+                .withBooleanOperator()
+                .withOptionalNot()
+                .withAnyOf("uuid")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testUuidNullComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1, " +
+                " rnd_uuid4() uuid2 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("null")
+                .withBooleanOperator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
     }
 
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
