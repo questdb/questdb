@@ -68,6 +68,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDottedConstAlias() throws Exception {
+        assertSql("column1\tcolumn2\n" +
+                ".f.e.j.hve\tdjnfkvbjke\n", "select '.f.e.j.hve', 'djnfkvbjke'");
+    }
+
+    @Test
     public void testAliasInExplicitGroupByFormula() throws SqlException {
         // table alias in group-by formula should be replaced to align with "choose" model
         assertQuery(

@@ -627,6 +627,17 @@ public class SqlUtil {
         return createColumnAlias(store, base, indexOfDot, aliasToColumnMap, false);
     }
 
+    static CharSequence createConstColumnAlias(LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap) {
+        CharSequence column = "column";
+        char digit = '1';
+
+        while(aliasToColumnMap.contains(column + Chars.toString(digit))) {
+            digit++;
+        }
+
+        return column + Chars.toString(digit);
+    }
+
     static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,

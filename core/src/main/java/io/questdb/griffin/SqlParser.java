@@ -174,6 +174,10 @@ public class SqlParser {
         );
     }
 
+    private CharSequence createConstColumnAlias(QueryModel model) {
+        return SqlUtil.createConstColumnAlias(model.getAliasToColumnMap());
+    }
+
     private void expectBy(GenericLexer lexer) throws SqlException {
         if (isByKeyword(tok(lexer, "'by'"))) {
             return;
@@ -1716,7 +1720,11 @@ public class SqlParser {
                 }
                 tok = optTok(lexer);
             } else {
-                alias = createColumnAlias(expr, model);
+                if(expr.type != ExpressionNode.CONSTANT) {
+                    alias = createColumnAlias(expr, model);
+                } else {
+                    alias = createConstColumnAlias(model);
+                }
             }
             if (alias.length() == 0) {
                 throw err(lexer, null, "column alias cannot be a blank string");
