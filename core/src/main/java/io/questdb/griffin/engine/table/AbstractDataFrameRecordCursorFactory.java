@@ -62,6 +62,11 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    public TableToken getTableToken() {
+        return dataFrameCursorFactory.getTableToken();
+    }
+
+    @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return dataFrameCursorFactory.supportTableRowId(tableToken);
     }

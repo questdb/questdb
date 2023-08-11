@@ -27,6 +27,7 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -34,6 +35,9 @@ import org.jetbrains.annotations.NotNull;
 
 public class ReadOnlySecurityContext implements SecurityContext {
     public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
+
+    protected ReadOnlySecurityContext() {
+    }
 
     @Override
     public void assumeServiceAccount(CharSequence serviceAccountName) {
@@ -266,6 +270,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public CharSequence getPrincipal() {
-        return null;
+        return Constants.USER_NAME;
     }
 }

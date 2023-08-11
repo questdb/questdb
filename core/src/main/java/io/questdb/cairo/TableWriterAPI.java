@@ -68,6 +68,7 @@ public interface TableWriterAPI extends Closeable {
      * @param columnType              {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
+     * @param isSequential            unused, should be false
      */
     void addColumn(
             CharSequence columnName,
@@ -76,7 +77,7 @@ public interface TableWriterAPI extends Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isSequential
     );
 
     long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;

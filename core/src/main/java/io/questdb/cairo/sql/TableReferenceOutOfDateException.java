@@ -53,8 +53,13 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
-    public static TableReferenceOutOfDateException of(TableToken tableToken, int expectedTableId, int actualTableId,
-                                                      long expectedTableVersion, long actualTableVersion) {
+    public static TableReferenceOutOfDateException of(
+            TableToken tableToken,
+            int expectedTableId,
+            int actualTableId,
+            long expectedMetadataVersion,
+            long actualMetadataVersion
+    ) {
         TableReferenceOutOfDateException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new TableReferenceOutOfDateException()) != null;
@@ -62,8 +67,8 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         ex.message.put(tableToken)
                 .put("', expectedTableId=").put(expectedTableId)
                 .put(", actualTableId=").put(actualTableId)
-                .put(", expectedTableVersion=").put(expectedTableVersion)
-                .put(", actualTableVersion=").put(actualTableVersion).put(']');
+                .put(", expectedMetadataVersion=").put(expectedMetadataVersion)
+                .put(", actualMetadataVersion=").put(actualMetadataVersion).put(']');
         return ex;
     }
 

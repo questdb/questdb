@@ -114,7 +114,7 @@ public class AlterOperationBuilder {
         extraInfo.add(columnNamePosition);
     }
 
-    public AlterOperationBuilder ofAddIndex(
+    public void ofAddIndex(
             int tableNamePosition,
             TableToken tableToken,
             int tableId,
@@ -127,7 +127,6 @@ public class AlterOperationBuilder {
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(indexValueBlockSize);
-        return this;
     }
 
     public AlterOperationBuilder ofAttachPartition(int tableNamePosition, TableToken tableToken, int tableId) {
@@ -138,13 +137,12 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
+    public void ofCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
         this.command = ADD_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
-        return this;
     }
 
     public AlterOperationBuilder ofDedupDisable(int tableNamePosition, TableToken tableToken) {
@@ -185,14 +183,13 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofDropIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int columnNamePosition) {
+    public void ofDropIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int columnNamePosition) {
         this.command = DROP_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(columnNamePosition);
-        return this;
     }
 
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, TableToken tableToken, int tableId) {
@@ -203,14 +200,13 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
+    public void ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
-        return this;
     }
 
     public AlterOperationBuilder ofRenameColumn(int tableNamePosition, TableToken tableToken, int tableId) {
