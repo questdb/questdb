@@ -507,7 +507,13 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             final TableRecordMetadata metadata = metadataPool.get(tableToken);
             if (metadataVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != metadataVersion) {
-                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(tableToken, metadata.getTableId(), metadata.getTableId(), metadataVersion, metadata.getMetadataVersion());
+                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                        tableToken,
+                        metadata.getTableId(),
+                        metadata.getTableId(),
+                        metadataVersion,
+                        metadata.getMetadataVersion()
+                );
                 metadata.close();
                 throw ex;
             }
@@ -536,13 +542,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.get(tableToken);
     }
 
-    public TableReader getReader(TableToken tableToken, long version) {
+    public TableReader getReader(TableToken tableToken, long metadataVersion) {
         verifyTableToken(tableToken);
         final int tableId = tableToken.getTableId();
         TableReader reader = readerPool.get(tableToken);
-        if ((version > -1 && reader.getVersion() != version)
+        if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
                 || tableId > -1 && reader.getMetadata().getTableId() != tableId) {
-            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(tableToken, tableId, reader.getMetadata().getTableId(), version, reader.getVersion());
+            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                    tableToken,
+                    tableId,
+                    reader.getMetadata().getTableId(),
+                    metadataVersion,
+                    reader.getMetadataVersion()
+            );
             reader.close();
             throw ex;
         }

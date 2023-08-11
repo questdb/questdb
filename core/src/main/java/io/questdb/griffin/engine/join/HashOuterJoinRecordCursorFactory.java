@@ -38,12 +38,9 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
-public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final HashOuterJoinRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterSink;
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public HashOuterJoinRecordCursorFactory(
@@ -60,9 +57,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
             JoinContext joinContext
 
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, joinContext, masterFactory, slaveFactory);
         RecordChain slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
@@ -74,7 +69,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 slaveChain,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata())
         );
-        this.joinContext = joinContext;
     }
 
     @Override

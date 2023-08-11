@@ -30,6 +30,7 @@ import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 import java.util.ArrayDeque;
 import java.util.Iterator;
@@ -135,6 +136,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode limitLo;
     //position of the limit clause token
     private int limitPosition;
+    private long metadataVersion = -1;
     private int modelPosition = 0;
     private int modelType = ExecutionModel.QUERY;
     private QueryModel nestedModel;
@@ -156,7 +158,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private Function tableNameFunction;
-    private long tableVersion = -1;
     private ExpressionNode timestamp;
     private QueryModel unionModel;
     private QueryModel updateTableModel;
@@ -360,7 +361,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNameToAliasMap.clear();
         tableNameFunction = null;
         tableId = -1;
-        tableVersion = -1;
+        metadataVersion = -1;
         bottomUpColumnNames.clear();
         expressionModels.clear();
         distinct = false;
@@ -469,7 +470,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void copyUpdateTableMetadata(QueryModel updateTableModel) {
         this.updateTableModel = updateTableModel;
         this.tableId = updateTableModel.tableId;
-        this.tableVersion = updateTableModel.tableVersion;
+        this.metadataVersion = updateTableModel.metadataVersion;
     }
 
     @Override
@@ -501,7 +502,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         return orderByPosition == that.orderByPosition
                 && latestByType == that.latestByType
-                && tableVersion == that.tableVersion
+                && metadataVersion == that.metadataVersion
                 && joinType == that.joinType
                 && joinKeywordPosition == that.joinKeywordPosition
                 && limitPosition == that.limitPosition
@@ -681,6 +682,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return limitPosition;
     }
 
+    public long getMetadataVersion() {
+        return metadataVersion;
+    }
+
     public int getModelAliasIndex(CharSequence column, int start, int end) {
         int index = modelAliasIndexes.keyIndex(column, start, end);
         if (index < 0) {
@@ -812,10 +817,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableNameFunction;
     }
 
-    public long getTableVersion() {
-        return tableVersion;
-    }
-
     public ExpressionNode getTimestamp() {
         return timestamp;
     }
@@ -881,7 +882,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
                 latestByType, whereClause, backupWhereClause,
                 postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
-                tableNameExpr, tableVersion, tableNameFunction,
+                tableNameExpr, metadataVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
                 sampleByUnit, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
@@ -933,6 +934,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isSelectTranslation() {
         return isSelectTranslation;
+    }
+
+    public boolean isTemporalJoin() {
+        return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
     }
 
     public boolean isTopDownNameMissing(CharSequence columnName) {
@@ -1086,6 +1091,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.limitPosition = limitPosition;
     }
 
+    public void setMetadataVersion(long metadataVersion) {
+        this.metadataVersion = metadataVersion;
+    }
+
     public void setModelPosition(int modelPosition) {
         this.modelPosition = modelPosition;
     }
@@ -1164,10 +1173,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.tableNameFunction = function;
     }
 
-    public void setTableVersion(long tableVersion) {
-        this.tableVersion = tableVersion;
-    }
-
     public void setTimestamp(ExpressionNode timestamp) {
         this.timestamp = timestamp;
     }
@@ -1191,6 +1196,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         } else if (modelType == ExecutionModel.UPDATE) {
             updateToSink(sink);
         }
+    }
+
+    // method to make debugging easier 
+    // not using toString name to prevent debugger from trying to use it on all model variables (because toSink0 can fail).
+    @SuppressWarnings("unused")
+    public String toString0() {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        this.toSink0(sink, true, true);
+        return sink.toString();
     }
 
     @Override

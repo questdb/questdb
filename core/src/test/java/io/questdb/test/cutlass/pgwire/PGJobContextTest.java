@@ -1331,107 +1331,112 @@ if __name__ == "__main__":
                 ResultSet rs = stmt.executeQuery();
                 assertEquals(testSize, rs.getFetchSize());
                 sink.clear();
-                assertResultSet("a[IPv4]\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n", sink, rs, map);
+                assertResultSet(
+                        "a[IPv4]\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n",
+                        sink,
+                        rs,
+                        map
+                );
             }
         });
     }
@@ -1567,7 +1572,11 @@ if __name__ == "__main__":
                         "12.2.65.90,5,65.34.123.99,22\n" +
                         "12.2.65.90,5,65.34.123.99,22\n" +
                         "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n", sink, rs, map);
+                        "12.2.65.90,5,65.34.123.99,22\n",
+                        sink,
+                        rs,
+                        map
+                );
             }
         });
     }
@@ -1721,7 +1730,11 @@ if __name__ == "__main__":
                         "null\n" +
                         "null\n" +
                         "null\n" +
-                        "null\n", sink, rs, map);
+                        "null\n",
+                        sink,
+                        rs,
+                        map
+                );
             }
         });
     }
@@ -2798,9 +2811,9 @@ if __name__ == "__main__":
                 {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
-                {"drop all table if exists;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop all table if exists;", "ERROR: 'tables' expected"},
                 {"drop all tables if exists;", "ERROR: expected [;]"},
-                {"drop all ;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop all ;", "ERROR: 'tables' expected"},
                 {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -2808,7 +2821,7 @@ if __name__ == "__main__":
                 String[] testData = sqlExpectedErrMsg[i];
                 try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
                     statement.execute();
-                    Assert.fail();
+                    Assert.fail(testData[0]);
                 } catch (PSQLException e) {
                     assertContains(e.getMessage(), testData[1]);
                 }
@@ -6477,7 +6490,7 @@ nodejs code:
                     + " WHERE timestamp >= '2023-03-23T00:00:00.000000Z'"
                     + " ORDER BY timestamp ";
 
-            int countStar = getCountStar("SELECT COUNT(*) FROM table", conn);
+            int countStar = getCountStar(conn);
             int ascCount = getRowCount(queryBase + "ASC", conn);
             int ascLimitCount = getRowCount(queryBase + "ASC LIMIT 100000", conn);
             int descCount = getRowCount(queryBase + "DESC", conn);
@@ -8279,17 +8292,18 @@ create table tab as (
     @Test
     public void testSquashPartitionsReturnsOk() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
-            connection.commit();
-            mayDrainWalQueue();
-            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
-                Assert.assertFalse(dropPartition.execute());
-            }
-        });
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+                    connection.commit();
+                    mayDrainWalQueue();
+                    try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
+                        Assert.assertFalse(dropPartition.execute());
+                    }
+                }
+        );
     }
 
     @Test
@@ -9394,9 +9408,9 @@ create table tab as (
         return backendPid;
     }
 
-    private static int getCountStar(String query, Connection conn) throws Exception {
+    private static int getCountStar(Connection conn) throws Exception {
         int count = -1;
-        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM table")) {
             try (ResultSet result = stmt.executeQuery()) {
                 if (result.next()) {
                     count = result.getInt(1);
@@ -11179,7 +11193,7 @@ create table tab as (
         private final int initialAllowedSendCalls;
         // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
         // we also *read* it from a test thread -> volatile is needed
-        private AtomicInteger remainingAllowedSendCalls = new AtomicInteger();
+        private final AtomicInteger remainingAllowedSendCalls = new AtomicInteger();
         private volatile boolean socketClosed = false;
 
         private DisconnectOnSendNetworkFacade(int allowedSendCount) {
@@ -11214,7 +11228,7 @@ create table tab as (
             if (remainingAllowedSendCalls.get() >= 0) {
                 return 0;
             }
-            return -(remainingAllowedSendCalls.get() + 1);
+            return -(remainingAllowedSendCalls.incrementAndGet());
         }
 
         boolean isSocketClosed() {

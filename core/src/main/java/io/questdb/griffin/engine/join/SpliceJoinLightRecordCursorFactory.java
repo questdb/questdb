@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -54,17 +53,14 @@ import io.questdb.std.Transient;
  * splice join optionally join on "tags", which in above example is currency pair field.
  * The join result will match rows where value of currency pair is the same.
  */
-public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final long NULL_ROWID = -1;
     private static final int VAL_MASTER_NEXT = 1;
     private static final int VAL_MASTER_PREV = 0;
     private static final int VAL_SLAVE_NEXT = 3;
     private static final int VAL_SLAVE_PREV = 2;
     private final SpliceJoinLightRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public SpliceJoinLightRecordCursorFactory(
@@ -77,14 +73,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             RecordSink masterSink,
             RecordSink slaveSink,
             int columnSplit,
-            JoinContext context
+            JoinContext joinContext
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, joinContext, masterFactory, slaveFactory);
         this.masterKeySink = masterSink;
         this.slaveKeySink = slaveSink;
-        this.joinContext = context;
 
         Map joinKeyMap = MapFactory.createMap(
                 cairoConfiguration,

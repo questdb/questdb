@@ -38,13 +38,10 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
-public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
     private final HashOuterJoinLightRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public HashOuterJoinLightRecordCursorFactory(
@@ -59,9 +56,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
             int columnSplit,
             JoinContext context
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, context, masterFactory, slaveFactory);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashOuterJoinLightRecordCursor(
@@ -70,7 +65,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 joinColumnTypes,
                 valueTypes, configuration
         );
-        this.joinContext = context;
     }
 
     @Override
