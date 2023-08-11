@@ -3434,7 +3434,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
                 }
             }
-            Assert.assertTrue(sq instanceof MemoryCR.ByteSequenceView);
             Assert.assertTrue(Vect.memeq(blob, ((MemoryCR.ByteSequenceView) sq).getAddress(), blobLen));
         } else {
             Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));

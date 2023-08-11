@@ -14,40 +14,6 @@ public class StaticUsernamePasswordMatcherTest {
     private int passwordLen;
     private long passwordPtr;
 
-    public static void assertMatch(UsernamePasswordMatcher matcher, String username, String password) {
-        byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
-        long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
-            }
-            assertMatch(matcher, username, ptr, bytes.length);
-        } finally {
-            Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    public static void assertMatch(UsernamePasswordMatcher matcher, String username, long passwordPtr, int passwordLen) {
-        Assert.assertTrue(matcher.verifyPassword(username, passwordPtr, passwordLen));
-    }
-
-    public static void assertNoMatch(UsernamePasswordMatcher matcher, String username, long passwordPtr, int passwordLen) {
-        Assert.assertFalse(matcher.verifyPassword(username, passwordPtr, passwordLen));
-    }
-
-    public static void assertNoMatch(UsernamePasswordMatcher matcher, String username, String password) {
-        byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
-        long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
-            }
-            assertNoMatch(matcher, username, ptr, bytes.length);
-        } finally {
-            Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
     @After
     public void tearDown() {
         if (passwordPtr != 0) {
@@ -63,6 +29,40 @@ public class StaticUsernamePasswordMatcherTest {
         assertNoMatch(matcher, "user", "wrongpassword");
         assertNoMatch(matcher, "", "wrongpassword");
         assertNoMatch(matcher, null, "pass");
+    }
+
+    private static void assertMatch(UsernamePasswordMatcher matcher, String username, String password) {
+        byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
+        long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+            }
+            assertMatch(matcher, username, ptr, bytes.length);
+        } finally {
+            Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertMatch(UsernamePasswordMatcher matcher, String username, long passwordPtr, int passwordLen) {
+        Assert.assertTrue(matcher.verifyPassword(username, passwordPtr, passwordLen));
+    }
+
+    private static void assertNoMatch(UsernamePasswordMatcher matcher, String username, long passwordPtr, int passwordLen) {
+        Assert.assertFalse(matcher.verifyPassword(username, passwordPtr, passwordLen));
+    }
+
+    private static void assertNoMatch(UsernamePasswordMatcher matcher, String username, String password) {
+        byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
+        long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+            }
+            assertNoMatch(matcher, username, ptr, bytes.length);
+        } finally {
+            Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private StaticUsernamePasswordMatcher newMatcher(String username, String password) {
