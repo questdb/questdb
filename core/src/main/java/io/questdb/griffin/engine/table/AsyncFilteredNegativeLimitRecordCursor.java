@@ -170,6 +170,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
+                    if (task.getErrorMsg() != null) {
+                        throw CairoException.nonCritical().put(task.getErrorMsg());
+                    }
 
                     // Consider frame sequence status only if we haven't accumulated enough rows.
                     allFramesActive &= frameSequence.isActive() || rowCount >= rowLimit;
@@ -202,8 +205,16 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                 }
             } while (frameIndex < frameLimit);
         } catch (Throwable e) {
-            LOG.error().$("unexpected error [ex=").$(e).I$();
-            throwTimeoutException();
+            LOG.error().$("negative limit filter error [ex=").$(e).I$();
+            if (e instanceof CairoException) {
+                CairoException ce = (CairoException) e;
+                if (ce.isInterruption()) {
+                    throwTimeoutException();
+                } else {
+                    throw ce;
+                }
+            }
+            throw CairoException.nonCritical().put(e.getMessage());
         }
 
         if (!allFramesActive) {

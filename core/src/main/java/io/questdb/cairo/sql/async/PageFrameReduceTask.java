@@ -38,6 +38,7 @@ public class PageFrameReduceTask implements Closeable {
     private final DirectLongList columns;
     private final long pageFrameQueueCapacity;
     private final DirectLongList rows;
+    private String errorMsg;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
@@ -56,6 +57,10 @@ public class PageFrameReduceTask implements Closeable {
 
     public DirectLongList getColumns() {
         return columns;
+    }
+
+    public String getErrorMsg() {
+        return errorMsg;
     }
 
     public int getFrameIndex() {
@@ -91,12 +96,17 @@ public class PageFrameReduceTask implements Closeable {
         this.frameSequence = frameSequence;
         this.frameSequenceId = frameSequence.getId();
         this.frameIndex = frameIndex;
+        this.errorMsg = null;
         rows.clear();
     }
 
     public void resetCapacities() {
         rows.resetCapacity();
         columns.resetCapacity();
+    }
+
+    public void setErrorMsg(String errorMsg) {
+        this.errorMsg = errorMsg;
     }
 
     void collected() {

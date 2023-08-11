@@ -46,6 +46,7 @@ import java.io.Closeable;
 public class PageFrameReduceJob implements Job, Closeable {
 
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
+    private static final String exceptionMessage = "unexpected filter error";
     private final MessageBus messageBus;
     private final int shardCount;
     private final int[] shards;
@@ -188,8 +189,9 @@ public class PageFrameReduceJob implements Job, Closeable {
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
                 } catch (Throwable e) {
+                    LOG.error().$("reduce error [ex=").$(e).I$();
+                    task.setErrorMsg(e.getMessage() != null ? e.getMessage() : exceptionMessage);
                     frameSequence.cancel();
-                    throw e;
                 } finally {
                     subSeq.done(cursor);
                     // Reduce counter has to be incremented only when we make
