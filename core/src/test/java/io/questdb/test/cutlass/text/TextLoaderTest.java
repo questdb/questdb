@@ -491,18 +491,21 @@ public class TextLoaderTest extends AbstractCairoTest {
                 180_000_000,
                 721,
                 180_000_000,
-                721);
+                721
+        );
     }
 
     @Test
     public void testCanUpdateO3MaxLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithO3MaxLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+                "partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
                 true,
                 PartitionBy.DAY,
                 0,
                 0,
                 0,
-                0);
+                0
+        );
     }
 
     @Test
@@ -3244,13 +3247,15 @@ public class TextLoaderTest extends AbstractCairoTest {
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
-    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(String createStmtExtra,
-                                                                    boolean overwrite,
-                                                                    int partitionBy,
-                                                                    long o3MaxLagUs,
-                                                                    int maxUncommittedRows,
-                                                                    long expectedO3MaxLag,
-                                                                    int expectedMaxUncommittedRows) throws Exception {
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+            String createStmtExtra,
+            boolean overwrite,
+            int partitionBy,
+            long o3MaxLagUs,
+            int maxUncommittedRows,
+            long expectedO3MaxLag,
+            int expectedMaxUncommittedRows
+    ) throws Exception {
         assertNoLeak(
                 textLoader -> {
                     String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
@@ -3430,6 +3435,8 @@ public class TextLoaderTest extends AbstractCairoTest {
         textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
         boolean forceHeader = textLoader.isForceHeaders();
         byte delimiter = textLoader.getColumnDelimiter();
+        int maxUncommittedRows = textLoader.getMaxUncommittedRows();
+        long o3MaxLag = textLoader.getO3MaxLag();
         playText0(textLoader, text, firstBufSize, manipulator);
         sink.clear();
         textLoader.getMetadata().toJson(sink);
@@ -3445,6 +3452,8 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
         textLoader.setForceHeaders(forceHeader);
+        textLoader.setMaxUncommittedRows(maxUncommittedRows);
+        textLoader.setO3MaxLag(o3MaxLag);
         if (delimiter > 0) {
             textLoader.configureColumnDelimiter(delimiter);
         }
