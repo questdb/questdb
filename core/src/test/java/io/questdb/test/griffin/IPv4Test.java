@@ -603,11 +603,6 @@ public class IPv4Test extends AbstractCairoTest {
                 "1.1.1.1\n", "select '1.1.1.1'::ipv4::string");
     }
 
-//    @Test
-//    public void testHeader() throws Exception {
-//        assertSql("", "select '.f.e.j.hve'");
-//    }
-
     @Test
     public void testExplicitCastIntToIPv4() throws Exception {
         assertSql(
