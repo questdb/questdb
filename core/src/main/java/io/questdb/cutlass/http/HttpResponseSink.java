@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.cutlass.tls.NativeTls;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -60,6 +61,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private boolean deflateBeforeSend = false;
     private int fd;
     private boolean headersSent;
+    private long tlsSessionPtr = 0;
     private long total = 0;
     private long totalBytesSent = 0;
     private long z_streamp = 0;
@@ -136,6 +138,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             z_streamp = Zip.deflateInit();
             compressOutBuffer.reopen();
         }
+    }
+
+    public void setTlsSession(long tlsSessionPtr) {
+        this.tlsSessionPtr = tlsSessionPtr;
     }
 
     private void deflate() {
@@ -241,9 +247,11 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        assert tlsSessionPtr != 0;
         int nSend = (int) sendBuf.getReadNAvailable();
         while (nSend > 0) {
-            int n = nf.send(fd, sendBuf.getReadAddress(), nSend);
+            int n = NativeTls.writeTls(fd, tlsSessionPtr, sendBuf.getReadAddress(), nSend);
+//            int n = nf.send(fd, sendBuf.getReadAddress(), nSend);
             if (n < 0) {
                 // disconnected
                 LOG.error()

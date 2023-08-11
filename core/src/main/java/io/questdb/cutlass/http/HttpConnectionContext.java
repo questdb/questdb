@@ -29,6 +29,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.ex.*;
+import io.questdb.cutlass.tls.NativeTls;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -66,6 +67,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
     private SuspendEvent suspendEvent;
+    private boolean tlsHandshakeComplete = false;
+    private long tlsSessionPtr = 0;
     private long totalBytesSent;
 
     public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
@@ -78,7 +81,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.responseSink = new HttpResponseSink(configuration);
         this.recvBufferSize = configuration.getRecvBufferSize();
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+//        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+        this.dumpNetworkTraffic = true;
         // this is default behaviour until the security context is overridden with correct principal
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
@@ -203,10 +207,57 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        if (!tlsHandshakeComplete) {
+            if (tlsSessionPtr == 0) {
+                assert operation == IOOperation.READ;
+                tlsSessionPtr = NativeTls.newSession();
+            }
+            switch (operation) {
+                case IOOperation.READ: {
+                    long res = NativeTls.readTls(fd, tlsSessionPtr, recvBuffer, recvBufferSize);
+                    int n = NativeTls.getIntResult(res);
+                    int flags = NativeTls.getFlagsInt(res);
+
+                    if (n > 0) {
+                        assert NativeTls.isHandshakeComplete(tlsSessionPtr);
+                        tlsHandshakeComplete = true;
+                        responseSink.setTlsSession(tlsSessionPtr);
+                        dumpBuffer(recvBuffer, n);
+                        handleClientRecv(selector, rescheduleContext, n);
+                        dispatcher.registerChannel(this, IOOperation.READ);
+                        return true;
+                    }
+
+                    if (NativeTls.wantsWrite(flags)) {
+                        assert !NativeTls.isHandshakeComplete(tlsSessionPtr);
+                        dispatcher.registerChannel(this, IOOperation.WRITE);
+                    }
+                    dispatcher.registerChannel(this, IOOperation.READ);
+                    return true;
+                }
+                case IOOperation.HEARTBEAT: {
+                    dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
+                    return false;
+                }
+                case IOOperation.WRITE: {
+                    long res = NativeTls.writeTls(fd, tlsSessionPtr, recvBuffer, 0);
+//                    int n = NativeTls.getIntResult(res);
+                    int flags = NativeTls.getFlagsInt(res);
+                    if (NativeTls.wantsRead(flags)) {
+                        dispatcher.registerChannel(this, IOOperation.READ);
+                    }
+                    if (NativeTls.wantsWrite(flags)) {
+                        dispatcher.registerChannel(this, IOOperation.WRITE);
+                    }
+                    return true;
+                }
+            }
+        }
+
         boolean keepGoing;
         switch (operation) {
             case IOOperation.READ:
-                keepGoing = handleClientRecv(selector, rescheduleContext);
+                keepGoing = handleClientRecv(selector, rescheduleContext, 0);
                 break;
             case IOOperation.WRITE:
                 keepGoing = handleClientSend();
@@ -224,7 +275,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (keepGoing) {
             if (configuration.getServerKeepAlive()) {
                 do {
-                    keepGoing = handleClientRecv(selector, rescheduleContext);
+                    keepGoing = handleClientRecv(selector, rescheduleContext, 0);
                 } while (keepGoing);
             } else {
                 dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF);
@@ -328,7 +379,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         clear();
         if (configuration.getServerKeepAlive()) {
-            while (handleClientRecv(selector, rescheduleContext)) ;
+            while (handleClientRecv(selector, rescheduleContext, 0)) ;
         } else {
             dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
         }
@@ -549,19 +600,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return processor;
     }
 
-    private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+    private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext, int read) {
         boolean busyRecv = true;
         try {
             final int fd = this.fd;
             // this is address of where header ended in our receive buffer
             // we need to being processing request content starting from this address
             long headerEnd = recvBuffer;
-            int read = 0;
             final boolean newRequest = headerParser.isIncomplete();
             if (newRequest) {
                 while (headerParser.isIncomplete()) {
                     // read headers
-                    read = nf.recv(fd, recvBuffer, recvBufferSize);
+                    if (read == 0) {
+                        read = nf.recv(fd, recvBuffer, recvBufferSize);
+                    }
                     LOG.debug().$("recv [fd=").$(fd).$(", count=").$(read).$(']').$();
                     if (read < 0) {
                         LOG.debug()

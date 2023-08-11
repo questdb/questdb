@@ -30,8 +30,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.text.TextLoader;
@@ -763,7 +763,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     long256Value.getLong1(),
                     long256Value.getLong2(),
                     long256Value.getLong3(),
-                    responseAsciiSink);
+                    responseAsciiSink
+            );
             responseAsciiSink.putLenEx(a);
         }
     }
@@ -1002,8 +1003,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     //replace column formats in activeSelectColumnTypes with those from latest bind call
     private void applyLatestBindColumnFormats() {
         for (int i = 0; i < bindSelectColumnFormats.size(); i++) {
-            int newValue = toColumnBinaryType((short) bindSelectColumnFormats.get(i),
-                    toColumnType(activeSelectColumnTypes.getQuick(2 * i)));
+            int newValue = toColumnBinaryType(
+                    (short) bindSelectColumnFormats.get(i),
+                    toColumnType(activeSelectColumnTypes.getQuick(2 * i))
+            );
             activeSelectColumnTypes.setQuick(2 * i, newValue);
         }
     }
