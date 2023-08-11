@@ -69,19 +69,18 @@ public abstract class BasePGTest extends AbstractCairoTest {
         assertResultSet(null, expected, sink, rs);
     }
 
-    public static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        printToSink(sink, rs, null);
-        TestUtils.assertEquals(message, expected, sink);
-    }
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            PGWireServer.PGConnectionContextFactory contextFactory,
+            CircuitBreakerRegistry registry
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
 
-    public static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, IntIntHashMap map) throws SQLException, IOException {
-        printToSink(sink, rs, map);
-        TestUtils.assertEquals(message, expected, sink);
-    }
-
-    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, IntIntHashMap map) throws SQLException, IOException {
-        printToSink(sink, rs, map);
-        TestUtils.assertEquals(null, expected, sink);
+        return new PGWireServer(configuration, cairoEngine, workerPool, contextFactory, registry);
     }
 
     public static PGWireServer createPGWireServer(
@@ -108,20 +107,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 ),
                 registry
         );
-    }
-
-    public static PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            PGWireServer.PGConnectionContextFactory contextFactory,
-            CircuitBreakerRegistry registry
-    ) {
-        if (!configuration.isEnabled()) {
-            return null;
-        }
-
-        return new PGWireServer(configuration, cairoEngine, workerPool, contextFactory, registry);
     }
 
     private static void toSink(InputStream is, CharSink sink) throws IOException {
@@ -159,6 +144,20 @@ public abstract class BasePGTest extends AbstractCairoTest {
         }
     }
 
+    protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs, map);
+    }
+
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        printToSink(sink, rs, map);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        printToSink(sink, rs, null);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
     protected static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
         // dump metadata
         ResultSetMetaData metaData = rs.getMetaData();
@@ -187,6 +186,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
         Timestamp timestamp;
         long rows = 0;
+        Timestamp timestamp;
         while (rs.next()) {
             rows++;
             for (int i = 1; i <= columnCount; i++) {
