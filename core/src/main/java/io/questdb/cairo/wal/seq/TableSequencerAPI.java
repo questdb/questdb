@@ -310,7 +310,6 @@ public class TableSequencerAPI implements QuietCloseable {
                 TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt) -> {
                     final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt, getSeqTxnTracker((TableToken) tt));
                     sequencer.create(tableId, tableDescriptor);
-                    sequencer.open(tableToken);
                     return sequencer;
                 })
         ) {

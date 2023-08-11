@@ -47,9 +47,10 @@ import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class TableTransactionLog implements Closeable {
-    public final static int HEADER_RESERVED = 8 * Long.BYTES;
+    public final static int HEADER_RESERVED = 7 * Long.BYTES;
     public static final long MAX_TXN_OFFSET = Integer.BYTES;
-    public static final long HEADER_SIZE = MAX_TXN_OFFSET + Long.BYTES + HEADER_RESERVED;
+    public static final long TABLE_CREATE_TIMESTAMP_OFFSET = MAX_TXN_OFFSET + Long.BYTES;
+    public static final long HEADER_SIZE = TABLE_CREATE_TIMESTAMP_OFFSET + Long.BYTES + HEADER_RESERVED;
     public static final int STRUCTURAL_CHANGE_WAL_ID = -1;
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
     private static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
@@ -191,6 +192,10 @@ public class TableTransactionLog implements Closeable {
     }
 
     void open(Path path) {
+        open(path, Long.MIN_VALUE); // ignore the timestamp
+    }
+
+    void open(Path path, long tableCreateTimestamp) {
         this.rootPath.clear();
         path.toSink(this.rootPath);
 
@@ -206,7 +211,7 @@ public class TableTransactionLog implements Closeable {
             txnMem.jumpTo(0L);
             txnMem.putInt(WAL_FORMAT_VERSION);
             txnMem.putLong(0L);
-            txnMem.putLong(0L);
+            txnMem.putLong(tableCreateTimestamp);
             txnMem.jumpTo(HEADER_SIZE);
 
             txnMetaMemIndex.jumpTo(0L);
