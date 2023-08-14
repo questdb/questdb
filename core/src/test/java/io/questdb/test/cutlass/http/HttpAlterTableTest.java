@@ -38,6 +38,8 @@ import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
 
+import static io.questdb.test.tools.TestUtils.drainWalQueue;
+
 public class HttpAlterTableTest extends AbstractTest {
 
     private static final String JSON_DDL_RESPONSE = "0c\r\n" +
@@ -127,15 +129,6 @@ public class HttpAlterTableTest extends AbstractTest {
 
             sendAndReceiveDdl("ALTER TABLE test SQUASH PARTITIONS");
         });
-    }
-
-    private static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
-            walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
-            // run once again as there might be notifications to handle now
-            walApplyJob.drain(0);
-        }
     }
 
     private static void sendAndReceive(String request, CharSequence response) {
