@@ -27,10 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -3148,6 +3145,43 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinConditionPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
+            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+
+            for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
+                assertSql("count\n3\n",
+                        "SELECT count(T2.created) " +
+                                "FROM tab as T1 " +
+                                "JOIN (SELECT * FROM tab) as T2 ON T1.created < T2.created " +
+                                join + " JOIN tab as T3 ON T2.value=T3.value"
+                );
+            }
+            assertSql("count\n1\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "JOIN tab T4 on T3.created < T4.created");
+
+            assertSql("count\n3\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "LEFT JOIN tab T4 on T3.created < T4.created");
+
+            assertSql("count\n3\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "LEFT JOIN tab T4 on T3.created-T4.created = 0 ");
+        });
+    }
+
+    @Test
     public void testInsertAsSelect() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
@@ -4583,6 +4617,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByEmptyIdentifier() throws Exception {
+        assertMemoryLeak(() -> {
+            assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by ''");
+            assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by \"\"");
+        });
+    }
+
+
+    @Test
     public void testOrderByFloat() throws Exception {
         assertQuery("f\n" +
                         "NaN\n" +
@@ -5192,20 +5235,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampWithNanosInWhereClause() throws Exception {
-        assertQuery("x\tts\n" +
-                        "2\t2019-10-17T00:00:00.200000Z\n" +
-                        "3\t2019-10-17T00:00:00.700000Z\n" +
-                        "4\t2019-10-17T00:00:00.800000Z\n",
-                "select * from x where ts between '2019-10-17T00:00:00.200000123Z' and '2019-10-17T00:00:00.800000123Z'",
-                "create table x as " +
-                        "(SELECT x, timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_short(1,5) * 100000L) as ts FROM long_sequence(5)" +
-                        ")",
-                null, true, false
-        );
-    }
-
-    @Test
     public void testSelectTimestampInNullString() throws Exception {
         assertQuery("c\n\n",
                 "select * from x where c in null::string",
@@ -5316,6 +5345,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "k",
                 true,
                 false
+        );
+    }
+
+    @Test
+    public void testTimestampWithNanosInWhereClause() throws Exception {
+        assertQuery("x\tts\n" +
+                        "2\t2019-10-17T00:00:00.200000Z\n" +
+                        "3\t2019-10-17T00:00:00.700000Z\n" +
+                        "4\t2019-10-17T00:00:00.800000Z\n",
+                "select * from x where ts between '2019-10-17T00:00:00.200000123Z' and '2019-10-17T00:00:00.800000123Z'",
+                "create table x as " +
+                        "(SELECT x, timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_short(1,5) * 100000L) as ts FROM long_sequence(5)" +
+                        ")",
+                null, true, false
         );
     }
 
