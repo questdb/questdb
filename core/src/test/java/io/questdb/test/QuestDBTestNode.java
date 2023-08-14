@@ -173,6 +173,7 @@ public class QuestDBTestNode {
             engine.getTableIdGenerator().open();
             engine.getTableIdGenerator().reset();
             engine.resetNameRegistryMemory();
+            engine.setUp();
         }
 
         public void tearDown(boolean removeDir) {

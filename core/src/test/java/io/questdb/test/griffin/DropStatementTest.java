@@ -62,7 +62,7 @@ public class DropStatementTest extends AbstractCairoTest {
             drop("DROP ALL TABLES");
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
-            Assert.assertEquals(0, tableBucket.size());
+            Assert.assertEquals(getSystemTablesCount(), tableBucket.size());
         });
     }
 
@@ -202,8 +202,8 @@ public class DropStatementTest extends AbstractCairoTest {
             }
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
-            Assert.assertEquals(1, tableBucket.size());
-            Assert.assertEquals(tab0, tableBucket.get(0).getTableName());
+            Assert.assertEquals(1 + getSystemTablesCount(), tableBucket.size());
+            assertTableBucketContains(tab0);
         });
     }
 
@@ -227,8 +227,22 @@ public class DropStatementTest extends AbstractCairoTest {
             }
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
-            Assert.assertEquals(1, tableBucket.size());
-            Assert.assertEquals(tab0, tableBucket.get(0).getTableName());
+            Assert.assertEquals(1 + getSystemTablesCount(), tableBucket.size());
+            assertTableBucketContains(tab0);
         });
+    }
+
+    private void assertTableBucketContains(String tableName) {
+        for (int i = 0, n = tableBucket.size(); i < n; i++) {
+            if (tableName.equals(tableBucket.get(i).getTableName())) {
+                return;
+            }
+        }
+
+        Assert.fail("Table name: " + tableName + " not found in table bucket");
+    }
+
+    protected int getSystemTablesCount() {
+        return 0;
     }
 }

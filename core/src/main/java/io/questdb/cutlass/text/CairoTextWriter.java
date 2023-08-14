@@ -86,6 +86,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         designatedTimestampIndex = NO_INDEX;
         timestampIndex = NO_INDEX;
         importedTimestampColumnName = null;
+        maxUncommittedRows = -1;
+        o3MaxLag = -1;
         remapIndex.clear();
     }
 
@@ -110,8 +112,16 @@ public class CairoTextWriter implements Closeable, Mutable {
         return columnErrorCounts;
     }
 
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     public int getPartitionBy() {
@@ -197,7 +207,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void checkUncommittedRowCount() {
         if (writer != null && maxUncommittedRows > 0 && writer.getUncommittedRowCount() >= maxUncommittedRows) {
-            writer.ic(this.o3MaxLag);
+            writer.ic(o3MaxLag);
         }
     }
 
@@ -306,7 +316,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         LOG.info()
                 .$("mis-detected [table=").$(tableName)
                 .$(", column=").$(i)
-                .$(", type=").$(ColumnType.nameOf(this.types.getQuick(i).getType()))
+                .$(", type=").$(ColumnType.nameOf(types.getQuick(i).getType()))
                 .$(']').$();
     }
 

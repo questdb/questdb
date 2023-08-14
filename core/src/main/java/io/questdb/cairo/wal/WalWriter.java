@@ -1528,6 +1528,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public long getMetaO3MaxLag() {
+            return 0;
+        }
+
+        @Override
         public TableRecordMetadata getMetadata() {
             return metadata;
         }
