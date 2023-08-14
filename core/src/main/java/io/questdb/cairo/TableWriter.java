@@ -1335,8 +1335,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public long getMetaMaxUncommittedRows() {
+    public int getMetaMaxUncommittedRows() {
         return metadata.getMaxUncommittedRows();
+    }
+
+    @Override
+    public long getMetaO3MaxLag() {
+        return metadata.getO3MaxLag();
     }
 
     @Override
@@ -2025,7 +2030,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void renameColumn(@NotNull CharSequence currentName, @NotNull CharSequence newName) {
+    public void renameColumn(
+            @NotNull CharSequence currentName,
+            @NotNull CharSequence newName,
+            SecurityContext securityContext
+    ) {
         checkDistressed();
         checkColumnName(newName);
 
@@ -2072,6 +2081,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (index == metadata.getTimestampIndex()) {
             designatedTimestampColumnName = Chars.toString(newName);
+        }
+
+        if (securityContext != null) {
+            ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();

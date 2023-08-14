@@ -21,29 +21,23 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+package io.questdb.griffin.engine.join;
 
-package io.questdb.test.griffin.engine.functions.regex;
-
-import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.JoinContext;
 
-public class NotMatchCharFunctionFactoryTest extends AbstractCairoTest {
+public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    @Test
-    public void testCheckCharacter() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+    protected final JoinContext joinContext;
+    protected final RecordCursorFactory masterFactory;
+    protected final RecordCursorFactory slaveFactory;
 
-            try (RecordCursorFactory factory = select("select * from x where name !~ 'H'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                    Assert.assertEquals(sink.toString().indexOf('H'), -1);
-                }
-            }
-        });
+    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, JoinContext joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
+        super(metadata);
+        this.joinContext = joinContext;
+        this.masterFactory = masterFactory;
+        this.slaveFactory = slaveFactory;
     }
 }

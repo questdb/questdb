@@ -97,7 +97,9 @@ public interface MetadataService {
 
     void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
-    long getMetaMaxUncommittedRows();
+    int getMetaMaxUncommittedRows();
+
+    long getMetaO3MaxLag();
 
     TableRecordMetadata getMetadata();
 
@@ -111,7 +113,11 @@ public interface MetadataService {
 
     boolean removePartition(long partitionTimestamp);
 
-    void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName);
+    default void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
+        renameColumn(columnName, newName, null);
+    }
+
+    void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext);
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
 

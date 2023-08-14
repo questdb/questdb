@@ -44,46 +44,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
-    private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-        @Override
-        public MillisecondClock getClock() {
-            return httpContextConfiguration.getClock();
-        }
-
-        @Override
-        public int getConnectionCheckFrequency() {
-            return 1_000_000;
-        }
-
-        @Override
-        public int getDoubleScale() {
-            return Numbers.MAX_SCALE;
-        }
-
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return DefaultFactoryProvider.INSTANCE;
-        }
-
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getFloatScale() {
-            return 10;
-        }
-
-        @Override
-        public CharSequence getKeepAliveHeader() {
-            return "Keep-Alive: timeout=5, max=10000\r\n";
-        }
-
-        @Override
-        public long getMaxQueryResponseRowLimit() {
-            return Long.MAX_VALUE;
-        }
+    private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new DefaultJsonQueryProcessorConfiguration() {
     };
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
         @Override
@@ -221,5 +182,47 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public boolean isQueryCacheEnabled() {
         return true;
+    }
+
+    public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+        @Override
+        public MillisecondClock getClock() {
+            return httpContextConfiguration.getClock();
+        }
+
+        @Override
+        public int getConnectionCheckFrequency() {
+            return 1_000_000;
+        }
+
+        @Override
+        public int getDoubleScale() {
+            return Numbers.MAX_SCALE;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return DefaultFactoryProvider.INSTANCE;
+        }
+
+        @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getFloatScale() {
+            return 10;
+        }
+
+        @Override
+        public CharSequence getKeepAliveHeader() {
+            return "Keep-Alive: timeout=5, max=10000\r\n";
+        }
+
+        @Override
+        public long getMaxQueryResponseRowLimit() {
+            return Long.MAX_VALUE;
+        }
     }
 }

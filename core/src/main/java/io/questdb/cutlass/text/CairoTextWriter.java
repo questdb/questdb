@@ -86,6 +86,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         designatedTimestampIndex = NO_INDEX;
         timestampIndex = NO_INDEX;
         importedTimestampColumnName = null;
+        maxUncommittedRows = -1;
+        o3MaxLag = -1;
         remapIndex.clear();
     }
 
@@ -110,8 +112,16 @@ public class CairoTextWriter implements Closeable, Mutable {
         return columnErrorCounts;
     }
 
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     public int getPartitionBy() {
@@ -195,7 +205,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void checkUncommittedRowCount() {
         if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-            writer.ic(this.o3MaxLag);
+            writer.ic(o3MaxLag);
         }
     }
 
@@ -290,7 +300,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         LOG.info()
                 .$("mis-detected [table=").$(tableName)
                 .$(", column=").$(i)
-                .$(", type=").$(ColumnType.nameOf(this.types.getQuick(i).getType()))
+                .$(", type=").$(ColumnType.nameOf(types.getQuick(i).getType()))
                 .$(']').$();
     }
 
@@ -343,6 +353,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
+                    securityContext.authorizeTableDrop(tableToken);
                     engine.drop(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
@@ -361,6 +372,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     }
                     partitionBy = writer.getPartitionBy();
                     tableStructureAdapter.of(names, detectedTypes);
+                    securityContext.authorizeInsert(tableToken, names);
                 }
                 break;
             default:
@@ -379,6 +391,18 @@ public class CairoTextWriter implements Closeable, Mutable {
             }
         } else {
             LOG.info().$("cannot update metadata attributes o3MaxLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
+        }
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            // We want to limit memory consumption during the import, so make sure
+            // to use table's maxUncommittedRows and o3MaxLag if they're not set.
+            if (o3MaxLag == -1) {
+                o3MaxLag = writer.getMetaO3MaxLag();
+                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
+            }
+            if (maxUncommittedRows == -1) {
+                maxUncommittedRows = writer.getMetaMaxUncommittedRows();
+                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
+            }
         }
         size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);

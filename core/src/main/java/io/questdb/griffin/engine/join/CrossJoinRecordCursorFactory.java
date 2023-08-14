@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -36,10 +35,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 //This plan is actually filter-less Nested Loop  
-public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final CrossJoinRecordCursor cursor;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
 
     public CrossJoinRecordCursorFactory(
             RecordMetadata metadata,
@@ -48,9 +45,7 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             int columnSplit
 
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new CrossJoinRecordCursor(columnSplit);
     }
 
