@@ -233,14 +233,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         return metadata.getTimestampIndex() > -1 ? metadata.getColumnName(metadata.getTimestampIndex()) : null;
     }
 
-    private long getO3MaxLag(TableWriterAPI writer) {
-        if (!writer.supportsMultipleWriters()) {
-            return ((TableWriter) writer).getMetaO3MaxLag();
-        }
-        // For WAL tables this parameter doesn't matter
-        return 0;
-    }
-
     private int getTablePartitionBy(TableWriterAPI writer) {
         // This is a bit of a hack. We need to know if the table is partitioned or not, mostly for compatibility with the non-WAL test cases.
         if (!writer.supportsMultipleWriters()) {
@@ -410,7 +402,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             // We want to limit memory consumption during the import, so make sure
             // to use table's maxUncommittedRows and o3MaxLag if they're not set.
             if (o3MaxLag == -1) {
-                o3MaxLag = getO3MaxLag(writer);
+                o3MaxLag = writer.getMetadata().getO3MaxLag();
                 LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
             }
             if (maxUncommittedRows == -1) {
