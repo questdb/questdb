@@ -55,7 +55,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStep() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            createEmptyTable(tableName, "DEDUP upsert keys(ts)");
+            createEmptyTable(tableName, "DEDUP upsert keys(ts, commit)");
+            compile("alter table " + tableName + " dedup disable");
+            compile("alter table " + tableName + " dedup enable upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandom(LOG);

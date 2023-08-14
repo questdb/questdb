@@ -92,5 +92,7 @@ public class TypeOfFunctionFactory implements FunctionFactory {
             final int type = ColumnType.getGeoHashTypeWithBits(b);
             TYPE_NAMES.put(type, new StrConstant(ColumnType.nameOf(type)));
         }
+
+        TYPE_NAMES.put(ColumnType.IPv4, new StrConstant(ColumnType.nameOf(ColumnType.IPv4)));
     }
 }
