@@ -179,7 +179,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                     }
                     if (col == DEDUP_NAME_COLUMN) {
                         int timestampIndex = tableReaderMetadata.getTimestampIndex();
-                        return timestampIndex > 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
+                        return timestampIndex >= 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
                     }
                     return false;
                 }
@@ -194,7 +194,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                        return o3MaxLag;
+                    return o3MaxLag;
                 }
 
                 @Override
