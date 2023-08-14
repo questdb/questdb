@@ -32,7 +32,8 @@ public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByColumnInJoinedSubquery() throws Exception {
-        assertQuery("x\toth\n" +
+        assertQuery(
+                "x\toth\n" +
                         "1\t100\n" +
                         "1\t81\n" +
                         "1\t64\n",
@@ -48,7 +49,12 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                         "  )\n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, false);
+                        "limit 3",
+                null,
+                null,
+                true,
+                false
+        );
     }
 
     // fails with duplicate column : column because alias created for 'x*x' clashes with one created for x+rnd_int(1,10,0)*0
@@ -56,7 +62,8 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     @Ignore
     public void testOrderByExpressionInJoinedSubquery() throws Exception {
-        assertQuery("x\tcolumn\tcolumn1\n" +
+        assertQuery(
+                "x\tcolumn\tcolumn1\n" +
                         "1\t100\t50\n" +
                         "1\t81\t45\n" +
                         "1\t64\t40\n",
@@ -69,23 +76,35 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                         "    select x*x,5*x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2  asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByExpressionInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery(
+                "x\n6\n7\n8\n",
                 "select * from \n" +
                         "(\n" +
                         "  select x from long_sequence(10) order by x/2 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByExpressionWhenColumnHasAliasInJoinedSubquery() throws Exception {
-        assertQuery("x\text\n1\t100\n1\t81\n1\t64\n",
+        assertQuery(
+                "x\text\n1\t100\n1\t81\n1\t64\n",
                 "select * from \n" +
                         "(\n" +
                         "  select x from long_sequence(10) \n" +
@@ -95,43 +114,72 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                         "    select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc, ext desc\n" +
-                        "limit 3", null, null, true, false);
+                        "limit 3",
+                null,
+                null,
+                true,
+                false
+        );
     }
 
     @Test
     public void testOrderByExpressionWithFunctionCallInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery(
+                "x\n6\n7\n8\n",
                 "select * from \n" +
                         "(\n" +
                         "    select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByExpressionWithFunctionCallInWithClause() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery(
+                "x\n6\n7\n8\n",
                 "with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 ) \n" +
                         "select * from q\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByTwoExpressions() throws Exception {
-        assertQuery("x\n10\n9\n8\n7\n6\n",
-                "select x from long_sequence(10) order by x/100, x*x desc  limit 5", null, null, true, true);
+        assertQuery(
+                "x\n10\n9\n8\n7\n6\n",
+                "select x from long_sequence(10) order by x/100, x*x desc  limit 5",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByTwoExpressionsInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery(
+                "x\n6\n7\n8\n",
                 "select * from \n" +
                         "(\n" +
                         "  select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 }

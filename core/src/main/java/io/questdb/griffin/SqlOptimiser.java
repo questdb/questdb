@@ -3767,6 +3767,9 @@ public class SqlOptimiser implements Mutable {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
                 final CharSequence column = orderBy.token;
 
+                if (column.length() == 0) {
+                    throw SqlException.invalidColumn(orderBy.position, column);
+                }
                 char first = column.charAt(0);
                 if (first < '0' || first > '9') {
                     continue;
