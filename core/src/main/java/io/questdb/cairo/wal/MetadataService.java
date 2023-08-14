@@ -97,7 +97,9 @@ public interface MetadataService {
 
     void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
-    long getMetaMaxUncommittedRows();
+    int getMetaMaxUncommittedRows();
+
+    long getMetaO3MaxLag();
 
     TableRecordMetadata getMetadata();
 
