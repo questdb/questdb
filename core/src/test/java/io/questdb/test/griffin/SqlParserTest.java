@@ -69,8 +69,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDottedConstAlias() throws Exception {
-        assertSql("column1\tcolumn2\n" +
-                ".f.e.j.hve\tdjnfkvbjke\n", "select '.f.e.j.hve', 'djnfkvbjke'");
+        assertSql("column1\tdjnfkvbjke\tcolumn2\tcolumn\tcolumn3\n" +
+                ".f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4\n", "select '.f.e.j.hve', 'djnfkvbjke'");
+    }
+
+    @Test
+    public void testDottedConstAlias2() throws Exception {
+        assertSql("column1\tdjnfkvbjke\tcolumn2\tcolumn\tcolumn3\n" +
+                ".f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4\n", "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4");
+    }
+
+    @Test
+    public void testDottedConstAlias3() throws Exception {
+        assertSql("column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4\n" +
+                ".f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4\n", "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4");
+    }
+
+    @Test
+    public void testDottedConstAlias4() throws Exception {
+        assertSql("", "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b");
     }
 
     @Test

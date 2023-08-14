@@ -626,26 +626,14 @@ public class SqlUtil {
     ) {
         return createColumnAlias(store, base, indexOfDot, aliasToColumnMap, false);
     }
-
-    static CharSequence createConstColumnAlias(LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap) {
-        CharSequence column = "column";
-        char digit = '1';
-
-        while(aliasToColumnMap.contains(column + Chars.toString(digit))) {
-            digit++;
-        }
-
-        return column + Chars.toString(digit);
-    }
-
     static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,
             int indexOfDot,
             LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
-            boolean cleanColumnNames
+            boolean nonLiteral
     ) {
-        final boolean disallowed = cleanColumnNames && disallowedAliases.contains(base);
+        final boolean disallowed = nonLiteral && disallowedAliases.contains(base);
 
         // short and sweet version
         if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {

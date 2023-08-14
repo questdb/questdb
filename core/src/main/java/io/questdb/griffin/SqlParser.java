@@ -71,6 +71,9 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private boolean subQueryMode = false;
+    private int digit;
+    private final ObjList<QueryColumn> columnNames = new ObjList<>();
+    private final IntList columnPositions = new IntList();
 
     SqlParser(
             CairoConfiguration configuration,
@@ -98,6 +101,7 @@ public class SqlParser {
         this.characterStore = characterStore;
         this.optimiser = optimiser;
         this.expressionParser = new ExpressionParser(expressionNodePool, this, characterStore);
+        this.digit = 1;
     }
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
@@ -174,8 +178,18 @@ public class SqlParser {
         );
     }
 
-    private CharSequence createConstColumnAlias(QueryModel model) {
-        return SqlUtil.createConstColumnAlias(model.getAliasToColumnMap());
+    private CharSequence createConstColumnAlias(LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap) {
+        CharSequence column = "column";
+
+        while(aliasToColumnMap.contains(column + Integer.toString(digit))) {
+            digit++;
+        }
+        int d = digit;
+        digit++;
+
+
+
+        return column + Integer.toString(d);
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
@@ -1720,21 +1734,26 @@ public class SqlParser {
                 }
                 tok = optTok(lexer);
             } else {
-                if(expr.type != ExpressionNode.CONSTANT) {
-                    alias = createColumnAlias(expr, model);
-                } else {
-                    alias = createConstColumnAlias(model);
+                columnNames.add(col);
+                columnPositions.add(colPosition);
+                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as
+                    lexer.unparseLast();
+                    break;
                 }
+                continue;
             }
+
             if (alias.length() == 0) {
                 throw err(lexer, null, "column alias cannot be a blank string");
             }
+
             col.setAlias(alias);
 
             // correlated sub-queries do not have expr.token values (they are null)
             if (expr.type == ExpressionNode.QUERY) {
                 expr.token = alias;
             }
+
             model.addBottomUpColumn(colPosition, col, false);
 
             if (model.getColumns().size() == 1 && tok == null && Chars.equals(expr.token, '*')) {
@@ -1760,6 +1779,19 @@ public class SqlParser {
                 throw err(lexer, tok, "',', 'from' or 'over' expected");
             }
         }
+
+        CharSequence alias;
+
+        for(int i = 0; i < columnNames.size(); i++) {
+            if(columnNames.get(i).getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(columnNames.get(i).getName(), '.') != -1) {
+                alias = createConstColumnAlias(model.getAliasToColumnMap());
+            } else {
+                alias = createColumnAlias(columnNames.get(i).getAst(), model);
+            }
+            columnNames.get(i).setAlias(alias);
+            model.addBottomUpColumn(columnPositions.get(i), columnNames.get(i), false);
+        }
+        columnNames.clear();
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel) throws SqlException {
