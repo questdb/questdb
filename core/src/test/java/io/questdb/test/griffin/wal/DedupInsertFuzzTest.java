@@ -50,6 +50,7 @@ import java.util.stream.Collectors;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class DedupInsertFuzzTest extends AbstractFuzzTest {
+
     @Test
     public void testDedupWithRandomShiftAndStep() throws Exception {
         assertMemoryLeak(() -> {
@@ -110,8 +111,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             " (ts timestamp, commit int, s symbol) " +
                             " , index(s) timestamp(ts) partition by DAY WAL "
                             + " DEDUP UPSERT KEYS(ts, s)"
-                    ,
-                    sqlExecutionContext
             );
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
@@ -656,7 +655,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     tableNameWal,
                     comaSeparatedUpsertCols
             );
-            compile(alterStatement, sqlExecutionContext);
+            compile(alterStatement);
 
             O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);

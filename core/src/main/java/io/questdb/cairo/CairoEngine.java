@@ -996,6 +996,10 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.setTableReaderListener(readerListener);
     }
 
+    @TestOnly
+    public void setUp() {
+    }
+
     public void setWalInitializer(@NotNull WalInitializer walInitializer) {
         this.walInitializer = walInitializer;
     }
