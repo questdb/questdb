@@ -83,13 +83,14 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
     public void reload() {
         if (!initialized) {
             initialize(configuration, getTableToken());
+        } else {
+            if (acquireTxn()) {
+                return;
+            }
+            reloadSlow();
+            // partition reload will apply truncate if necessary
+            // applyTruncate for non-partitioned tables only
         }
-        if (acquireTxn()) {
-            return;
-        }
-        reloadSlow();
-        // partition reload will apply truncate if necessary
-        // applyTruncate for non-partitioned tables only
     }
 
     public long size() {
