@@ -7561,8 +7561,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
         } else {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses.clear();
+            if (dedupColumnCommitAddresses != null) {
                 dedupColumnCommitAddresses.setDedupColumnCount(0);
             }
         }
