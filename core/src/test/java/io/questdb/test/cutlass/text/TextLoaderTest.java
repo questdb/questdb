@@ -1736,6 +1736,26 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3MaxLagAndMaxUncommittedRowsNewTableNonPartitioned() throws Exception {
+        testO3MaxLagAndMaxUncommittedRowsNewTable(
+                "",
+                PartitionBy.NONE,
+                -1,
+                -1
+        );
+    }
+
+    @Test
+    public void testO3MaxLagAndMaxUncommittedRowsNewTablePartitioned() throws Exception {
+        testO3MaxLagAndMaxUncommittedRowsNewTable(
+                "partition by day",
+                PartitionBy.DAY,
+                configuration.getMaxUncommittedRows(),
+                configuration.getO3MaxLag()
+        );
+    }
+
+    @Test
     public void testOverrideDoubleWithFloat() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
@@ -3302,12 +3322,10 @@ public class TextLoaderTest extends AbstractCairoTest {
             Set<String> expectedPartitionNames
     ) throws Exception {
         final AtomicInteger rmdirCallCount = new AtomicInteger();
-        final AtomicInteger msyncCallCount = new AtomicInteger();
 
         final FilesFacade ff = new TestFilesFacade() {
             @Override
             public void msync(long addr, long len, boolean async) {
-                msyncCallCount.incrementAndGet();
                 Assert.assertFalse(async);
                 Files.msync(addr, len, false);
             }
@@ -3528,6 +3546,43 @@ public class TextLoaderTest extends AbstractCairoTest {
                 expectedParsedLineCount,
                 expectedWrittenLineCount,
                 skipLinesWithExtraValues
+        );
+    }
+
+    private void testO3MaxLagAndMaxUncommittedRowsNewTable(
+            String createStmtExtra,
+            int partitionBy,
+            int expectedMaxUncommittedRows,
+            long expectedO3MaxLag
+    ) throws Exception {
+        assertNoLeak(
+                textLoader -> {
+                    String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
+                    ddl(createStmt);
+                    configureLoaderDefaults(
+                            textLoader,
+                            Atomicity.SKIP_ROW,
+                            false,
+                            partitionBy
+                    );
+                    textLoader.setForceHeaders(true);
+                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                    playText0(
+                            textLoader,
+                            "ts,int\n" +
+                                    "2021-01-02T00:00:30.000000Z,1\n",
+                            512,
+                            ENTITY_MANIPULATOR
+                    );
+
+                    assertTable("ts\tint\n" +
+                            "2021-01-02T00:00:30.000000Z\t1\n");
+
+                    Assert.assertEquals("test", textLoader.getTableName());
+                    Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
+                    Assert.assertEquals(expectedMaxUncommittedRows, textLoader.getMaxUncommittedRows());
+                    Assert.assertEquals(expectedO3MaxLag, textLoader.getO3MaxLag());
+                }
         );
     }
 
