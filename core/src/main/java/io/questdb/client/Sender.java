@@ -87,7 +87,8 @@ public interface Sender extends Closeable {
      * This behavior can be adjusted by QuestDB server configuration. See <code>line.tcp.timestamp</code> in
      * <a href="https://questdb.io/docs/reference/configuration/">QuestDB server documentation</a>
      *
-     * @param timestamp time since 1st Jan 1970 UTC (epoch)
+     * @param timestamp timestamp value since epoch (in nanoseconds by default; see "line.tcp.timestamp" configuration
+     *                  option to learn how to change the unit on the server side)
      */
     void at(long timestamp);
 
@@ -184,7 +185,7 @@ public interface Sender extends Closeable {
      * Add a column with a non-designated timestamp value.
      *
      * @param name  name of the column
-     * @param value value to add (in microseconds since epoch)
+     * @param value timestamp value since epoch (in microseconds)
      * @return this instance for method chaining
      */
     Sender timestampColumn(CharSequence name, long value);
