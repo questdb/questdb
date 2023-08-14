@@ -158,7 +158,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         TestUtils.assertEquals(message, expected, sink);
     }
 
-    protected static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+    public static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
         // dump metadata
         ResultSetMetaData metaData = rs.getMetaData();
         final int columnCount = metaData.getColumnCount();
