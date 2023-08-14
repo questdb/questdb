@@ -1305,6 +1305,11 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
+                if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token)) ||
+                        (n.type == ExpressionNode.LITERAL && n.token.length() == 0)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
+                }
+
                 tok = optTok(lexer);
 
                 if (tok != null && isDescKeyword(tok)) {
