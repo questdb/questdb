@@ -176,8 +176,16 @@ public class TextLoader implements Closeable, Mutable {
         return lexer != null ? lexer.getErrorCount() : 0;
     }
 
+    public int getMaxUncommittedRows() {
+        return textWriter.getMaxUncommittedRows();
+    }
+
     public RecordMetadata getMetadata() {
         return textWriter.getMetadata();
+    }
+
+    public long getO3MaxLag() {
+        return textWriter.getO3MaxLag();
     }
 
     public long getParsedLineCount() {
