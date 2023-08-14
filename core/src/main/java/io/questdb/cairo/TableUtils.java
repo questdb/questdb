@@ -25,10 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.AnyRecordMetadata;
@@ -626,7 +623,7 @@ public final class TableUtils {
         if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
             return ((TableWriterMetadata) metadata).getMaxUncommittedRows();
         }
-        try (var tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+        try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
             return tableMetadata.getMaxUncommittedRows();
         }
     }
@@ -675,7 +672,7 @@ public final class TableUtils {
                 return ((TableWriterMetadata) metadata).getO3MaxLag();
             }
 
-            try (var tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+            try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
                 return tableMetadata.getO3MaxLag();
             }
         }
@@ -687,7 +684,7 @@ public final class TableUtils {
         if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
             return ((TableWriterMetadata) metadata).getPartitionBy();
         }
-        try (var tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+        try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
             return tableMetadata.getPartitionBy();
         }
     }
