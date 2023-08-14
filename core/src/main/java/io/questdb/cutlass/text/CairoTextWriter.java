@@ -26,6 +26,7 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
@@ -233,16 +234,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         return metadata.getTimestampIndex() > -1 ? metadata.getColumnName(metadata.getTimestampIndex()) : null;
     }
 
-    private int getTablePartitionBy(TableWriterAPI writer) {
-        // This is a bit of a hack. We need to know if the table is partitioned or not, mostly for compatibility with the non-WAL test cases.
-        if (!writer.supportsMultipleWriters()) {
-            return ((TableWriter) writer).getPartitionBy();
-        }
-        // If the table is WAL, we will not report correctly the partitioning type, but it does not matter.
-        // The way to find the table partitioning type is to get TableReader and check its metadata. This is way too heavy for the next to none benefit.
-        return PartitionBy.DAY;
-    }
-
     private void initWriterAndOverrideImportTypes(
             TableToken tableToken,
             ObjList<CharSequence> names,
@@ -383,7 +374,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                             !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
                         warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
                     }
-                    int tablePartitionBy = getTablePartitionBy(writer);
+                    int tablePartitionBy = TableUtils.getPartitionBy(writer.getMetadata(), engine);
                     if (PartitionBy.isPartitioned(partitionBy) && partitionBy != tablePartitionBy) {
                         warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;
                     }
@@ -401,12 +392,12 @@ public class CairoTextWriter implements Closeable, Mutable {
         if (PartitionBy.isPartitioned(partitionBy)) {
             // We want to limit memory consumption during the import, so make sure
             // to use table's maxUncommittedRows and o3MaxLag if they're not set.
-            if (o3MaxLag == -1) {
-                o3MaxLag = writer.getMetadata().getO3MaxLag();
+            if (o3MaxLag == -1 && !writer.getMetadata().isWalEnabled()) {
+                o3MaxLag = TableUtils.getO3MaxLag(writer.getMetadata(), engine);
                 LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
             }
             if (maxUncommittedRows == -1) {
-                maxUncommittedRows = writer.getMetadata().getMaxUncommittedRows();
+                maxUncommittedRows = TableUtils.getMaxUncommittedRows(writer.getMetadata(), engine);
                 LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
             }
         }
