@@ -65,7 +65,7 @@ public class SqlGrammarUtil {
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new RuntimeException(e);
         }
-        print("FUNCTIONS", names);
+        print("KEYWORDS", names);
 
         // types
         names.clear();
