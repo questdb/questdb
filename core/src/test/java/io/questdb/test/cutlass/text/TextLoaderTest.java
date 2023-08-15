@@ -1322,7 +1322,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, precision is micro
                 3,
-                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1")
+                setOf("2021-01-01", "2021-01-01.1", "2021-01-01.3", "2021-01-02", "2021-01-02.2", "2021-01-02.3")
         );
     }
 
@@ -1331,7 +1331,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 60_000_000, // 1 minute, precision is micro
                 2,
-                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1", "2021-01-02.2", "2021-01-02.4")
+                setOf("2021-01-01", "2021-01-01.1", "2021-01-01.2", "2021-01-01.4", "2021-01-01.6", "2021-01-02.0", "2021-01-02.1", "2021-01-02.5")
         );
     }
 
@@ -3336,7 +3336,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 if (!dirName.equals("seq")) {
                     rmdirCallCount.getAndIncrement();
                     if (!expectedPartitionNames.contains(dirName)) {
-                        Assert.fail();
+                        Assert.fail(dirName + " not expected");
                     }
                 }
                 return Files.rmdir(name);

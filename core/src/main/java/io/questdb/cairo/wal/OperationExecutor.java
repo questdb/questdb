@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -38,13 +39,13 @@ import io.questdb.std.Rnd;
 
 import java.io.Closeable;
 
-class OperationCompiler implements Closeable {
+class OperationExecutor implements Closeable {
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
     private final TableRenameSupportExecutionContext renameSupportExecutionContext;
     private final Rnd rnd;
 
-    OperationCompiler(
+    OperationExecutor(
             CairoEngine engine,
             int workerCount,
             int sharedWorkerCount
@@ -71,26 +72,34 @@ class OperationCompiler implements Closeable {
         Misc.free(renameSupportExecutionContext);
     }
 
-    public AlterOperation compileAlterSql(CharSequence alterSql, TableToken tableToken) throws SqlException {
-        renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
-        AlterOperation alterOp;
+    public void executeAlter(TableWriter tableWriter, CharSequence alterSql, long seqTxn) throws SqlException {
+        final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
             final CompiledQuery compiledQuery = compiler.compile(alterSql, renameSupportExecutionContext);
-            alterOp = compiledQuery.getAlterOperation();
+            try (AlterOperation alterOp = compiledQuery.getAlterOperation()) {
+                alterOp.withContext(renameSupportExecutionContext);
+                tableWriter.apply(alterOp, seqTxn);
+            }
+        } catch (SqlException ex) {
+            tableWriter.markSeqTxnCommitted(seqTxn);
+            throw ex;
         }
-        alterOp.withContext(renameSupportExecutionContext);
-        return alterOp;
     }
 
-    public UpdateOperation compileUpdateSql(CharSequence updateSql, TableToken tableToken) throws SqlException {
-        renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
-        UpdateOperation updateOperation;
+    public void executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {
+        final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
             final CompiledQuery compiledQuery = compiler.compile(updateSql, renameSupportExecutionContext);
-            updateOperation = compiledQuery.getUpdateOperation();
+            try (UpdateOperation updateOperation = compiledQuery.getUpdateOperation()) {
+                updateOperation.withContext(renameSupportExecutionContext);
+                tableWriter.apply(updateOperation, seqTxn);
+            }
+        } catch (SqlException ex) {
+            tableWriter.markSeqTxnCommitted(seqTxn);
+            throw ex;
         }
-        updateOperation.withContext(renameSupportExecutionContext);
-        return updateOperation;
     }
 
     public BindVariableService getBindVariableService() {
