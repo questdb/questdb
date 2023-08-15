@@ -908,12 +908,28 @@ public class SqlParser {
             }
 
             if (isExceptKeyword(tok)) {
-                prevModel.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT);
+                tok = tok(lexer, "all or select");
+                if (isAllKeyword(tok)) {
+                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT_ALL);
+                    modelPosition = lexer.getPosition();
+                } else {
+                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT);
+                    lexer.unparseLast();
+                    modelPosition = lexer.lastTokenPosition();
+                }
                 continue;
             }
 
             if (isIntersectKeyword(tok)) {
-                prevModel.setSetOperationType(QueryModel.SET_OPERATION_INTERSECT);
+                tok = tok(lexer, "all or select");
+                if (isAllKeyword(tok)) {
+                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_INTERSECT_ALL);
+                    modelPosition = lexer.getPosition();
+                } else {
+                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_INTERSECT);
+                    lexer.unparseLast();
+                    modelPosition = lexer.lastTokenPosition();
+                }
             }
         }
     }
