@@ -643,7 +643,7 @@ public class SqlUtil {
         final CharacterStoreEntry characterStoreEntry = store.newEntry();
 
         if (indexOfDot == -1) {
-            if (disallowed) {
+            if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NaN) {
                 characterStoreEntry.put("column");
             } else {
                 characterStoreEntry.put(base);

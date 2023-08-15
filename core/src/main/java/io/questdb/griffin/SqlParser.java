@@ -72,8 +72,7 @@ public class SqlParser {
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private boolean subQueryMode = false;
     private int digit;
-    private final ObjList<QueryColumn> columnNames = new ObjList<>();
-    private final IntList columnPositions = new IntList();
+    private final ObjList<QueryColumn> columns = new ObjList<>();
 
     SqlParser(
             CairoConfiguration configuration,
@@ -1720,8 +1719,11 @@ public class SqlParser {
             }
 
             if (tok != null && Chars.equals(tok, ';')) {
-                alias = createColumnAlias(expr, model);
-            } else if (tok != null && columnAliasStop.excludes(tok)) {
+                alias = null;
+                col.setAlias(null);
+                columns.add(col);
+            }
+            else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
                 if (isAsKeyword(tok)) {
@@ -1734,27 +1736,29 @@ public class SqlParser {
                 }
                 tok = optTok(lexer);
             } else {
-                columnNames.add(col);
-                columnPositions.add(colPosition);
-                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as
-                    lexer.unparseLast();
-                    break;
+                alias = null;
+                col.setAlias(null);
+                columns.add(col);
+            }
+
+            if(alias != null) {
+                if (alias.length() == 0) {
+                    throw err(lexer, null, "column alias cannot be a blank string");
                 }
-                continue;
+                col.setAlias(alias);
             }
-
-            if (alias.length() == 0) {
-                throw err(lexer, null, "column alias cannot be a blank string");
-            }
-
-            col.setAlias(alias);
 
             // correlated sub-queries do not have expr.token values (they are null)
             if (expr.type == ExpressionNode.QUERY) {
                 expr.token = alias;
             }
 
-            model.addBottomUpColumn(colPosition, col, false);
+            if(alias != null) { //add everywhere
+                model.addBottomUpColumn(colPosition, col, false);
+            } else { //only add to bottom up columns / bottom up column names which are responsible for ordering, the others will be updated later
+                model.addFieldForNullAlias(col);
+            }
+
 
             if (model.getColumns().size() == 1 && tok == null && Chars.equals(expr.token, '*')) {
                 throw err(lexer, null, "'from' expected");
@@ -1782,16 +1786,33 @@ public class SqlParser {
 
         CharSequence alias;
 
-        for(int i = 0; i < columnNames.size(); i++) {
-            if(columnNames.get(i).getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(columnNames.get(i).getName(), '.') != -1) {
+        for(int i = 0; i < columns.size(); i++) {
+            CharSequence token = columns.get(i).getAst().token;
+            if(columns.get(i).getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(columns.get(i).getAst().token, '.') != -1) {
                 alias = createConstColumnAlias(model.getAliasToColumnMap());
             } else {
-                alias = createColumnAlias(columnNames.get(i).getAst(), model);
+                alias = createColumnAlias(columns.get(i).getAst(), model);
             }
-            columnNames.get(i).setAlias(alias);
-            model.addBottomUpColumn(columnPositions.get(i), columnNames.get(i), false);
+            updateMapsAndLists(model, alias, token, i);
         }
-        columnNames.clear();
+        columns.clear();
+    }
+
+    private void updateMapsAndLists(QueryModel model, CharSequence alias, CharSequence token, int i) {
+        QueryColumn nullColumn = columns.get(i);
+        int oldIndexColumns = model.getBottomUpColumns().indexOf(nullColumn);
+        int oldIndexColumnNames = model.getBottomUpColumnNames().indexOfNull();
+
+        columns.get(i).setAlias(alias);
+
+        model.getBottomUpColumns().set(oldIndexColumns, columns.get(i));
+        model.getBottomUpColumnNames().set(oldIndexColumnNames, columns.get(i).getAlias());
+
+        model.getAliasToColumnMap().put(alias, columns.get(i));
+        model.getAliasToColumnNameMap().put(alias, token);
+
+        model.getColumnNameToAliasMap().put(token, alias);
+        model.getColumnAliasIndexes().put(alias, model.getBottomUpColumnNames().indexOfNull());
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel) throws SqlException {
@@ -2257,6 +2278,8 @@ public class SqlParser {
         copyModelPool.clear();
         topLevelWithModel.clear();
         explainModelPool.clear();
+        columns.clear();
+        digit = 1;
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {
