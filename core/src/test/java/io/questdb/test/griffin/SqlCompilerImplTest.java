@@ -27,8 +27,10 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -5092,8 +5094,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertFailure(96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION"));
         assertFailure(99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION ALL"));
-        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
-        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+        assertFailure(97, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
+        assertFailure(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT ALL"));
+        assertFailure(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+        assertFailure(103, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT ALL"));
     }
 
     @Test
