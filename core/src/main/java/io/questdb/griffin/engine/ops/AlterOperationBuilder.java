@@ -25,10 +25,8 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
 
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
 
@@ -47,7 +45,7 @@ public class AlterOperationBuilder {
     }
 
     public void addColumnToList(
-            @Transient CharSequence columnName,
+            CharSequence columnName,
             int columnNamePosition,
             int type,
             int symbolCapacity,
@@ -57,7 +55,7 @@ public class AlterOperationBuilder {
             boolean dedupKey
     ) {
         assert columnName != null && columnName.length() > 0;
-        extraStrInfo.add(Chars.toString(columnName));
+        extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
@@ -98,7 +96,7 @@ public class AlterOperationBuilder {
     }
 
     public void ofAddColumn(
-            @Transient CharSequence columnName,
+            CharSequence columnName,
             int columnNamePosition,
             int type,
             int symbolCapacity,
@@ -107,7 +105,7 @@ public class AlterOperationBuilder {
             int indexValueBlockCapacity
     ) {
         assert columnName != null && columnName.length() > 0;
-        extraStrInfo.add(Chars.toString(columnName));
+        extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
@@ -120,14 +118,14 @@ public class AlterOperationBuilder {
             int tableNamePosition,
             TableToken tableToken,
             int tableId,
-            @Transient CharSequence columnName,
+            CharSequence columnName,
             int indexValueBlockSize
     ) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
-        this.extraStrInfo.add(Chars.toString(columnName));
+        this.extraStrInfo.add(columnName);
         this.extraInfo.add(indexValueBlockSize);
     }
 
@@ -139,12 +137,12 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public void ofCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, @Transient CharSequence columnName) {
+    public void ofCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
         this.command = ADD_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
-        this.extraStrInfo.add(Chars.toString(columnName));
+        this.extraStrInfo.add(columnName);
     }
 
     public AlterOperationBuilder ofDedupDisable(int tableNamePosition, TableToken tableToken) {
@@ -171,9 +169,9 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofDropColumn(@Transient CharSequence columnName) {
+    public AlterOperationBuilder ofDropColumn(CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
-        this.extraStrInfo.add(Chars.toString(columnName));
+        this.extraStrInfo.add(columnName);
         return this;
     }
 
@@ -185,12 +183,12 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public void ofDropIndex(int tableNamePosition, TableToken tableToken, int tableId, @Transient CharSequence columnName, int columnNamePosition) {
+    public void ofDropIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int columnNamePosition) {
         this.command = DROP_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
-        this.extraStrInfo.add(Chars.toString(columnName));
+        this.extraStrInfo.add(columnName);
         this.extraInfo.add(columnNamePosition);
     }
 
@@ -202,13 +200,13 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public void ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, @Transient CharSequence columnName) {
+    public void ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
-        this.extraStrInfo.add(Chars.toString(columnName));
+        this.extraStrInfo.add(columnName);
     }
 
     public AlterOperationBuilder ofRenameColumn(int tableNamePosition, TableToken tableToken, int tableId) {
@@ -219,9 +217,9 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public void ofRenameColumn(@Transient CharSequence columnName, @Transient CharSequence newName) {
-        extraStrInfo.add(Chars.toString(columnName));
-        extraStrInfo.add(Chars.toString(newName));
+    public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
+        extraStrInfo.add(columnName);
+        extraStrInfo.add(newName);
     }
 
     public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, TableToken tableToken, int tableId, long o3MaxLag) {
