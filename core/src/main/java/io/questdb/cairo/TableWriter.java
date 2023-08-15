@@ -40,7 +40,10 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -1332,8 +1335,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public long getMetaMaxUncommittedRows() {
+    public int getMetaMaxUncommittedRows() {
         return metadata.getMaxUncommittedRows();
+    }
+
+    @Override
+    public long getMetaO3MaxLag() {
+        return metadata.getO3MaxLag();
     }
 
     @Override
@@ -7561,8 +7569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
         } else {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses.clear();
+            if (dedupColumnCommitAddresses != null) {
                 dedupColumnCommitAddresses.setDedupColumnCount(0);
             }
         }
