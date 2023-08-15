@@ -1172,7 +1172,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     alterWriter2.apply(alterOperation, true);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exists");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exist");
                 }
             } finally {
                 Misc.free(alterOperation);
