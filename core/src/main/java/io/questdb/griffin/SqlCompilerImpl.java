@@ -876,6 +876,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
         boolean tsIncludedInDedupColumns = false;
 
+        // ALTER TABLE abc DEDUP <ENABLE> UPSERT KEYS(a, b)
+        // ENABLE word is not mandatory to be compatible v7.3
+        // where it was omitted from the syntax
+        if (tok != null && isEnableKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
         if (tok == null || !isUpsertKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert'");
         }
