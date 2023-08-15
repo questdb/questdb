@@ -22,62 +22,62 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CurrentUserFunctionFactory implements FunctionFactory {
-
-    private static final String SIGNATURE = "current_user()";
-
+public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return SIGNATURE;
+        return "netmask(S)";
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new IPv4StrNetmaskFunctionFactory.IPv4StrNetmaskFunction(args.getQuick(0));
     }
 
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CurrentUserFunction();
-    }
+    public static final class IPv4StrNetmaskFunction extends IPv4Function implements UnaryFunction {
+        private final Function arg;
 
-    static class CurrentUserFunction extends StrFunction {
-        private SecurityContext context;
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            return context.getPrincipal();
+        public IPv4StrNetmaskFunction(Function arg) {
+            this.arg = arg;
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return context.getPrincipal();
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            this.context = executionContext.getSecurityContext();
+        public int getIPv4(Record rec) {
+            if(arg.getStr(rec) == null) {
+                return Numbers.IPv4_NULL;
+            }
+            final int val = Numbers.getIPv4Netmask(arg.getStr(rec));
+            return val == -2 ? Numbers.IPv4_NULL : val;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
+            sink.val("netmask(").val(arg).val(')');
         }
     }
 }
+

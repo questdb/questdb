@@ -211,6 +211,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.IPv4, ColumnType.IPv4), ColumnType.IPv4);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.IPv4, ColumnType.STRING), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.BYTE), ColumnType.LONG);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.BOOLEAN), ColumnType.LONG);
@@ -301,6 +302,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.SYMBOL), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.UUID), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.IPv4), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.BYTE), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.BOOLEAN), ColumnType.STRING);

@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
@@ -99,6 +100,16 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return factoryProvider;
         }
     }) {
+        @Override
+        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+            return new DefaultJsonQueryProcessorConfiguration() {
+                @Override
+                public FactoryProvider getFactoryProvider() {
+                    return factoryProvider;
+                }
+            };
+        }
+
         @Override
         public int getWorkerCount() {
             return workerCountHttp;

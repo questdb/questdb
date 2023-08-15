@@ -60,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 public class PropServerConfiguration implements ServerConfiguration {
@@ -84,6 +85,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
+    private final int cairoSQLCopyIdSupplier;
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -934,6 +936,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
+            String cairoSQLCopyIdSupplier = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ID_SUPPLIER, "random");
+            this.cairoSQLCopyIdSupplier = Chars.equalsLowerCaseAscii(cairoSQLCopyIdSupplier, "sequential") ? 1 : 0;
+
             this.cairoSqlCopyMaxIndexChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE, 100 * Numbers.SIZE_1MB);
             this.cairoSqlCopyMaxIndexChunkSize -= (cairoSqlCopyMaxIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
             if (this.cairoSqlCopyMaxIndexChunkSize < 16) {
@@ -1681,7 +1686,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     class PropCairoConfiguration implements CairoConfiguration {
-        private final LongSupplier copyIDSupplier = () -> getRandom().nextPositiveLong();
+        private final LongSupplier randomIDSupplier = () -> getRandom().nextPositiveLong();
+        private final LongSupplier sequentialIDSupplier = new LongSupplier() {
+            final AtomicLong value = new AtomicLong();
+
+            @Override
+            public long getAsLong() {
+                return value.incrementAndGet();
+            }
+        };
 
         @Override
         public boolean attachPartitionCopy() {
@@ -1795,7 +1808,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public @NotNull LongSupplier getCopyIDSupplier() {
-            return copyIDSupplier;
+            if (cairoSQLCopyIdSupplier == 0) {
+                return randomIDSupplier;
+            }
+
+            return sequentialIDSupplier;
         }
 
         @Override

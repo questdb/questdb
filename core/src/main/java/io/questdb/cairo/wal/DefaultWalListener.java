@@ -24,6 +24,28 @@
 
 package io.questdb.cairo.wal;
 
-public interface WalInitializerFactory {
-    WalInitializer getInstance();
+import io.questdb.cairo.TableToken;
+
+public class DefaultWalListener implements WalListener {
+    public static final DefaultWalListener INSTANCE = new DefaultWalListener();
+
+    @Override
+    public void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {
+    }
+
+    @Override
+    public void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp) {
+    }
+
+    @Override
+    public void segmentClosed(final TableToken tabletoken, int walId, int segmentId) {
+    }
+
+    @Override
+    public void tableDropped(TableToken tableToken, long txn, long timestamp) {
+    }
+
+    @Override
+    public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
+    }
 }

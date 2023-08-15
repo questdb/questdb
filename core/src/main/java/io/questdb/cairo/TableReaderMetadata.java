@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -32,7 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
-public class TableReaderMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Mutable {
+public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
@@ -207,6 +207,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return o3MaxLag;
     }
 
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -221,6 +222,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return tableToken;
     }
 
+    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }

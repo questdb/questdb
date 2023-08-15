@@ -21,20 +21,23 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+package io.questdb.griffin.engine.join;
 
-package io.questdb.cairo.wal;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.JoinContext;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.str.Path;
+public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
-public class BasicWalInitializer implements WalInitializer {
-    public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
+    protected final JoinContext joinContext;
+    protected final RecordCursorFactory masterFactory;
+    protected final RecordCursorFactory slaveFactory;
 
-    @Override
-    public void initDirectory(Path dirPath) {
-    }
-
-    @Override
-    public void rollbackDirectory(Path path) {
+    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, JoinContext joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
+        super(metadata);
+        this.joinContext = joinContext;
+        this.masterFactory = masterFactory;
+        this.slaveFactory = slaveFactory;
     }
 }

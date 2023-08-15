@@ -407,7 +407,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
             final TableReaderRecord record = new TableReaderRecord();
             try (
-                    final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(x, -1, 0, new RuntimeIntervalModel(intervals), timestampIndex, metadata);
+                    final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(x, 0, new RuntimeIntervalModel(intervals), timestampIndex, metadata);
                     final DataFrameCursor cursor = factory.getCursor(executionContext, ORDER_ASC)
             ) {
 

@@ -182,7 +182,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         }
 
         @Override
-        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
         }
 
         @Override

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.Path;
@@ -58,7 +59,7 @@ public class WalListenerTest extends AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        engine.setWalListener(WalListener.DEFAULT);
+        engine.setWalListener(DefaultWalListener.INSTANCE);
         if (!listener.events.isEmpty()) {
             System.err.println("Unexpected or unasserted WalListener events:");
             for (WalListenerEvent event : listener.events) {
@@ -128,7 +129,8 @@ public class WalListenerTest extends AbstractCairoTest {
                     releaseInactive(engine);
 
                     // Empty segment does not generate close event
-                    Assert.assertEquals(0, listener.events.size());
+                    Assert.assertEquals(0, listener.events.size()
+                    );
                 }
             }
 
@@ -144,7 +146,8 @@ public class WalListenerTest extends AbstractCairoTest {
                             -1,
                             null
                     ),
-                    listener.events.remove());
+                    listener.events.remove()
+            );
 
             try (WalWriter walWriter2 = engine.getWalWriter(tableToken2.get())) {
                 walWriter2.addColumn("c", ColumnType.INT);
@@ -159,7 +162,8 @@ public class WalListenerTest extends AbstractCairoTest {
                                 -1,
                                 null
                         ),
-                        listener.events.remove());
+                        listener.events.remove()
+                );
             }
 
             releaseInactive(engine);
@@ -179,7 +183,8 @@ public class WalListenerTest extends AbstractCairoTest {
                             -1,
                             null
                     ),
-                    listener.events.remove());
+                    listener.events.remove()
+            );
         });
     }
 

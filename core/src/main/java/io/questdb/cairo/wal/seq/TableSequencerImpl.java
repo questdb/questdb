@@ -69,7 +69,7 @@ public class TableSequencerImpl implements TableSequencer {
         this.seqTxnTracker = txnTracker;
 
         final CairoConfiguration configuration = engine.getConfiguration();
-        this.walInitializer = configuration.getFactoryProvider().getWalInitializerFactory().getInstance();
+        this.walInitializer = engine.getWalInitializer();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();

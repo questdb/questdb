@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
@@ -35,17 +36,24 @@ import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 public class InsertOperationImpl implements InsertOperation {
+
+    //type inference fails on java 8 if <CharSequence> is removed 
+    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<CharSequence>() {
+        @Override
+        public void addAll(ReadOnlyObjList<? extends CharSequence> that) {
+            throw new UnsupportedOperationException();
+        }
+    };
     private final InsertOperationFuture doneFuture = new InsertOperationFuture();
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final long metadataVersion;
     private final TableToken tableToken;
+    private ObjList<CharSequence> columnNames;
 
     public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
         this.engine = engine;
@@ -60,13 +68,23 @@ public class InsertOperationImpl implements InsertOperation {
 
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+        SecurityContext securityContext = executionContext.getSecurityContext();
+        securityContext.authorizeInsert(tableToken, columnNames);
+
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
-            if (writer.getMetadataVersion() != metadataVersion
-                    || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
+            if (
+                // when metadata changes the compiled insert may no longer be valid, we have to
+                // recompile SQL text to ensure column indexes are correct
+                    writer.getMetadataVersion() != metadataVersion
+                            // when table names do not match, it means table was renamed (although our table token
+                            // remains valid). We should not allow user to insert into new table name because they
+                            // used "old" table name in SQL text
+                            || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())
+            ) {
                 writer.close();
-                throw WriterOutOfDateException.INSTANCE;
+                throw WriterOutOfDateException.of(tableToken.getTableName());
             }
             insertMethod.writer = writer;
         }
@@ -84,6 +102,17 @@ public class InsertOperationImpl implements InsertOperation {
             insertMethod.execute();
             insertMethod.commit();
             return doneFuture;
+        }
+    }
+
+    public void setColumnNames(ObjList<CharSequence> columnNameList) {
+        if (columnNameList.size() == 0) {
+            columnNames = EMPTY_COLUMN_LIST;
+        } else {
+            columnNames = new ObjList<>();
+            for (int i = 0, n = columnNameList.size(); i < n; i++) {
+                columnNames.add(Chars.toString(columnNameList.getQuick(i)));
+            }
         }
     }
 

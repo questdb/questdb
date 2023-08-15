@@ -24,11 +24,17 @@
 
 package io.questdb.cairo.wal;
 
-public class BasicWalInitializerFactory implements WalInitializerFactory {
-    public static final BasicWalInitializerFactory INSTANCE = new BasicWalInitializerFactory();
+import io.questdb.cairo.TableToken;
+import io.questdb.std.str.Path;
+
+public class DefaultWalInitializer implements WalInitializer {
+    public static final DefaultWalInitializer INSTANCE = new DefaultWalInitializer();
 
     @Override
-    public WalInitializer getInstance() {
-        return BasicWalInitializer.INSTANCE;
+    public void initDirectory(Path dirPath) {
+    }
+
+    @Override
+    public void rollbackDirectory(Path path) {
     }
 }

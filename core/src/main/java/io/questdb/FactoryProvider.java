@@ -24,9 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.DdlListenerFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.WalInitializerFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
@@ -44,10 +42,4 @@ public interface FactoryProvider extends QuietCloseable {
     PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
 
     SecurityContextFactory getSecurityContextFactory();
-
-    WalInitializerFactory getWalInitializerFactory();
-
-    DdlListenerFactory getDdlListenerFactory();
-
-    void load();
 }

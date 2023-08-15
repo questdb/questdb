@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -7778,7 +7777,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            TableToken tableToken = new TableToken("tab", dirName, 1, false);
+            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false);
             CharSequence lockedReason = engine.lock(tableToken, "testing");
             Assert.assertNull(lockedReason);
             try {
@@ -7804,7 +7803,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     }
                 }
             } finally {
-                engine.unlock(AllowAllSecurityContext.INSTANCE, tableToken, null, false);
+                engine.unlock(securityContext, tableToken, null, false);
             }
         });
     }
@@ -8401,6 +8400,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "order by ts\n",
                 modelOf("weather").col("ts", ColumnType.TIMESTAMP).col("temperature", ColumnType.FLOAT)
         );
+    }
+
+    protected int getSystemTablesCount() {
+        return 0;
     }
 
     @FunctionalInterface

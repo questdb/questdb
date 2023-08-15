@@ -685,7 +685,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
         return new DataFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullFwdDataFrameCursorFactory(metadata.getTableToken(), metadata.getTableId(), reader.getVersion(), GenericRecordMetadata.copyOf(metadata)),
+                new FullFwdDataFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOf(metadata)),
                 new DataFrameRowCursorFactory(),
                 false,
                 null,

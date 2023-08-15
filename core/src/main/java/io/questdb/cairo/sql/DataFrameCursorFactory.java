@@ -82,6 +82,8 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
     int getOrder();
 
     boolean supportTableRowId(TableToken tableToken);
+    
+    TableToken getTableToken();
 
     /**
      * @param sink to print data frame cursor to

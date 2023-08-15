@@ -76,7 +76,9 @@ public class TableTransactionLog implements Closeable {
     public void close() {
         if (txnMem.isOpen()) {
             long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
-            assert maxTxnInFile == maxTxn.get() : "Max txn in the file " + maxTxnInFile + " but in memory is " + maxTxn.get();
+            if (maxTxnInFile != maxTxn.get()) {
+                LOG.error().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
+            }
             txnMem.close(false);
             txnMetaMem.close(false);
             txnMetaMemIndex.close(false);
