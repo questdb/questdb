@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import org.jetbrains.annotations.NotNull;
 
 public class SqlKeywords {
     public static final int CASE_KEYWORD_LENGTH = 4;
@@ -594,6 +595,20 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'r'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i) | 32) == 'p';
+    }
+
+    public static boolean isEnableKeyword(@NotNull CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'b'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i) | 32) == 'e';
     }
 
     public static boolean isEndKeyword(CharSequence tok) {
