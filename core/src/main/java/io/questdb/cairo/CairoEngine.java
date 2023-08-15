@@ -492,7 +492,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
-    public TableRecordMetadata getMetadata(TableToken tableToken) {
+    public TableMetadata getMetadata(TableToken tableToken) {
         verifyTableToken(tableToken);
         try {
             return metadataPool.get(tableToken);
