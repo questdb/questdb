@@ -24,16 +24,10 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.QuietCloseable;
+public interface TableMetadata extends TableRecordMetadata {
+    int getMaxUncommittedRows();
 
-public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
+    long getO3MaxLag();
 
-    long getMetadataVersion();
-
-    int getTableId();
-
-    TableToken getTableToken();
-
-    boolean isWalEnabled();
+    int getPartitionBy();
 }

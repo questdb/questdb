@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -2945,16 +2946,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     "partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
                     );
 
-                    try (TableWriter writer = getWriter("x")) {
+                    try (TableWriter writer = getWriter("x");
+                         TableMetadata tableMetadata = engine.getMetadata(writer.getTableToken())) {
                         sink.clear();
-                        TableRecordMetadata metadata = writer.getMetadata();
-                        metadata.toJson(sink);
+                        tableMetadata.toJson(sink);
                         TestUtils.assertEquals(
                                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
                                 sink
                         );
-                        Assert.assertEquals(10000, metadata.getMaxUncommittedRows());
-                        Assert.assertEquals(250000, metadata.getO3MaxLag());
+                        Assert.assertEquals(10000, tableMetadata.getMaxUncommittedRows());
+                        Assert.assertEquals(250000, tableMetadata.getO3MaxLag());
                     }
                 }
         );
