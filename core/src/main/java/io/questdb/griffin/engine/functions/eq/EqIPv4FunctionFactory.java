@@ -37,13 +37,12 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
-import static io.questdb.std.Numbers.parseIPv4Quiet;
 
 public class EqIPv4FunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "=(XS)";
+        return "=(XX)";
     }
 
     @Override
@@ -65,26 +64,22 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
 
 
         if (!a.isConstant() && b.isConstant()) {
-            return createHalfConstantFunc(b, a, argPositions.get(1));
+            return createHalfConstantFunc(b, a);
+        } else if (a.isConstant() && !b.isConstant()) {
+            return createHalfConstantFunc(a, b);
         }
 
         return new EqIPv4FunctionFactory.Func(a, b);
     }
 
-    private Function createHalfConstantFunc(Function constFunc, Function varFunc, int constFuncPosition) throws SqlException {
-        CharSequence constValue = constFunc.getStr(null);
+    private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
+        int constValue = constFunc.getIPv4(null);
 
-        if (constValue == null) {
-            return new NullCheckFunc(varFunc);
+        if (constValue == IPv4_NULL) {
+            return new EqIPv4FunctionFactory.NullCheckFunc(varFunc);
         }
 
-        int constVal = parseIPv4Quiet(constValue);
-
-        if (constVal == 0) {
-            throw SqlException.$(constFuncPosition, "not a valid IP address: ").put(constValue);
-        }
-
-        return new ConstCheckFunc(varFunc, constVal);
+        return new EqIPv4FunctionFactory.ConstCheckFunc(varFunc, constValue);
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -123,7 +118,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getIPv4(rec) == parseIPv4Quiet(right.getStr(rec)));
+            return negated != (left.getIPv4(rec) == right.getIPv4(rec));
         }
 
         @Override
