@@ -34,28 +34,25 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 
-class ExceptRecordCursor extends AbstractSetRecordCursor {
-    private final Map mapA;
-    private final Map mapB;
+class IntersectAllRecordCursor extends AbstractSetRecordCursor {
+    private final Map map;
     private final RecordSink recordSink;
     private boolean isCursorBHashed;
     private boolean isOpen;
     private Record recordA;
     private Record recordB;
 
-    public ExceptRecordCursor(Map mapA, Map mapB, RecordSink recordSink) {
-        this.mapA = mapA;
-        this.mapB = mapB;
+    public IntersectAllRecordCursor(Map map, RecordSink recordSink) {
+        this.map = map;
         this.recordSink = recordSink;
-        isOpen = true;
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
-            mapA.close();
-            mapB.close();
+            this.map.close();
             super.close();
         }
     }
@@ -83,14 +80,10 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
             isCursorBHashed = true;
         }
         while (cursorA.hasNext()) {
-            MapKey keyB = mapB.withKey();
-            keyB.put(recordA, recordSink);
-            if (keyB.notFound()) {
-                MapKey keyA = mapA.withKey();
-                keyA.put(recordA, recordSink);
-                if (keyA.create()) {
-                    return true;
-                }
+            MapKey key = map.withKey();
+            key.put(recordA, recordSink);
+            if (key.findValue() != null) {
+                return true;
             }
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
@@ -115,14 +108,13 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     @Override
     public void toTop() {
         cursorA.toTop();
-        mapA.clear();
     }
 
     private void hashCursorB() {
         while (cursorB.hasNext()) {
-            MapKey keyB = mapB.withKey();
-            keyB.put(recordB, recordSink);
-            keyB.createValue();
+            MapKey key = map.withKey();
+            key.put(recordB, recordSink);
+            key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
         // this is an optimisation to release TableReader in case "this"
@@ -133,8 +125,7 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         if (!isOpen) {
-            mapA.reopen();
-            mapB.reopen();
+            map.reopen();
             isOpen = true;
         }
 

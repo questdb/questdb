@@ -37,9 +37,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory {
+public class IntersectAllRecordCursorFactory extends AbstractSetRecordCursorFactory {
 
-    public IntersectRecordCursorFactory(
+    public IntersectAllRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory factoryA,
@@ -51,13 +51,12 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
             @Transient @NotNull ColumnTypes mapValueTypes
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
-        Map mapA = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
-        Map mapB = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
+        Map map = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         if (castFunctionsA == null && castFunctionsB == null) {
-            cursor = new IntersectRecordCursor(mapA, mapB, recordSink);
+            cursor = new IntersectAllRecordCursor(map, recordSink);
         } else {
             assert castFunctionsA != null && castFunctionsB != null;
-            cursor = new IntersectCastRecordCursor(mapA, mapB, recordSink, castFunctionsA, castFunctionsB);
+            cursor = new IntersectAllCastRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
         }
     }
 
@@ -74,7 +73,7 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
 
     @Override
     protected CharSequence getOperation() {
-        return "Intersect";
+        return "Intersect All";
     }
 
     @Override

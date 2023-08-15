@@ -2109,7 +2109,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "col1\n" +
                         "0.0.0.1\n" +
                         "0.0.0.2\n",
-                "select col1 from x intersect select col2 from y"
+                "select col1 from x intersect all select col2 from y"
         );
     }
 
