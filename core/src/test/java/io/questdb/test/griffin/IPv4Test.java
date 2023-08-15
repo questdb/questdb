@@ -1939,7 +1939,7 @@ public class IPv4Test extends AbstractCairoTest {
         assertSql(
                 "ip\n" +
                         "0.0.0.1\n",
-                "select * from test where '0.0.0.1' = ip"
+                "select * from test where ipv4 '0.0.0.1' = ip"
         );
     }
 
@@ -1968,7 +1968,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "0.0.0.2\n" +
                         "\n" +
                         "\n",
-                "select * from test where ip != '0.0.0.1'"
+                "select * from test where ip != ipv4 '0.0.0.1'"
         );
     }
 
@@ -1997,7 +1997,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "0.0.0.2\n" +
                         "\n" +
                         "\n",
-                "select * from test where '0.0.0.1' != ip"
+                "select * from test where ipv4 '0.0.0.1' != ip"
         );
     }
 
@@ -5028,7 +5028,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "0.0.0.1\t814\t1970-01-01T02:36:40.000000Z\n" +
                         "0.0.0.1\t511\t1970-01-01T02:41:40.000000Z\n" +
                         "0.0.0.1\t25\t1970-01-01T02:43:20.000000Z\n",
-                "select * from test where ip = '0.0.0.1'",
+                "select * from test where ip = ipv4 '0.0.0.1'",
                 "create table test as " +
                         "(" +
                         "  select" +
@@ -5169,7 +5169,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "(" +
                         "  select" +
                         "    rnd_int(0,9,0)::ipv4 ip1," +
-                        "    rnd_int(0,9,0)::ipv4::string ip2" +
+                        "    rnd_int(0,9,0)::ipv4 ip2" +
                         "  from long_sequence(1000)" +
                         ")",
                 null,
@@ -5179,9 +5179,52 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testLessThanIPv4() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select ipv4 '34.11.45.3' < ipv4 '22.1.200.89'");
+    }
+
+    @Test
+    public void testLessThanEqIPv4() throws Exception {
+        assertSql("column\n" +
+                "true\n", "select ipv4 '34.11.45.3' <= ipv4 '34.11.45.3'");
+    }
+
+    @Test
+    public void testGreaterThanIPv4() throws Exception {
+        assertSql("column\n" +
+                "true\n", "select ipv4 '34.11.45.3' > ipv4 '22.1.200.89'");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4() throws Exception {
+        assertSql("column\n" +
+                "true\n", "select ipv4 '34.11.45.3' >= ipv4 '22.1.200.89'");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4Null() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select ipv4 '34.11.45.3' >= ipv4 '0.0.0.0'");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4Null2() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select ipv4 '34.11.45.3' >= null");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4BadStr() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select ipv4 '34.11.45.3' >= ipv4 'apple'");
+    }
+
+
+    @Test
     public void testWhereInvalidIPv4() throws Exception {
-        assertException(
-                "select * from test where ip = 'hello'",
+        assertQuery("ip\tbytes\tk\n",
+                "select * from test where ip = ipv4 'hello'",
                 "create table test as " +
                         "(" +
                         "  select" +
@@ -5190,8 +5233,9 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                30,
-                "not a valid IP address: hello"
+                "k",
+                true,
+                false
         );
     }
 }
