@@ -49,7 +49,9 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final CharacterStore characterStore;
+    private final CharSequence column;
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
+    private final ObjList<QueryColumn> columns = new ObjList<>();
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
@@ -70,9 +72,8 @@ public class SqlParser {
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
-    private boolean subQueryMode = false;
     private int digit;
-    private final ObjList<QueryColumn> columns = new ObjList<>();
+    private boolean subQueryMode = false;
 
     SqlParser(
             CairoConfiguration configuration,
@@ -101,6 +102,7 @@ public class SqlParser {
         this.optimiser = optimiser;
         this.expressionParser = new ExpressionParser(expressionNodePool, this, characterStore);
         this.digit = 1;
+        this.column = "column";
     }
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
@@ -178,17 +180,11 @@ public class SqlParser {
     }
 
     private CharSequence createConstColumnAlias(LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap) {
-        CharSequence column = "column";
-
-        while(aliasToColumnMap.contains(column + Integer.toString(digit))) {
+        while (aliasToColumnMap.contains(column + Integer.toString(digit))) {
             digit++;
         }
-        int d = digit;
         digit++;
-
-
-
-        return column + Integer.toString(d);
+        return column + Integer.toString(digit - 1);
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
@@ -1722,8 +1718,7 @@ public class SqlParser {
                 alias = null;
                 col.setAlias(null);
                 columns.add(col);
-            }
-            else if (tok != null && columnAliasStop.excludes(tok)) {
+            } else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
                 if (isAsKeyword(tok)) {
@@ -1741,7 +1736,7 @@ public class SqlParser {
                 columns.add(col);
             }
 
-            if(alias != null) {
+            if (alias != null) {
                 if (alias.length() == 0) {
                     throw err(lexer, null, "column alias cannot be a blank string");
                 }
@@ -1753,7 +1748,7 @@ public class SqlParser {
                 expr.token = alias;
             }
 
-            if(alias != null) { //add everywhere
+            if (alias != null) { //add everywhere
                 model.addBottomUpColumn(colPosition, col, false);
             } else { //only add to bottom up columns / bottom up column names which are responsible for ordering, the others will be updated later
                 model.addFieldForNullAlias(col);
@@ -1786,9 +1781,9 @@ public class SqlParser {
 
         CharSequence alias;
 
-        for(int i = 0; i < columns.size(); i++) {
+        for (int i = 0; i < columns.size(); i++) {
             CharSequence token = columns.get(i).getAst().token;
-            if(columns.get(i).getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(columns.get(i).getAst().token, '.') != -1) {
+            if (columns.get(i).getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(columns.get(i).getAst().token, '.') != -1) {
                 alias = createConstColumnAlias(model.getAliasToColumnMap());
             } else {
                 alias = createColumnAlias(columns.get(i).getAst(), model);
@@ -1796,23 +1791,6 @@ public class SqlParser {
             updateMapsAndLists(model, alias, token, i);
         }
         columns.clear();
-    }
-
-    private void updateMapsAndLists(QueryModel model, CharSequence alias, CharSequence token, int i) {
-        QueryColumn nullColumn = columns.get(i);
-        int oldIndexColumns = model.getBottomUpColumns().indexOf(nullColumn);
-        int oldIndexColumnNames = model.getBottomUpColumnNames().indexOfNull();
-
-        columns.get(i).setAlias(alias);
-
-        model.getBottomUpColumns().set(oldIndexColumns, columns.get(i));
-        model.getBottomUpColumnNames().set(oldIndexColumnNames, columns.get(i).getAlias());
-
-        model.getAliasToColumnMap().put(alias, columns.get(i));
-        model.getAliasToColumnNameMap().put(alias, token);
-
-        model.getColumnNameToAliasMap().put(token, alias);
-        model.getColumnAliasIndexes().put(alias, model.getBottomUpColumnNames().indexOfNull());
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel) throws SqlException {
@@ -2231,6 +2209,23 @@ public class SqlParser {
             throw SqlException.position(pos).put(expectedList).put(" expected");
         }
         return tok;
+    }
+
+    private void updateMapsAndLists(QueryModel model, CharSequence alias, CharSequence token, int i) {
+        QueryColumn nullColumn = columns.get(i);
+        int oldIndexColumns = model.getBottomUpColumns().indexOf(nullColumn);
+        int oldIndexColumnNames = model.getBottomUpColumnNames().indexOfNull();
+
+        columns.get(i).setAlias(alias);
+
+        model.getBottomUpColumns().set(oldIndexColumns, columns.get(i));
+        model.getBottomUpColumnNames().set(oldIndexColumnNames, columns.get(i).getAlias());
+
+        model.getAliasToColumnMap().put(alias, columns.get(i));
+        model.getAliasToColumnNameMap().put(alias, token);
+
+        model.getColumnNameToAliasMap().put(token, alias);
+        model.getColumnAliasIndexes().put(alias, model.getBottomUpColumnNames().indexOfNull());
     }
 
     private void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
