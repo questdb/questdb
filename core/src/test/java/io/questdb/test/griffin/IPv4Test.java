@@ -5179,6 +5179,49 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testLessThanIPv4() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select ipv4 '34.11.45.3' < ipv4 '22.1.200.89'");
+    }
+
+    @Test
+    public void testLessThanEqIPv4() throws Exception {
+        assertSql("column\n" +
+                "true\n", "select ipv4 '34.11.45.3' <= ipv4 '34.11.45.3'");
+    }
+
+    @Test
+    public void testGreaterThanIPv4() throws Exception {
+        assertSql("column\n" +
+                "true\n", "select ipv4 '34.11.45.3' > ipv4 '22.1.200.89'");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4() throws Exception {
+        assertSql("column\n" +
+                "true\n", "select ipv4 '34.11.45.3' >= ipv4 '22.1.200.89'");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4Null() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select ipv4 '34.11.45.3' >= ipv4 '0.0.0.0'");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4Null2() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select ipv4 '34.11.45.3' >= null");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4BadStr() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select ipv4 '34.11.45.3' >= ipv4 'apple'");
+    }
+
+
+    @Test
     public void testWhereInvalidIPv4() throws Exception {
         assertQuery("ip\tbytes\tk\n",
                 "select * from test where ip = ipv4 'hello'",
