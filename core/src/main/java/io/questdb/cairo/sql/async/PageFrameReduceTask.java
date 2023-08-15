@@ -28,17 +28,21 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
 public class PageFrameReduceTask implements Closeable {
 
+    private static final String exceptionMessage = "unexpected filter error";
+
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
     private final long pageFrameQueueCapacity;
     private final DirectLongList rows;
-    private String errorMsg;
+    private StringSink errorMsg = new StringSink();
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
@@ -59,7 +63,7 @@ public class PageFrameReduceTask implements Closeable {
         return columns;
     }
 
-    public String getErrorMsg() {
+    public CharSequence getErrorMsg() {
         return errorMsg;
     }
 
@@ -92,11 +96,15 @@ public class PageFrameReduceTask implements Closeable {
         return rows;
     }
 
+    public boolean hasError() {
+        return errorMsg.length() > 0;
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
         this.frameSequenceId = frameSequence.getId();
         this.frameIndex = frameIndex;
-        this.errorMsg = null;
+        errorMsg.clear();
         rows.clear();
     }
 
@@ -105,8 +113,13 @@ public class PageFrameReduceTask implements Closeable {
         columns.resetCapacity();
     }
 
-    public void setErrorMsg(String errorMsg) {
-        this.errorMsg = errorMsg;
+    public void setErrorMsg(Throwable th) {
+        if (th instanceof FlyweightMessageContainer) {
+            errorMsg.put(((FlyweightMessageContainer) th).getFlyweightMessage());
+        } else {
+            final String msg = th.getMessage();
+            errorMsg.put(msg != null ? msg : exceptionMessage);
+        }
     }
 
     void collected() {

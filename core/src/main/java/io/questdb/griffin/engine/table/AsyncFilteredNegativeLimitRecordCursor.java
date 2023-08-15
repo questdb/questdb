@@ -170,7 +170,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
-                    if (task.getErrorMsg() != null) {
+                    if (task.hasError()) {
                         throw CairoException.nonCritical().put(task.getErrorMsg());
                     }
 
