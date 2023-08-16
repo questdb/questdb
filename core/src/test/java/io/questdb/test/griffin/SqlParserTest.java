@@ -8106,7 +8106,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    @Ignore
     public void testUnderTerminatedOver() throws Exception {
         assertSyntaxError("select a,b, f(c) over (partition by b order by ts from xyz", 50, "expected");
     }
