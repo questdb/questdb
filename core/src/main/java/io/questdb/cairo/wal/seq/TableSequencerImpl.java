@@ -293,10 +293,6 @@ public class TableSequencerImpl implements TableSequencer {
         return txn;
     }
 
-    public void open(TableToken tableToken) {
-        openInit(tableToken, Long.MIN_VALUE);
-    }
-
     @Override
     public TableToken reload() {
         tableTransactionLog.reload(path);
@@ -373,11 +369,11 @@ public class TableSequencerImpl implements TableSequencer {
         }
     }
 
-    void openInit(TableToken tableToken, long tableCreateTimestamp) {
+    void open(TableToken tableToken) {
         try {
             walIdGenerator.open(path);
             metadata.open(path, rootLen, tableToken);
-            tableTransactionLog.open(path, tableCreateTimestamp);
+            tableTransactionLog.open(path);
         } catch (CairoException ex) {
             closeLocked();
             if (ex.isTableDropped()) {
@@ -409,9 +405,9 @@ public class TableSequencerImpl implements TableSequencer {
         schemaLock.writeLock().lock();
         try {
             createSequencerDir(ff, mkDirMode);
-            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
             final long timestamp = microClock.getTicks();
-            openInit(tableToken, timestamp);
+            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
+            tableTransactionLog.create(path, timestamp);
             engine.getWalListener().tableCreated(tableToken, timestamp);
         } finally {
             schemaLock.writeLock().unlock();
