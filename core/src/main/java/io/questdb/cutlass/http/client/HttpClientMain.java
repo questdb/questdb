@@ -44,7 +44,7 @@ public class HttpClientMain {
             for (int i = 0; i < 1; i++) {
                 HttpClient.Request req = client.newRequest();
 
-                HttpClient.Response rsp = req
+                HttpClient.ResponseHeaders rsp = req
                         .GET()
                         .url("/exec")
 //                        .query("query", "cpu%20limit%20400000")
@@ -53,18 +53,19 @@ public class HttpClientMain {
                         .header("Accept", "gzip, deflate, br")
                         .send("localhost", 9000);
 
-                rsp.awaitHeaders();
+                rsp.await();
 
                 if (rsp.isChunked()) {
 
                     jsonToTableSerializer.clear();
 
-                    HttpClient.Response.Chunk chunk;
+                    ChunkedResponse chunkedRsp = rsp.getChunkedResponse();
+                    HttpClient.Chunk chunk;
 
                     long t = System.currentTimeMillis();
                     int chunkCount = 0;
-                    while ((chunk = rsp.recv()) != null) {
-                        jsonToTableSerializer.parse(chunk.addr, chunk.addr + chunk.available);
+                    while ((chunk = chunkedRsp.recv()) != null) {
+                        jsonToTableSerializer.parse(chunk.lo(), chunk.hi());
                         chunkCount++;
                     }
                     System.out.println(System.currentTimeMillis() - t);

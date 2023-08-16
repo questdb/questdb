@@ -33,26 +33,24 @@ import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public abstract class HttpClient implements QuietCloseable {
     protected final NetworkFacade nf;
     private final int bufferSize;
+    private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
     private final int defaultTimeout;
     private final Request request = new Request();
     protected int fd = -1;
     private long bufLo;
-    private long dataHi;
-    private long dataLo;
     private long ptr = bufLo;
-    private Response response = new Response();
+    private ResponseHeaders responseHeaders;
 
     public HttpClient(HttpClientConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
         this.defaultTimeout = configuration.getTimeout();
         this.bufferSize = configuration.getBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.responseHeaders = new ResponseHeaders(bufLo, defaultTimeout);
     }
 
     @Override
@@ -62,7 +60,7 @@ public abstract class HttpClient implements QuietCloseable {
             Unsafe.free(bufLo, bufferSize, MemoryTag.NATIVE_DEFAULT);
             bufLo = 0;
         }
-        response = Misc.free(response);
+        responseHeaders = Misc.free(responseHeaders);
     }
 
     public void disconnect() {
@@ -78,20 +76,6 @@ public abstract class HttpClient implements QuietCloseable {
         return request;
     }
 
-    private void compactBuffer() {
-        // move unprocessed data to the front of the buffer
-        // to maximise
-        if (dataLo > bufLo) {
-            final long len = dataHi - dataLo;
-            assert len > -1;
-            if (len > 0) {
-                Vect.memmove(bufLo, dataLo, len);
-            }
-            dataLo = bufLo;
-            dataHi = bufLo + len;
-        }
-    }
-
     private int die(int byteCount) {
         if (byteCount < 1) {
             throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
@@ -99,8 +83,8 @@ public abstract class HttpClient implements QuietCloseable {
         return byteCount;
     }
 
-    private int recvOrDie(int timeout) {
-        return recvOrDie(dataHi, (int) (bufferSize - (dataHi - bufLo)), timeout);
+    private int recvOrDie(long addr, int timeout) {
+        return recvOrDie(addr, (int) (bufferSize - (addr - bufLo)), timeout);
     }
 
     private int recvOrDie(long lo, int len, int timeout) {
@@ -128,6 +112,23 @@ public abstract class HttpClient implements QuietCloseable {
     protected abstract void ioWait(int timeout, int op);
 
     protected abstract void setupIoWait();
+
+    public interface Chunk {
+        long hi();
+
+        long lo();
+    }
+
+    private class ChunkedResponseImpl extends AbstractChunkedResponse {
+        public ChunkedResponseImpl(long bufLo, int defaultTimeout) {
+            super(bufLo, defaultTimeout);
+        }
+
+        @Override
+        protected int recvOrDie(long buf, int timeout) {
+            return HttpClient.this.recvOrDie(buf, timeout);
+        }
+    }
 
     public class Request extends AbstractCharSink {
         private static final int STATE_HEADER = 4;
@@ -198,11 +199,11 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
-        public Response send(CharSequence host, int port) {
+        public ResponseHeaders send(CharSequence host, int port) {
             return send(host, port, defaultTimeout);
         }
 
-        public Response send(CharSequence host, int port, int timeout) {
+        public ResponseHeaders send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
             if (fd == -1) {
                 connect(host, port);
@@ -215,8 +216,8 @@ public abstract class HttpClient implements QuietCloseable {
 
             crlf();
             doSend(timeout);
-            response.init();
-            return response;
+            responseHeaders.init();
+            return responseHeaders;
         }
 
         public Request url(CharSequence url) {
@@ -372,26 +373,31 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    public class Response implements QuietCloseable {
-        private final Chunk chunk = new Chunk();
-        private final DirectByteCharSequence chunkSize = new DirectByteCharSequence();
-        private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
+    public class ResponseHeaders implements QuietCloseable {
+        private final long bufLo;
+        private final AbstractChunkedResponse chunkedResponse;
+        private final int defaultTimeout;
         private HttpHeaderParser headerParser = new HttpHeaderParser(4096, csPool);
 
-        public void awaitHeaders() {
-            awaitHeaders(defaultTimeout);
+        public ResponseHeaders(long bufLo, int defaultTimeout) {
+            this.bufLo = bufLo;
+            this.defaultTimeout = defaultTimeout;
+            this.chunkedResponse = new ChunkedResponseImpl(bufLo, defaultTimeout);
         }
 
-        public void awaitHeaders(int timeout) {
-            // prepare chunk sink ready for reuse
-            //
-            chunk.clear();
+        public void await() {
+            await(defaultTimeout);
+        }
+
+        public void await(int timeout) {
             while (headerParser.isIncomplete()) {
-                final int len = recvOrDie(bufLo, bufferSize, timeout);
+                final int len = recvOrDie(bufLo, timeout);
                 if (len > 0) {
                     // dataLo & dataHi are boundaries of unprocessed data left in the buffer
-                    dataLo = headerParser.parse(bufLo, bufLo + len, false, true);
-                    dataHi = bufLo + len;
+                    chunkedResponse.begin(
+                            headerParser.parse(bufLo, bufLo + len, false, true),
+                            bufLo + len
+                    );
                 }
             }
         }
@@ -399,6 +405,10 @@ public abstract class HttpClient implements QuietCloseable {
         @Override
         public void close() {
             headerParser = Misc.free(headerParser);
+        }
+
+        public ChunkedResponse getChunkedResponse() {
+            return chunkedResponse;
         }
 
         public HttpRequestHeader header() {
@@ -412,137 +422,10 @@ public abstract class HttpClient implements QuietCloseable {
             return Chars.equalsNc("chunked", header().getHeader("Transfer-Encoding"));
         }
 
-        public Chunk recv() {
-            return recv(defaultTimeout);
-        }
-
-        public Chunk recv(int timeout) {
-            return chunk.endOfChunk ? chunkStart(timeout) : chunkContinue(timeout);
-        }
-
-        @NotNull
-        private HttpClient.Response.Chunk chunkContinue(int timeout) {
-            chunk.consumed += chunk.available;
-            compactBuffer();
-            final int len = recvOrDie(timeout);
-
-            // we are consuming the remaining chunk bytes;
-            // chunk size includes `\r\n\`, which must not be included in
-            // "available" bytes of the last chunk
-
-            // configure chunk boundaries, chunk size contains two extra bytes for CRLF
-            // we must consume and ignore them
-            long chunkBytesRemaining = chunk.size - chunk.consumed;
-            boolean endOfChunk = chunkBytesRemaining <= len;
-            chunk.endOfChunk = endOfChunk;
-            chunk.addr = dataHi;
-            chunk.available = Math.min(chunkBytesRemaining - 2, len);
-
-            if (endOfChunk) {
-                dataHi += len;
-                dataLo = chunk.addr + chunk.available + 2;
-            } else {
-                // we just consumed the entire buffer
-                dataLo = bufLo;
-                dataHi = bufLo;
-            }
-            return chunk;
-        }
-
-        @Nullable
-        private HttpClient.Response.Chunk chunkStart(int timeout) {
-            if (parseChunkSize0(dataLo, dataHi)) {
-                return chunk.size > 2 ? chunk : null;
-            }
-
-            while (true) {
-                compactBuffer();
-                final int len = recvOrDie(timeout);
-                dataHi += len;
-                // try to read chunk prefix
-                if (parseChunkSize0(dataLo, dataHi)) {
-                    return chunk.size > 0 ? chunk : null;
-                }
-            }
-        }
-
+        // todo: rename to clear()
         private void init() {
             csPool.clear();
             headerParser.clear();
-        }
-
-        private boolean parseChunkSize0(long lo, long hi) {
-            long p = lo;
-            long x = -1;
-            long len;
-            while (p < hi) {
-                char b = (char) Unsafe.getUnsafe().getByte(p++);
-                switch (b) {
-                    case '\r':
-                        x = p;
-                        break;
-                    case '\n':
-                        if (x == -1) {
-                            throw new HttpClientException("malformed chunk");
-                        }
-                        // parse the hex chunk length
-                        // last char, at(x) is `\r`, exclude
-                        chunkSize.of(lo, x - 1);
-                        try {
-                            len = Numbers.parseHexLong(chunkSize);
-                            chunk.addr = p;
-                            // the chunk length does NOT include trailing chars `\r\n`
-                            chunk.size = len + 2;
-                            chunk.available = Math.min(len, hi - p);
-                            chunk.endOfChunk = len == chunk.available;
-                            chunk.consumed = 0;
-
-                            // if chunk size is smaller that the unprocessed data size
-                            // we will reduce unprocessed data size by chunk size; otherwise
-                            // we clear the unprocessed data
-                            long chunkHi = chunk.addr + chunk.available;
-                            if (chunkHi < dataHi) {
-                                dataLo = chunkHi;
-                                // this data can also be CRLF only
-                                if (chunk.available == len) {
-                                    // skip CRLF
-                                    dataLo += 2;
-                                }
-                            } else {
-                                dataLo = bufLo;
-                                dataHi = bufLo;
-                            }
-
-                            return true;
-                        } catch (NumericException e) {
-                            throw new HttpClientException("could not parse chunk size");
-                        }
-                    default:
-                        break;
-                }
-            }
-            return false;
-        }
-
-        public class Chunk implements Mutable {
-            long addr;
-            long available;
-            long consumed = 0;
-            boolean endOfChunk;
-            long size;
-
-            @Override
-            public void clear() {
-                endOfChunk = true;
-            }
-
-            public long hi() {
-                return addr + available;
-            }
-
-            public long lo() {
-                return addr;
-            }
         }
     }
 }

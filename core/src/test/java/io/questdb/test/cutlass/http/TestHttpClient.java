@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cutlass.http.client.AbstractChunkedResponse;
+import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.std.Chars;
@@ -66,16 +68,17 @@ public class TestHttpClient implements QuietCloseable {
 
     private void toSink0(CharSequence url, CharSequence sql, CharSink sink) {
         HttpClient.Request req = httpClient.newRequest();
-        HttpClient.Response rsp = req
+        HttpClient.ResponseHeaders rsp = req
                 .GET()
                 .url(url)
                 .query("query", sql)
                 .send("localhost", 9001);
 
-        rsp.awaitHeaders();
-        HttpClient.Response.Chunk chunk;
+        rsp.await();
+        ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
+        HttpClient.Chunk chunk;
 
-        while ((chunk = rsp.recv()) != null) {
+        while ((chunk = chunkedResponse.recv()) != null) {
             Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
         }
     }
