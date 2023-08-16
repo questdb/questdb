@@ -1528,6 +1528,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public long getMetaO3MaxLag() {
+            return 0;
+        }
+
+        @Override
         public TableRecordMetadata getMetadata() {
             return metadata;
         }
@@ -1541,7 +1546,7 @@ public class WalWriter implements TableWriterAPI {
         public void removeColumn(@NotNull CharSequence columnName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-                throw CairoException.nonCritical().put("cannot remove column, column does not exists [table=").put(tableToken.getTableName())
+                throw CairoException.nonCritical().put("cannot remove column, column does not exist [table=").put(tableToken.getTableName())
                         .put(", column=").put(columnName).put(']');
             }
 
@@ -1556,7 +1561,7 @@ public class WalWriter implements TableWriterAPI {
         public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
-                throw CairoException.nonCritical().put("cannot rename column, column does not exists [table=").put(tableToken.getTableName())
+                throw CairoException.nonCritical().put("cannot rename column, column does not exist [table=").put(tableToken.getTableName())
                         .put(", column=").put(columnName).put(']');
             }
             if (columnIndex == metadata.getTimestampIndex()) {

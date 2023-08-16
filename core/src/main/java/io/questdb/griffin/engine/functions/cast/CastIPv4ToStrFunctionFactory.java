@@ -49,7 +49,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         Function IPv4Func = args.getQuick(0);
         if (IPv4Func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(IPv4Func.getIPv4(null));
+            Numbers.intToIPv4Sink(sink, IPv4Func.getIPv4(null));
             return new StrConstant(Chars.toString(sink));
         }
         return new CastIPv4ToStrFunctionFactory.CastIPv4ToStrFunction(args.getQuick(0));

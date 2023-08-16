@@ -22,19 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo.sql;
 
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+public interface TableMetadata extends TableRecordMetadata {
+    int getMaxUncommittedRows();
 
-/**
- * Transient parameters and returned values are those logically passed by value.
- * Java passes all non-primitive types by reference and this annotation is
- * a handy way to tell caller that reference is not being held on to.
- */
-@Retention(RetentionPolicy.SOURCE)
-@Target({ElementType.PARAMETER, ElementType.METHOD})
-public @interface Transient {
+    long getO3MaxLag();
+
+    int getPartitionBy();
 }

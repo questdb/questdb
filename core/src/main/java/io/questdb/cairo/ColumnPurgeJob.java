@@ -88,8 +88,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 null
         );
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
-            this.tableToken = sqlCompiler.query().$(
-                            "CREATE TABLE IF NOT EXISTS \"")
+            this.tableToken = sqlCompiler.query()
+                    .$("CREATE TABLE IF NOT EXISTS \"")
                     .$(tableName)
                     .$("\" (" +
                             "ts timestamp, " + // 0

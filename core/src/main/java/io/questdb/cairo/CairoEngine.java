@@ -492,7 +492,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
-    public TableRecordMetadata getMetadata(TableToken tableToken) {
+    public TableMetadata getMetadata(TableToken tableToken) {
         verifyTableToken(tableToken);
         try {
             return metadataPool.get(tableToken);
@@ -994,6 +994,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setReaderListener(ReaderPool.ReaderListener readerListener) {
         readerPool.setTableReaderListener(readerListener);
+    }
+
+    @TestOnly
+    public void setUp() {
     }
 
     public void setWalInitializer(@NotNull WalInitializer walInitializer) {
