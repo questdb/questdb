@@ -81,6 +81,7 @@ public class ServerMain implements Closeable {
         engine = freeOnExit.register(bootstrap.newCairoEngine());
         config.init(engine, freeOnExit);
         freeOnExit.register(config.getFactoryProvider());
+        engine.load();
 
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();

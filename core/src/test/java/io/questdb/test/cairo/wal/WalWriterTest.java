@@ -3026,13 +3026,21 @@ public class WalWriterTest extends AbstractCairoTest {
 
             assertTableExistence(true, tableToken);
 
-            engine.setWalInitializer((segmentDir, tableToken1, walId, segmentId) -> {
-                final File segmentDirFile = new File(segmentDir.toString());
-                final File customInitFile = new File(segmentDirFile, "customInitFile");
-                try {
-                    customInitFile.createNewFile();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+            engine.setWalInitializer(new WalInitializer() {
+                @Override
+                public void initDirectory(Path dirPath) {
+                    final File segmentDirFile = new File(dirPath.toString());
+                    final File customInitFile = new File(segmentDirFile, "customInitFile");
+                    try {
+                        customInitFile.createNewFile();
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+
+                @Override
+                public void rollbackDirectory(Path path) {
+                    // do nothing
                 }
             });
 

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -135,7 +136,7 @@ public interface TableNameRegistry extends Closeable {
     /**
      * Reloads table name registry from storage, adjusted with converted tables.
      */
-    void reloadTableNameCache(ObjList<TableToken> convertedTables);
+    void reloadTableNameCache(@Nullable ObjList<TableToken> convertedTables);
 
     void removeAlias(TableToken tableToken);
 

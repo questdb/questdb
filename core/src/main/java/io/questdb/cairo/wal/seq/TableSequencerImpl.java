@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.WalInitializer;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
@@ -39,12 +40,12 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 
 public class TableSequencerImpl implements TableSequencer {
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
     private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
-    private final EmptyOperationCursor emptyOperationCursor = new EmptyOperationCursor();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
@@ -57,6 +58,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final SeqTxnTracker seqTxnTracker;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
+    private final WalInitializer walInitializer;
     private volatile boolean closed = false;
     private boolean distressed;
     private TableToken tableToken;
@@ -67,10 +69,12 @@ public class TableSequencerImpl implements TableSequencer {
         this.seqTxnTracker = txnTracker;
 
         final CairoConfiguration configuration = engine.getConfiguration();
+        this.walInitializer = engine.getWalInitializer();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
-            path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR);
+            path.of(configuration.getRoot());
+            path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.length();
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();
@@ -121,9 +125,9 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         if (metadata.getMetadataVersion() == structureVersionLo) {
             // Nothing to do.
-            return emptyOperationCursor.of(tableToken);
+            return EmptyOperationCursor.INSTANCE;
         }
-        return tableTransactionLog.getTableMetadataChangeLog(tableToken, structureVersionLo, alterCommandWalFormatter);
+        return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
     }
 
     @Override
@@ -296,7 +300,11 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public TableToken reload() {
         tableTransactionLog.reload(path);
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getTableToken(), metadata.getMetadataVersion(), alterCommandWalFormatter)) {
+        if (tableTransactionLog.isDropped()) {
+            return null;
+        }
+
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getMetadataVersion(), alterCommandWalFormatter)) {
             boolean updated = false;
             while (metaChangeCursor.hasNext()) {
                 TableMetadataChange change = metaChangeCursor.next();
@@ -356,6 +364,7 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw e;
         }
+        walInitializer.initDirectory(path);
         path.trimTo(rootLen);
     }
 
