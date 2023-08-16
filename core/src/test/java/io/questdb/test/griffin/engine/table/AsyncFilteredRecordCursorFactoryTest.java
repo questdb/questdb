@@ -137,7 +137,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (" +
                     " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
-                    " from long_sequence(10000)" +
+                    " from long_sequence(4)" +
                     ") timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select * from x where a > '2022-03-08T18:03:57.609765Z'";
             try {
@@ -150,18 +150,66 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [STRING -> DOUBLE]");
             }
         }, 4, 4);
     }
 
     @Test
-    public void testFaultToleranceNPE() throws Exception {
+    public void testFaultToleranceNegativeLimitImplicitCastException() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (" +
                     " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
-                    " from long_sequence(10000)" +
+                    " from long_sequence(4)" +
+                    ") timestamp(t) partition by hour", sqlExecutionContext);
+            final String sql = "select * from x where a > '2022-03-08T18:03:57.609765Z' limit -1";
+            try {
+                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        } // drain cursor until exception
+                        Assert.fail();
+                    }
+                }
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [STRING -> DOUBLE]");
+            }
+        }, 4, 4);
+    }
+
+    @Test
+    public void testFaultToleranceNegativeLimitNpe() throws Exception {
+        withPool0((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            compiler.compile("create table x as (" +
+                    " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
+                    " from long_sequence(4)" +
+                    ") timestamp(t) partition by hour", sqlExecutionContext);
+            final String sql = "select * from x where npe() limit -1";
+            try {
+                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        } // drain cursor until exception
+                        Assert.fail();
+                    }
+                }
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "unexpected filter error");
+            }
+        }, 4, 4);
+    }
+
+    @Test
+    public void testFaultToleranceNpe() throws Exception {
+        withPool0((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            compiler.compile("create table x as (" +
+                    " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
+                    " from long_sequence(4)" +
                     ") timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select * from x where npe()";
             try {
@@ -174,13 +222,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                TestUtils.assertContains(e.getMessage(), "unexpected filter error");
             }
         }, 4, 4);
     }
 
     @Test
-    public void testFaultToleranceSampleByFilterNPE() throws Exception {
+    public void testFaultToleranceSampleByFilterNpe() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
             compiler.compile("create table x as (" +
                     "select timestamp_sequence(0, 100000) timestamp," +
@@ -203,7 +251,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                TestUtils.assertContains(e.getMessage(), "unexpected filter error");
             }
         }, 4, 4);
     }

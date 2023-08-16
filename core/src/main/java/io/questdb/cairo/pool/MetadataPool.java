@@ -25,7 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
 public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataTenant> {
@@ -46,18 +46,20 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         if (engine.isWalTable(tableToken)) {
             return new SequencerMetadataTenant(this, entry, index, tableToken, engine.getTableSequencerAPI());
         }
-        return new TableReaderMetadataTenant(this, entry, index, tableToken);
+        return new TableReaderMetadataTenant(this, entry, index, tableToken, false);
     }
 
-    public interface MetadataTenant extends TableRecordMetadata, PoolTenant {
+    public interface MetadataTenant extends TableMetadata, PoolTenant {
     }
 
     private static class SequencerMetadataTenant extends GenericTableRecordMetadata implements MetadataTenant {
         private final int index;
+        private final TableReaderMetadataTenant readerMetadataTenant;
         private final TableSequencerAPI tableSequencerAPI;
         private final TableToken tableToken;
         private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
         private AbstractMultiTenantPool<MetadataTenant> pool;
+        private boolean tableReaderMetadataRefreshPending;
 
         public SequencerMetadataTenant(
                 AbstractMultiTenantPool<MetadataTenant> pool,
@@ -72,6 +74,8 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
             this.tableSequencerAPI = tableSequencerAPI;
             this.tableToken = tableToken;
             tableSequencerAPI.getTableMetadata(tableToken, this);
+            this.readerMetadataTenant = new TableReaderMetadataTenant(pool, entry, index, tableToken, true);
+            tableReaderMetadataRefreshPending = true;
         }
 
         @Override
@@ -82,6 +86,8 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
                 }
             }
             super.close();
+            readerMetadataTenant.goodbye();
+            readerMetadataTenant.close();
         }
 
         @SuppressWarnings("unchecked")
@@ -95,6 +101,24 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
             return index;
         }
 
+        @Override
+        public int getMaxUncommittedRows() {
+            lazilyRefreshReaderMetadata();
+            return readerMetadataTenant.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            lazilyRefreshReaderMetadata();
+            return readerMetadataTenant.getO3MaxLag();
+        }
+
+        @Override
+        public int getPartitionBy() {
+            lazilyRefreshReaderMetadata();
+            return readerMetadataTenant.getPartitionBy();
+        }
+
         public void goodbye() {
             entry = null;
             pool = null;
@@ -103,7 +127,16 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         @Override
         public void refresh() {
             tableSequencerAPI.reloadMetadataConditionally(tableToken, getMetadataVersion(), this);
+            tableReaderMetadataRefreshPending = true;
         }
+
+        private void lazilyRefreshReaderMetadata() {
+            if (tableReaderMetadataRefreshPending) {
+                readerMetadataTenant.reload();
+                tableReaderMetadataRefreshPending = false;
+            }
+        }
+
     }
 
     private static class TableReaderMetadataTenant extends DynamicTableReaderMetadata implements MetadataTenant {
@@ -115,9 +148,10 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
                 AbstractMultiTenantPool<MetadataTenant> pool,
                 AbstractMultiTenantPool.Entry<MetadataTenant> entry,
                 int index,
-                TableToken tableToken
+                TableToken tableToken,
+                boolean lazy
         ) {
-            super(pool.getConfiguration(), tableToken);
+            super(pool.getConfiguration(), tableToken, lazy);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

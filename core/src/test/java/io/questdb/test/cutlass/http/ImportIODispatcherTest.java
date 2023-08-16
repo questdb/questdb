@@ -34,6 +34,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -51,7 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
+import static io.questdb.test.tools.TestUtils.*;
 
 public class ImportIODispatcherTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(ImportIODispatcherTest.class);
@@ -744,6 +745,64 @@ public class ImportIODispatcherTest extends AbstractTest {
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
         }
+    }
+
+    @Test
+    public void testImportWithDedupEnabled() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+
+                    try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.compile(
+                                "create table trips (" +
+                                        "Col1 STRING," +
+                                        "Pickup_DateTime TIMESTAMP," +
+                                        "DropOff_datetime STRING" +
+                                        ") timestamp(Pickup_DateTime) partition by DAY WAL",
+                                sqlExecutionContext
+                        );
+
+                        String request = ValidImportRequest1
+                                .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime HTTP");
+
+                        String response = WarningValidImportResponse1
+                                .replace("\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
+                                        "\r\n" +
+                                                "|   Partition by  |                                               DAY  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |");
+                        new SendAndReceiveRequestBuilder().execute(request, response);
+
+                        drainWalQueue(engine);
+                        assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select count() from trips",
+                                Misc.getThreadLocalBuilder(),
+                                "count\n24\n"
+                        );
+
+                        engine.compile("alter table trips dedup upsert keys(Pickup_DateTime)", sqlExecutionContext);
+
+                        // resend the same request
+                        new SendAndReceiveRequestBuilder().execute(request, response);
+                        drainWalQueue(engine);
+
+                        // check deduplication worked
+                        assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select count() from trips",
+                                Misc.getThreadLocalBuilder(),
+                                "count\n24\n"
+                        );
+                    }
+                });
     }
 
     @Test

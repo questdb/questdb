@@ -27,70 +27,73 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
-class ExceptRecordCursor extends AbstractSetRecordCursor {
-    private final Map mapA;
-    private final Map mapB;
+class IntersectAllCastRecordCursor extends AbstractSetRecordCursor {
+    private final UnionCastRecord castRecord;
+    private final Map map;
     private final RecordSink recordSink;
     private boolean isCursorBHashed;
     private boolean isOpen;
-    private Record recordA;
-    private Record recordB;
+    // this is the B record of except cursor, required by sort algo
+    private UnionCastRecord recordB;
 
-    public ExceptRecordCursor(Map mapA, Map mapB, RecordSink recordSink) {
-        this.mapA = mapA;
-        this.mapB = mapB;
-        this.recordSink = recordSink;
+    public IntersectAllCastRecordCursor(
+            Map map,
+            RecordSink recordSink,
+            @NotNull ObjList<Function> castFunctionA,
+            @NotNull ObjList<Function> castFunctionB
+    ) {
+        this.map = map;
         isOpen = true;
+        this.recordSink = recordSink;
+        castRecord = new UnionCastRecord(castFunctionA, castFunctionB);
     }
 
     @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
-            mapA.close();
-            mapB.close();
+            map.close();
             super.close();
         }
     }
 
     @Override
     public Record getRecord() {
-        return recordA;
+        return castRecord;
     }
 
     @Override
     public Record getRecordB() {
-        return cursorA.getRecordB();
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return cursorA.getSymbolTable(columnIndex);
+        if (recordB == null) {
+            recordB = new UnionCastRecord(castRecord.getCastFunctionsA(), castRecord.getCastFunctionsB());
+            recordB.setAb(true);
+            // we do not need cursorB here, it is likely to be closed anyway
+            recordB.of(cursorA.getRecordB(), null);
+        }
+        return recordB;
     }
 
     @Override
     public boolean hasNext() {
         if (!isCursorBHashed) {
             hashCursorB();
+            castRecord.setAb(true);
             toTop();
             isCursorBHashed = true;
         }
         while (cursorA.hasNext()) {
-            MapKey keyB = mapB.withKey();
-            keyB.put(recordA, recordSink);
-            if (keyB.notFound()) {
-                MapKey keyA = mapA.withKey();
-                keyA.put(recordA, recordSink);
-                if (keyA.create()) {
-                    return true;
-                }
+            MapKey key = map.withKey();
+            key.put(castRecord, recordSink);
+            if (key.findValue() != null) {
+                return true;
             }
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
@@ -98,13 +101,8 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return cursorA.newSymbolTable(columnIndex);
-    }
-
-    @Override
     public void recordAt(Record record, long atRowId) {
-        cursorA.recordAt(record, atRowId);
+        cursorA.recordAt(((UnionCastRecord) record).getRecordA(), atRowId);
     }
 
     @Override
@@ -115,14 +113,13 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     @Override
     public void toTop() {
         cursorA.toTop();
-        mapA.clear();
     }
 
     private void hashCursorB() {
         while (cursorB.hasNext()) {
-            MapKey keyB = mapB.withKey();
-            keyB.put(recordB, recordSink);
-            keyB.createValue();
+            MapKey key = map.withKey();
+            key.put(castRecord, recordSink);
+            key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
         // this is an optimisation to release TableReader in case "this"
@@ -131,16 +128,17 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
         this.cursorB = Misc.free(this.cursorB);
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
         if (!isOpen) {
-            mapA.reopen();
-            mapB.reopen();
             isOpen = true;
+            map.reopen();
         }
 
-        super.of(cursorA, cursorB, circuitBreaker);
-        recordA = cursorA.getRecord();
-        recordB = cursorB.getRecord();
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
+        castRecord.of(cursorA.getRecord(), cursorB.getRecord());
+        castRecord.setAb(false);
         isCursorBHashed = false;
     }
 }

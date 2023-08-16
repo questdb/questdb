@@ -48,12 +48,7 @@ import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.*;
-import io.questdb.griffin.engine.functions.eq.ContainsIPv4FunctionFactory;
-import io.questdb.griffin.engine.functions.eq.ContainsEqIPv4FunctionFactory;
-import io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4FunctionFactory;
-import io.questdb.griffin.engine.functions.eq.NegContainsIPv4FunctionFactory;
-import io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory;
-import io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.*;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -472,7 +467,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "        DataFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: b\n",
-                                sqlExecutionContext
+                        sqlExecutionContext
                 );
             }
         });
@@ -980,6 +975,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a ( i int, s string);",
                 "select * from a except select * from a",
                 "Except\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n" +
+                        "    Hash\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testExceptAll() throws Exception {
+        assertPlan("create table a ( i int, s string);",
+                "select * from a except all select * from a",
+                "Except All\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
@@ -1772,11 +1781,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new StrConstant("12.6.5.10/24"));
                             } else if (factory instanceof ContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("12.6.5.10/24"));
-                            } else if(factory instanceof NegContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                            } else if (factory instanceof NegContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("34.56.22.11/12"));
-                            } else if(factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                            } else if (factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("32.12.22.11/12"));
-                            } else if(factory instanceof RndIPv4CCFunctionFactory) {
+                            } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                 args.add(new StrConstant("4.12.22.11/12"));
                                 args.add(new IntConstant(2));
                             } else if (!useConst) {
@@ -2486,6 +2495,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testIntersectAll() throws Exception {
+        assertPlan("create table a ( i int, s string);",
+                "select * from a intersect all select * from a",
+                "Intersect All\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n" +
+                        "    Hash\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
     }
 
     @Test

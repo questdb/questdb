@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.AnyRecordMetadata;
@@ -643,6 +644,15 @@ public final class TableUtils {
         return type;
     }
 
+    public static int getMaxUncommittedRows(TableRecordMetadata metadata, CairoEngine engine) {
+        if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
+            return ((TableWriterMetadata) metadata).getMaxUncommittedRows();
+        }
+        try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+            return tableMetadata.getMaxUncommittedRows();
+        }
+    }
+
     public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
         // In theory, we can have a column type where `NULL` value will be different `LONG` values,
         // then this should return different values on longIndex. At the moment there are no such types.
@@ -678,6 +688,29 @@ public final class TableUtils {
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;
+        }
+    }
+
+    public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
+        if (!metadata.isWalEnabled()) {
+            if (metadata instanceof TableWriterMetadata) {
+                return ((TableWriterMetadata) metadata).getO3MaxLag();
+            }
+
+            try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+                return tableMetadata.getO3MaxLag();
+            }
+        }
+        // Does not have effect for WAL enabled tables
+        return 0;
+    }
+
+    public static int getPartitionBy(TableRecordMetadata metadata, CairoEngine engine) {
+        if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
+            return ((TableWriterMetadata) metadata).getPartitionBy();
+        }
+        try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+            return tableMetadata.getPartitionBy();
         }
     }
 

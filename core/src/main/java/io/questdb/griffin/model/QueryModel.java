@@ -69,9 +69,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_NONE = 0;
     public static final int SELECT_MODEL_VIRTUAL = 2;
     public static final int SET_OPERATION_EXCEPT = 2;
-    public static final int SET_OPERATION_INTERSECT = 3;
+    public static final int SET_OPERATION_EXCEPT_ALL = 3;
+    public static final int SET_OPERATION_INTERSECT = 4;
+    public static final int SET_OPERATION_INTERSECT_ALL = 5;
     public static final int SET_OPERATION_UNION = 1;
-    //types of set operations between this and union model
+    // types of set operations between this and union model
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
@@ -1499,8 +1501,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (unionModel != null) {
             if (setOperationType == QueryModel.SET_OPERATION_INTERSECT) {
                 sink.put(" intersect ");
+            } else if (setOperationType == QueryModel.SET_OPERATION_INTERSECT_ALL) {
+                sink.put(" intersect all ");
             } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT) {
                 sink.put(" except ");
+            } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT_ALL) {
+                sink.put(" except all ");
             } else {
                 sink.put(" union ");
                 if (setOperationType == QueryModel.SET_OPERATION_UNION_ALL) {

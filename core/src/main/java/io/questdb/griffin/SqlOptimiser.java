@@ -2915,7 +2915,11 @@ public class SqlOptimiser implements Mutable {
                 emitLiteralsTopDown(leftJoinWhere, jm);
                 emitLiteralsTopDown(leftJoinWhere, model);
             }
+        }
 
+        // propagate join models columns in separate loop to catch columns added to models prior to the current one 
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final QueryModel jm = joinModels.getQuick(i);
             propagateTopDownColumns0(jm, false, model, true);
         }
 

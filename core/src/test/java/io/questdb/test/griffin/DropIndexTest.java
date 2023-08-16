@@ -251,16 +251,31 @@ public class DropIndexTest extends AbstractCairoTest {
                             "  select " +
                             "    rnd_symbol('K1', 'K2') колонка " +
                             "  from long_sequence(317)" +
-                            ")",
-                    sqlExecutionContext
+                            ")"
             );
             engine.releaseAllWriters();
             assertException(
                     "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
                     36,
-                    "Column is not indexed [name=колонка]"
+                    "column is not indexed [name=колонка]"
             );
         });
+    }
+
+    @Test
+    public void testDropIndexOfNonSymbolColumnShouldFail() throws Exception {
+        assertException(
+                "alter table trades alter column price drop index",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        "), index(sym) timestamp(ts) partition by DAY",
+                32,
+                "indexes are only supported for symbol type [column=price, type=DOUBLE]"
+        );
     }
 
     @Test
@@ -398,7 +413,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     // reason can be Alter table execute or Engine cleanup (unknown)
                     TestUtils.assertContains(fail.getMessage(), "table busy [reason=");
                 } else if (fail instanceof SqlException) {
-                    TestUtils.assertContains(fail.getMessage(), "Column is not indexed");
+                    TestUtils.assertContains(fail.getMessage(), "not indexed");
                 }
             } catch (EntryUnavailableException e) {
                 // reason can be Alter table execute or Engine cleanup (unknown)
@@ -407,7 +422,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 Assert.assertNull(concurrentDropIndexFailure.get());
                 endLatch.await();
             } catch (SqlException | CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Column is not indexed");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "not indexed");
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
                 endLatch.await();
