@@ -286,10 +286,8 @@ public class TableSequencerAPI implements QuietCloseable {
         return getSeqTxnTracker(tableToken).notifyOnCheck(seqTxn);
     }
 
-    public void notifySegmentClosed(TableToken tableToken, int walId, int segmentId) {
-        final long txn = lastTxn(tableToken);
-        final long timestamp = configuration.getMicrosecondClock().getTicks();
-        engine.getWalListener().segmentClosed(tableToken, txn, timestamp, walId, segmentId);
+    public void notifySegmentClosed(TableToken tableToken, long txn, int walId, int segmentId) {
+        engine.getWalListener().segmentClosed(tableToken, txn, walId, segmentId);
     }
 
     @TestOnly

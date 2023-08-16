@@ -105,6 +105,7 @@ public class WalWriter implements TableWriterAPI {
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
     private int walLockFd = -1;
+    private long seqTxn = NO_TXN;
 
     public WalWriter(
             CairoConfiguration configuration,
@@ -770,8 +771,8 @@ public class WalWriter implements TableWriterAPI {
             LOG.error().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
         }
-
-        return txn;
+        this.seqTxn = txn;
+        return this.seqTxn;
     }
 
     private void checkDistressed() {
@@ -1082,7 +1083,8 @@ public class WalWriter implements TableWriterAPI {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
         } while (seqTxn == NO_TXN);
-        return seqTxn;
+        this.seqTxn = seqTxn;
+        return this.seqTxn;
     }
 
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {
@@ -1222,7 +1224,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void releaseSegmentLock(int segmentId, int segmentLockFd) {
         if (ff.close(segmentLockFd)) {
-            sequencer.notifySegmentClosed(tableToken, walId, segmentId);
+            sequencer.notifySegmentClosed(tableToken, this.seqTxn, walId, segmentId);
             LOG.debug().$("released segment lock [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .$(", fd=").$(segmentLockFd)

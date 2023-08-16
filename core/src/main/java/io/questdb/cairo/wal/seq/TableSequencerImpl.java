@@ -412,7 +412,7 @@ public class TableSequencerImpl implements TableSequencer {
             metadata.create(tableStruct, tableToken, path, rootLen, tableId);
             final long timestamp = microClock.getTicks();
             openInit(tableToken, timestamp);
-            engine.getWalListener().tableCreated(tableToken, 0, timestamp);
+            engine.getWalListener().tableCreated(tableToken, timestamp);
         } finally {
             schemaLock.writeLock().unlock();
         }

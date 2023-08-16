@@ -166,7 +166,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     new WalListenerEvent(
                             WalListenerEventType.SEGMENT_CLOSED,
                             tableToken1.get(),
-                            2,
+                            1,
                             0,
                             1,
                             0,
@@ -279,12 +279,12 @@ public class WalListenerTest extends AbstractCairoTest {
         }
 
         @Override
-        public void segmentClosed(TableToken tabletoken, long txn, long timestamp, int walId, int segmentId) {
+        public void segmentClosed(TableToken tabletoken, long txn, int walId, int segmentId) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.SEGMENT_CLOSED,
                     tabletoken,
                     txn,
-                    timestamp,
+                    0,
                     walId,
                     segmentId,
                     -1,
@@ -293,11 +293,11 @@ public class WalListenerTest extends AbstractCairoTest {
         }
 
         @Override
-        public void tableCreated(TableToken tableToken, long txn, long timestamp) {
+        public void tableCreated(TableToken tableToken, long timestamp) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.TABLE_CREATED,
                     tableToken,
-                    txn,
+                    0,
                     timestamp,
                     -1,
                     -1,
