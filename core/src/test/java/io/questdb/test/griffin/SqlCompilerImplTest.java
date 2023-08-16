@@ -26,11 +26,12 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -2947,16 +2948,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     "partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
                     );
 
-                    try (TableWriter writer = getWriter("x")) {
+                    try (TableWriter writer = getWriter("x");
+                         TableMetadata tableMetadata = engine.getMetadata(writer.getTableToken())) {
                         sink.clear();
-                        TableRecordMetadata metadata = writer.getMetadata();
-                        metadata.toJson(sink);
+                        tableMetadata.toJson(sink);
                         TestUtils.assertEquals(
                                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
                                 sink
                         );
-                        Assert.assertEquals(10000, metadata.getMaxUncommittedRows());
-                        Assert.assertEquals(250000, metadata.getO3MaxLag());
+                        Assert.assertEquals(10000, tableMetadata.getMaxUncommittedRows());
+                        Assert.assertEquals(250000, tableMetadata.getO3MaxLag());
                     }
                 }
         );
@@ -3136,8 +3137,51 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetCurrentUser() throws SqlException {
+        assertQuery("current_user\n" +
+                "admin\n", "select current_user()", null, true, true);
+    }
+
+    @Test
     public void testInLongTypeMismatch() throws Exception {
         assertFailure(43, "cannot compare LONG with type DOUBLE", "select 1 from long_sequence(1) where x in (123.456)");
+    }
+
+    @Test
+    public void testInnerJoinConditionPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
+            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+
+            for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
+                assertSql("count\n3\n",
+                        "SELECT count(T2.created) " +
+                                "FROM tab as T1 " +
+                                "JOIN (SELECT * FROM tab) as T2 ON T1.created < T2.created " +
+                                join + " JOIN tab as T3 ON T2.value=T3.value"
+                );
+            }
+            assertSql("count\n1\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "JOIN tab T4 on T3.created < T4.created");
+
+            assertSql("count\n3\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "LEFT JOIN tab T4 on T3.created < T4.created");
+
+            assertSql("count\n3\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "LEFT JOIN tab T4 on T3.created-T4.created = 0 ");
+        });
     }
 
     @Test
@@ -3863,9 +3907,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
-                public TableReader getReader(TableToken tableToken, long version) {
+                public TableReader getReader(TableToken tableToken, long metadataVersion) {
                     fiddler.run(this);
-                    return super.getReader(tableToken, version);
+                    return super.getReader(tableToken, metadataVersion);
                 }
             }) {
                 try (
@@ -4241,12 +4285,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertTimestampAsStr() throws Exception {
         final String expected = "ts\n" +
+                "2020-01-10T12:00:01.111143Z\n" +
                 "2020-01-10T15:00:01.000143Z\n" +
                 "2020-01-10T18:00:01.800000Z\n" +
                 "\n";
 
         assertMemoryLeak(() -> {
             ddl("create table xy (ts timestamp)");
+            // execute insert with nanos - we expect the nanos to be truncated
+            insert("insert into xy(ts) values ('2020-01-10T12:00:01.111143123Z')");
+
             // execute insert with micros
             insert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
 
@@ -4570,6 +4618,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 null, true, true
         );
     }
+
+    @Test
+    public void testOrderByEmptyIdentifier() throws Exception {
+        assertMemoryLeak(() -> {
+            assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by ''");
+            assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by \"\"");
+        });
+    }
+
 
     @Test
     public void testOrderByFloat() throws Exception {
@@ -5037,8 +5094,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertFailure(96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION"));
         assertFailure(99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION ALL"));
-        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
-        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+        assertFailure(97, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
+        assertFailure(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT ALL"));
+        assertFailure(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+        assertFailure(103, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT ALL"));
     }
 
     @Test
@@ -5294,6 +5353,63 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testTimestampWithNanosInWhereClause() throws Exception {
+        assertQuery("x\tts\n" +
+                        "2\t2019-10-17T00:00:00.200000Z\n" +
+                        "3\t2019-10-17T00:00:00.700000Z\n" +
+                        "4\t2019-10-17T00:00:00.800000Z\n",
+                "select * from x where ts between '2019-10-17T00:00:00.200000123Z' and '2019-10-17T00:00:00.800000123Z'",
+                "create table x as " +
+                        "(SELECT x, timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_short(1,5) * 100000L) as ts FROM long_sequence(5)" +
+                        ")",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testUseExtensionPoints() {
+        try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
+
+            try {
+                compiler.compile("alter altar", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownAlterStatementCalled);
+            }
+
+            try {
+                compiler.compile("show something", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownShowStatementCalled);
+            }
+
+            try {
+                compiler.compile("drop table ka boom zoom", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownDropTableSuffixCalled);
+            }
+
+            try {
+                compiler.compile("drop something", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownDropStatementCalled);
+            }
+
+            try {
+                compiler.compile("create table tab ( i int)", sqlExecutionContext);
+                compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertTrue(compiler.unknownDropColumnSuffixCalled);
+            }
+        }
+    }
+
+
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws SqlException {
         ddl(ddl);
         try (TableReader reader = getReader("y")) {
@@ -5482,9 +5598,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(TableToken tableToken, long tableVersion) {
+            public TableReader getReader(TableToken tableToken, long metadataVersion) {
                 fiddler.run(this);
-                return super.getReader(tableToken, tableVersion);
+                return super.getReader(tableToken, metadataVersion);
             }
         }) {
             try (
@@ -5614,4 +5730,47 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         void run(CairoEngine engine);
     }
+
+    static class SqlCompilerWrapper extends SqlCompilerImpl {
+        boolean unknownAlterStatementCalled;
+        boolean unknownDropColumnSuffixCalled;
+        boolean unknownDropStatementCalled;
+        boolean unknownDropTableSuffixCalled;
+        boolean unknownShowStatementCalled;
+
+        SqlCompilerWrapper(CairoEngine engine) {
+            super(engine);
+        }
+
+        @Override
+        protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+            unknownAlterStatementCalled = true;
+            super.unknownAlterStatement(executionContext, tok);
+        }
+
+        @Override
+        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
+            unknownDropColumnSuffixCalled = true;
+            super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
+        }
+
+        @Override
+        protected void unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+            unknownDropStatementCalled = true;
+            super.unknownDropStatement(executionContext, tok);
+        }
+
+        @Override
+        protected void unknownDropTableSuffix(SqlExecutionContext executionContext, CharSequence tok, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
+            unknownDropTableSuffixCalled = true;
+            super.unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
+        }
+
+        @Override
+        protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+            unknownShowStatementCalled = true;
+            return super.unknownShowStatement(executionContext, tok);
+        }
+    }
+
 }

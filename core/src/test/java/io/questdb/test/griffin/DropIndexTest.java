@@ -251,16 +251,31 @@ public class DropIndexTest extends AbstractCairoTest {
                             "  select " +
                             "    rnd_symbol('K1', 'K2') колонка " +
                             "  from long_sequence(317)" +
-                            ")",
-                    sqlExecutionContext
+                            ")"
             );
             engine.releaseAllWriters();
             assertException(
                     "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
                     36,
-                    "Column is not indexed [name=колонка]"
+                    "column is not indexed [name=колонка]"
             );
         });
+    }
+
+    @Test
+    public void testDropIndexOfNonSymbolColumnShouldFail() throws Exception {
+        assertException(
+                "alter table trades alter column price drop index",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        "), index(sym) timestamp(ts) partition by DAY",
+                32,
+                "indexes are only supported for symbol type [column=price, type=DOUBLE]"
+        );
     }
 
     @Test
@@ -370,12 +385,13 @@ public class DropIndexTest extends AbstractCairoTest {
             final SOCountDownLatch endLatch = new SOCountDownLatch(1);
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
             final AtomicReference<Throwable> concurrentDropIndexFailure = new AtomicReference<>();
+            final String dropIndexDdl = dropIndexStatement();
 
             // drop index thread
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    ddl(dropIndexStatement());
+                    ddl(dropIndexDdl);
                 } catch (Throwable e) {
                     concurrentDropIndexFailure.set(e);
                 } finally {
@@ -388,7 +404,7 @@ public class DropIndexTest extends AbstractCairoTest {
             // drop the index concurrently
             startBarrier.await();
             try {
-                ddl(dropIndexStatement(), sqlExecutionContext);
+                ddl(dropIndexDdl);
                 endLatch.await();
                 // we didn't fail, check they did
                 Throwable fail = concurrentDropIndexFailure.get();
@@ -397,7 +413,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     // reason can be Alter table execute or Engine cleanup (unknown)
                     TestUtils.assertContains(fail.getMessage(), "table busy [reason=");
                 } else if (fail instanceof SqlException) {
-                    TestUtils.assertContains(fail.getMessage(), "Column is not indexed");
+                    TestUtils.assertContains(fail.getMessage(), "not indexed");
                 }
             } catch (EntryUnavailableException e) {
                 // reason can be Alter table execute or Engine cleanup (unknown)
@@ -406,7 +422,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 Assert.assertNull(concurrentDropIndexFailure.get());
                 endLatch.await();
             } catch (SqlException | CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Column is not indexed");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "not indexed");
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
                 endLatch.await();
@@ -662,11 +678,13 @@ public class DropIndexTest extends AbstractCairoTest {
                     4
             );
             // other indexed column remains intact
-            Assert.assertEquals(expectedDFiles,
+            Assert.assertEquals(
+                    expectedDFiles,
                     countFiles("temperature", 0L, DropIndexTest::isDataFile)
             );
             // check index files exist
-            Assert.assertEquals(expectedDFiles * 2,
+            Assert.assertEquals(
+                    expectedDFiles * 2,
                     countFiles("temperature", 0L, DropIndexTest::isIndexFile)
             );
         });

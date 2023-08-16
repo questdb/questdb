@@ -73,7 +73,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         if (counter.decrementAndGet() == 0) {
                             throw new IndexOutOfBoundsException();
                         }
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
                         return 0;
                     }
 
@@ -111,7 +111,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
                         return 0;
                     }
 
@@ -369,7 +369,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         if (counter.decrementAndGet() == 0) {
                             return 0;
                         }
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
                         return 0;
                     }
 
@@ -407,7 +407,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
                         return 0;
                     }
 
@@ -1172,7 +1172,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     alterWriter2.apply(alterOperation, true);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exists");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exist");
                 }
             } finally {
                 Misc.free(alterOperation);

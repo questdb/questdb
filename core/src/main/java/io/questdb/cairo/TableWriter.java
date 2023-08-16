@@ -40,7 +40,10 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -114,6 +117,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final CairoConfiguration configuration;
+    private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
@@ -182,7 +186,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
-    private CommitListener commitListener;
     private long committedMasterRef;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private String designatedTimestampColumnName;
@@ -244,10 +247,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean lock,
             LifecycleManager lifecycleManager,
             CharSequence root,
+            DdlListener ddlListener,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
+        this.ddlListener = ddlListener;
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
@@ -350,12 +355,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @TestOnly
     public TableWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics) {
-        this(configuration, tableToken, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+        this(configuration, tableToken, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, metrics);
     }
 
     @TestOnly
     public TableWriter(CairoConfiguration configuration, TableToken tableToken, MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+        this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, metrics);
     }
 
     @TestOnly
@@ -383,7 +388,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void addColumn(@NotNull CharSequence columnName, int columnType) {
+    public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         addColumn(
                 columnName,
                 columnType,
@@ -391,7 +396,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 configuration.getDefaultSymbolCacheFlag(),
                 false,
                 0,
-                false
+                false,
+                false,
+                securityContext
         );
     }
 
@@ -427,7 +434,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isDedupKey,
-            SqlExecutionContext executionContext
+            SecurityContext securityContext
     ) {
         addColumn(
                 columnName,
@@ -438,7 +445,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
-                executionContext
+                securityContext
         );
     }
 
@@ -481,7 +488,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
-            SqlExecutionContext executionContext
+            SecurityContext securityContext
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -572,8 +579,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
         }
 
-        if (executionContext != null) {
-            executionContext.getCairoEngine().onColumnAdded(executionContext.getSecurityContext(), tableToken, columnName);
+        if (securityContext != null) {
+            ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
     }
 
@@ -592,15 +599,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
 
         if (isColumnIndexed(metaMem, columnIndex)) {
-            throw CairoException.nonCritical().put("already indexed [column=").put(columnName).put(']');
+            throw CairoException.nonCritical().put("column is already indexed [column=").put(columnName).put(']');
         }
 
         final int existingType = getColumnType(metaMem, columnIndex);
-        LOG.info().$("adding index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$(", path=").$(path).I$();
+        LOG.info().$("adding index to '").utf8(columnName).$("' [").$(ColumnType.nameOf(existingType)).$(", path=").$(path).I$();
 
         if (!ColumnType.isSymbol(existingType)) {
             LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).I$();
-            throw CairoException.nonCritical().put("cannot create index for [column='").put(columnName).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
+            throw CairoException.nonCritical().put("cannot create index for [column='").put(columnName).put("', type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
         }
 
         // create indexer
@@ -985,10 +992,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
             shrinkO3Mem();
-
-            if (commitListener != null) {
-                commitListener.onCommit(txWriter.getTxn(), rowsAdded);
-            }
             return rowsAdded;
         }
 
@@ -1189,11 +1192,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
         if (columnIndex == -1) {
-            throw CairoException.invalidMetadata("Column does not exist", columnName);
+            throw CairoException.invalidMetadata("column does not exist", columnName);
         }
         if (!isColumnIndexed(metaMem, columnIndex)) {
-            // if a column is indexed, it is al so of type SYMBOL
-            throw CairoException.invalidMetadata("Column is not indexed", columnName);
+            // if a column is indexed, it is also of type SYMBOL
+            throw CairoException.invalidMetadata("column is not indexed", columnName);
         }
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
@@ -1332,8 +1335,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public long getMetaMaxUncommittedRows() {
+    public int getMetaMaxUncommittedRows() {
         return metadata.getMaxUncommittedRows();
+    }
+
+    @Override
+    public long getMetaO3MaxLag() {
+        return metadata.getO3MaxLag();
     }
 
     @Override
@@ -1540,7 +1548,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.nonCritical().put("Cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                    throw CairoException.nonCritical().put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
 
                 bumpMasterRef();
@@ -1937,7 +1945,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean timestamp = (index == timestampIndex);
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
-            throw CairoException.nonCritical().put("Cannot remove timestamp from partitioned table");
+            throw CairoException.nonCritical().put("cannot remove timestamp from partitioned table");
         }
 
         commit();
@@ -2022,7 +2030,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void renameColumn(@NotNull CharSequence currentName, @NotNull CharSequence newName) {
+    public void renameColumn(
+            @NotNull CharSequence currentName,
+            @NotNull CharSequence newName,
+            SecurityContext securityContext
+    ) {
         checkDistressed();
         checkColumnName(newName);
 
@@ -2069,6 +2081,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (index == metadata.getTimestampIndex()) {
             designatedTimestampColumnName = Chars.toString(newName);
+        }
+
+        if (securityContext != null) {
+            ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
@@ -2118,11 +2134,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 distressed = true;
             }
         }
-    }
-
-    @SuppressWarnings("unused")
-    public void setCommitListener(CommitListener commitListener) {
-        this.commitListener = commitListener;
     }
 
     public void setExtensionListener(ExtensionListener listener) {
@@ -3116,12 +3127,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            final long txn = getTxn();
-
-            if (commitListener != null) {
-                commitListener.onCommit(txn, rowsAdded);
-            }
-            return txn;
+            return getTxn();
         }
         return TableSequencer.NO_TXN;
     }
@@ -3515,7 +3521,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(partitionFrameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
-        commitListener = Misc.free(commitListener);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
@@ -5479,7 +5484,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff,
+            mem1.of(
+                    ff,
                     dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
                     configuration.getDataAppendPageSize(),
                     -1,
@@ -7563,8 +7569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
         } else {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses.clear();
+            if (dedupColumnCommitAddresses != null) {
                 dedupColumnCommitAddresses.setDedupColumnCount(0);
             }
         }

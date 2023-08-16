@@ -24,8 +24,6 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.MessageBus;
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
@@ -75,27 +73,23 @@ public class WriterPool extends AbstractPool {
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
+    @NotNull
+    private final CairoEngine engine;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
-    @NotNull
-    private final MessageBus messageBus;
-    @NotNull
-    private final Metrics metrics;
     private final CharSequence root;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
      * @param configuration configuration parameters.
-     * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
-     * @param metrics       metrics instance to be used by table writers.
+     * @param engine        engine instance.
      */
-    public WriterPool(CairoConfiguration configuration, @NotNull MessageBus messageBus, @NotNull Metrics metrics) {
+    public WriterPool(CairoConfiguration configuration, @NotNull CairoEngine engine) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
-        this.messageBus = messageBus;
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getRoot();
-        this.metrics = metrics;
+        this.engine = engine;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
@@ -221,7 +215,9 @@ public class WriterPool extends AbstractPool {
             return reinterpretOwnershipReason(e.ownershipReason);
         }
 
-        LOG.error().$("could not lock, busy [table=`").utf8(tableToken.getDirName()).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
+        LOG.error().$("could not lock, busy [table=`").utf8(tableToken.getDirName())
+                .$("`, owner=").$(e.owner)
+                .$(", thread=").$(thread).I$();
         notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY);
         return reinterpretOwnershipReason(e.ownershipReason);
     }
@@ -255,7 +251,17 @@ public class WriterPool extends AbstractPool {
                 // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, tableToken, messageBus, null, false, e, root, metrics);
+                writer = new TableWriter(
+                        configuration,
+                        tableToken,
+                        engine.getMessageBus(),
+                        null,
+                        false,
+                        e,
+                        root,
+                        engine.getDdlListener(tableToken),
+                        engine.getMetrics()
+                );
             }
 
             if (writer == null) {
@@ -365,7 +371,17 @@ public class WriterPool extends AbstractPool {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
-            e.writer = new TableWriter(configuration, tableToken, messageBus, null, true, e, root, metrics);
+            e.writer = new TableWriter(
+                    configuration,
+                    tableToken,
+                    engine.getMessageBus(),
+                    null,
+                    true,
+                    e,
+                    root,
+                    engine.getDdlListener(tableToken),
+                    engine.getMetrics()
+            );
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {

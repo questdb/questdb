@@ -326,7 +326,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txnScoreboard;
     }
 
-    public long getVersion() {
+    public long getMetadataVersion() {
         return txFile.getMetadataVersion();
     }
 

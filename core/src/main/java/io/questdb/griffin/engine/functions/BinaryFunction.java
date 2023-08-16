@@ -40,10 +40,6 @@ public interface BinaryFunction extends Function {
 
     Function getLeft();
 
-    default String getName() {
-        return getClass().getName();
-    }
-
     Function getRight();
 
     @Override

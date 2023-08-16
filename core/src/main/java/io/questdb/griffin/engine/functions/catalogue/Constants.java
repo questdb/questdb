@@ -123,8 +123,8 @@ public class Constants {
     };
     public static final StrConstant PG_CATALOG_VERSION_CONSTANT = new StrConstant("PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit, QuestDB");
     public static final String PUBLIC = "public";
+    public static final String USER_NAME = "admin";
     static final String[] NAMESPACES = {"pg_catalog", PUBLIC};
     static final int[] NAMESPACE_OIDS = {PGOids.PG_CATALOG_OID, PGOids.PG_PUBLIC_OID};
     static final StrFunction PUBLIC_CONSTANT = new StrConstant(PUBLIC);
-    static final StrFunction USER_CONSTANT = new StrConstant("admin");
 }

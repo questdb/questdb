@@ -1351,7 +1351,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 prepareCommandComplete(true);
                 return;
-            } catch (TableReferenceOutOfDateException ex) {
+            } catch (TableReferenceOutOfDateException | WriterOutOfDateException ex) {
                 if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
@@ -1426,6 +1426,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
                     processCompiledQuery(cc);
                 }
+            } catch (CairoException e) {
+                if (!e.isAuthorizationError()) {
+                    typesAndUpdate = Misc.free(typesAndUpdate);
+                }
+                if (transactionState == IN_TRANSACTION) {
+                    transactionState = ERROR_TRANSACTION;
+                }
+                throw e;
             } catch (Throwable e) {
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 if (transactionState == IN_TRANSACTION) {

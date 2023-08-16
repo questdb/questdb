@@ -192,7 +192,7 @@ public class TableBackupTest {
             }
 
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return testFf;
             }
 
