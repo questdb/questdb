@@ -32,7 +32,10 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
@@ -1082,9 +1085,9 @@ public final class TestUtils {
             final AtomicInteger totalSent = new AtomicInteger();
 
             @Override
-            public int send(int fd, long buffer, int bufferLen) {
+            public int sendRaw(int fd, long buffer, int bufferLen) {
                 if (startDelayDelayAfter == 0) {
-                    return super.send(fd, buffer, bufferLen);
+                    return super.sendRaw(fd, buffer, bufferLen);
                 }
 
                 int sentNow = totalSent.get();
@@ -1094,7 +1097,7 @@ public final class TestUtils {
                         return 0;
                     }
 
-                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
+                    int result = super.sendRaw(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
                     totalSent.addAndGet(result);
                     return result;
                 }

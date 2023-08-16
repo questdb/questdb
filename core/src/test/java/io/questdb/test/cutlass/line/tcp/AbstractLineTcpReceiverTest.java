@@ -44,6 +44,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 
@@ -87,6 +88,18 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     };
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
+    private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
+        @Override
+        public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
+            if (authKeyId == null) {
+                return super.getLineAuthenticatorFactory();
+            }
+            URL u = getClass().getResource("authDb.txt");
+            assert u != null;
+            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
+            return new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
+        }
+    };
     protected boolean autoCreateNewColumns = true;
     protected long commitIntervalDefault = 2000;
     protected double commitIntervalFraction = 0.5;
@@ -96,18 +109,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-    private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
-        @Override
-        public LineAuthenticatorFactory getLineAuthenticatorFactory() {
-            if (authKeyId == null) {
-                return super.getLineAuthenticatorFactory();
-            }
-            URL u = getClass().getResource("authDb.txt");
-            assert u != null;
-            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
-            return new EllipticCurveAuthenticatorFactory(nf, () -> new StaticChallengeResponseMatcher(authDb));
-        }
-    };
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {

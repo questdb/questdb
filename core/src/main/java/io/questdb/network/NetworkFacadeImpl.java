@@ -27,7 +27,6 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class NetworkFacadeImpl implements NetworkFacade {
@@ -176,17 +175,17 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public int peek(int fd, long buffer, int bufferLen) {
+    public int peekRaw(int fd, long buffer, int bufferLen) {
         return Net.peek(fd, buffer, bufferLen);
     }
 
     @Override
-    public int recv(int fd, long buffer, int bufferLen) {
+    public int recvRaw(int fd, long buffer, int bufferLen) {
         return Net.recv(fd, buffer, bufferLen);
     }
 
     @Override
-    public int recvmmsg(int fd, long msgVec, int msgCount) {
+    public int recvmmsgRaw(int fd, long msgVec, int msgCount) {
         return Net.recvmmsg(fd, msgVec, msgCount);
     }
 
@@ -196,12 +195,12 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public int send(int fd, long buffer, int bufferLen) {
+    public int sendRaw(int fd, long buffer, int bufferLen) {
         return Net.send(fd, buffer, bufferLen);
     }
 
     @Override
-    public int sendTo(int fd, long ptr, int len, long socketAddress) {
+    public int sendToRaw(int fd, long ptr, int len, long socketAddress) {
         return Net.sendTo(fd, ptr, len, socketAddress);
     }
 
@@ -278,32 +277,8 @@ public class NetworkFacadeImpl implements NetworkFacade {
         if (fd == -1) {
             return true;
         }
-
+        // TODO(puzpuzpuz): check if we needed the old HTTP-specific logic here
         final int nRead = Net.peek(fd, buffer, bufferSize);
-
-        if (nRead == 0) {
-            return false;
-        }
-
-        if (nRead < 0) {
-            return true;
-        }
-
-        // Read \r\n from the input stream and discard it since some HTTP clients
-        // send these chars as a keep alive in between requests.
-        int index = 0;
-        while (index < nRead) {
-            byte b = Unsafe.getUnsafe().getByte(buffer + index);
-            if (b != (byte) '\r' && b != (byte) '\n') {
-                break;
-            }
-            index++;
-        }
-
-        if (index > 0) {
-            Net.recv(fd, buffer, index);
-        }
-
-        return false;
+        return nRead < 0;
     }
 }

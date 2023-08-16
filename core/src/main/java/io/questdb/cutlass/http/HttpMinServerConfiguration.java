@@ -24,12 +24,15 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.FactoryProvider;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 
 public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
 
     IODispatcherConfiguration getDispatcherConfiguration();
+
+    FactoryProvider getFactoryProvider();
 
     HttpContextConfiguration getHttpContextConfiguration();
 

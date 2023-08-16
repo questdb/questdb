@@ -24,23 +24,28 @@
 
 package io.questdb.network;
 
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
 public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
     protected IODispatcher<T> dispatcher;
-    protected int fd = -1;
     protected long heartbeatId = -1;
+    protected Socket socket;
 
     @Override
     public void clear() {
+        assert socket == null : "socket must be closed before clear call";
         heartbeatId = -1;
-        fd = -1;
         dispatcher = null;
     }
 
     public void clearSuspendEvent() {
         // no-op
+    }
+
+    public void closeSocket() {
+        socket = Misc.free(socket);
     }
 
     public long getAndResetHeartbeatId() {
@@ -54,7 +59,11 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     public int getFd() {
-        return fd;
+        return socket != null ? socket.getFd() : -1;
+    }
+
+    public Socket getSocket() {
+        return socket;
     }
 
     public SuspendEvent getSuspendEvent() {
@@ -62,12 +71,12 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     public boolean invalid() {
-        return fd == -1;
+        return socket == null;
     }
 
     @SuppressWarnings("unchecked")
-    public T of(int fd, IODispatcher<T> dispatcher) {
-        this.fd = fd;
+    public T of(Socket socket, IODispatcher<T> dispatcher) {
+        this.socket = socket;
         this.dispatcher = dispatcher;
         return (T) this;
     }

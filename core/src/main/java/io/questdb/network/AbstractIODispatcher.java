@@ -68,6 +68,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final long queuedConnectionTimeoutMs;
     private final int rcvBufSize;
     private final int sndBufSize;
+    private final SocketFactory socketFactory;
     private final int testConnectionBufSize;
     protected boolean closed = false;
     protected long heartbeatIntervalMs;
@@ -80,33 +81,35 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
+            IOContextFactory<C> ioContextFactory,
+            SocketFactory socketFactory
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
 
         this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
-        this.testConnectionBuf = Unsafe.malloc(this.testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);
+        this.testConnectionBuf = Unsafe.malloc(testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);
 
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
         this.interestPubSeq = new MPSequence(interestQueue.getCycle());
         this.interestSubSeq = new SCSequence();
-        this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
+        this.interestPubSeq.then(interestSubSeq).then(interestPubSeq);
 
         this.ioEventQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
         this.ioEventPubSeq = new SPSequence(configuration.getIOQueueCapacity());
         this.ioEventSubSeq = new MCSequence(configuration.getIOQueueCapacity());
-        this.ioEventPubSeq.then(this.ioEventSubSeq).then(this.ioEventPubSeq);
+        this.ioEventPubSeq.then(ioEventSubSeq).then(ioEventPubSeq);
 
         this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
         this.disconnectPubSeq = new MPSequence(disconnectQueue.getCycle());
         this.disconnectSubSeq = new SCSequence();
-        this.disconnectPubSeq.then(this.disconnectSubSeq).then(this.disconnectPubSeq);
+        this.disconnectPubSeq.then(disconnectSubSeq).then(disconnectPubSeq);
 
         this.clock = configuration.getClock();
         this.activeConnectionLimit = configuration.getLimit();
         this.ioContextFactory = ioContextFactory;
+        this.socketFactory = socketFactory;
         this.initialBias = configuration.getInitialBias();
         this.idleConnectionTimeout = configuration.getTimeout() > 0 ? configuration.getTimeout() : Long.MIN_VALUE;
         this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() > 0 ? configuration.getQueueTimeout() : 0;
@@ -218,7 +221,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
         pending.set(r, OPM_FD, fd);
         pending.set(r, OPM_OPERATION, -1);
-        pending.set(r, ioContextFactory.newInstance(fd, this));
+        final Socket socket = socketFactory.newInstance(nf, fd, LOG);
+        pending.set(r, ioContextFactory.newInstance(socket, this));
         pendingAdded(r);
     }
 
@@ -242,7 +246,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             throw NetworkError.instance(nf.errno()).couldNotBindSocket(
                     configuration.getDispatcherLogName(),
                     configuration.getBindIPv4Address(),
-                    this.port);
+                    this.port
+            );
         }
         LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
                 .$(" [fd=").$(serverFd)
@@ -332,7 +337,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$(", fd=").$(fd)
                 .$(", src=").$(DISCONNECT_SOURCES[src])
                 .I$();
-        nf.close(fd, LOG);
+        context.closeSocket();
         if (closed) {
             Misc.free(context);
         } else {

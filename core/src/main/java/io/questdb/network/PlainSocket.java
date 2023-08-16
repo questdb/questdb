@@ -22,36 +22,48 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.network;
 
-import io.questdb.network.Socket;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.log.Log;
 
-public interface Authenticator extends QuietCloseable {
+public class PlainSocket implements Socket {
+    private final int fd;
+    private final Log log;
+    private final NetworkFacade nf;
 
-    int NEEDS_DISCONNECT = 3;
-    int NEEDS_READ = 0;
-    int NEEDS_WRITE = 1;
-    int OK = -1;
-    int QUEUE_FULL = 2;
-
-    default void clear() {
+    public PlainSocket(NetworkFacade nf, int fd, Log log) {
+        this.nf = nf;
+        this.fd = fd;
+        this.log = log;
     }
 
     @Override
-    default void close() {
+    public void close() {
+        nf.close(fd, log);
     }
 
-    CharSequence getPrincipal();
+    @Override
+    public int getFd() {
+        return fd;
+    }
 
-    long getRecvBufPos();
+    @Override
+    public int init() {
+        return INIT_DONE; // no-op
+    }
 
-    long getRecvBufPseudoStart();
+    @Override
+    public int recv(long bufferPtr, int bufferLen) {
+        return nf.recvRaw(fd, bufferPtr, bufferLen);
+    }
 
-    int handleIO() throws AuthenticatorException;
+    @Override
+    public int send(long bufferPtr, int bufferLen) {
+        return nf.sendRaw(fd, bufferPtr, bufferLen);
+    }
 
-    void init(@Nullable Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
-
-    boolean isAuthenticated();
+    @Override
+    public void shutdown(int how) {
+        nf.shutdown(fd, how);
+    }
 }

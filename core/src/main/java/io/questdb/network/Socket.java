@@ -22,36 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.network;
 
-import io.questdb.network.Socket;
 import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
 
-public interface Authenticator extends QuietCloseable {
+/**
+ * Abstraction for plain and encrypted TCP sockets.
+ */
+public interface Socket extends QuietCloseable {
+    int INIT_DONE = 0;
+    int WANTS_READ = 2;
+    int WANTS_WRITE = 1;
 
-    int NEEDS_DISCONNECT = 3;
-    int NEEDS_READ = 0;
-    int NEEDS_WRITE = 1;
-    int OK = -1;
-    int QUEUE_FULL = 2;
+    int getFd();
 
-    default void clear() {
-    }
+    /**
+     * Initialize socket for communication. The method has to be called (potentially,
+     * multiple times) before the first call to {@link #recv(long, int)} and
+     * {@link #send(long, int)} until {@link #INIT_DONE} is returned.
+     *
+     * @return one of the following values:
+     * <ul>
+     *     <li>{@link #INIT_DONE} - initialization is done</li>
+     *     <li>{@link #WANTS_READ} - a read for the socket is required</li>
+     *     <li>{@link #WANTS_WRITE} - a write to the socket is required</li>
+     * </ul>
+     */
+    int init();
 
-    @Override
-    default void close() {
-    }
+    int recv(long bufferPtr, int bufferLen);
 
-    CharSequence getPrincipal();
+    int send(long bufferPtr, int bufferLen);
 
-    long getRecvBufPos();
-
-    long getRecvBufPseudoStart();
-
-    int handleIO() throws AuthenticatorException;
-
-    void init(@Nullable Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
-
-    boolean isAuthenticated();
+    void shutdown(int how);
 }

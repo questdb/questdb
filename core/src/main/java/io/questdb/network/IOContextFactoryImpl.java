@@ -52,7 +52,7 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         if (closed) {
             Misc.free(context);
         } else {
-            context.of(-1, null);
+            context.of(null, null);
             contextPool.get().push(context);
         }
     }
@@ -62,8 +62,8 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         Misc.free(this.contextPool);
     }
 
-    public C newInstance(int fd, IODispatcher<C> dispatcher) {
-        return contextPool.get().pop().of(fd, dispatcher);
+    public C newInstance(Socket socket, IODispatcher<C> dispatcher) {
+        return contextPool.get().pop().of(socket, dispatcher);
     }
 
     @Override

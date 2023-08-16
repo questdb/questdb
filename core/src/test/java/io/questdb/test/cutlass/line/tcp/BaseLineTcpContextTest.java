@@ -120,10 +120,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected void closeContext() {
-        if (null != scheduler) {
+        if (scheduler != null) {
             workerPool.halt();
             Assert.assertFalse(context.invalid());
             Assert.assertEquals(FD, context.getFd());
+            context.closeSocket();
             context.close();
             Assert.assertTrue(context.invalid());
             Assert.assertEquals(-1, context.getFd());
@@ -140,12 +141,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
-            public LineAuthenticatorFactory getLineAuthenticatorFactory() {
+            public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
                 if (withAuth) {
                     URL u = getClass().getResource("authDb.txt");
                     assert u != null;
                     CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
-                    return new EllipticCurveAuthenticatorFactory(nf, () -> new StaticChallengeResponseMatcher(authDb));
+                    return new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
                 }
                 return super.getLineAuthenticatorFactory();
             }
@@ -265,11 +266,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
     }
 
-    @FunctionalInterface
-    public interface UnstableRunnable {
-        void run() throws Exception;
-    }
-
     protected void runInContext(UnstableRunnable r) throws Exception {
         runInContext(r, null);
     }
@@ -322,7 +318,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         noNetworkIOJob.setScheduler(scheduler);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         Assert.assertNull(context.getDispatcher());
-        context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
+        context.of(new TestSocket(lineTcpConfiguration.getNetworkFacade()), new IODispatcher<>() {
             @Override
             public void close() {
             }
@@ -382,6 +378,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         Os.sleep(lineTcpConfiguration.getMaintenanceInterval() + 50);
     }
 
+    @FunctionalInterface
+    public interface UnstableRunnable {
+        void run() throws Exception;
+    }
+
     static class NoNetworkIOJob implements NetworkIOJob {
         private final ByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new ByteCharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
@@ -438,9 +439,45 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
     }
 
+    private static class TestSocket implements Socket {
+        private final NetworkFacade nf;
+
+        public TestSocket(NetworkFacade nf) {
+            this.nf = nf;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public int getFd() {
+            return FD;
+        }
+
+        @Override
+        public int getStatus() {
+            return 0;
+        }
+
+        @Override
+        public int recv(long bufferPtr, int bufferLen) {
+            return nf.recvRaw(FD, bufferPtr, bufferLen);
+        }
+
+        @Override
+        public int send(long bufferPtr, int bufferLen) {
+            return nf.sendRaw(FD, bufferPtr, bufferLen);
+        }
+
+        @Override
+        public void shutdown() {
+        }
+    }
+
     class LineTcpNetworkFacade extends NetworkFacadeImpl {
         @Override
-        public int recv(int fd, long buffer, int bufferLen) {
+        public int recvRaw(int fd, long buffer, int bufferLen) {
             Assert.assertEquals(FD, fd);
             if (recvBuffer == null) {
                 return -1;

@@ -29,6 +29,9 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SocketFactory;
+import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderImpl implements FactoryProvider {
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
@@ -42,22 +45,27 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
-    public HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
+    public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
         return DefaultHttpAuthenticatorFactory.INSTANCE;
     }
 
     @Override
-    public LineAuthenticatorFactory getLineAuthenticatorFactory() {
+    public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
         return lineAuthenticatorFactory;
     }
 
     @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return pgWireAuthenticatorFactory;
     }
 
     @Override
-    public SecurityContextFactory getSecurityContextFactory() {
+    public @NotNull SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
+    }
+
+    @Override
+    public @NotNull SocketFactory getSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
     }
 }

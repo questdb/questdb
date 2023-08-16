@@ -2855,6 +2855,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
         public HttpContextConfiguration getHttpContextConfiguration() {
             return httpContextConfiguration;
         }
@@ -2920,6 +2925,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return httpIODispatcherConfiguration;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
@@ -3240,11 +3250,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
-        }
-
-        @Override
-        public boolean readOnlySecurityContext() {
-            return httpReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 

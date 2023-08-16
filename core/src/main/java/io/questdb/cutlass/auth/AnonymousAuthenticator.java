@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.auth;
 
+import io.questdb.network.Socket;
+
 public class AnonymousAuthenticator implements Authenticator {
 
     public static final AnonymousAuthenticator INSTANCE = new AnonymousAuthenticator();
@@ -49,7 +51,7 @@ public class AnonymousAuthenticator implements Authenticator {
     }
 
     @Override
-    public void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+    public void init(Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
     }
 
     @Override

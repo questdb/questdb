@@ -66,7 +66,8 @@ public class PGWireServer implements Closeable {
     ) {
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
-                contextFactory
+                contextFactory,
+                configuration.getFactoryProvider().getSocketFactory()
         );
         this.metrics = engine.getMetrics();
         this.workerPool = workerPool;
@@ -172,8 +173,7 @@ public class PGWireServer implements Closeable {
                         circuitBreaker
                 );
                 FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                NetworkFacade nf = configuration.getNetworkFacade();
-                Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(nf, configuration, circuitBreaker, registry, pgConnectionContext);
+                Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(configuration, circuitBreaker, registry, pgConnectionContext);
                 pgConnectionContext.setAuthenticator(authenticator);
                 return pgConnectionContext;
             }, configuration.getConnectionPoolInitialCapacity());

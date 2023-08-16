@@ -22,36 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.network;
 
-import io.questdb.network.Socket;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.log.Log;
 
-public interface Authenticator extends QuietCloseable {
-
-    int NEEDS_DISCONNECT = 3;
-    int NEEDS_READ = 0;
-    int NEEDS_WRITE = 1;
-    int OK = -1;
-    int QUEUE_FULL = 2;
-
-    default void clear() {
-    }
+public class PlainSocketFactory implements SocketFactory {
+    public static final SocketFactory INSTANCE = new PlainSocketFactory();
 
     @Override
-    default void close() {
+    public Socket newInstance(NetworkFacade nf, int fd, Log log) {
+        return new PlainSocket(nf, fd, log);
     }
-
-    CharSequence getPrincipal();
-
-    long getRecvBufPos();
-
-    long getRecvBufPseudoStart();
-
-    int handleIO() throws AuthenticatorException;
-
-    void init(@Nullable Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
-
-    boolean isAuthenticated();
 }

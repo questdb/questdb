@@ -33,8 +33,8 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkFacade;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.Socket;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -57,12 +57,10 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final UsernamePasswordMatcher matcher;
-    private final NetworkFacade nf;
     private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
-    private int fd;
     private long recvBufEnd;
     private long recvBufReadPos;
     private long recvBufStart;
@@ -71,11 +69,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private long sendBufReadPos;
     private long sendBufStart;
     private long sendBufWritePos;
+    private Socket socket;
     private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
     public CleartextPasswordPgWireAuthenticator(
-            NetworkFacade nf,
             PGWireConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
@@ -83,8 +81,6 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             UsernamePasswordMatcher matcher
     ) {
         this.matcher = matcher;
-
-        this.nf = nf;
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
@@ -178,7 +174,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                         break;
                     }
                     case AUTH_SUCCESS:
-                        circuitBreaker.of(fd);
+                        circuitBreaker.of(socket.getFd());
                         return Authenticator.OK;
                     case AUTH_FAILED:
                         return Authenticator.NEEDS_DISCONNECT;
@@ -192,15 +188,15 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     @Override
-    public void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
-        if (fd == -1) {
+    public void init(Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+        if (socket == null) {
             this.circuitBreaker.setSecret(-1);
         } else {
             this.circuitBreaker.setSecret(registry.getNewSecret());
         }
         this.state = State.EXPECT_INIT_MESSAGE;
         this.username = null;
-        this.fd = fd;
+        this.socket = socket;
         this.recvBufStart = recvBuffer;
         this.recvBufReadPos = recvBuffer;
         this.recvBufWritePos = recvBuffer;
@@ -442,7 +438,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     private int readFromSocket() {
-        int bytesRead = nf.recv(fd, recvBufWritePos, (int) (recvBufEnd - recvBufWritePos));
+        int bytesRead = socket.recv(recvBufWritePos, (int) (recvBufEnd - recvBufWritePos));
         if (bytesRead < 0) {
             return Authenticator.NEEDS_DISCONNECT;
         }
@@ -452,7 +448,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
     private int writeToSocketAndAdvance(State nextState) {
         int toWrite = (int) (sendBufWritePos - sendBufReadPos);
-        int n = nf.send(fd, sendBufReadPos, toWrite);
+        int n = socket.send(sendBufReadPos, toWrite);
         if (n < 0) {
             return Authenticator.NEEDS_DISCONNECT;
         }
@@ -462,7 +458,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             state = nextState;
             return Authenticator.OK;
         }
-        // we could try to call nf.send() again as there could be space in the socket buffer now
+        // we could try to call socket.send() again as there could be space in the socket buffer now
         // but: auth messages are small and we assume that the socket buffer is large enough to accommodate them in one go
         // thus this return should be rare and we will just wait for the next select() call
         return Authenticator.NEEDS_WRITE;

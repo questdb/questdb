@@ -31,5 +31,5 @@ public interface IOContextFactory<C extends IOContext<C>> {
         Misc.free(context);
     }
 
-    C newInstance(int fd, IODispatcher<C> dispatcher);
+    C newInstance(Socket socket, IODispatcher<C> dispatcher);
 }

@@ -332,7 +332,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         typesAndSelectIsCached = false;
         typesAndUpdateIsCached = false;
         clear();
-        this.fd = -1;
         sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
@@ -442,24 +441,25 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public PGConnectionContext of(int fd, IODispatcher<PGConnectionContext> dispatcher) {
-        PGConnectionContext r = super.of(fd, dispatcher);
+    public PGConnectionContext of(Socket socket, IODispatcher<PGConnectionContext> dispatcher) {
+        PGConnectionContext r = super.of(socket, dispatcher);
+        final int fd = socket != null ? socket.getFd() : -1;
         sqlExecutionContext.with(fd);
-        if (fd == -1) {
+        if (socket == null) {
             // The context is about to be returned to the pool, so we should release the memory.
             freeBuffers();
-            authenticator.init(-1, 0, 0, 0, 0);
+            authenticator.init(null, 0, 0, 0, 0);
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
-                this.recvBuffer = Unsafe.malloc(this.recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+                this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
             }
             if (sendBuffer == 0) {
-                this.sendBuffer = Unsafe.malloc(this.sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+                this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
                 this.sendBufferPtr = sendBuffer;
                 this.sendBufferLimit = sendBuffer + sendBufferSize;
             }
-            authenticator.init(fd, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
+            authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
         }
         return r;
     }
@@ -1192,7 +1192,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
             if (typesAndSelect != null) {
                 logQuery(doLog);
-                LOG.info().$("query cache used [fd=").$(fd).I$();
+                LOG.info().$("query cache used [fd=").$(getFd()).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
                 typesAndSelect.defineBindVariables(bindVariableService);
@@ -1277,11 +1277,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int remaining = bufferSize;
 
         while (remaining > 0) {
-            int m = nf.send(
-                    getFd(),
-                    sendBuffer + offset,
-                    remaining
-            );
+            int m = socket.send(sendBuffer + offset, remaining);
             if (m < 0) {
                 LOG.info().$("disconnected on write [code=").$(m).$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
@@ -1580,7 +1576,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         CharSequence principal = authenticator.getPrincipal();
         SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
-        sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker);
+        sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
         sendRNQ = true;
 
         // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it
@@ -1591,7 +1587,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void logQuery(boolean doLog) {
         if (doLog) {
-            LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(queryText).I$();
+            LOG.info().$("parse [fd=").$(getFd()).$(", q=").utf8(queryText).I$();
         }
     }
 
@@ -2656,13 +2652,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     int doReceive(int remaining) {
         final long data = recvBuffer + recvBufferWriteOffset;
-        final int n = nf.recv(getFd(), data, remaining);
+        final int n = socket.recv(data, remaining);
         dumpBuffer('>', data, n);
         return n;
     }
 
     void doSend(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final int n = nf.send(getFd(), sendBuffer + offset, size);
+        final int n = socket.send(sendBuffer + offset, size);
         dumpBuffer('<', sendBuffer + offset, n);
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;

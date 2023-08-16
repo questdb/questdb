@@ -74,10 +74,11 @@ public class IODispatcherHeartbeatTest {
                             return heartbeatInterval;
                         }
                     },
-                    (fd, d) -> {
+                    (s, d) -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
-                    }
+                        return new TestContext(s, d, heartbeatInterval);
+                    },
+                    PlainSocketFactory.INSTANCE
             )) {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
                 Rnd rnd = new Rnd();
@@ -153,10 +154,11 @@ public class IODispatcherHeartbeatTest {
                             return heartbeatToIdleRatio * heartbeatInterval;
                         }
                     },
-                    (fd, d) -> {
+                    (s, d) -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
-                    }
+                        return new TestContext(s, d, heartbeatInterval);
+                    },
+                    PlainSocketFactory.INSTANCE
             )) {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
@@ -227,10 +229,11 @@ public class IODispatcherHeartbeatTest {
             };
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
-                    (fd, d) -> {
+                    (s, d) -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
-                    }
+                        return new TestContext(s, d, heartbeatInterval);
+                    },
+                    PlainSocketFactory.INSTANCE
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 suspendEvent.setDeadline(suspendEventDeadline);
@@ -297,10 +300,11 @@ public class IODispatcherHeartbeatTest {
             };
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
-                    (fd, d) -> {
+                    (s, d) -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
-                    }
+                        return new TestContext(s, d, heartbeatInterval);
+                    },
+                    PlainSocketFactory.INSTANCE
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
@@ -378,10 +382,11 @@ public class IODispatcherHeartbeatTest {
             };
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
-                    (fd, d) -> {
+                    (s, d) -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
-                    }
+                        return new TestContext(s, d, heartbeatInterval);
+                    },
+                    PlainSocketFactory.INSTANCE
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
@@ -471,8 +476,9 @@ public class IODispatcherHeartbeatTest {
         long previousReadTs;
         SuspendEvent suspendEvent;
 
-        public TestContext(int fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
-            this.fd = fd;
+        public TestContext(Socket socket, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
+            this.socket = socket;
+            this.fd = socket.getFd();
             this.dispatcher = dispatcher;
             this.heartbeatInterval = heartbeatInterval;
         }
