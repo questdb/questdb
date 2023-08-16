@@ -211,6 +211,7 @@ public class TableTransactionLog implements Closeable {
             txnMem.jumpTo(0L);
             txnMem.putInt(WAL_FORMAT_VERSION);
             txnMem.putLong(0L);
+            assert tableCreateTimestamp != Long.MIN_VALUE;
             txnMem.putLong(tableCreateTimestamp);
             txnMem.jumpTo(HEADER_SIZE);
 
