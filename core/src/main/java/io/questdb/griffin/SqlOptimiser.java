@@ -4117,6 +4117,15 @@ public class SqlOptimiser implements Mutable {
                             useOuterModel = true;
                         }
                     } else {
+                        //translatingModel is populated in createSelectColumn (alongside groupByModel, outerVirtualModel, innerVirtualModel and analyticModel)
+                        //In theory, any of the above models could be used to achieve the same outcome, but translatingModel is the most intuitive
+                        //model, distinctModel, cursorModel and baseModel are populated with different values and could not substitute translatingModel without creating a bug
+                        //The below if-statement will only evaluate to true when using wildcards in a join with duplicate column names
+                        //Because the other column aliases are not known at the time qc's alias gets set, we must wait until this point (when we know the other column aliases) to alter it if a duplicate has occurred
+                        if(translatingModel.getAliasToColumnMap().contains(qc.getAlias())) {
+                            CharSequence newAlias = createColumnAlias(qc.getAst(), translatingModel);
+                            qc.setAlias(newAlias);
+                        }
                         createSelectColumn(
                                 qc.getAlias(),
                                 qc.getAst(),

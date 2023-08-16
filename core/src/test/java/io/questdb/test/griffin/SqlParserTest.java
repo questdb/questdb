@@ -7077,29 +7077,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectContainsDuplicateColumnAliases() throws Exception {
-        assertSyntaxError(
-                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;",
-                28,
-                "Duplicate column [name=ts1]",
-                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
-                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
+        ddl(
+                "CREATE TABLE t1 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY"
         );
+        ddl(
+                "CREATE TABLE t2 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY"
+        );
+        insert("INSERT INTO t1(ts, x) VALUES (1, 1)");
+        insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
+        engine.releaseInactive();
 
-        assertSyntaxError(
-                "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;",
-                10,
-                "Duplicate column [name=TS1]",
-                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
-                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
-        );
-
-        assertSyntaxError(
-                "select t1.*, t2.ts from t1 asof join (select * from t2) t2;",
-                13,
-                "Duplicate column [name=ts]",
-                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
-                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
-        );
+        assertSql("TS\tts1\tx\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n","select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+        assertSql("ts\tx\tts1\tx1\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z\n","select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;");
+        assertSql("ts\tx\tts1\n" +
+                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n","select t1.*, t2.ts from t1 asof join (select * from t2) t2;");
 
         assertSyntaxError(
                 "SELECT " +
