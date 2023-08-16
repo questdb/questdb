@@ -68,129 +68,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDottedConstAlias() throws Exception {
-        assertSql("column1\tdjnfkvbjke\n" +
-                ".f.e.j.hve\tdjnfkvbjke\n", "select '.f.e.j.hve', 'djnfkvbjke'");
-    }
-
-    @Test
-    public void testDottedConstAlias2() throws Exception {
-        assertSql("column1\tdjnfkvbjke\tcolumn2\tcolumn3\tcolumn4\n" +
-                ".f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4\n", "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4");
-    }
-
-    @Test
-    public void testDottedConstAlias3() throws Exception {
-        assertSql("column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4\n" +
-                ".f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4\n", "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4");
-    }
-
-    @Test
-    public void testDottedConstAlias4() throws Exception {
-        assertSql("x\tx1\n" +
-                "1\t1\n" +
-                "1\t2\n" +
-                "1\t3\n" +
-                "1\t4\n" +
-                "1\t5\n" +
-                "1\t6\n" +
-                "1\t7\n" +
-                "1\t8\n" +
-                "1\t9\n" +
-                "1\t10\n" +
-                "2\t1\n" +
-                "2\t2\n" +
-                "2\t3\n" +
-                "2\t4\n" +
-                "2\t5\n" +
-                "2\t6\n" +
-                "2\t7\n" +
-                "2\t8\n" +
-                "2\t9\n" +
-                "2\t10\n" +
-                "3\t1\n" +
-                "3\t2\n" +
-                "3\t3\n" +
-                "3\t4\n" +
-                "3\t5\n" +
-                "3\t6\n" +
-                "3\t7\n" +
-                "3\t8\n" +
-                "3\t9\n" +
-                "3\t10\n" +
-                "4\t1\n" +
-                "4\t2\n" +
-                "4\t3\n" +
-                "4\t4\n" +
-                "4\t5\n" +
-                "4\t6\n" +
-                "4\t7\n" +
-                "4\t8\n" +
-                "4\t9\n" +
-                "4\t10\n" +
-                "5\t1\n" +
-                "5\t2\n" +
-                "5\t3\n" +
-                "5\t4\n" +
-                "5\t5\n" +
-                "5\t6\n" +
-                "5\t7\n" +
-                "5\t8\n" +
-                "5\t9\n" +
-                "5\t10\n" +
-                "6\t1\n" +
-                "6\t2\n" +
-                "6\t3\n" +
-                "6\t4\n" +
-                "6\t5\n" +
-                "6\t6\n" +
-                "6\t7\n" +
-                "6\t8\n" +
-                "6\t9\n" +
-                "6\t10\n" +
-                "7\t1\n" +
-                "7\t2\n" +
-                "7\t3\n" +
-                "7\t4\n" +
-                "7\t5\n" +
-                "7\t6\n" +
-                "7\t7\n" +
-                "7\t8\n" +
-                "7\t9\n" +
-                "7\t10\n" +
-                "8\t1\n" +
-                "8\t2\n" +
-                "8\t3\n" +
-                "8\t4\n" +
-                "8\t5\n" +
-                "8\t6\n" +
-                "8\t7\n" +
-                "8\t8\n" +
-                "8\t9\n" +
-                "8\t10\n" +
-                "9\t1\n" +
-                "9\t2\n" +
-                "9\t3\n" +
-                "9\t4\n" +
-                "9\t5\n" +
-                "9\t6\n" +
-                "9\t7\n" +
-                "9\t8\n" +
-                "9\t9\n" +
-                "9\t10\n" +
-                "10\t1\n" +
-                "10\t2\n" +
-                "10\t3\n" +
-                "10\t4\n" +
-                "10\t5\n" +
-                "10\t6\n" +
-                "10\t7\n" +
-                "10\t8\n" +
-                "10\t9\n" +
-                "10\t10\n", "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b");
-    }
-
-    @Test
     public void testAliasInExplicitGroupByFormula() throws SqlException {
         // table alias in group-by formula should be replaced to align with "choose" model
         assertQuery(
@@ -2774,6 +2651,129 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "'when' expected",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testDottedConstAlias() throws Exception {
+        assertSql("column1\tdjnfkvbjke\n" +
+                ".f.e.j.hve\tdjnfkvbjke\n", "select '.f.e.j.hve', 'djnfkvbjke'");
+    }
+
+    @Test
+    public void testDottedConstAlias2() throws Exception {
+        assertSql("column1\tdjnfkvbjke\tcolumn2\tcolumn3\tcolumn4\n" +
+                ".f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4\n", "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4");
+    }
+
+    @Test
+    public void testDottedConstAlias3() throws Exception {
+        assertSql("column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4\n" +
+                ".f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4\n", "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4");
+    }
+
+    @Test
+    public void testDottedConstAlias4() throws Exception {
+        assertSql("x\tx1\n" +
+                "1\t1\n" +
+                "1\t2\n" +
+                "1\t3\n" +
+                "1\t4\n" +
+                "1\t5\n" +
+                "1\t6\n" +
+                "1\t7\n" +
+                "1\t8\n" +
+                "1\t9\n" +
+                "1\t10\n" +
+                "2\t1\n" +
+                "2\t2\n" +
+                "2\t3\n" +
+                "2\t4\n" +
+                "2\t5\n" +
+                "2\t6\n" +
+                "2\t7\n" +
+                "2\t8\n" +
+                "2\t9\n" +
+                "2\t10\n" +
+                "3\t1\n" +
+                "3\t2\n" +
+                "3\t3\n" +
+                "3\t4\n" +
+                "3\t5\n" +
+                "3\t6\n" +
+                "3\t7\n" +
+                "3\t8\n" +
+                "3\t9\n" +
+                "3\t10\n" +
+                "4\t1\n" +
+                "4\t2\n" +
+                "4\t3\n" +
+                "4\t4\n" +
+                "4\t5\n" +
+                "4\t6\n" +
+                "4\t7\n" +
+                "4\t8\n" +
+                "4\t9\n" +
+                "4\t10\n" +
+                "5\t1\n" +
+                "5\t2\n" +
+                "5\t3\n" +
+                "5\t4\n" +
+                "5\t5\n" +
+                "5\t6\n" +
+                "5\t7\n" +
+                "5\t8\n" +
+                "5\t9\n" +
+                "5\t10\n" +
+                "6\t1\n" +
+                "6\t2\n" +
+                "6\t3\n" +
+                "6\t4\n" +
+                "6\t5\n" +
+                "6\t6\n" +
+                "6\t7\n" +
+                "6\t8\n" +
+                "6\t9\n" +
+                "6\t10\n" +
+                "7\t1\n" +
+                "7\t2\n" +
+                "7\t3\n" +
+                "7\t4\n" +
+                "7\t5\n" +
+                "7\t6\n" +
+                "7\t7\n" +
+                "7\t8\n" +
+                "7\t9\n" +
+                "7\t10\n" +
+                "8\t1\n" +
+                "8\t2\n" +
+                "8\t3\n" +
+                "8\t4\n" +
+                "8\t5\n" +
+                "8\t6\n" +
+                "8\t7\n" +
+                "8\t8\n" +
+                "8\t9\n" +
+                "8\t10\n" +
+                "9\t1\n" +
+                "9\t2\n" +
+                "9\t3\n" +
+                "9\t4\n" +
+                "9\t5\n" +
+                "9\t6\n" +
+                "9\t7\n" +
+                "9\t8\n" +
+                "9\t9\n" +
+                "9\t10\n" +
+                "10\t1\n" +
+                "10\t2\n" +
+                "10\t3\n" +
+                "10\t4\n" +
+                "10\t5\n" +
+                "10\t6\n" +
+                "10\t7\n" +
+                "10\t8\n" +
+                "10\t9\n" +
+                "10\t10\n", "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b");
     }
 
     @Test
@@ -7094,11 +7094,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
         engine.releaseInactive();
 
         assertSql("TS\tts1\tx\tts2\n" +
-                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n","select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
         assertSql("ts\tx\tts1\tx1\tts2\n" +
-                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z\n","select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;");
+                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z\n", "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;");
         assertSql("ts\tx\tts1\n" +
-                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n","select t1.*, t2.ts from t1 asof join (select * from t2) t2;");
+                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t1.*, t2.ts from t1 asof join (select * from t2) t2;");
 
         assertSyntaxError(
                 "SELECT " +

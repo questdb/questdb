@@ -626,6 +626,7 @@ public class SqlUtil {
     ) {
         return createColumnAlias(store, base, indexOfDot, aliasToColumnMap, false);
     }
+
     static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,
