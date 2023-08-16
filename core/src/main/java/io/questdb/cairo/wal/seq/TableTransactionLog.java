@@ -26,11 +26,11 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -176,14 +176,27 @@ public class TableTransactionLog implements Closeable {
             tlTransactionLogCursor.set(cursor);
             return cursor;
         }
-        return cursor.of(ff, txnLo, path);
+        try {
+            return cursor.of(ff, txnLo, path);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     @NotNull
-    TableMetadataChangeLog getTableMetadataChangeLog(TableToken tableToken, long structureVersionLo, MemorySerializer serializer) {
+    TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer) {
         final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
-        cursor.of(ff, tableToken, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
+        cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
         return cursor;
+    }
+
+    boolean isDropped() {
+        long lastTxn = maxTxn.get();
+        if (lastTxn > 0) {
+            return WalUtils.DROP_TABLE_WALID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
+        }
+        return false;
     }
 
     long lastTxn() {
@@ -243,7 +256,6 @@ public class TableTransactionLog implements Closeable {
         private final MemoryFCRImpl txnMetaMem = new MemoryFCRImpl();
         private FilesFacade ff;
         private MemorySerializer serializer;
-        private TableToken tableToken;
         private long txnMetaAddress;
         private long txnMetaOffset;
         private long txnMetaOffsetHi;
@@ -256,11 +268,6 @@ public class TableTransactionLog implements Closeable {
             }
             txnMetaOffset = 0;
             txnMetaOffsetHi = 0;
-        }
-
-        @Override
-        public TableToken getTableToken() {
-            return tableToken;
         }
 
         @Override
@@ -282,13 +289,10 @@ public class TableTransactionLog implements Closeable {
 
         public void of(
                 FilesFacade ff,
-                TableToken tableToken,
                 long structureVersionLo,
                 MemorySerializer serializer,
                 @Transient final Path path
         ) {
-            this.tableToken = tableToken;
-
             // deallocates current state
             close();
 
@@ -349,18 +353,29 @@ public class TableTransactionLog implements Closeable {
         private int fd;
         private FilesFacade ff;
         private long txn;
-        private long txnCount;
+        private long txnCount = -1;
         private long txnLo;
         private long txnOffset;
 
         public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
-            of(ff, txnLo, path);
+            try {
+                of(ff, txnLo, path);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
         public void close() {
-            ff.close(fd);
-            ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
+            if (fd > 0) {
+                ff.close(fd);
+            }
+            if (txnCount > -1 && address > 0) {
+                ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
+                txnCount = 0;
+                address = 0;
+            }
         }
 
         @Override
@@ -451,10 +466,13 @@ public class TableTransactionLog implements Closeable {
         private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
             this.ff = ff;
             this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
-            this.txnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
-            if (txnCount > -1L) {
+            long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > -1L) {
+                this.txnCount = newTxnCount;
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
+            } else {
+                throw CairoException.critical(ff.errno()).put("cannot read sequencer transactions [path=").put(path).put(']');
             }
             this.txnLo = txnLo;
             txn = txnLo;

@@ -128,17 +128,8 @@ public class WalListenerTest extends AbstractCairoTest {
                     drainWalQueue();
                     releaseInactive(engine);
 
-                    Assert.assertEquals(
-                            new WalListenerEvent(
-                                    WalListenerEventType.SEGMENT_CLOSED,
-                                    tableToken2.get(),
-                                    -1,
-                                    2,
-                                    0,
-                                    -1,
-                                    null
-                            ),
-                            listener.events.remove()
+                    // Empty segment does not generate close event
+                    Assert.assertEquals(0, listener.events.size()
                     );
                 }
             }
@@ -177,18 +168,8 @@ public class WalListenerTest extends AbstractCairoTest {
 
             releaseInactive(engine);
 
-            Assert.assertEquals(
-                    new WalListenerEvent(
-                            WalListenerEventType.SEGMENT_CLOSED,
-                            tableToken2.get(),
-                            -1,
-                            3,
-                            0,
-                            -1,
-                            null
-                    ),
-                    listener.events.remove()
-            );
+            // No data event, segment closed ignored
+            Assert.assertEquals(0, listener.events.size());
 
             engine.drop(Path.getThreadLocal(""), tableToken2.get());
 

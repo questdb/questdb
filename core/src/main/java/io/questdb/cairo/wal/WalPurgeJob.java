@@ -224,6 +224,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         Path path = setTablePath(tableToken);
         long p = ff.findFirst(path);
         int rootPathLen = path.length();
+        logic.sequencerHasPendingTasks(sequencerHasPendingTasks());
         if (p > 0) {
             try {
                 do {
@@ -285,8 +286,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
             try {
-                txReader.ofRO(path, PartitionBy.NONE);
-                TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                try {
+                    txReader.ofRO(path, PartitionBy.NONE);
+                    TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                } catch (CairoException ex) {
+                    if (engine.isTableDropped(tableToken)) {
+                        // This is ok, table dropped while we tried to read the txn
+                        return false;
+                    }
+                    throw ex;
+                }
                 final long lastAppliedTxn = txReader.getSeqTxn();
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
@@ -315,6 +324,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // No need to do anything, all discovered segments / wals will be deleted
     }
 
+    private boolean hasPendingFiles(Path pendingPath) {
+        final long p = ff.findFirst(pendingPath);
+        if (p > 0) {
+            try {
+                do {
+                    final int type = ff.findType(p);
+                    final long pUtf8NameZ = ff.findName(p);
+                    fileName.of(pUtf8NameZ);
+                    if ((type == Files.DT_FILE) && Chars.endsWith(fileName, WalUtils.WAL_PENDING_FS_MARKER)) {
+                        return true;
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
+            }
+        }
+        return false;
+    }
+
     private void recursiveDelete(Path path) {
         final int errno = ff.rmdir(path);
         if (errno > 0 && !CairoException.errnoRemovePathDoesNotExist(errno)) {
@@ -324,26 +352,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     /**
-     * Check if the segment directory has any outstanding ".pending" marker files in a ".pending" directory.
+     * Check if the segment directory has any outstanding ".pending" marker files in the ".pending" directory.
      */
     private boolean segmentHasPendingTasks(int walId, int segmentId) {
         final Path pendingPath = setSegmentPendingPath(tableToken, walId, segmentId);
-        final long p = ff.findFirst(pendingPath);
-        if (p > 0) {
-            try {
-                do {
-                    final int type = ff.findType(p);
-                    final long pUtf8NameZ = ff.findName(p);
-                    fileName.of(pUtf8NameZ);
-                    if ((type == Files.DT_FILE) && Chars.endsWith(fileName, ".pending")) {
-                        return true;
-                    }
-                } while (ff.findNext(p) > 0);
-            } finally {
-                ff.findClose(p);
-            }
-        }
-        return false;
+        return hasPendingFiles(pendingPath);
+    }
+
+    private boolean sequencerHasPendingTasks() {
+        path.of(configuration.getRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.WAL_PENDING_FS_MARKER);
+        return hasPendingFiles(path.$());
     }
 
     private Path setSegmentLockPath(TableToken tableName, int walId, int segmentId) {
@@ -360,7 +378,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private Path setSegmentPendingPath(TableToken tableName, int walId, int segmentId) {
         return path.of(configuration.getRoot())
-                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).concat(".pending").slash$();
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).concat(WalUtils.WAL_PENDING_FS_MARKER).slash$();
     }
 
     private Path setTablePath(TableToken tableName) {
@@ -429,6 +447,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         private final LongList discovered = new LongList();
         private final IntIntHashMap nextToApply = new IntIntHashMap();
         private final LongList nextToApplyKeys = new LongList();  // LongList rather than IntList because need .sort().
+        private boolean sequencerPending;
         private TableToken tableToken;
 
         public Logic(Deleter deleter) {
@@ -482,6 +501,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         public boolean hasPendingTasks() {
+            if (sequencerPending) {
+                return true;
+            }
             for (int i = 0; i < discovered.size(); ++i) {
                 if (decodePendingTasks(discovered.get(i))) {
                     return true;
@@ -495,6 +517,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             nextToApply.clear();
             nextToApplyKeys.clear();
             discovered.clear();
+            sequencerPending = false;
         }
 
         public void run() {
@@ -527,6 +550,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                 }
             }
+        }
+
+        public void sequencerHasPendingTasks(boolean isPending) {
+            sequencerPending = isPending;
         }
 
         public void trackDiscoveredSegment(int walId, int segmentId, boolean pendingTasks, boolean locked) {
