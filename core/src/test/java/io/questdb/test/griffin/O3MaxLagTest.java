@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -217,13 +218,18 @@ public class O3MaxLagTest extends AbstractO3Test {
                         " WITH maxUncommittedRows=1, o3MaxLag=120s", sqlExecutionContext);
 
                 try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
+                    int effectiveMaxUncommitted;
+                    try (TableMetadata tableMetadata = engine.getMetadata(engine.verifyTableName(tableName))) {
+                        effectiveMaxUncommitted = tableMetadata.getMaxUncommittedRows();
+                    }
+
                     for (int i = 0; i < length; i++) {
                         long ts = IntervalUtils.parseFloorPartialTimestamp(dates[i]);
                         Row r = writer.newRow(ts);
                         r.append();
 
                         Assert.assertEquals(i + 1, writer.size());
-                        if (writer.getMetadata().getMaxUncommittedRows() < writer.getUncommittedRowCount()) {
+                        if (effectiveMaxUncommitted < writer.getUncommittedRowCount()) {
                             writer.ic(CommitMode.NOSYNC);
                         }
                         Assert.assertEquals(i + 1, writer.size());

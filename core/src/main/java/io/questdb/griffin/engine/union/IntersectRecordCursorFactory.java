@@ -51,12 +51,13 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
             @Transient @NotNull ColumnTypes mapValueTypes
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
-        Map map = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
+        Map mapA = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
+        Map mapB = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         if (castFunctionsA == null && castFunctionsB == null) {
-            cursor = new IntersectRecordCursor(map, recordSink);
+            cursor = new IntersectRecordCursor(mapA, mapB, recordSink);
         } else {
             assert castFunctionsA != null && castFunctionsB != null;
-            cursor = new IntersectCastRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
+            cursor = new IntersectCastRecordCursor(mapA, mapB, recordSink, castFunctionsA, castFunctionsB);
         }
     }
 

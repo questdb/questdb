@@ -113,7 +113,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     default RecordCursorFactory getBaseFactory() {
-        throw new UnsupportedOperationException("Unsupported for: " + getClass());
+        return null;
     }
 
     /**
@@ -153,6 +153,15 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default int getScanDirection() {
         return SCAN_DIRECTION_FORWARD;
+    }
+
+    /**
+     * If factory operates on table directly returns table's token, null otherwise.
+     *
+     * @return table token of table used by this factory
+     */
+    default TableToken getTableToken() {
+        return null;
     }
 
     /* Returns true if this factory handles limit M , N clause already and false otherwise .

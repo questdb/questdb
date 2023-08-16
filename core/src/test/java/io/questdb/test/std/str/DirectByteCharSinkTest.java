@@ -33,7 +33,6 @@ import org.junit.Test;
 import java.nio.charset.StandardCharsets;
 
 public class DirectByteCharSinkTest {
-
     @Test
     public void testResize() {
         final String expected = "a\n" +
@@ -114,7 +113,7 @@ public class DirectByteCharSinkTest {
         for (int i = 0; i < len; i++) {
             bytes[i] = Unsafe.getUnsafe().getByte(ptr + i);
         }
-        
+
         TestUtils.assertEquals(s, new String(bytes, StandardCharsets.UTF_8));
     }
 }

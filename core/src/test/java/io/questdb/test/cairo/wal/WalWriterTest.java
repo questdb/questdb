@@ -2009,7 +2009,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     removeColumn(walWriter, "noColLikeThis");
                     assertException("Should not be able to remove non existent column");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "cannot remove column, column does not exists [table=testRemovingNonExistentColumn, column=noColLikeThis]");
+                    TestUtils.assertContains(e.getMessage(), "cannot remove column, column does not exist [table=testRemovingNonExistentColumn, column=noColLikeThis]");
                 }
                 row = walWriter.newRow(0);
                 row.putByte(0, (byte) 10);

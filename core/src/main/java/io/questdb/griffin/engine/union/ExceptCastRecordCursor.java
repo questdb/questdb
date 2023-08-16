@@ -37,15 +37,23 @@ import io.questdb.std.ObjList;
 
 class ExceptCastRecordCursor extends AbstractSetRecordCursor {
     private final UnionCastRecord castRecord;
-    private final Map map;
+    private final Map mapA;
+    private final Map mapB;
     private final RecordSink recordSink;
     private boolean isCursorBHashed;
     private boolean isOpen;
     // this is the B record of except cursor, required by sort algo
     private UnionCastRecord recordB;
 
-    public ExceptCastRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
-        this.map = map;
+    public ExceptCastRecordCursor(
+            Map mapA,
+            Map mapB,
+            RecordSink recordSink,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB
+    ) {
+        this.mapA = mapA;
+        this.mapB = mapB;
         isOpen = true;
         this.recordSink = recordSink;
         castRecord = new UnionCastRecord(castFunctionsA, castFunctionsB);
@@ -55,7 +63,8 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            map.close();
+            mapA.close();
+            mapB.close();
             super.close();
         }
     }
@@ -85,10 +94,14 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
             isCursorBHashed = true;
         }
         while (cursorA.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(castRecord, recordSink);
-            if (key.notFound()) {
-                return true;
+            MapKey keyB = mapB.withKey();
+            keyB.put(castRecord, recordSink);
+            if (keyB.notFound()) {
+                MapKey keyA = mapA.withKey();
+                keyA.put(castRecord, recordSink);
+                if (keyA.create()) {
+                    return true;
+                }
             }
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
@@ -108,13 +121,14 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
     @Override
     public void toTop() {
         cursorA.toTop();
+        mapA.clear();
     }
 
     private void hashCursorB() {
         while (cursorB.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(castRecord, recordSink);
-            key.createValue();
+            MapKey keyB = mapB.withKey();
+            keyB.put(castRecord, recordSink);
+            keyB.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
         // this is an optimisation to release TableReader in case "this"
@@ -125,8 +139,9 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         if (!isOpen) {
+            mapA.reopen();
+            mapB.reopen();
             isOpen = true;
-            map.reopen();
         }
 
         super.of(cursorA, cursorB, circuitBreaker);

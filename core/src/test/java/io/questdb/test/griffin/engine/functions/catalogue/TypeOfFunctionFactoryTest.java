@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
@@ -56,6 +57,28 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTooManyArgs() throws Exception {
         assertSyntaxError("select typeOf(1,2)");
+    }
+
+    @Test
+    public void testTypeOfAllRegularDataTypes() throws SqlException {
+        for (int i = ColumnType.BOOLEAN; i < ColumnType.MAX; i++) {
+            String name = ColumnType.nameOf(i);
+            if (Chars.equals("unknown", name)
+                    || i == ColumnType.CURSOR
+                    || i == ColumnType.VAR_ARG
+                    || i == ColumnType.RECORD
+                    || i == ColumnType.GEOHASH
+                    || i == ColumnType.LONG128
+                    || i == ColumnType.REGCLASS
+                    || i == ColumnType.REGPROCEDURE
+                    || i == ColumnType.ARRAY_STRING
+                    || i == ColumnType.PARAMETER
+            ) {
+                continue;
+            }
+
+            assertSql("typeOf\n" + ColumnType.nameOf(i) + "\n", "select typeOf(cast(null as " + name + "  ))");
+        }
     }
 
     @Test
