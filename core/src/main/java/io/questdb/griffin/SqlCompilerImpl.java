@@ -477,7 +477,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                                 tableMetadata,
                                 indexValueCapacity
                         );
-
                     } else if (SqlKeywords.isDropKeyword(tok)) {
                         // alter table <table name> alter column drop index
                         expectKeyword(lexer, "index");
@@ -498,6 +497,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                                 securityContext,
                                 tableNamePosition,
                                 tableToken,
+                                columnNamePosition,
                                 columnName,
                                 tableMetadata,
                                 true
@@ -507,6 +507,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                                 securityContext,
                                 tableNamePosition,
                                 tableToken,
+                                columnNamePosition,
                                 columnName,
                                 tableMetadata,
                                 false
@@ -801,9 +802,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             TableRecordMetadata metadata,
             int indexValueBlockSize
     ) throws SqlException {
-
-        if (metadata.getColumnIndexQuiet(columnName) == -1) {
+        final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex == -1) {
             throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+
+        final int type = metadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(type)) {
+            throw SqlException.position(columnNamePosition).put("indexes are only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
         }
 
         if (indexValueBlockSize == -1) {
@@ -825,17 +831,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             SecurityContext securityContext,
             int tableNamePosition,
             TableToken tableToken,
+            int columnNamePosition,
             CharSequence columnName,
             TableRecordMetadata metadata,
             boolean cache
     ) throws SqlException {
         int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
-            throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
         }
 
-        if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-            throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
+        final int type = metadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(type)) {
+            throw SqlException.position(columnNamePosition).put("cache is only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
         }
 
         if (cache) {
@@ -856,9 +864,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             CharSequence columnName,
             TableRecordMetadata metadata
     ) throws SqlException {
-        if (metadata.getColumnIndexQuiet(columnName) == -1) {
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex == -1) {
             throw SqlException.invalidColumn(columnNamePosition, columnName);
         }
+
+        final int type = metadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(type)) {
+            throw SqlException.position(columnNamePosition).put("indexes are only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
+        }
+
         alterOperationBuilder.ofDropIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, columnNamePosition);
         securityContext.authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
@@ -875,6 +890,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
         boolean tsIncludedInDedupColumns = false;
+
+        // ALTER TABLE abc DEDUP <ENABLE> UPSERT KEYS(a, b)
+        // ENABLE word is not mandatory to be compatible v7.3
+        // where it was omitted from the syntax
+        if (tok != null && isEnableKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+        }
 
         if (tok == null || !isUpsertKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert'");

@@ -7898,7 +7898,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            TableToken tableToken = new TableToken("tab", dirName, 1, false);
+            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false);
             CharSequence lockedReason = engine.lock(tableToken, "testing");
             Assert.assertNull(lockedReason);
             try {
@@ -8521,6 +8521,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "order by ts\n",
                 modelOf("weather").col("ts", ColumnType.TIMESTAMP).col("temperature", ColumnType.FLOAT)
         );
+    }
+
+    protected int getSystemTablesCount() {
+        return 0;
     }
 
     @FunctionalInterface

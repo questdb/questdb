@@ -45,7 +45,7 @@ public class DedupColumnCommitAddresses implements Closeable {
     private static final long NULL_VAL_256 = RESERVED3 + 8L;
     private static final int RECORD_BYTES = (int) (NULL_VAL_256 + 32L);
     // The data structure in above offsets has to match dedup_column struct in dedup.cpp
-    
+
     private PagedDirectLongList addresses;
     private int columnCount;
 
@@ -127,8 +127,10 @@ public class DedupColumnCommitAddresses implements Closeable {
             }
             int longsPerBlock = RECORD_BYTES / Long.BYTES;
             addresses.setBlockSize(dedupColumnCount * longsPerBlock);
-            this.columnCount = dedupColumnCount;
+        } else if (dedupColumnCount == 0) {
+            clear();
         }
+        this.columnCount = dedupColumnCount;
     }
 
     static {

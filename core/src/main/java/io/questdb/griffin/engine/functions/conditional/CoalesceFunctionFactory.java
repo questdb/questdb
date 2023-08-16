@@ -64,6 +64,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         for (int i = 0; i < argsSize; i++) {
             returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), argPositions.getQuick(i));
         }
+
+        for (int i = 0; i < args.size(); i++) {
+            args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+        }
+
         switch (ColumnType.tagOf(returnType)) {
             case ColumnType.DOUBLE:
                 return argsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, argsSize);
