@@ -187,9 +187,10 @@ public class PageFrameReduceJob implements Job, Closeable {
                     if (frameSequence.isActive()) {
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
-                } catch (Throwable e) {
+                } catch (Throwable th) {
+                    LOG.error().$("reduce error [ex=").$(th).I$();
+                    task.setErrorMsg(th);
                     frameSequence.cancel();
-                    throw e;
                 } finally {
                     subSeq.done(cursor);
                     // Reduce counter has to be incremented only when we make

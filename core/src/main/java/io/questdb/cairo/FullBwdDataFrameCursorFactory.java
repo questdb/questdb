@@ -33,8 +33,8 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     private FullFwdDataFrameCursor fwdCursor;
 
-    public FullBwdDataFrameCursorFactory(TableToken tableToken, int tableId, long tableVersion, GenericRecordMetadata metadata) {
-        super(tableToken, tableVersion, metadata);
+    public FullBwdDataFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
+        super(tableToken, metadataVersion, metadata);
     }
 
     @Override

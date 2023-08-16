@@ -22,10 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.sql;
 
-import java.io.Closeable;
+public interface TableMetadata extends TableRecordMetadata {
+    int getMaxUncommittedRows();
 
-public interface CommitListener extends Closeable {
-    void onCommit(long txn, long rowsAdded);
+    long getO3MaxLag();
+
+    int getPartitionBy();
 }

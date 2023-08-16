@@ -171,6 +171,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtCharFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory,
@@ -776,6 +777,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.IntPlusIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.math.IPv4MinusIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.IPv4MinusIPv4FunctionFactory,
+
+            // ipv4 functions
+            io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory,
 
             io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory,

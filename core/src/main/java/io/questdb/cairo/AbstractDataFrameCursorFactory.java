@@ -33,11 +33,11 @@ import io.questdb.std.str.CharSink;
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
     private final GenericRecordMetadata metadata;
     private final TableToken tableToken;
-    private final long tableVersion;
+    private final long metadataVersion;
 
-    public AbstractDataFrameCursorFactory(TableToken tableToken, long tableVersion, GenericRecordMetadata metadata) {
+    public AbstractDataFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
         this.tableToken = tableToken;
-        this.tableVersion = tableVersion;
+        this.metadataVersion = metadataVersion;
         this.metadata = metadata;
     }
 
@@ -67,7 +67,12 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     protected TableReader getReader(SqlExecutionContext executionContext) {
         return executionContext.getReader(
                 tableToken,
-                tableVersion
+                metadataVersion
         );
+    }
+
+    @Override
+    public TableToken getTableToken() {
+        return tableToken;
     }
 }

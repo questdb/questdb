@@ -29,7 +29,10 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -41,6 +44,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -639,206 +643,206 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceIndexedWithIndexedByByNone() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
+        testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByByNoneR() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
+        testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByByNoneRTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByByNoneTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByByYear() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
+        testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByByYearR() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
+        testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByByYearRTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByByYearTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     //
 
     @Test
     public void testReplaceIndexedWithIndexedByDay() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
+        testReplaceIndexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByDayR() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+        testReplaceIndexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByDayRTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByDayTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByMonth() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
+        testReplaceIndexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByMonthR() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+        testReplaceIndexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByMonthRTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByMonthTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByWeek() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+        testReplaceIndexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByWeekR() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
+        testReplaceIndexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByWeekRTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithIndexedByWeekTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByByDay() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
+        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByByDayR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByByNone() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
+        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByByNoneR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
+        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByByYear() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
+        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     ///
 
     @Test
     public void testReplaceIndexedWithUnindexedByByYearR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
+        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByMonth() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
+        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByMonthR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByWeek() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
     public void testReplaceIndexedWithUnindexedByWeekR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
+        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByDay() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
+        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByDayR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByMonth() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
+        testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByMonthR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+        testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByNone() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
+        testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByNoneR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
+        testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByWeek() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+        testReplaceUnindexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByWeekR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
+        testReplaceUnindexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByYear() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
+        testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     @Test
     public void testReplaceUnindexedWithIndexedByYearR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
+        testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     @Test
@@ -1187,7 +1191,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -1300,7 +1304,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -1444,7 +1448,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -1631,7 +1635,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
 
@@ -1971,7 +1975,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private void testReplaceIndexedColWithIndexed(int partitionBy, long increment, int expectedPartitionMin, boolean testRestricted) throws Exception {
+    private void testReplaceIndexedColWithIndexed(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;
@@ -2045,7 +2049,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private void testReplaceIndexedColWithIndexedWithTruncate(int partitionBy, long increment, int expectedPartitionMin, boolean testRestricted) throws Exception {
+    private void testReplaceIndexedColWithIndexedWithTruncate(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;
@@ -2142,7 +2146,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private void testReplaceIndexedColWithUnindexed(int partitionBy, long increment, int expectedPartitionMin, boolean testRestricted) throws Exception {
+    private void testReplaceIndexedColWithUnindexed(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;
@@ -2216,7 +2220,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private void testReplaceUnindexedColWithIndexed(int partitionBy, long increment, int expectedPartitionMin, boolean testRestricted) throws Exception {
+    private void testReplaceUnindexedColWithIndexed(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;
@@ -2520,12 +2524,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     final static class MyWorkScheduler extends MessageBusImpl {
-        private final Sequence pubSeq;
+        private final MPSequence pubSeq;
         private final RingQueue<ColumnIndexerTask> queue = new RingQueue<>(ColumnIndexerTask::new, 1024);
-        private final Sequence subSeq;
+        private final MCSequence subSeq;
 
-        public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
-
+        public MyWorkScheduler(MPSequence pubSequence, MCSequence subSequence) {
             super(configuration);
 
             this.pubSeq = pubSequence;
@@ -2540,7 +2543,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public Sequence getIndexerPubSequence() {
+        public MPSequence getIndexerPubSequence() {
             return pubSeq;
         }
 
@@ -2550,7 +2553,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public Sequence getIndexerSubSequence() {
+        public MCSequence getIndexerSubSequence() {
             return subSeq;
         }
     }

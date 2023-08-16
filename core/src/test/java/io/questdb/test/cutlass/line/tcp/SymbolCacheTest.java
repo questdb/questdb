@@ -776,11 +776,11 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
 
         @Override
-        public void addColumn(@NotNull CharSequence columnName, int columnType) {
+        public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         }
 
         @Override
-        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isDedupKey) {
+        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
         }
 
         @Override

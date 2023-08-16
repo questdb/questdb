@@ -309,11 +309,23 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // ExceptCastRecordCursor
         addTestCase("(select s sym from x) except (select sym from y)", true);
 
+        // ExceptAllRecordCursor
+        addTestCase("x except all y", true);
+
+        // ExceptAllCastRecordCursor
+        addTestCase("(select s sym from x) except all (select sym from y)", true);
+
         // IntersectRecordCursor
         addTestCase("x intersect y");
 
         // IntersectCastRecordCursor
         addTestCase("(select s sym from x) intersect (select sym from y)");
+
+        // IntersectAllRecordCursor
+        addTestCase("x intersect all y");
+
+        // IntersectAllCastRecordCursor
+        addTestCase("(select s sym from x) intersect all (select sym from y)");
     }
 
     @Test

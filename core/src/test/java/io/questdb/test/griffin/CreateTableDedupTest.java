@@ -348,6 +348,50 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEnableDedup() throws Exception {
+        String tableName = testName.getMethodName();
+        ddl(
+                "create table " + tableName +
+                        " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                        " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
+        );
+        assertSql(
+                "name\tdedup\n" +
+                        "testEnableDedup\ttrue\n",
+                "select name, dedup from tables() where name ='" + tableName + "'"
+        );
+        assertSql(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                        "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                        "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n",
+                "show columns from '" + tableName + "'"
+        );
+        compile("alter table " + tableName + " dedup disable");
+        drainWalQueue();
+        assertSql(
+                "name\tdedup\n" +
+                        "testEnableDedup\tfalse\n",
+                "select name, dedup from tables() where name ='" + tableName + "'"
+        );
+
+        compile("alter table " + tableName + " dedup enable upsert keys(ts)");
+        drainWalQueue();
+        assertSql(
+                "name\tdedup\n" +
+                        "testEnableDedup\ttrue\n",
+                "select name, dedup from tables() where name ='" + tableName + "'"
+        );
+        assertSql(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
+                        "x\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
+                        "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n",
+                "show columns from '" + tableName + "'"
+        );
+    }
+
+    @Test
     public void testEnableDedupDroppedColumnColumnConcurrently() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameStr = testName.getMethodName();

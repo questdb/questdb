@@ -30,6 +30,7 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.*;
@@ -80,7 +81,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
     private static final ModelOperator RESTORE_WHERE_CLAUSE = QueryModel::restoreWhereClause;
+    private static final SetRecordCursorFactoryConstructor SET_EXCEPT_ALL_CONSTRUCTOR = ExceptAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
+    private static final SetRecordCursorFactoryConstructor SET_INTERSECT_ALL_CONSTRUCTOR = IntersectAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
@@ -114,8 +117,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final LongList prefixes = new LongList();
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
-    private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
-
+    private final PageFrameReduceTaskFactory reduceTaskFactory;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
@@ -143,16 +145,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.functionParser = functionParser;
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
-        this.jitIRMem = Vm.getCARWInstance(configuration.getSqlJitIRMemoryPageSize(),
-                configuration.getSqlJitIRMemoryMaxPages(), MemoryTag.NATIVE_SQL_COMPILER);
+        this.jitIRMem = Vm.getCARWInstance(
+                configuration.getSqlJitIRMemoryPageSize(),
+                configuration.getSqlJitIRMemoryMaxPages(),
+                MemoryTag.NATIVE_SQL_COMPILER
+        );
         // Pre-touch JIT IR memory to avoid false positive memory leak detections.
         jitIRMem.putByte((byte) 0);
         jitIRMem.truncate();
         this.expressionNodePool = expressionNodePool;
-        this.reduceTaskPool = new WeakClosableObjectPool<>(
-                () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER),
-                configuration.getPageFrameReduceTaskPoolCapacity()
-        );
+        this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
     }
 
     @Override
@@ -165,7 +167,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @Override
     public void close() {
         Misc.free(jitIRMem);
-        Misc.free(reduceTaskPool);
     }
 
     @NotNull
@@ -196,7 +197,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    public RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursorFactory generate(@Transient QueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         return generateQuery(model, executionContext, true);
     }
 
@@ -205,7 +206,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
-    public RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel innerModel = model.getInnerExecutionModel();
         QueryModel queryModel = innerModel.getQueryModel();
         RecordCursorFactory factory;
@@ -262,42 +263,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
-                                                             RecordMetadata metadata,
-                                                             RecordCursorFactory masterFactory,
-                                                             RecordCursorFactory slaveFactory,
-                                                             @Transient ColumnTypes mapKeyTypes,
-                                                             @Transient ColumnTypes mapValueTypes,
-                                                             @Transient ColumnTypes slaveColumnTypes,
-                                                             RecordSink masterKeySink,
-                                                             RecordSink slaveKeySink,
-                                                             int columnSplit,
-                                                             RecordValueSink slaveValueSink,
-                                                             IntList columnIndex,
-                                                             JoinContext joinContext,
-                                                             ColumnFilter masterTableKeyColumns) {
+    private static RecordCursorFactory createFullFatAsOfJoin(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory masterFactory,
+            RecordCursorFactory slaveFactory,
+            @Transient ColumnTypes mapKeyTypes,
+            @Transient ColumnTypes mapValueTypes,
+            @Transient ColumnTypes slaveColumnTypes,
+            RecordSink masterKeySink,
+            RecordSink slaveKeySink,
+            int columnSplit,
+            RecordValueSink slaveValueSink,
+            IntList columnIndex,
+            JoinContext joinContext,
+            ColumnFilter masterTableKeyColumns
+    ) {
         return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
                 mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex,
-                joinContext, masterTableKeyColumns);
+                joinContext, masterTableKeyColumns
+        );
     }
 
-    private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
-                                                           RecordMetadata metadata,
-                                                           RecordCursorFactory masterFactory,
-                                                           RecordCursorFactory slaveFactory,
-                                                           @Transient ColumnTypes mapKeyTypes,
-                                                           @Transient ColumnTypes mapValueTypes,
-                                                           @Transient ColumnTypes slaveColumnTypes,
-                                                           RecordSink masterKeySink,
-                                                           RecordSink slaveKeySink,
-                                                           int columnSplit,
-                                                           RecordValueSink slaveValueSink,
-                                                           IntList columnIndex,
-                                                           JoinContext joinContext,
-                                                           ColumnFilter masterTableKeyColumns) {
+    private static RecordCursorFactory createFullFatLtJoin(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory masterFactory,
+            RecordCursorFactory slaveFactory,
+            @Transient ColumnTypes mapKeyTypes,
+            @Transient ColumnTypes mapValueTypes,
+            @Transient ColumnTypes slaveColumnTypes,
+            RecordSink masterKeySink,
+            RecordSink slaveKeySink,
+            int columnSplit,
+            RecordValueSink slaveValueSink,
+            IntList columnIndex,
+            JoinContext joinContext,
+            ColumnFilter masterTableKeyColumns
+    ) {
         return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
                 mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink,
-                columnIndex, joinContext, masterTableKeyColumns);
+                columnIndex, joinContext, masterTableKeyColumns
+        );
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
@@ -1380,7 +1387,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
         final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportPageFrameCursor()) {
-
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
             final boolean canCompile = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
@@ -1410,6 +1416,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory,
                             bindVarFunctions,
                             filter,
+                            reduceTaskFactory,
                             compileWorkerFilterConditionally(
                                     !filter.isReadThreadSafe(),
                                     executionContext.getSharedWorkerCount(),
@@ -1418,7 +1425,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext
                             ),
                             jitFilter,
-                            reduceTaskPool,
                             limitLoFunction,
                             limitLoPos,
                             preTouchColumns,
@@ -1451,7 +1457,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext.getMessageBus(),
                     factory,
                     filter,
-                    reduceTaskPool,
+                    reduceTaskFactory,
                     compileWorkerFilterConditionally(
                             !filter.isReadThreadSafe(),
                             executionContext.getSharedWorkerCount(),
@@ -1481,6 +1487,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // when function is null we have to recompile it from scratch, including creating new factory
             return TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
         }
+    }
+
+    private RecordCursorFactory generateIntersectOrExceptAllFactory(
+            QueryModel model,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory factoryA,
+            RecordCursorFactory factoryB,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB,
+            RecordMetadata unionMetadata,
+            SetRecordCursorFactoryConstructor constructor
+    ) throws SqlException {
+        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
+        final RecordSink recordSink = RecordSinkFactory.getInstance(
+                asm,
+                unionMetadata,
+                entityColumnFilter,
+                true
+        );
+        valueTypes.clear();
+        // Remap symbol columns to string type since that's how recordSink copies them.
+        keyTypes.clear();
+        for (int i = 0, n = unionMetadata.getColumnCount(); i < n; i++) {
+            final int columnType = unionMetadata.getColumnType(i);
+            if (ColumnType.isSymbol(columnType)) {
+                keyTypes.add(ColumnType.STRING);
+            } else {
+                keyTypes.add(columnType);
+            }
+        }
+        RecordCursorFactory unionAllFactory = constructor.create(
+                configuration,
+                unionMetadata,
+                factoryA,
+                factoryB,
+                castFunctionsA,
+                castFunctionsB,
+                recordSink,
+                keyTypes,
+                valueTypes
+        );
+
+        if (model.getUnionModel().getUnionModel() != null) {
+            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext);
+        }
+        return unionAllFactory;
     }
 
     private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1751,7 +1803,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getMessageBus(),
                                 master,
                                 filter,
-                                reduceTaskPool,
+                                reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         !filter.isReadThreadSafe(),
                                         executionContext.getSharedWorkerCount(),
@@ -1864,7 +1916,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             TableToken tableToken,
             IntrinsicModel intrinsicModel,
             Function filter,
-            SqlExecutionContext executionContext,
+            @Transient SqlExecutionContext executionContext,
             int timestampIndex,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizes,
@@ -1874,8 +1926,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (intrinsicModel.hasIntervalFilters()) {
             dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(
                     tableToken,
-                    model.getTableId(),
-                    model.getTableVersion(),
+                    model.getMetadataVersion(),
                     intrinsicModel.buildIntervalModel(),
                     timestampIndex,
                     GenericRecordMetadata.deepCopyOf(reader.getMetadata())
@@ -1883,8 +1934,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(
                     tableToken,
-                    model.getTableId(),
-                    model.getTableVersion(),
+                    model.getMetadataVersion(),
                     GenericRecordMetadata.deepCopyOf(reader.getMetadata())
             );
         }
@@ -3047,7 +3097,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
             int dot = Chars.indexOf(colMetadata.getName(), '.');
-            if (dot > -1) {//remove inner table alias 
+            if (dot > -1) {//remove inner table alias
                 selectMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(colMetadata.getName(), dot + 1, colMetadata.getName().length()),
@@ -3068,7 +3118,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
     }
 
-    private RecordCursorFactory generateSelectCursor(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateSelectCursor(
+            @Transient QueryModel model,
+            @Transient SqlExecutionContext executionContext) throws SqlException {
         // sql parser ensures this type of model always has only one column
         return new RecordAsAFieldRecordCursorFactory(
                 generate(model.getNestedModel(), executionContext),
@@ -3091,7 +3143,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && (tableNameEn = twoDeepNested.getTableNameExpr()) != null
                         && tableNameEn.type == ExpressionNode.LITERAL
                         && twoDeepNested.getWhereClause() == null
-                        && twoDeepNested.getJoinModels().size() == 1//no joins 
+                        && twoDeepNested.getJoinModels().size() == 1//no joins
         ) {
             CharSequence tableName = tableNameEn.token;
             TableToken tableToken = executionContext.getTableToken(tableName);
@@ -3285,7 +3337,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext.getSharedWorkerCount()
                     );
                     tempVaf.add(vaf);
-                    meta.add(indexInThis,
+                    meta.add(
+                            indexInThis,
                             new TableColumnMetadata(
                                     Chars.toString(columns.getQuick(indexInThis).getName()),
                                     vaf.getType(),
@@ -3592,10 +3645,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             switch (model.getSetOperationType()) {
                 case SET_OPERATION_UNION: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
-                    final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -3605,16 +3658,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryB,
                             castFunctionsA,
                             castFunctionsB,
-                            setMetadata,
+                            unionMetadata,
                             SET_UNION_CONSTRUCTOR
                     );
                 }
                 case SET_OPERATION_UNION_ALL: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
-                    final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionAllFactory(
@@ -3624,15 +3677,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryB,
                             castFunctionsA,
                             castFunctionsB,
-                            setMetadata
+                            unionMetadata
                     );
                 }
                 case SET_OPERATION_EXCEPT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
-                    final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -3642,16 +3695,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryB,
                             castFunctionsA,
                             castFunctionsB,
-                            setMetadata,
+                            unionMetadata,
                             SET_EXCEPT_CONSTRUCTOR
+                    );
+                }
+                case SET_OPERATION_EXCEPT_ALL: {
+                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                    }
+
+                    return generateIntersectOrExceptAllFactory(
+                            model,
+                            executionContext,
+                            factoryA,
+                            factoryB,
+                            castFunctionsA,
+                            castFunctionsB,
+                            unionMetadata,
+                            SET_EXCEPT_ALL_CONSTRUCTOR
                     );
                 }
                 case SET_OPERATION_INTERSECT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
-                    final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -3661,8 +3733,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryB,
                             castFunctionsA,
                             castFunctionsB,
-                            setMetadata,
+                            unionMetadata,
                             SET_INTERSECT_CONSTRUCTOR
+                    );
+                }
+                case SET_OPERATION_INTERSECT_ALL: {
+                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                    }
+
+                    return generateIntersectOrExceptAllFactory(
+                            model,
+                            executionContext,
+                            factoryA,
+                            factoryB,
+                            castFunctionsA,
+                            castFunctionsB,
+                            unionMetadata,
+                            SET_INTERSECT_ALL_CONSTRUCTOR
                     );
                 }
                 default:
@@ -3702,26 +3793,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.isUpdate() && !executionContext.isWalApplication()) {
             try (
                     TableReader reader = executionContext.getReader(tableToken);
-                    TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getTableVersion())
+                    TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getMetadataVersion())
             ) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, metadata);
             }
         } else {
             try (TableReader reader = executionContext.getReader(
                     tableToken,
-                    model.getTableVersion())) {
+                    model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
         }
     }
 
     private RecordCursorFactory generateTableQuery0(
-            QueryModel model,
-            SqlExecutionContext executionContext,
+            @Transient QueryModel model,
+            @Transient SqlExecutionContext executionContext,
             ObjList<ExpressionNode> latestBy,
             boolean supportsRandomAccess,
-            TableReader reader,
-            TableRecordMetadata metadata
+            @Transient TableReader reader,
+            @Transient TableRecordMetadata metadata
     ) throws SqlException {
         // create metadata based on top-down columns that are required
 
@@ -3904,16 +3995,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
                 if (orderDescendingByDesignatedTimestampOnly) {
-                    dfcFactory = new IntervalBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex, dfcFactoryMeta);
+                    dfcFactory = new IntervalBwdDataFrameCursorFactory(
+                            tableToken,
+                            model.getMetadataVersion(),
+                            intervalModel,
+                            readerTimestampIndex,
+                            dfcFactoryMeta
+                    );
                 } else {
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex, dfcFactoryMeta);
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(
+                            tableToken,
+                            model.getMetadataVersion(),
+                            intervalModel,
+                            readerTimestampIndex,
+                            dfcFactoryMeta
+                    );
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
                 if (orderDescendingByDesignatedTimestampOnly) {
-                    dfcFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                    dfcFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
-                    dfcFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                    dfcFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 }
                 intervalHitsOnlyOnePartition = reader.getPartitionedBy() == PartitionBy.NONE;
             }
@@ -3970,8 +4073,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 boolean orderByTimestamp = false;
                 // we can use skip sorting by timestamp if we:
                 // - query index with a single value or
-                // - query index with multiple values but use table order with forward scan (heap row cursor factory doesn't support backward scan) 
-                // it doesn't matter if we hit one or more partitions 
+                // - query index with multiple values but use table order with forward scan (heap row cursor factory doesn't support backward scan)
+                // it doesn't matter if we hit one or more partitions
                 if (!orderByKeyColumn
                         && isOrderByDesignatedTimestampOnly(model)
                 ) {
@@ -4009,7 +4112,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                             if (filter == null) {
-                                rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex,
+                                rcf = new DeferredSymbolIndexRowCursorFactory(
+                                        keyColumnIndex,
                                         symbolFunc,
                                         true,
                                         indexDirection
@@ -4182,10 +4286,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RowCursorFactory rowCursorFactory;
 
             if (orderDescendingByDesignatedTimestampOnly) {
-                cursorFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                cursorFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdDataFrameRowCursorFactory();
             } else {
-                cursorFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                cursorFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new DataFrameRowCursorFactory();
             }
 
@@ -4213,7 +4317,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByAllIndexedRecordCursorFactory(
                         myMeta,
                         configuration,
-                        new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
+                        new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                         listColumnFilterA.getColumnIndexFactored(0),
                         columnIndexes,
                         prefixes
@@ -4226,7 +4330,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
+                        new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                         latestByColumnIndex,
                         null,
                         columnIndexes
@@ -4246,7 +4350,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByAllSymbolsFilteredRecordCursorFactory(
                     myMeta,
                     configuration,
-                    new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
+                    new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                     keyTypes,
                     partitionByColumnIndexes,
@@ -4259,7 +4363,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LatestByAllFilteredRecordCursorFactory(
                 myMeta,
                 configuration,
-                new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
+                new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                 RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                 keyTypes,
                 null,
@@ -4274,10 +4378,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryB,
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
-            RecordMetadata setMetadata
+            RecordMetadata unionMetadata
     ) throws SqlException {
-        final RecordCursorFactory setFactory = new UnionAllRecordCursorFactory(
-                setMetadata,
+        final RecordCursorFactory unionFactory = new UnionAllRecordCursorFactory(
+                unionMetadata,
                 factoryA,
                 factoryB,
                 castFunctionsA,
@@ -4285,9 +4389,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), setFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
         }
-        return setFactory;
+        return unionFactory;
     }
 
     private RecordCursorFactory generateUnionFactory(
@@ -4297,30 +4401,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryB,
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
-            RecordMetadata setMetadata,
+            RecordMetadata unionMetadata,
             SetRecordCursorFactoryConstructor constructor
     ) throws SqlException {
         entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
         final RecordSink recordSink = RecordSinkFactory.getInstance(
                 asm,
-                setMetadata,
+                unionMetadata,
                 entityColumnFilter,
                 true
         );
         valueTypes.clear();
         // Remap symbol columns to string type since that's how recordSink copies them.
         keyTypes.clear();
-        for (int i = 0, n = setMetadata.getColumnCount(); i < n; i++) {
-            final int columnType = setMetadata.getColumnType(i);
+        for (int i = 0, n = unionMetadata.getColumnCount(); i < n; i++) {
+            final int columnType = unionMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
                 keyTypes.add(ColumnType.STRING);
             } else {
                 keyTypes.add(columnType);
             }
         }
+
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
-                setMetadata,
+                unionMetadata,
                 factoryA,
                 factoryB,
                 castFunctionsA,

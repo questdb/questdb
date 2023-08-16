@@ -80,7 +80,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 metadata = GenericRecordMetadata.copyOf(writer.getMetadata());
             }
 
-            try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_ID, 0, metadata)) {
+            try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(tableToken, 0, metadata)) {
                 long count = 0;
                 try (DataFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC)) {
                     DataFrame frame;

@@ -22,15 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.sql.async;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.str.Path;
-
-public class BasicWalInitializer implements WalInitializer {
-    public static final BasicWalInitializer INSTANCE = new BasicWalInitializer();
-
-    @Override
-    public void initSegmentDirectory(Path segmentDir, TableToken tableToken, int walId, int segmentId) {
-    }
+public interface PageFrameReduceTaskFactory {
+    PageFrameReduceTask getInstance();
 }

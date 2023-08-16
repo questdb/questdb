@@ -373,7 +373,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TO_STRING_COL4_PAD, "Locale");
                 pad(socket, TO_STRING_COL5_PAD, "Errors").put(Misc.EOL);
 
-
                 socket.put('|');
                 pad(socket, TO_STRING_COL1_PAD, "Partition by");
                 pad(socket, TO_STRING_COL2_PAD, PartitionBy.toString(textLoaderCompletedState.getPartitionBy()));

@@ -76,6 +76,13 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
     @Test
     public void createWalAndDropAddIndex() throws Exception {
         assertMemoryLeak(() -> {
+            String expected = "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "2\tBC\t2022-02-24T06:00:00.000000Z\tFG\n" +
+                    "3\tCD\t2022-02-24T12:00:00.000000Z\tFG\n" +
+                    "4\tCD\t2022-02-24T18:00:00.000000Z\tFG\n" +
+                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n";
+
             String tableName = testName.getMethodName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
@@ -88,32 +95,22 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             ddl("alter table " + tableName + " alter column sym drop index");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T06:00:00.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T18:00:00.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n", tableName);
+            assertSql(expected, tableName);
 
             ddl("alter table " + tableName + " alter column sym drop index");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T06:00:00.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T18:00:00.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n", tableName);
+            assertSql(expected, tableName);
+
+            ddl("alter table " + tableName + " alter column sym2 drop index");
+
+            drainWalQueue();
+            assertSql(expected, tableName);
 
             ddl("alter table " + tableName + " alter column sym add index capacity 8");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T06:00:00.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T18:00:00.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n", tableName);
+            assertSql(expected, tableName);
         });
     }
 

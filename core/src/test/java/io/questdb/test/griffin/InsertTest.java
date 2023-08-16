@@ -745,7 +745,7 @@ public class InsertTest extends AbstractCairoTest {
             try {
                 insert("insert into trades VALUES (1), (3), (2);");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot insert rows out of order to non-partitioned table.");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot insert rows out of order to non-partitioned table.");
             }
         });
     }

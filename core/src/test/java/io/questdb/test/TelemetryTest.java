@@ -38,6 +38,7 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -52,7 +53,7 @@ public class TelemetryTest extends AbstractCairoTest {
     public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TelemetryConfiguration getTelemetryConfiguration() {
+            public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
                 return new DefaultTelemetryConfiguration() {
                     @Override
                     public boolean getEnabled() {
@@ -203,7 +204,7 @@ public class TelemetryTest extends AbstractCairoTest {
         };
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public BuildInformation getBuildInformation() {
+            public @NotNull BuildInformation getBuildInformation() {
                 return buildInformation;
             }
         };

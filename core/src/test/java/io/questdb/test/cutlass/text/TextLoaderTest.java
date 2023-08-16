@@ -39,6 +39,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -490,18 +491,21 @@ public class TextLoaderTest extends AbstractCairoTest {
                 180_000_000,
                 721,
                 180_000_000,
-                721);
+                721
+        );
     }
 
     @Test
     public void testCanUpdateO3MaxLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithO3MaxLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+                "partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
                 true,
                 PartitionBy.DAY,
                 0,
                 0,
                 0,
-                0);
+                0
+        );
     }
 
     @Test
@@ -964,7 +968,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public TextConfiguration getTextConfiguration() {
+                public @NotNull TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
             };
@@ -1237,7 +1241,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1318,7 +1322,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, precision is micro
                 3,
-                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1")
+                setOf("2021-01-01", "2021-01-01.1", "2021-01-01.3", "2021-01-02", "2021-01-02.2", "2021-01-02.3")
         );
     }
 
@@ -1327,7 +1331,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 60_000_000, // 1 minute, precision is micro
                 2,
-                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1", "2021-01-02.2", "2021-01-02.4")
+                setOf("2021-01-01", "2021-01-01.1", "2021-01-01.2", "2021-01-01.4", "2021-01-01.6", "2021-01-02.0", "2021-01-02.1", "2021-01-02.5")
         );
     }
 
@@ -1342,7 +1346,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1403,7 +1407,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1492,7 +1496,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public TextConfiguration getTextConfiguration() {
+                public @NotNull TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
             };
@@ -1729,6 +1733,26 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
             Assert.fail();
         });
+    }
+
+    @Test
+    public void testO3MaxLagAndMaxUncommittedRowsNewTableNonPartitioned() throws Exception {
+        testO3MaxLagAndMaxUncommittedRowsNewTable(
+                "",
+                PartitionBy.NONE,
+                -1,
+                -1
+        );
+    }
+
+    @Test
+    public void testO3MaxLagAndMaxUncommittedRowsNewTablePartitioned() throws Exception {
+        testO3MaxLagAndMaxUncommittedRowsNewTable(
+                "partition by day",
+                PartitionBy.DAY,
+                configuration.getMaxUncommittedRows(),
+                configuration.getO3MaxLag()
+        );
     }
 
     @Test
@@ -2065,7 +2089,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -3167,7 +3191,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -3243,13 +3267,15 @@ public class TextLoaderTest extends AbstractCairoTest {
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
-    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(String createStmtExtra,
-                                                                    boolean overwrite,
-                                                                    int partitionBy,
-                                                                    long o3MaxLagUs,
-                                                                    int maxUncommittedRows,
-                                                                    long expectedO3MaxLag,
-                                                                    int expectedMaxUncommittedRows) throws Exception {
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+            String createStmtExtra,
+            boolean overwrite,
+            int partitionBy,
+            long o3MaxLagUs,
+            int maxUncommittedRows,
+            long expectedO3MaxLag,
+            int expectedMaxUncommittedRows
+    ) throws Exception {
         assertNoLeak(
                 textLoader -> {
                     String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
@@ -3296,12 +3322,10 @@ public class TextLoaderTest extends AbstractCairoTest {
             Set<String> expectedPartitionNames
     ) throws Exception {
         final AtomicInteger rmdirCallCount = new AtomicInteger();
-        final AtomicInteger msyncCallCount = new AtomicInteger();
 
         final FilesFacade ff = new TestFilesFacade() {
             @Override
             public void msync(long addr, long len, boolean async) {
-                msyncCallCount.incrementAndGet();
                 Assert.assertFalse(async);
                 Files.msync(addr, len, false);
             }
@@ -3312,7 +3336,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 if (!dirName.equals("seq")) {
                     rmdirCallCount.getAndIncrement();
                     if (!expectedPartitionNames.contains(dirName)) {
-                        Assert.fail();
+                        Assert.fail(dirName + " not expected");
                     }
                 }
                 return Files.rmdir(name);
@@ -3325,7 +3349,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         };
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
 
@@ -3340,7 +3364,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return new DefaultTextConfiguration() {
                     @Override
                     public int getTextAnalysisMaxLines() {
@@ -3429,6 +3453,8 @@ public class TextLoaderTest extends AbstractCairoTest {
         textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
         boolean forceHeader = textLoader.isForceHeaders();
         byte delimiter = textLoader.getColumnDelimiter();
+        int maxUncommittedRows = textLoader.getMaxUncommittedRows();
+        long o3MaxLag = textLoader.getO3MaxLag();
         playText0(textLoader, text, firstBufSize, manipulator);
         sink.clear();
         textLoader.getMetadata().toJson(sink);
@@ -3444,6 +3470,8 @@ public class TextLoaderTest extends AbstractCairoTest {
 
         textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
         textLoader.setForceHeaders(forceHeader);
+        textLoader.setMaxUncommittedRows(maxUncommittedRows);
+        textLoader.setO3MaxLag(o3MaxLag);
         if (delimiter > 0) {
             textLoader.configureColumnDelimiter(delimiter);
         }
@@ -3518,6 +3546,43 @@ public class TextLoaderTest extends AbstractCairoTest {
                 expectedParsedLineCount,
                 expectedWrittenLineCount,
                 skipLinesWithExtraValues
+        );
+    }
+
+    private void testO3MaxLagAndMaxUncommittedRowsNewTable(
+            String createStmtExtra,
+            int partitionBy,
+            int expectedMaxUncommittedRows,
+            long expectedO3MaxLag
+    ) throws Exception {
+        assertNoLeak(
+                textLoader -> {
+                    String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
+                    ddl(createStmt);
+                    configureLoaderDefaults(
+                            textLoader,
+                            Atomicity.SKIP_ROW,
+                            false,
+                            partitionBy
+                    );
+                    textLoader.setForceHeaders(true);
+                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                    playText0(
+                            textLoader,
+                            "ts,int\n" +
+                                    "2021-01-02T00:00:30.000000Z,1\n",
+                            512,
+                            ENTITY_MANIPULATOR
+                    );
+
+                    assertTable("ts\tint\n" +
+                            "2021-01-02T00:00:30.000000Z\t1\n");
+
+                    Assert.assertEquals("test", textLoader.getTableName());
+                    Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
+                    Assert.assertEquals(expectedMaxUncommittedRows, textLoader.getMaxUncommittedRows());
+                    Assert.assertEquals(expectedO3MaxLag, textLoader.getO3MaxLag());
+                }
         );
     }
 

@@ -24,14 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.str.CharSink;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -50,12 +50,11 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
 
     @Test
     public void testAlterFlagInNonSymbolColumn() throws Exception {
-        assertFailure("alter table x alter column b cache", 29, "Invalid column type - Column should be of type symbol");
+        assertFailure("alter table x alter column b cache", 27, "cache is only supported for symbol type");
     }
 
     @Test
     public void testAlterSymbolCacheFlagToFalseAndCheckOpenReaderWithCursor() throws Exception {
-
         String expectedOrdered = "sym\n" +
                 "googl\n" +
                 "googl\n" +
@@ -201,7 +200,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x alter column y cache", 29, "Invalid column: y");
+        assertFailure("alter table x alter column y cache", 27, "Invalid column: y");
     }
 
     @Test
