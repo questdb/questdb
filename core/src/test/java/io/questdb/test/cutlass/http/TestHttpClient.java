@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.client.AbstractChunkedResponse;
 import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
