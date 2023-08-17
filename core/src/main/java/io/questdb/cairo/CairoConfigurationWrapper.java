@@ -793,6 +793,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getTempRenamePendingTablePrefix() {
+        return delegate.getTempRenamePendingTablePrefix();
+    }
+
+    @Override
     public @NotNull TextConfiguration getTextConfiguration() {
         return delegate.getTextConfiguration();
     }

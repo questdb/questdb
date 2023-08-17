@@ -25,14 +25,23 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.seq.MetadataServiceStub;
+import io.questdb.cairo.wal.seq.TableMetadataChange;
+import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
+    private static final Log LOG = LogFactory.getLog(CheckWalTransactionsJob.class);
     private final TableSequencerAPI.TableSequencerCallback checkNotifyOutstandingTxnInWalRef;
     private final CharSequence dbRoot;
     private final CairoEngine engine;
@@ -44,7 +53,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final ObjHashSet<TableToken> tablesToCheck = new ObjHashSet<>();
     private final TxReader txReader;
     private long lastProcessedCount = 0;
+    private RenameTrackingMetadataService renameTrackingMetadataService = new RenameTrackingMetadataService();
     private Path threadLocalPath;
+
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
@@ -65,7 +76,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
-    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long seqTxn) {
+    public void checkNotifyOutstandingTxnInWal(@NotNull TableToken tableToken, long seqTxn) {
         if (!tablesToCheck.isEmpty() && !tablesToCheck.contains(tableToken)) {
             return;
         }
@@ -80,6 +91,10 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             // Dropped table
             engine.notifyWalTxnCommitted(tableToken);
         } else {
+            if (TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), engine.getConfiguration().getTempRenamePendingTablePrefix())) {
+                tableToken = renameToExpectedTableName(tableToken);
+            }
+
             if (engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
                 if (engine.getTableSequencerAPI().notifyOnCheck(tableToken, seqTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);
@@ -111,5 +126,68 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         checkMissingWalTransactions();
         lastProcessedCount = unpublishedWalTxnCount;
         return true;
+    }
+
+    @NotNull
+    private TableToken renameToExpectedTableName(TableToken tableToken) {
+        LOG.info().$("attempting to apply deferred table rename [name=").utf8(tableToken.getTableName()).I$();
+
+        // Table name is temporary, because the real table name was occupied by another one at the point of creation
+        // Rename the table to the correct name.
+        renameTrackingMetadataService.tableName = TableUtils.getTableNameFromDirName(tableToken.getDirName());
+        try (TableMetadataChangeLog metaChangeCursor = engine.getTableSequencerAPI().getMetadataChangeLog(tableToken, 0)) {
+            while (metaChangeCursor.hasNext()) {
+                TableMetadataChange change = metaChangeCursor.next();
+                change.apply(renameTrackingMetadataService, true);
+            }
+        }
+
+        TableToken updatedTableToken = tableToken.renamed(Chars.toString(renameTrackingMetadataService.tableName));
+        try {
+            engine.applyTableRename(tableToken, updatedTableToken);
+            LOG.info().$("successfully applied deferred table rename [from=").utf8(tableToken.getTableName())
+                    .$(", to=").utf8(updatedTableToken.getTableName())
+                    .$(", tableDir=").utf8(tableToken.getDirName())
+                    .I$();
+            tableToken = updatedTableToken;
+        } catch (CairoException e) {
+            // In most cases it's expected, the table name can be still occupied by another table
+            LOG.info().$("could not apply deferred table rename [from=").utf8(tableToken.getTableName())
+                    .$(", to=").utf8(updatedTableToken.getTableName())
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .I$();
+        }
+        return tableToken;
+    }
+
+    private static class RenameTrackingMetadataService implements MetadataServiceStub {
+        private CharSequence tableName;
+
+        @Override
+        public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        }
+
+        @Override
+        public TableRecordMetadata getMetadata() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public TableToken getTableToken() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void removeColumn(@NotNull CharSequence columnName) {
+        }
+
+        @Override
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
+        }
+
+        @Override
+        public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+            tableName = Chars.toString(toTableName);
+        }
     }
 }
