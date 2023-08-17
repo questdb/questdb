@@ -1816,7 +1816,7 @@ public class SqlParser {
             } else {
                 alias = createColumnAlias(columns.get(i).getAst(), model);
             }
-            updateMapsAndLists(model, alias, token, i);
+            updateMapsAndLists(model, alias, token, columns.get(i));
         }
         columns.clear();
     }
