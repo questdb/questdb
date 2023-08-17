@@ -1816,7 +1816,7 @@ public class SqlParser {
             } else {
                 alias = createColumnAlias(column.getAst(), model);
             }
-            updateMapsAndLists(model, alias, token, column);
+            updateAlias(model, alias, token, column);
         }
         columnsWithNoAlias.clear();
     }
@@ -2239,7 +2239,7 @@ public class SqlParser {
         return tok;
     }
 
-    private void updateMapsAndLists(QueryModel model, CharSequence alias, CharSequence token, QueryColumn column) {
+    private void updateAlias(QueryModel model, CharSequence alias, CharSequence token, QueryColumn column) {
         int oldIndexColumns = model.getBottomUpColumns().indexOf(column);
         int oldIndexColumnNames = model.getBottomUpColumnNames().indexOfNull();
 
