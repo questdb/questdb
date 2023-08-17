@@ -35,6 +35,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import javax.management.Query;
+
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -1810,11 +1812,12 @@ public class SqlParser {
         CharSequence alias;
 
         for (int i = 0; i < columns.size(); i++) {
-            CharSequence token = columns.get(i).getAst().token;
-            if (columns.get(i).getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(columns.get(i).getAst().token, '.') != -1) {
+            QueryColumn column = columns.get(i);
+            CharSequence token = column.getAst().token;
+            if (column.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(column.getAst().token, '.') != -1) {
                 alias = createConstColumnAlias(model.getAliasToColumnMap());
             } else {
-                alias = createColumnAlias(columns.get(i).getAst(), model);
+                alias = createColumnAlias(column.getAst(), model);
             }
             updateMapsAndLists(model, alias, token, i);
         }
