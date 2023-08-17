@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 public class HistogramGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "histogram(LD)";
+        return "histogram(LDI)";
     }
 
     @Override
@@ -44,6 +44,6 @@ public class HistogramGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new HistogramGroupByFunction(args.getQuick(0), args.getQuick(1));
+        return new HistogramGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 }

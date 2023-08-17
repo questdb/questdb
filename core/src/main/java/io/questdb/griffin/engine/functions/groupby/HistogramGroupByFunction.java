@@ -36,19 +36,28 @@ import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 public class HistogramGroupByFunction extends LongFunction implements GroupByFunction, BinaryFunction {
     private final Function left;
     private final Function right;
-    private final Histogram histogram;
+    private final Function numberOfSignificantValueDigits;
+    private Histogram histogram;
 
-    public HistogramGroupByFunction(Function left, Function right) {
+    public HistogramGroupByFunction(Function left, Function right, Function numberOfSignificantValueDigits) {
         this.left = left;
         this.right = right;
-        this.histogram = new Histogram(3);
+        this.numberOfSignificantValueDigits = numberOfSignificantValueDigits;
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {}
+    public void computeFirst(MapValue mapValue, Record record) {
+        this.histogram = new Histogram(numberOfSignificantValueDigits.getInt(record));
+
+        final long value = left.getLong(record);
+        histogram.recordSingleValue(value);
+    }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {}
+    public void computeNext(MapValue mapValue, Record record) {
+        final long value = left.getLong(record);
+        histogram.recordSingleValue(value);
+    }
 
     @Override
     public Function getLeft() { return left; }

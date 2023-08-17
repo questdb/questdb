@@ -210,6 +210,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHistogram() throws Exception {
+        compile("create table test (col long)");
+        insert("insert into test values(10)");
+        insert("insert into test values(11)");
+        insert("insert into test values(12)");
+        insert("insert into test values(13)");
+        insert("insert into test values(14)");
+        insert("insert into test values(15)");
+        insert("insert into test values(16)");
+        insert("insert into test values(17)");
+        insert("insert into test values(18)");
+        insert("insert into test values(19)");
+        assertSql("histogram\n" +
+                "19\n", "select histogram(col, 99.0, 3) from test");
+    }
+
+    @Test
     public void testBindVariableInIndexedLookup() throws Exception {
         testBindVariableInIndexedLookup(true);
     }
