@@ -31,10 +31,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class HistogramGroupByFunctionFactory implements FunctionFactory {
+public class PercentileAtValueGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "histogram(LDI)";
+        return "percentileAtValue(LLI)";
     }
 
     @Override
@@ -44,6 +45,6 @@ public class HistogramGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new HistogramGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2));
+        return new PercentileAtValueGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 }

@@ -606,7 +606,8 @@ open module io.questdb {
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
             // histogram group by function
-            io.questdb.griffin.engine.functions.groupby.HistogramGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.PercentileGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.PercentileAtValueGroupByFunctionFactory,
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,

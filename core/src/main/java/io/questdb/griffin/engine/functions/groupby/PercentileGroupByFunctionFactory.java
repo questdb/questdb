@@ -22,23 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.std;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.std.histogram.org.HdrHistogram.Histogram;
-import org.junit.Test;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-import java.io.PrintStream;
+public class PercentileGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "percentile(LDI)";
+    }
 
-public class HdrHistogramTest {
-    @Test
-    public void initialiseHist() {
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-        Histogram hist = new Histogram(1, 10000, 3);
-
-        for(int i = 1; i < 10000; i++) {
-            hist.recordSingleValue(i);
-        }
-
-        hist.outputPercentileDistribution(new PrintStream(System.out), 1.0);
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new PercentileGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 }

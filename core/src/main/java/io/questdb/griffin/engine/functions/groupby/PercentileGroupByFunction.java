@@ -28,27 +28,27 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 
-public class HistogramGroupByFunction extends LongFunction implements GroupByFunction, BinaryFunction {
+public class PercentileGroupByFunction extends LongFunction implements GroupByFunction, TernaryFunction {
     private final Function left;
+    private final Function center;
     private final Function right;
-    private final Function numberOfSignificantValueDigits;
     private Histogram histogram;
 
-    public HistogramGroupByFunction(Function left, Function right, Function numberOfSignificantValueDigits) {
+    public PercentileGroupByFunction(Function left, Function center, Function right) {
         this.left = left;
+        this.center = center;
         this.right = right;
-        this.numberOfSignificantValueDigits = numberOfSignificantValueDigits;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        this.histogram = new Histogram(numberOfSignificantValueDigits.getInt(record));
+        this.histogram = new Histogram(right.getInt(record));
 
         final long value = left.getLong(record);
         histogram.recordSingleValue(value);
@@ -64,6 +64,9 @@ public class HistogramGroupByFunction extends LongFunction implements GroupByFun
     public Function getLeft() { return left; }
 
     @Override
+    public Function getCenter() { return center; }
+
+    @Override
     public Function getRight() { return right; }
 
     @Override
@@ -71,7 +74,7 @@ public class HistogramGroupByFunction extends LongFunction implements GroupByFun
         if(histogram.empty()) {
             return Numbers.LONG_NaN;
         }
-        return histogram.getValueAtPercentile(right.getDouble(rec));
+        return histogram.getValueAtPercentile(center.getDouble(rec));
     }
 
     @Override

@@ -212,20 +212,53 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testHistogram() throws Exception {
         compile("create table test (col long)");
+        insert("insert into test values(1)");
+        insert("insert into test values(2)");
+        insert("insert into test values(3)");
+        insert("insert into test values(4)");
+        insert("insert into test values(5)");
+        insert("insert into test values(6)");
+        insert("insert into test values(7)");
+        insert("insert into test values(8)");
+        insert("insert into test values(9)");
         insert("insert into test values(10)");
-        insert("insert into test values(11)");
-        insert("insert into test values(12)");
-        insert("insert into test values(13)");
-        insert("insert into test values(14)");
-        insert("insert into test values(15)");
-        insert("insert into test values(16)");
-        insert("insert into test values(17)");
-        insert("insert into test values(18)");
-        insert("insert into test values(19)");
-        assertSql("histogram\n" +
-                "19\n", "select histogram(col, 99.0, 3) from test");
+        assertSql("percentile\n" +
+                "9\n", "select percentile(col, 90, 5) from test");
     }
 
+    @Test
+    public void percentileAtValueTest() throws Exception {
+        compile("create table test (col long)");
+        insert("insert into test values(1)");
+        insert("insert into test values(2)");
+        insert("insert into test values(3)");
+        insert("insert into test values(4)");
+        insert("insert into test values(5)");
+        insert("insert into test values(6)");
+        insert("insert into test values(7)");
+        insert("insert into test values(8)");
+        insert("insert into test values(9)");
+        insert("insert into test values(10)");
+        assertSql("percentileAtValue\n" +
+                "90.0\n", "select percentileAtValue(col, 9, 5) from test");
+    }
+
+    @Test
+    public void percentileAtValueNullTest() throws Exception {
+        compile("create table test (col long)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        assertSql("percentileAtValue\n" +
+                "NaN\n", "select percentileAtValue(col, null, 3) from test");
+    }
     @Test
     public void testNullHistogram() throws Exception {
         compile("create table test (col long)");
@@ -239,8 +272,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         insert("insert into test values(null)");
         insert("insert into test values(null)");
         insert("insert into test values(null)");
-        assertSql("histogram\n" +
-                "NaN\n", "select histogram(col, 99.0, 3) from test");
+        assertSql("percentile\n" +
+                "NaN\n", "select percentile(col, 99.0, 3) from test");
     }
 
     @Test
