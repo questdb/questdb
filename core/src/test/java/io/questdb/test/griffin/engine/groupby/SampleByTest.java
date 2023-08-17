@@ -9021,7 +9021,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 94,
-                "invalid number"
+                "invalid fill value"
         );
     }
 
@@ -9871,7 +9871,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 43,
-                "invalid number: zz"
+                "invalid fill value: zz"
         );
     }
 
