@@ -53,7 +53,7 @@ public class SqlParser {
     private final CharacterStore characterStore;
     private final CharSequence column;
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
-    private final ObjList<QueryColumn> columns = new ObjList<>();
+    private final ObjList<QueryColumn> columnsWithNoAlias = new ObjList<>();
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
@@ -1819,7 +1819,7 @@ public class SqlParser {
             } else {
                 alias = createColumnAlias(column.getAst(), model);
             }
-            updateMapsAndLists(model, alias, token, i);
+            updateMapsAndLists(model, alias, token, columns.get(i));
         }
         columns.clear();
     }
