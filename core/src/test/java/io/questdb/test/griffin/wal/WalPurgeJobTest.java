@@ -49,8 +49,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
 public class WalPurgeJobTest extends AbstractCairoTest {
+    private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+
     @Test
     public void testClosedButUnappliedSegment() throws Exception {
         // Test two segment with changes committed to the sequencer, but never applied to the table.
@@ -232,6 +235,41 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDroppedTablePendingSequencer() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            createPendingFile(tableToken, SEQ_DIR);
+            compile("drop table " + tableName);
+
+            drainWalQueue();
+            runWalPurgeJob();
+
+            assertExistence(true, tableToken, SEQ_DIR);
+
+            engine.releaseAllWalWriters();
+
+
+            runWalPurgeJob();
+            assertExistence(true, tableToken, SEQ_DIR);
+            assertWalExistence(false, tableToken, 1);
+
+            removePendingFile(tableToken, SEQ_DIR);
+            runWalPurgeJob();
+            assertExistence(false, tableToken, SEQ_DIR);
+        });
+    }
+
+    @Test
     public void testInterval() throws Exception {
         AtomicInteger counter = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
@@ -260,18 +298,18 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 Assert.assertEquals(0, counter.get());
                 currentMicros += interval / 2 + 1;
                 walPurgeJob.run(0);
-                Assert.assertEquals(1, counter.get());
+                Assert.assertEquals(2, counter.get());
                 currentMicros += interval / 2 + 1;
                 walPurgeJob.run(0);
                 walPurgeJob.run(0);
                 walPurgeJob.run(0);
-                Assert.assertEquals(1, counter.get());
+                Assert.assertEquals(2, counter.get());
                 currentMicros += interval;
                 walPurgeJob.run(0);
-                Assert.assertEquals(2, counter.get());
+                Assert.assertEquals(4, counter.get());
                 currentMicros += 10 * interval;
                 walPurgeJob.run(0);
-                Assert.assertEquals(3, counter.get());
+                Assert.assertEquals(6, counter.get());
             }
         });
     }
@@ -422,7 +460,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentLockExistence(false, tableName, 1, 2);
 
             // We write a marker file to prevent the second segment "wal1/1" from being reaped.
-            final File pendingDirPath = new File(segment1DirPath, ".pending");
+            final File pendingDirPath = new File(segment1DirPath, WalUtils.WAL_PENDING_FS_MARKER);
             Assert.assertTrue(pendingDirPath.mkdirs());
             final File pendingFilePath = new File(pendingDirPath, "task.pending");
             Assert.assertTrue(pendingFilePath.createNewFile());
@@ -481,7 +519,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentLockExistence(false, tableName, 1, 1);
 
             // We write a marker file to prevent the segment "wal1/0" from being reaped.
-            final File pendingDirPath = new File(segment0DirPath, ".pending");
+            final File pendingDirPath = new File(segment0DirPath, WalUtils.WAL_PENDING_FS_MARKER);
             Assert.assertTrue(pendingDirPath.mkdirs());
             final File pendingFilePath = new File(pendingDirPath, "task.pending");
             Assert.assertTrue(pendingFilePath.createNewFile());
@@ -783,9 +821,9 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             final String tableName = testName.getMethodName();
             compile(
                     "create table " + tableName + "("
-                    + "x long,"
-                    + "ts timestamp"
-                    + ") timestamp(ts) partition by DAY WAL"
+                            + "x long,"
+                            + "ts timestamp"
+                            + ") timestamp(ts) partition by DAY WAL"
             );
 
             insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
@@ -1044,6 +1082,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         });
     }
 
+    private void assertExistence(boolean exists, TableToken tableToken, String dir) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableToken).concat(dir).$();
+            Assert.assertEquals(Chars.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
+        }
+    }
+
     private void assertNoMoreEvents(TestDeleter deleter, int evIndex) {
         if (deleter.events.size() > evIndex) {
             StringBuilder sb = new StringBuilder();
@@ -1051,6 +1097,25 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 sb.append(deleter.events.get(i)).append(", ");
             }
             Assert.fail("Unexpected events: " + sb);
+        }
+    }
+
+    private void createPendingFile(TableToken tableToken, String dir) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableToken).concat(dir).concat(WalUtils.WAL_PENDING_FS_MARKER);
+            ff.mkdir(path.$(), configuration.getMkDirMode());
+            path.concat("test.pending");
+            ff.touch(path.$());
+        }
+    }
+
+    private void removePendingFile(TableToken tableToken, String dir) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableToken).concat(dir).concat(WalUtils.WAL_PENDING_FS_MARKER);
+            path.concat("test.pending");
+            ff.remove(path.$());
         }
     }
 
