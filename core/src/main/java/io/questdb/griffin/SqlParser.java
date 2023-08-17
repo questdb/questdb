@@ -35,8 +35,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import javax.management.Query;
-
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -1747,7 +1745,7 @@ public class SqlParser {
             if (tok != null && Chars.equals(tok, ';')) {
                 alias = null;
                 col.setAlias(null);
-                columns.add(col);
+                columnsWithNoAlias.add(col);
             } else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
@@ -1763,7 +1761,7 @@ public class SqlParser {
             } else {
                 alias = null;
                 col.setAlias(null);
-                columns.add(col);
+                columnsWithNoAlias.add(col);
             }
 
             if (alias != null) {
@@ -1811,17 +1809,17 @@ public class SqlParser {
 
         CharSequence alias;
 
-        for (int i = 0; i < columns.size(); i++) {
-            QueryColumn column = columns.get(i);
+        for (int i = 0; i < columnsWithNoAlias.size(); i++) {
+            QueryColumn column = columnsWithNoAlias.get(i);
             CharSequence token = column.getAst().token;
             if (column.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(column.getAst().token, '.') != -1) {
                 alias = createConstColumnAlias(model.getAliasToColumnMap());
             } else {
                 alias = createColumnAlias(column.getAst(), model);
             }
-            updateMapsAndLists(model, alias, token, columns.get(i));
+            updateMapsAndLists(model, alias, token, column);
         }
-        columns.clear();
+        columnsWithNoAlias.clear();
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel) throws SqlException {
@@ -2242,17 +2240,16 @@ public class SqlParser {
         return tok;
     }
 
-    private void updateMapsAndLists(QueryModel model, CharSequence alias, CharSequence token, int i) {
-        QueryColumn nullColumn = columns.get(i);
-        int oldIndexColumns = model.getBottomUpColumns().indexOf(nullColumn);
+    private void updateMapsAndLists(QueryModel model, CharSequence alias, CharSequence token, QueryColumn column) {
+        int oldIndexColumns = model.getBottomUpColumns().indexOf(column);
         int oldIndexColumnNames = model.getBottomUpColumnNames().indexOfNull();
 
-        columns.get(i).setAlias(alias);
+        column.setAlias(alias);
 
-        model.getBottomUpColumns().set(oldIndexColumns, columns.get(i));
-        model.getBottomUpColumnNames().set(oldIndexColumnNames, columns.get(i).getAlias());
+        model.getBottomUpColumns().set(oldIndexColumns, column);
+        model.getBottomUpColumnNames().set(oldIndexColumnNames, column.getAlias());
 
-        model.getAliasToColumnMap().put(alias, columns.get(i));
+        model.getAliasToColumnMap().put(alias, column);
         model.getAliasToColumnNameMap().put(alias, token);
 
         model.getColumnNameToAliasMap().put(token, alias);
@@ -2304,7 +2301,7 @@ public class SqlParser {
         copyModelPool.clear();
         topLevelWithModel.clear();
         explainModelPool.clear();
-        columns.clear();
+        columnsWithNoAlias.clear();
         digit = 1;
     }
 
