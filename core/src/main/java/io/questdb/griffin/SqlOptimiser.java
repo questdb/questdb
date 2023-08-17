@@ -4121,6 +4121,14 @@ public class SqlOptimiser implements Mutable {
                             useOuterModel = true;
                         }
                     } else {
+                        //groupByModel is populated in createSelectColumn
+                        //groupByModel must be used as it is the only model that is populated with duplicate column names in createSelectColumn
+                        //The below if-statement will only evaluate to true when using wildcards in a join with duplicate column names
+                        //Because the other column aliases are not known at the time qc's alias gets set, we must wait until this point (when we know the other column aliases) to alter it if a duplicate has occurred
+                        if (groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
+                            CharSequence newAlias = createColumnAlias(qc.getAst(), groupByModel);
+                            qc.setAlias(newAlias);
+                        }
                         createSelectColumn(
                                 qc.getAlias(),
                                 qc.getAst(),
