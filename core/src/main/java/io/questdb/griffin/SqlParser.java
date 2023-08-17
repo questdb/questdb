@@ -180,11 +180,18 @@ public class SqlParser {
     }
 
     private CharSequence createConstColumnAlias(LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap) {
-        while (aliasToColumnMap.contains(column + Integer.toString(digit))) {
+        final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+
+        characterStoreEntry.put(column);
+        int len = characterStoreEntry.length();
+        characterStoreEntry.put(digit);
+
+        while (aliasToColumnMap.contains(characterStoreEntry.toImmutable())) {
+            characterStoreEntry.trimTo(len);
             digit++;
+            characterStoreEntry.put(digit);
         }
-        digit++;
-        return column + Integer.toString(digit - 1);
+        return characterStoreEntry.toImmutable();
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
