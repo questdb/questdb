@@ -51,7 +51,7 @@ public class SqlParser {
     private final CharacterStore characterStore;
     private final CharSequence column;
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
-    private final ObjList<QueryColumn> columns = new ObjList<>();
+    private final ObjList<QueryColumn> columnsWithNoAlias = new ObjList<>();
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
