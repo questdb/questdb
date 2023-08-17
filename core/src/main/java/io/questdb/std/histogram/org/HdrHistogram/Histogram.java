@@ -72,6 +72,31 @@ public class Histogram extends AbstractHistogram {
     }
 
     @Override
+    public long getValueAtPercentile(final double percentile) {
+        // Truncate to 0..100%, and remove 1 ulp to avoid roundoff overruns into next bucket when we
+        // subsequently round up to the nearest integer:
+        double requestedPercentile =
+                Math.min(Math.max(Math.nextAfter(percentile, Double.NEGATIVE_INFINITY), 0.0D), 100.0D);
+        // derive the count at the requested percentile. We round up to nearest integer to ensure that the
+        // largest value that the requested percentile of overall recorded values is <= is actually included.
+        double fpCountAtPercentile = (requestedPercentile * getTotalCount()) / 100.0D;
+        long countAtPercentile = (long)(Math.ceil(fpCountAtPercentile)); // round up
+
+        countAtPercentile = Math.max(countAtPercentile, 1); // Make sure we at least reach the first recorded entry
+        long totalToCurrentIndex = 0;
+        for (int i = 0; i < countsArrayLength; i++) {
+            totalToCurrentIndex += getCountAtIndex(i);
+            if (totalToCurrentIndex >= countAtPercentile) {
+                long valueAtIndex = valueFromIndex(i);
+                return (percentile == 0.0) ?
+                        lowestEquivalentValue(valueAtIndex) :
+                        highestEquivalentValue(valueAtIndex);
+            }
+        }
+        return 0;
+    }
+
+    @Override
     void setCountAtNormalizedIndex(int index, long value) {
         counts[index] = value;
     }

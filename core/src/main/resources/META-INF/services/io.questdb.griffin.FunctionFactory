@@ -710,6 +710,9 @@ io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
 # 'haversine_dist_degree'
 io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory
 
+# histogram group by function
+io.questdb.griffin.engine.functions.groupby.HistogramGroupByFunctionFactory
+
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
 io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
