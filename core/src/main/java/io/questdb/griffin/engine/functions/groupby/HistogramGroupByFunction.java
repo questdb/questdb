@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 
 public class HistogramGroupByFunction extends LongFunction implements GroupByFunction, BinaryFunction {
@@ -67,6 +68,9 @@ public class HistogramGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public long getLong(Record rec) {
+        if(histogram.empty()) {
+            return Numbers.LONG_NaN;
+        }
         return histogram.getValueAtPercentile(right.getDouble(rec));
     }
 

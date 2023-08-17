@@ -42,150 +42,9 @@ import java.util.zip.DataFormatException;
  */
 
 public class Histogram extends AbstractHistogram {
-    long totalCount;
     long[] counts;
     int normalizingIndexOffset;
-
-    @Override
-    public long getCountAtIndex(final int index) {
-        return counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)];
-    }
-
-    @Override
-    long getCountAtNormalizedIndex(final int index) {
-        return counts[index];
-    }
-
-    @Override
-    void incrementCountAtIndex(final int index) {
-        counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)]++;
-    }
-
-    @Override
-    void addToCountAtIndex(final int index, final long value) {
-        counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)] += value;
-    }
-
-    @Override
-    public void setCountAtIndex(int index, long value) {
-        counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)] = value;
-    }
-
-    @Override
-    public long getValueAtPercentile(final double percentile) {
-        // Truncate to 0..100%, and remove 1 ulp to avoid roundoff overruns into next bucket when we
-        // subsequently round up to the nearest integer:
-        double requestedPercentile =
-                Math.min(Math.max(Math.nextAfter(percentile, Double.NEGATIVE_INFINITY), 0.0D), 100.0D);
-        // derive the count at the requested percentile. We round up to nearest integer to ensure that the
-        // largest value that the requested percentile of overall recorded values is <= is actually included.
-        double fpCountAtPercentile = (requestedPercentile * getTotalCount()) / 100.0D;
-        long countAtPercentile = (long)(Math.ceil(fpCountAtPercentile)); // round up
-
-        countAtPercentile = Math.max(countAtPercentile, 1); // Make sure we at least reach the first recorded entry
-        long totalToCurrentIndex = 0;
-        for (int i = 0; i < countsArrayLength; i++) {
-            totalToCurrentIndex += getCountAtIndex(i);
-            if (totalToCurrentIndex >= countAtPercentile) {
-                long valueAtIndex = valueFromIndex(i);
-                return (percentile == 0.0) ?
-                        lowestEquivalentValue(valueAtIndex) :
-                        highestEquivalentValue(valueAtIndex);
-            }
-        }
-        return 0;
-    }
-
-    @Override
-    void setCountAtNormalizedIndex(int index, long value) {
-        counts[index] = value;
-    }
-
-    @Override
-    int getNormalizingIndexOffset() {
-        return normalizingIndexOffset;
-    }
-
-    @Override
-    void setNormalizingIndexOffset(int normalizingIndexOffset) {
-        this.normalizingIndexOffset = normalizingIndexOffset;
-    }
-
-    @Override
-    void setIntegerToDoubleValueConversionRatio(double integerToDoubleValueConversionRatio) {
-        nonConcurrentSetIntegerToDoubleValueConversionRatio(integerToDoubleValueConversionRatio);
-    }
-
-    @Override
-    void shiftNormalizingIndexByOffset(int offsetToAdd,
-                                       boolean lowestHalfBucketPopulated,
-                                       double newIntegerToDoubleValueConversionRatio) {
-        nonConcurrentNormalizingIndexShift(offsetToAdd, lowestHalfBucketPopulated);
-    }
-
-    @Override
-    void clearCounts() {
-        java.util.Arrays.fill(counts, 0); //change to a qdb arr?
-        totalCount = 0;
-    }
-
-    @Override
-    public Histogram copy() {
-        Histogram copy = new Histogram(this); //System.arraycopy? - will this be more efficient?
-        copy.add(this);
-        return copy;
-    }
-
-    @Override
-    public Histogram copyCorrectedForCoordinatedOmission(final long expectedIntervalBetweenValueSamples) {
-        Histogram copy = new Histogram(this);
-        copy.addWhileCorrectingForCoordinatedOmission(this, expectedIntervalBetweenValueSamples);
-        return copy;
-    }
-
-    @Override
-    public long getTotalCount() {
-        return totalCount;
-    }
-
-    @Override
-    void setTotalCount(final long totalCount) {
-        this.totalCount = totalCount;
-    }
-
-    @Override
-    void incrementTotalCount() {
-        totalCount++;
-    }
-
-    @Override
-    void addToTotalCount(final long value) {
-        totalCount += value;
-    }
-
-    @Override
-    int _getEstimatedFootprintInBytes() {
-        return (512 + (8 * counts.length));
-    }
-
-    @Override
-    void resize(long newHighestTrackableValue) {
-        int oldNormalizedZeroIndex = normalizeIndex(0, normalizingIndexOffset, countsArrayLength);
-
-        establishSize(newHighestTrackableValue);
-
-        int countsDelta = countsArrayLength - counts.length;
-
-        counts = Arrays.copyOf(counts, countsArrayLength);
-
-        if (oldNormalizedZeroIndex != 0) {
-            // We need to shift the stuff from the zero index and up to the end of the array:
-            int newNormalizedZeroIndex = oldNormalizedZeroIndex + countsDelta;
-            int lengthToCopy = (countsArrayLength - countsDelta) - oldNormalizedZeroIndex;
-            System.arraycopy(counts, oldNormalizedZeroIndex, counts, newNormalizedZeroIndex, lengthToCopy);
-            Arrays.fill(counts, oldNormalizedZeroIndex, newNormalizedZeroIndex, 0);
-        }
-    }
+    long totalCount;
 
     /**
      * Construct an auto-resizing histogram with a lowest discernible value of 1 and an auto-adjusting
@@ -238,6 +97,7 @@ public class Histogram extends AbstractHistogram {
     /**
      * Construct a histogram with the same range settings as a given source histogram,
      * duplicating the source's start/end timestamps (but NOT its contents)
+     *
      * @param source The source histogram to duplicate
      */
     public Histogram(final AbstractHistogram source) {
@@ -263,7 +123,8 @@ public class Histogram extends AbstractHistogram {
 
     /**
      * Construct a new histogram by decoding it from a ByteBuffer.
-     * @param buffer The buffer to decode from
+     *
+     * @param buffer                         The buffer to decode from
      * @param minBarForHighestTrackableValue Force highestTrackableValue to be set at least this high
      * @return The newly constructed histogram
      */
@@ -274,7 +135,8 @@ public class Histogram extends AbstractHistogram {
 
     /**
      * Construct a new histogram by decoding it from a compressed form in a ByteBuffer.
-     * @param buffer The buffer to decode from
+     *
+     * @param buffer                         The buffer to decode from
      * @param minBarForHighestTrackableValue Force highestTrackableValue to be set at least this high
      * @return The newly constructed histogram
      * @throws DataFormatException on error parsing/decompressing the buffer
@@ -283,11 +145,6 @@ public class Histogram extends AbstractHistogram {
                                                            final long minBarForHighestTrackableValue)
             throws DataFormatException {
         return decodeFromCompressedByteBuffer(buffer, Histogram.class, minBarForHighestTrackableValue);
-    }
-
-    private void readObject(final ObjectInputStream o)
-            throws IOException, ClassNotFoundException {
-        o.defaultReadObject();
     }
 
     /**
@@ -303,5 +160,155 @@ public class Histogram extends AbstractHistogram {
         return decodeFromCompressedByteBuffer(
                 ByteBuffer.wrap(Base64Helper.parseBase64Binary(base64CompressedHistogramString)),
                 0);
+    }
+
+    @Override
+    public Histogram copy() {
+        Histogram copy = new Histogram(this); //System.arraycopy? - will this be more efficient?
+        copy.add(this);
+        return copy;
+    }
+
+    @Override
+    public Histogram copyCorrectedForCoordinatedOmission(final long expectedIntervalBetweenValueSamples) {
+        Histogram copy = new Histogram(this);
+        copy.addWhileCorrectingForCoordinatedOmission(this, expectedIntervalBetweenValueSamples);
+        return copy;
+    }
+
+    public boolean empty() {
+        return totalCount == 0;
+    }
+
+    @Override
+    public long getCountAtIndex(final int index) {
+        return counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)];
+    }
+
+    @Override
+    public long getTotalCount() {
+        return totalCount;
+    }
+
+    @Override
+    public long getValueAtPercentile(final double percentile) {
+        // Truncate to 0..100%, and remove 1 ulp to avoid roundoff overruns into next bucket when we
+        // subsequently round up to the nearest integer:
+        double requestedPercentile =
+                Math.min(Math.max(Math.nextAfter(percentile, Double.NEGATIVE_INFINITY), 0.0D), 100.0D);
+        // derive the count at the requested percentile. We round up to nearest integer to ensure that the
+        // largest value that the requested percentile of overall recorded values is <= is actually included.
+        double fpCountAtPercentile = (requestedPercentile * getTotalCount()) / 100.0D;
+        long countAtPercentile = (long) (Math.ceil(fpCountAtPercentile)); // round up
+
+        countAtPercentile = Math.max(countAtPercentile, 1); // Make sure we at least reach the first recorded entry
+        long totalToCurrentIndex = 0;
+        for (int i = 0; i < countsArrayLength; i++) {
+            totalToCurrentIndex += getCountAtIndex(i);
+            if (totalToCurrentIndex >= countAtPercentile) {
+                long valueAtIndex = valueFromIndex(i);
+                return (percentile == 0.0) ?
+                        lowestEquivalentValue(valueAtIndex) :
+                        highestEquivalentValue(valueAtIndex);
+            }
+        }
+        return 0;
+    }
+
+    @Override
+    public void setCountAtIndex(int index, long value) {
+        counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)] = value;
+    }
+
+    private void readObject(final ObjectInputStream o)
+            throws IOException, ClassNotFoundException {
+        o.defaultReadObject();
+    }
+
+    @Override
+    int _getEstimatedFootprintInBytes() {
+        return (512 + (8 * counts.length));
+    }
+
+    @Override
+    void addToCountAtIndex(final int index, final long value) {
+        counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)] += value;
+    }
+
+    @Override
+    void addToTotalCount(final long value) {
+        totalCount += value;
+    }
+
+    @Override
+    void clearCounts() {
+        java.util.Arrays.fill(counts, 0); //change to a qdb arr?
+        totalCount = 0;
+    }
+
+    @Override
+    long getCountAtNormalizedIndex(final int index) {
+        return counts[index];
+    }
+
+    @Override
+    int getNormalizingIndexOffset() {
+        return normalizingIndexOffset;
+    }
+
+    @Override
+    void incrementCountAtIndex(final int index) {
+        counts[normalizeIndex(index, normalizingIndexOffset, countsArrayLength)]++;
+    }
+
+    @Override
+    void incrementTotalCount() {
+        totalCount++;
+    }
+
+    @Override
+    void resize(long newHighestTrackableValue) {
+        int oldNormalizedZeroIndex = normalizeIndex(0, normalizingIndexOffset, countsArrayLength);
+
+        establishSize(newHighestTrackableValue);
+
+        int countsDelta = countsArrayLength - counts.length;
+
+        counts = Arrays.copyOf(counts, countsArrayLength);
+
+        if (oldNormalizedZeroIndex != 0) {
+            // We need to shift the stuff from the zero index and up to the end of the array:
+            int newNormalizedZeroIndex = oldNormalizedZeroIndex + countsDelta;
+            int lengthToCopy = (countsArrayLength - countsDelta) - oldNormalizedZeroIndex;
+            System.arraycopy(counts, oldNormalizedZeroIndex, counts, newNormalizedZeroIndex, lengthToCopy);
+            Arrays.fill(counts, oldNormalizedZeroIndex, newNormalizedZeroIndex, 0);
+        }
+    }
+
+    @Override
+    void setCountAtNormalizedIndex(int index, long value) {
+        counts[index] = value;
+    }
+
+    @Override
+    void setIntegerToDoubleValueConversionRatio(double integerToDoubleValueConversionRatio) {
+        nonConcurrentSetIntegerToDoubleValueConversionRatio(integerToDoubleValueConversionRatio);
+    }
+
+    @Override
+    void setNormalizingIndexOffset(int normalizingIndexOffset) {
+        this.normalizingIndexOffset = normalizingIndexOffset;
+    }
+
+    @Override
+    void setTotalCount(final long totalCount) {
+        this.totalCount = totalCount;
+    }
+
+    @Override
+    void shiftNormalizingIndexByOffset(int offsetToAdd,
+                                       boolean lowestHalfBucketPopulated,
+                                       double newIntegerToDoubleValueConversionRatio) {
+        nonConcurrentNormalizingIndexShift(offsetToAdd, lowestHalfBucketPopulated);
     }
 }

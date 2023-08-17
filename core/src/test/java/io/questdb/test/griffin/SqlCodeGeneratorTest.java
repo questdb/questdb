@@ -227,6 +227,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullHistogram() throws Exception {
+        compile("create table test (col long)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        insert("insert into test values(null)");
+        assertSql("histogram\n" +
+                "NaN\n", "select histogram(col, 99.0, 3) from test");
+    }
+
+    @Test
     public void testBindVariableInIndexedLookup() throws Exception {
         testBindVariableInIndexedLookup(true);
     }
