@@ -1807,11 +1807,10 @@ public class SqlParser {
             }
         }
 
-        CharSequence alias;
-
         for (int i = 0; i < columnsWithNoAlias.size(); i++) {
             QueryColumn column = columnsWithNoAlias.get(i);
             CharSequence token = column.getAst().token;
+            CharSequence alias;
             if (column.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(column.getAst().token, '.') != -1) {
                 alias = createConstColumnAlias(model.getAliasToColumnMap());
             } else {
