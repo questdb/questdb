@@ -1764,24 +1764,20 @@ public class SqlParser {
                 columnsWithNoAlias.add(col);
             }
 
-            if (alias != null) {
-                if (alias.length() == 0) {
-                    throw err(lexer, null, "column alias cannot be a blank string");
-                }
-                col.setAlias(alias);
-            }
-
             // correlated sub-queries do not have expr.token values (they are null)
             if (expr.type == ExpressionNode.QUERY) {
                 expr.token = alias;
             }
 
-            if (alias != null) { //add everywhere
-                model.addBottomUpColumn(colPosition, col, false);
-            } else { //only add to bottom up columns / bottom up column names which are responsible for ordering, the others will be updated later
-                model.addFieldForNullAlias(col);
+            if (alias != null) {
+                if (alias.length() == 0) {
+                    throw err(lexer, null, "column alias cannot be a blank string");
+                }
+                col.setAlias(alias);
+                model.addBottomUpColumn(colPosition, col, false); //add everywhere
+            } else {
+                model.addFieldForNullAlias(col);  //only add to bottom up columns / bottom up column names which are responsible for ordering, the others will be updated later
             }
-
 
             if (model.getColumns().size() == 1 && tok == null && Chars.equals(expr.token, '*')) {
                 throw err(lexer, null, "'from' expected");
