@@ -22,7 +22,7 @@ public interface ValueRecorder {
     /**
      * Record a value.
      * <p>
-     * To compensate for the loss of sampled values when a recorded value is larger than the expected
+     * To compensate for the loss of sampled values w hen a recorded value is larger than the expected
      * interval between value samples, will auto-generate an additional series of decreasingly-smaller
      * (down to the expectedIntervalBetweenValueSamples) value records.
      * <p>

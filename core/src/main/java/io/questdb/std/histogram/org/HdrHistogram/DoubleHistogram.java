@@ -16,7 +16,7 @@ import java.util.zip.DataFormatException;
 import java.util.zip.Deflater;
 
 /**
- * <h3>A floating point values High Dynamic Range (HDR) Histogram</h3>
+ * A floating point values High Dynamic Range (HDR) Histogram
  * <p>
  * It is important to note that {@link DoubleHistogram} is not thread-safe, and does not support safe concurrent
  * recording by multiple threads. If concurrent operation is required, consider using

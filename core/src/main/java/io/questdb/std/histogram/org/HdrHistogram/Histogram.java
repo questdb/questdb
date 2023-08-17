@@ -14,7 +14,7 @@ import java.util.Arrays;
 import java.util.zip.DataFormatException;
 
 /**
- * <h3>A High Dynamic Range (HDR) Histogram</h3>
+ * A High Dynamic Range (HDR) Histogram
  * <p>
  * {@link Histogram} supports the recording and analyzing sampled data value counts across a configurable integer value
  * range with configurable value precision within the range. Value precision is expressed as the number of significant

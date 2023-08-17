@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.*;
 import java.util.zip.DataFormatException;
 
 /**
- * <h3>A High Dynamic Range (HDR) Histogram using atomic <b><code>long</code></b> count type </h3>
+ * A High Dynamic Range (HDR) Histogram using atomic <b><code>long</code></b> count type
  * An AtomicHistogram guarantees lossless recording of values into the histogram even when the
  * histogram is updated by multiple threads. It is important to note though that this lossless
  * recording capability is the only thread-safe behavior provided by AtomicHistogram, and that it

@@ -23,7 +23,7 @@ import java.util.zip.DataFormatException;
  * HdrHistogram of the measured reaction time behavior for any arbitrary
  * time range within the log, by adding [only] the relevant interval
  * histograms.
- * <h3>Histogram log format:</h3>
+ * Histogram log format:
  * A histogram log file consists of text lines. Lines beginning with
  * the "#" character are optional and treated as comments. Lines
  * containing the legend (starting with "Timestamp") are also optional

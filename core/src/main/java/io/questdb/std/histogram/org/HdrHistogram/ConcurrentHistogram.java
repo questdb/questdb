@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 import java.util.zip.DataFormatException;
 
 /**
- * <h3>An integer values High Dynamic Range (HDR) Histogram that supports safe concurrent recording operations.</h3>
+ * An integer values High Dynamic Range (HDR) Histogram that supports safe concurrent recording operations.
  * A ConcurrentHistogram guarantees lossless recording of values into the histogram even when the
  * histogram is updated by multiple threads, and supports auto-resize and shift operations that may
  * result from or occur concurrently with other recording operations.

@@ -24,7 +24,7 @@ import java.util.zip.Inflater;
 import static java.nio.ByteOrder.BIG_ENDIAN;
 
 /**
- * <h3>An abstract base class for integer values High Dynamic Range (HDR) Histograms</h3>
+ * An abstract base class for integer values High Dynamic Range (HDR) Histograms
  * <p>
  * AbstractHistogram supports the recording and analyzing sampled data value counts across a configurable integer value
  * range with configurable value precision within the range. Value precision is expressed as the number of significant
