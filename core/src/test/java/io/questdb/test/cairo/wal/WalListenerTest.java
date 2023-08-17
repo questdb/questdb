@@ -78,6 +78,20 @@ public class WalListenerTest extends AbstractCairoTest {
             tableToken1.set(createTable(testName.getMethodName()));
             assertTableExistence(true, tableToken1.get());
 
+            Assert.assertEquals(
+                    new WalListenerEvent(
+                            WalListenerEventType.TABLE_CREATED,
+                            tableToken1.get(),
+                            0,
+                            0,
+                            -1,
+                            -1,
+                            -1,
+                            null
+                    ),
+                    listener.events.remove()
+            );
+
             try (WalWriter walWriter1 = engine.getWalWriter(tableToken1.get())) {
                 final TableWriter.Row row = walWriter1.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -88,6 +102,7 @@ public class WalListenerTest extends AbstractCairoTest {
                                 WalListenerEventType.DATA_TXN_COMMITTED,
                                 tableToken1.get(),
                                 1,
+                                0,
                                 1,
                                 0,
                                 0,
@@ -117,6 +132,7 @@ public class WalListenerTest extends AbstractCairoTest {
                                     WalListenerEventType.TABLE_RENAMED,
                                     tableToken2.get(),
                                     2,
+                                    0,
                                     -1,
                                     -1,
                                     -1,
@@ -140,7 +156,8 @@ public class WalListenerTest extends AbstractCairoTest {
                     new WalListenerEvent(
                             WalListenerEventType.SEGMENT_CLOSED,
                             tableToken1.get(),
-                            -1,
+                            1,
+                            0,
                             1,
                             0,
                             -1,
@@ -157,6 +174,7 @@ public class WalListenerTest extends AbstractCairoTest {
                                 WalListenerEventType.NON_DATA_TXN_COMMITTED,
                                 tableToken2.get(),
                                 3,
+                                0,
                                 -1,
                                 -1,
                                 -1,
@@ -178,6 +196,7 @@ public class WalListenerTest extends AbstractCairoTest {
                             WalListenerEventType.TABLE_DROPPED,
                             tableToken2.get(),
                             4,
+                            0,
                             -1,
                             -1,
                             -1,
@@ -202,6 +221,7 @@ public class WalListenerTest extends AbstractCairoTest {
         DATA_TXN_COMMITTED,
         NON_DATA_TXN_COMMITTED,
         SEGMENT_CLOSED,
+        TABLE_CREATED,
         TABLE_DROPPED,
         TABLE_RENAMED
     }
@@ -215,6 +235,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     WalListenerEventType.DATA_TXN_COMMITTED,
                     tableToken,
                     txn,
+                    timestamp,
                     walId,
                     segmentId,
                     segmentTxn,
@@ -228,6 +249,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     WalListenerEventType.NON_DATA_TXN_COMMITTED,
                     tableToken,
                     txn,
+                    timestamp,
                     -1,
                     -1,
                     -1,
@@ -236,13 +258,28 @@ public class WalListenerTest extends AbstractCairoTest {
         }
 
         @Override
-        public void segmentClosed(TableToken tabletoken, int walId, int segmentId) {
+        public void segmentClosed(TableToken tabletoken, long txn, int walId, int segmentId) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.SEGMENT_CLOSED,
                     tabletoken,
-                    -1,
+                    txn,
+                    0,
                     walId,
                     segmentId,
+                    -1,
+                    null
+            ));
+        }
+
+        @Override
+        public void tableCreated(TableToken tableToken, long timestamp) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.TABLE_CREATED,
+                    tableToken,
+                    0,
+                    timestamp,
+                    -1,
+                    -1,
                     -1,
                     null
             ));
@@ -254,6 +291,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     WalListenerEventType.TABLE_DROPPED,
                     tableToken,
                     txn,
+                    timestamp,
                     -1,
                     -1,
                     -1,
@@ -267,6 +305,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     WalListenerEventType.TABLE_RENAMED,
                     tableToken,
                     txn,
+                    timestamp,
                     -1,
                     -1,
                     -1,
@@ -281,6 +320,7 @@ public class WalListenerTest extends AbstractCairoTest {
         public final int segmentTxn;
         public final TableToken tableToken;
         public final long txn;
+        public final long timestamp;
         public final WalListenerEventType type;
         public final int walId;
 
@@ -288,6 +328,7 @@ public class WalListenerTest extends AbstractCairoTest {
                 WalListenerEventType type,
                 TableToken tableToken,
                 long txn,
+                long timestamp,
                 int walId,
                 int segmentId,
                 int segmentTxn,
@@ -296,6 +337,7 @@ public class WalListenerTest extends AbstractCairoTest {
             this.type = type;
             this.tableToken = tableToken;
             this.txn = txn;
+            this.timestamp = timestamp;
             this.walId = walId;
             this.segmentId = segmentId;
             this.segmentTxn = segmentTxn;
@@ -309,6 +351,7 @@ public class WalListenerTest extends AbstractCairoTest {
                 return this.type == that.type &&
                         Objects.equals(this.tableToken, that.tableToken) &&
                         this.txn == that.txn &&
+                        // this.timestamp == that.timestamp && // do not compare timestamp in tests
                         this.walId == that.walId &&
                         this.segmentId == that.segmentId &&
                         this.segmentTxn == that.segmentTxn &&
@@ -323,6 +366,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     "type=" + type +
                     ", tableToken=" + tableToken +
                     ", txn=" + txn +
+                    ", timestamp=" + timestamp +
                     ", walId=" + walId +
                     ", segmentId=" + segmentId +
                     ", segmentTxn=" + segmentTxn +

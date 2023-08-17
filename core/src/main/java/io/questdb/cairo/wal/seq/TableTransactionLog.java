@@ -47,10 +47,11 @@ import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class TableTransactionLog implements Closeable {
-    public final static int HEADER_RESERVED = 8 * Long.BYTES;
+    public final static int HEADER_RESERVED = 7 * Long.BYTES;
     public static final long MAX_TXN_OFFSET = Integer.BYTES;
-    public static final long HEADER_SIZE = MAX_TXN_OFFSET + Long.BYTES + HEADER_RESERVED;
     public static final int STRUCTURAL_CHANGE_WAL_ID = -1;
+    public static final long TABLE_CREATE_TIMESTAMP_OFFSET = MAX_TXN_OFFSET + Long.BYTES;
+    public static final long HEADER_SIZE = TABLE_CREATE_TIMESTAMP_OFFSET + Long.BYTES + HEADER_RESERVED;
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
     private static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
     private static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
@@ -156,6 +157,24 @@ public class TableTransactionLog implements Closeable {
         txnMetaMemIndex.putLong(varMemBegin + len);
     }
 
+    void create(Path path, long tableCreateTimestamp) {
+
+        openFiles(path);
+
+        txnMem.jumpTo(0L);
+        txnMem.putInt(WAL_FORMAT_VERSION);
+        txnMem.putLong(0L);
+        txnMem.putLong(tableCreateTimestamp);
+        txnMem.sync(false);
+
+        txnMetaMem.jumpTo(0L);
+        txnMetaMem.sync(false); // empty
+
+        txnMetaMemIndex.jumpTo(0L);
+        txnMetaMemIndex.putLong(0L); // N + 1, first entry is 0.
+        txnMetaMemIndex.sync(false);
+    }
+
     long endMetadataChangeEntry() {
         sync();
 
@@ -207,32 +226,29 @@ public class TableTransactionLog implements Closeable {
         this.rootPath.clear();
         path.toSink(this.rootPath);
 
-        final int pathLength = path.length();
-        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-        openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
-        openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+        if (!txnMem.isOpen()) {
+            openFiles(path);
+        }
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET);
         maxTxn.set(lastTxn);
 
-        if (lastTxn == 0) {
-            txnMem.jumpTo(0L);
-            txnMem.putInt(WAL_FORMAT_VERSION);
-            txnMem.putLong(0L);
-            txnMem.putLong(0L);
-            txnMem.jumpTo(HEADER_SIZE);
+        txnMem.jumpTo(HEADER_SIZE);
+        txnMetaMemIndex.jumpTo(8); // first entry is 0.
+        txnMetaMem.jumpTo(0L);
+        long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
+        long structureAppendOffset = maxStructureVersion * Long.BYTES;
+        long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
+        txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
+        txnMetaMem.jumpTo(txnMetaMemSize);
+    }
 
-            txnMetaMemIndex.jumpTo(0L);
-            txnMetaMemIndex.putLong(0L); // N + 1, first entry is 0.
-            txnMetaMem.jumpTo(0L);
-        } else {
-            long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
-            txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
-            long structureAppendOffset = maxStructureVersion * Long.BYTES;
-            long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
-            txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
-            txnMetaMem.jumpTo(txnMetaMemSize);
-        }
+    void openFiles(Path path) {
+        final int pathLength = path.length();
+        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+        openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
+        openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
     }
 
     AlterOperation readTableMetadataChangeLog(long structureVersion, MemorySerializer serializer) {
