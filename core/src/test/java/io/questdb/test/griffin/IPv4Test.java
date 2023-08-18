@@ -1227,17 +1227,84 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4BitOr() throws Exception {
+        assertSql(
+                "column\n" +
+                        "255.1.1.1\n",
+                "select ipv4 '1.1.1.1' | '255.0.0.0'"
+        );
+    }
+
+    @Test
+    public void testIPv4StrPlusInt() throws Exception {
+        assertSql(
+                "column\n" +
+                        "1.1.1.6\n",
+                "select '1.1.1.1' + 5"
+        );
+    }
+
+    @Test
+    public void testIPv4StrMinusInt() throws Exception {
+        assertSql(
+                "column\n" +
+                        "1.1.0.252\n",
+                "select '1.1.1.1' - 5"
+        );
+    }
+
+    @Test
+    public void testIPv4StrMinusIPv4Str() throws Exception {
+        assertSql(
+                "column\n" +
+                        "16843008\n",
+                "select '1.1.1.1' - '0.0.0.1'"
+        );
+    }
+
+    @Test
+    public void testIPv4StrMinusIPv4() throws Exception {
+        assertSql(
+                "column\n" +
+                        "16843008\n",
+                "select '1.1.1.1' - ipv4 '0.0.0.1'"
+        );
+    }
+
+    @Test
+    public void testIPv4MinusIPv4Str() throws Exception {
+        assertSql(
+                "column\n" +
+                        "16843008\n",
+                "select ipv4 '1.1.1.1' - '0.0.0.1'"
+        );
+    }
+
+    @Test
+    public void testIntPlusIPv4Str() throws Exception {
+        assertSql(
+                "column\n" +
+                        "1.1.1.6\n",
+                "select 5 + '1.1.1.1'"
+        );
+    }
+
+    @Test
+    public void testIPv4BitOr2() throws Exception {
+        assertSql(
+                "column\n" +
+                        "255.1.1.1\n",
+                "select '1.1.1.1' | ipv4 '255.0.0.0'"
+        );
+    }
+
+    @Test
     public void testIPv4BitwiseNotFails() throws Exception {
         assertSql(
                 "column\n" +
                         "\n",
                 "select ~ ipv4 'apple'"
         );
-    }
-
-    @Test
-    public void testIPv4BitwiseNotFailsStr() throws Exception {
-        assertException("select ~ '0.0.1.1'", 0, "inconvertible value: `0.0.1.1` [STRING -> LONG]");
     }
 
     @Test
@@ -4043,7 +4110,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testImplicitCastStrIPv42() throws Exception {
         assertSql("column\n" +
-                "false\n", "select ipv4 '2.2.2.2' < '1.1.1.1'");
+                "false\n", "select ipv4 '2.2.2.2' <= '1.1.1.1'");
     }
 
     @Test
@@ -4053,8 +4120,20 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testBitAndStr() throws Exception {
+        assertSql("column\n" +
+                "2.0.0.0\n", "select ipv4 '2.1.1.1' & '2.2.2.2'");
+    }
+
+    @Test
+    public void testBitAndStr2() throws Exception {
+        assertSql("column\n" +
+                "2.0.0.0\n", "select '2.2.2.2' & ipv4 '2.1.1.1'");
+    }
+
+    @Test
     public void testImplicitCastStrIPv4BadStr() throws Exception {
-        assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 20, "invalid ipv4 format: dhukdsvhiu");
+        assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 0, "invalid ipv4 format: dhukdsvhiu");
     }
 
     @Test

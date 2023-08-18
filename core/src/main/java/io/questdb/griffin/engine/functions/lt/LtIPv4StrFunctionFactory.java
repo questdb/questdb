@@ -26,20 +26,16 @@ package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class LtIPv4FunctionFactory implements FunctionFactory {
+public class LtIPv4StrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "<(XX)";
+        return "<(XS)";
     }
 
     @Override
@@ -56,48 +52,5 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         return new LtIPv4FunctionFactory.LtIPv4Function(args.getQuick(0), args.getQuick(1));
-    }
-
-    static class LtIPv4Function extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
-
-        public LtIPv4Function(Function left, Function right) {
-            this.left = left;
-            this.right = right;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            long left = Numbers.ipv4ToLong(this.left.getIPv4(rec));
-            if (left != Numbers.IPv4_NULL) {
-                long right = Numbers.ipv4ToLong(this.right.getIPv4(rec));
-                if (right != Numbers.IPv4_NULL) {
-                    return negated == (left >= right);
-                }
-            }
-            return false;
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(left);
-            if (negated) {
-                sink.val(">=");
-            } else {
-                sink.val('<');
-            }
-            sink.val(right);
-        }
     }
 }
