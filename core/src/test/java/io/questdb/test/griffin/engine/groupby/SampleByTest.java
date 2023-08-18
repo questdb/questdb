@@ -9831,6 +9831,32 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWithOrderByDescTimestamp() throws Exception {
+        assertQuery(
+                "created_at\tfirst\n" +
+                        "1970-01-01T08:00:00.000000Z\t42.17768841969397\n" +
+                        "1970-01-01T06:00:00.000000Z\t34.91070363730514\n" +
+                        "1970-01-01T04:00:00.000000Z\t79.05675319675964\n" +
+                        "1970-01-01T02:00:00.000000Z\t8.43832076262595\n" +
+                        "1970-01-01T00:00:00.000000Z\t80.43224099968394\n",
+                "select created_at, first(price)" +
+                        " from trades" +
+                        " sample by 2h" +
+                        " order by created_at desc",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0) * 100 price," +
+                        " timestamp_sequence(0, 3600000000) created_at" + // 1 hour step
+                        " from long_sequence(10)" + // 10 rows
+                        ") timestamp(created_at) partition by day",
+                "created_at###DESC",
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testSamplePeriodInvalidWithNoUnits() throws Exception {
         testSampleByPeriodFails(
                 "select sum(a), k from x sample by 300/10 align to calendar",
