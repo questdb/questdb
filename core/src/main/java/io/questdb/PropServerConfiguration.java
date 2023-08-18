@@ -2710,11 +2710,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInitialBias() {
-            return IOOperation.READ;
-        }
-
-        @Override
         public KqueueFacade getKqueueFacade() {
             return KqueueFacadeImpl.INSTANCE;
         }
@@ -2794,11 +2789,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getHint() {
             return httpMinNetConnectionHint;
-        }
-
-        @Override
-        public int getInitialBias() {
-            return IOOperation.READ;
         }
 
         @Override
@@ -3291,11 +3281,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInitialBias() {
-            return BIAS_READ;
-        }
-
-        @Override
         public KqueueFacade getKqueueFacade() {
             return KqueueFacadeImpl.INSTANCE;
         }
@@ -3721,11 +3706,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getHint() {
             return pgNetConnectionHint;
-        }
-
-        @Override
-        public int getInitialBias() {
-            return BIAS_READ;
         }
 
         @Override

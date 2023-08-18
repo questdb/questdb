@@ -145,7 +145,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
     @Override
     protected void pendingAdded(int index) {
-        pending.set(index, OPM_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
+        pending.set(index, OPM_OPERATION, IOOperation.READ);
     }
 
     @Override

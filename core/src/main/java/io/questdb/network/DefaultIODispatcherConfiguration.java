@@ -56,11 +56,6 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getInitialBias() {
-        return BIAS_READ;
-    }
-
-    @Override
     public KqueueFacade getKqueueFacade() {
         return KqueueFacadeImpl.INSTANCE;
     }

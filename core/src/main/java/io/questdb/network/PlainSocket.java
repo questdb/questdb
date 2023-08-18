@@ -48,8 +48,8 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public int init() {
-        return INIT_DONE; // no-op
+    public int read() {
+        return 0;
     }
 
     @Override
@@ -65,5 +65,20 @@ public class PlainSocket implements Socket {
     @Override
     public void shutdown(int how) {
         nf.shutdown(fd, how);
+    }
+
+    @Override
+    public boolean wantsRead() {
+        return false;
+    }
+
+    @Override
+    public boolean wantsWrite() {
+        return false;
+    }
+
+    @Override
+    public int write() {
+        return 0;
     }
 }

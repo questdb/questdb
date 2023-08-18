@@ -30,29 +30,20 @@ import io.questdb.std.QuietCloseable;
  * Abstraction for plain and encrypted TCP sockets.
  */
 public interface Socket extends QuietCloseable {
-    int INIT_DONE = 0;
-    int WANTS_READ = 2;
-    int WANTS_WRITE = 1;
 
     int getFd();
 
-    /**
-     * Initialize socket for communication. The method has to be called (potentially,
-     * multiple times) before the first call to {@link #recv(long, int)} and
-     * {@link #send(long, int)} until {@link #INIT_DONE} is returned.
-     *
-     * @return one of the following values:
-     * <ul>
-     *     <li>{@link #INIT_DONE} - initialization is done</li>
-     *     <li>{@link #WANTS_READ} - a read for the socket is required</li>
-     *     <li>{@link #WANTS_WRITE} - a write to the socket is required</li>
-     * </ul>
-     */
-    int init();
+    int read();
 
     int recv(long bufferPtr, int bufferLen);
 
     int send(long bufferPtr, int bufferLen);
 
     void shutdown(int how);
+
+    boolean wantsRead();
+
+    boolean wantsWrite();
+
+    int write();
 }
