@@ -439,7 +439,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 // empty
                 return StrConstant.EMPTY;
             }
-            return new StrConstant(tok);
+
+            try {
+                int ip = Numbers.parseIPv4_0(tok, 1, len - 1);
+                return new IPv4Constant(ip);
+            } catch (NumericException e) {
+                return new StrConstant(tok);
+            }
         }
 
         // special case E'str'
@@ -919,6 +925,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     return DoubleConstant.newInstance(function.getDouble(null));
                 }
+            case ColumnType.IPv4:
+                if (function instanceof IPv4Constant) {
+                    return function;
+                } else {
+                    return IPv4Constant.newInstance(function.getIPv4(null));
+                }
             case ColumnType.LONG:
                 if (function instanceof LongConstant) {
                     return function;
@@ -983,12 +995,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return function;
                 } else {
                     return new UuidConstant(function.getLong128Lo(null), function.getLong128Hi(null));
-                }
-            case ColumnType.IPv4:
-                if (function instanceof IPv4Constant) {
-                    return function;
-                } else {
-                    return IPv4Constant.newInstance(function.getIPv4(null));
                 }
             default:
                 return function;

@@ -4047,6 +4047,12 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitCastStrIPv43() throws Exception {
+        assertSql("column\n" +
+                "253.253.253.253\n", "select ~ '2.2.2.2'");
+    }
+
+    @Test
     public void testImplicitCastStrIPv4BadStr() throws Exception {
         assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 0, "invalid ipv4 format: dhukdsvhiu");
     }
@@ -4054,7 +4060,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testImplicitCastStrIPv4Null() throws Exception {
         assertSql("column\n" +
-                "false\n", "select '0.0.0.0' < ipv4 '1.1.1.1'");
+                "false\n", "select '0.0.0.1'::ipv4 < '1.1.1.1'::ipv4");
     }
 
     @Test
