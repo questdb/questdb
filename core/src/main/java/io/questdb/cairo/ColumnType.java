@@ -380,6 +380,8 @@ public final class ColumnType {    //@formatter:off
                 }
             }
         }
+        //When null used as func arg, default to string as function factory arg to avoid weird behaviour
+        overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * NULL + STRING] = -1;
     }
 
     static {

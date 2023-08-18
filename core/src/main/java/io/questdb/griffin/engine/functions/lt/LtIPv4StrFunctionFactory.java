@@ -35,7 +35,7 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "<(XS)";
+        return "<(Xs)";
     }
 
     @Override

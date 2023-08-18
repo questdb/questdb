@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 public class LtStrIPv4FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<(SX)";
+        return "<(sX)";
     }
 
     @Override

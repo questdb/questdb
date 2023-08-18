@@ -789,7 +789,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.IntPlusIPv4StrFunctionFactory,
             io.questdb.griffin.engine.functions.math.IPv4StrMinusIPv4StrFunctionFactory,
             io.questdb.griffin.engine.functions.math.IPv4StrMinusIPv4FunctionFactory,
-io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory,
+            io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory,
 
             // ipv4 functions
             io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory,

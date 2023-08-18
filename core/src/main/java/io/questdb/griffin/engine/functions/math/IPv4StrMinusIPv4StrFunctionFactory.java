@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 public class IPv4StrMinusIPv4StrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "-(SS)";
+        return "-(ss)";
     }
 
     @Override

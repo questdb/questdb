@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 public class BitwiseNotIPv4StrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "~(S)";
+        return "~(s)";
     }
 
     @Override
