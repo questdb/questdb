@@ -439,13 +439,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 // empty
                 return StrConstant.EMPTY;
             }
-
-            try {
-                int ip = Numbers.parseIPv4_0(tok, 1, len - 1);
-                return new IPv4Constant(ip);
-            } catch (NumericException e) {
-                return new StrConstant(tok);
-            }
+            return new StrConstant(tok);
         }
 
         // special case E'str'

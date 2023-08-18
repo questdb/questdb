@@ -4058,12 +4058,6 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testImplicitCastStrIPv4Null() throws Exception {
-        assertSql("column\n" +
-                "false\n", "select '0.0.0.1'::ipv4 < '1.1.1.1'::ipv4");
-    }
-
-    @Test
     public void testImplicitCastStrToIpv4() throws Exception {
         ddl("create table x (b string)");
         insert("insert into x values('0.0.0.1')");
