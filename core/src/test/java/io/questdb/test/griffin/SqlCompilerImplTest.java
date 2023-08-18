@@ -27,8 +27,10 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -4332,26 +4334,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
-        // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)
-        // 2.- then it finds column t1.ts with no explicit alias, so it attempts to give it what it finds after the dot,
-        //     but alas that alias is taken, so it fabricates alias ts1
-        // 3.- then it finds column t1.ts again, but this time with an explicit alias ts1, which is taken by the prev.
-        //     column and therefore is a duplicate, so the reported error is correct -> Duplicate column 'ts1'
-        assertFailure(35, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;"
-        );
+        // wildcard aliases are created after all other aliases
+        // a duplicate column may be produced while optimiser does not have info on other aliases
+        // if this occurs, the column is renamed once we have full alias info for all columns and this error is avoided
 
-        // in this case, the optimizer, left to right, expands "t1.*" to x, ts1, and then the user defines
-        // t2.ts as ts1 which produces the error
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
-        );
+        assertSql("TS\tts2\tts1\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tts2\tx\tts3\tx1\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n", "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tx\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tx\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
     }
 
     @Test
@@ -5092,8 +5089,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertFailure(96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION"));
         assertFailure(99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION ALL"));
-        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
-        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+        assertFailure(97, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
+        assertFailure(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT ALL"));
+        assertFailure(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+        assertFailure(103, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT ALL"));
     }
 
     @Test
