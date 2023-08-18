@@ -43,6 +43,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -463,7 +464,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * Returns transaction number, which is always > -1. Negative values are used as status code.
      */
     long applyWal(
-            TableToken tableToken,
+            @NotNull TableToken tableToken,
             CairoEngine engine,
             OperationExecutor operationCompiler,
             Job.RunStatus runStatus

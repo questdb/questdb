@@ -24,18 +24,11 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.TableToken;
-
 public class EmptyOperationCursor implements TableMetadataChangeLog {
-    private TableToken tableToken;
+    public final static TableMetadataChangeLog INSTANCE = new EmptyOperationCursor();
 
     @Override
     public void close() {
-    }
-
-    @Override
-    public TableToken getTableToken() {
-        return tableToken;
     }
 
     @Override
@@ -46,10 +39,5 @@ public class EmptyOperationCursor implements TableMetadataChangeLog {
     @Override
     public TableMetadataChange next() {
         throw new UnsupportedOperationException();
-    }
-
-    public EmptyOperationCursor of(TableToken tableToken) {
-        this.tableToken = tableToken;
-        return this;
     }
 }
