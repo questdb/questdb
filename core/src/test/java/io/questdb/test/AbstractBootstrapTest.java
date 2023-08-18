@@ -46,6 +46,8 @@ import java.io.PrintWriter;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
+import static io.questdb.PropertyKey.*;
+
 public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final String CHARSET = "UTF8";
     protected static final int HTTP_MIN_PORT = 9011;
@@ -97,36 +99,36 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
 
             // enable all services, but UDP; it has to be enabled per test
-            writer.println("http.enabled=true");
-            writer.println("http.min.enabled=true");
-            writer.println("pg.enabled=true");
-            writer.println("line.tcp.enabled=true");
+            writer.println(HTTP_ENABLED + "=true");
+            writer.println(HTTP_MIN_ENABLED + "=true");
+            writer.println(PG_ENABLED + "=true");
+            writer.println(LINE_TCP_ENABLED + "=true");
 
             // disable services
-            writer.println("http.query.cache.enabled=false");
-            writer.println("pg.select.cache.enabled=false");
-            writer.println("pg.insert.cache.enabled=false");
-            writer.println("pg.update.cache.enabled=false");
-            writer.println("cairo.wal.enabled.default=false");
-            writer.println("metrics.enabled=false");
-            writer.println("telemetry.enabled=false");
+            writer.println(HTTP_QUERY_CACHE_ENABLED + "=false");
+            writer.println(PG_SELECT_CACHE_ENABLED + "=false");
+            writer.println(PG_INSERT_CACHE_ENABLED + "=false");
+            writer.println(PG_UPDATE_CACHE_ENABLED + "=false");
+            writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
+            writer.println(METRICS_ENABLED + "=false");
+            writer.println(TELEMETRY_ENABLED + "=false");
 
             // configure endpoints
-            writer.println("http.bind.to=0.0.0.0:" + httpPort);
-            writer.println("http.min.net.bind.to=0.0.0.0:" + httpMinPort);
-            writer.println("pg.net.bind.to=0.0.0.0:" + pgPort);
-            writer.println("line.tcp.net.bind.to=0.0.0.0:" + ilpPort);
-            writer.println("line.udp.bind.to=0.0.0.0:" + ilpPort);
-            writer.println("line.udp.receive.buffer.size=" + ILP_BUFFER_SIZE);
-            writer.println("http.frozen.clock=true");
+            writer.println(HTTP_BIND_TO + "=0.0.0.0:" + httpPort);
+            writer.println(HTTP_MIN_NET_BIND_TO + "=0.0.0.0:" + httpMinPort);
+            writer.println(PG_NET_BIND_TO + "=0.0.0.0:" + pgPort);
+            writer.println(LINE_TCP_NET_BIND_TO + "=0.0.0.0:" + ilpPort);
+            writer.println(LINE_UDP_BIND_TO + "=0.0.0.0:" + ilpPort);
+            writer.println(LINE_UDP_RECEIVE_BUFFER_SIZE + "=" + ILP_BUFFER_SIZE);
+            writer.println(HTTP_FROZEN_CLOCK + "=true");
 
             // configure worker pools
-            writer.println("shared.worker.count=2");
-            writer.println("http.worker.count=1");
-            writer.println("http.min.worker.count=1");
-            writer.println("pg.worker.count=1");
-            writer.println("line.tcp.writer.worker.count=1");
-            writer.println("line.tcp.io.worker.count=" + ILP_WORKER_COUNT);
+            writer.println(SHARED_WORKER_COUNT + "=2");
+            writer.println(HTTP_WORKER_COUNT + "=1");
+            writer.println(HTTP_MIN_WORKER_COUNT + "=1");
+            writer.println(PG_WORKER_COUNT + "=1");
+            writer.println(LINE_TCP_WRITER_WORKER_COUNT + "=1");
+            writer.println(LINE_TCP_IO_WORKER_COUNT + "=" + ILP_WORKER_COUNT);
 
             // extra
             if (extra != null) {

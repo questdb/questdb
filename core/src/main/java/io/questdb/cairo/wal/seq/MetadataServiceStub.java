@@ -67,7 +67,12 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default long getMetaMaxUncommittedRows() {
+    default int getMetaMaxUncommittedRows() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default long getMetaO3MaxLag() {
         throw new UnsupportedOperationException();
     }
 

@@ -83,6 +83,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         private final TableListRecordCursor cursor;
         private final boolean hideTelemetryTables;
         private final CharSequence sysTablePrefix;
+        private final CharSequence tempPendingRenameTablePrefix;
         private CairoEngine engine;
         private Path path;
         private TableReaderMetadata tableReaderMetadata;
@@ -94,6 +95,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             cursor = new TableListRecordCursor();
             hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
             tableReaderMetadata = new TableReaderMetadata(configuration);
+            tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
         }
 
         @Override
@@ -147,7 +149,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     tableToken = tableBucket.get(tableIndex);
-                    if (record.open(tableToken)) {
+                    if (!TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) && record.open(tableToken)) {
                         break;
                     }
                 }
@@ -179,7 +181,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                     }
                     if (col == DEDUP_NAME_COLUMN) {
                         int timestampIndex = tableReaderMetadata.getTimestampIndex();
-                        return timestampIndex > 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
+                        return timestampIndex >= 0 && tableReaderMetadata.isWalEnabled() && tableReaderMetadata.isDedupKey(timestampIndex);
                     }
                     return false;
                 }
@@ -194,7 +196,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                        return o3MaxLag;
+                    return o3MaxLag;
                 }
 
                 @Override

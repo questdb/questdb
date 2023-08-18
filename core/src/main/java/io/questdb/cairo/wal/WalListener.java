@@ -32,7 +32,9 @@ public interface WalListener {
 
     void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp);
 
-    void segmentClosed(final TableToken tabletoken, int walId, int segmentId);
+    void segmentClosed(final TableToken tabletoken, long txn, int walId, int segmentId);
+
+    void tableCreated(TableToken tableToken, long timestamp);
 
     void tableDropped(TableToken tableToken, long txn, long timestamp);
 

@@ -105,6 +105,7 @@ public class WalWriter implements TableWriterAPI {
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
     private int walLockFd = -1;
+    private long lastSeqTxn = NO_TXN;
 
     public WalWriter(
             CairoConfiguration configuration,
@@ -294,7 +295,7 @@ public class WalWriter implements TableWriterAPI {
             Misc.free(symbolMapMem);
             freeColumns(truncate);
 
-            releaseSegmentLock(segmentId, segmentLockFd);
+            releaseSegmentLock(segmentId, segmentLockFd, segmentRowCount);
 
             try {
                 releaseWalLock();
@@ -444,6 +445,7 @@ public class WalWriter implements TableWriterAPI {
 
     public void rollUncommittedToNewSegment() {
         final long uncommittedRows = getUncommittedRowCount();
+        final long oldSegmentRowCount = segmentRowCount;
 
         if (uncommittedRows > 0) {
             final int oldSegmentId = segmentId;
@@ -509,7 +511,7 @@ public class WalWriter implements TableWriterAPI {
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
             } finally {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd);
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldSegmentRowCount);
             }
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;
@@ -770,8 +772,7 @@ public class WalWriter implements TableWriterAPI {
             LOG.error().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
         }
-
-        return txn;
+        return lastSeqTxn = txn;
     }
 
     private void checkDistressed() {
@@ -1029,7 +1030,7 @@ public class WalWriter implements TableWriterAPI {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
-        walInitializer.initSegmentDirectory(path, tableToken, walId, segmentId);
+        walInitializer.initDirectory(path);
         path.trimTo(segmentPathLen);
         return segmentPathLen;
     }
@@ -1082,7 +1083,7 @@ public class WalWriter implements TableWriterAPI {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
         } while (seqTxn == NO_TXN);
-        return seqTxn;
+        return lastSeqTxn = seqTxn;
     }
 
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {
@@ -1168,6 +1169,7 @@ public class WalWriter implements TableWriterAPI {
         final int newSegmentId = segmentId + 1;
         final int oldSegmentLockFd = segmentLockFd;
         segmentLockFd = -1;
+        final long oldSegmentRows = segmentRowCount;
         try {
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
@@ -1214,19 +1216,25 @@ public class WalWriter implements TableWriterAPI {
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
             if (oldSegmentLockFd > -1) {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd);
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldSegmentRows);
             }
             path.trimTo(rootLen);
         }
     }
 
-    private void releaseSegmentLock(int segmentId, int segmentLockFd) {
+    private void releaseSegmentLock(int segmentId, int segmentLockFd, long segmentRowCount) {
         if (ff.close(segmentLockFd)) {
-            sequencer.notifySegmentClosed(tableToken, walId, segmentId);
-            LOG.debug().$("released segment lock [walId=").$(walId)
-                    .$(", segmentId=").$(segmentId)
-                    .$(", fd=").$(segmentLockFd)
-                    .$(']').$();
+            if (segmentRowCount > 0) {
+                sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
+                LOG.debug().$("released segment lock [walId=").$(walId)
+                        .$(", segmentId=").$(segmentId)
+                        .$(", fd=").$(segmentLockFd)
+                        .$(']').$();
+            } else {
+                path.trimTo(rootLen).slash().put(segmentId);
+                walInitializer.rollbackDirectory(path);
+                path.trimTo(rootLen);
+            }
         } else {
             LOG.error()
                     .$("cannot close segment lock fd [walId=").$(walId)
@@ -1528,6 +1536,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public long getMetaO3MaxLag() {
+            return 0;
+        }
+
+        @Override
         public TableRecordMetadata getMetadata() {
             return metadata;
         }
@@ -1541,7 +1554,7 @@ public class WalWriter implements TableWriterAPI {
         public void removeColumn(@NotNull CharSequence columnName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-                throw CairoException.nonCritical().put("cannot remove column, column does not exists [table=").put(tableToken.getTableName())
+                throw CairoException.nonCritical().put("cannot remove column, column does not exist [table=").put(tableToken.getTableName())
                         .put(", column=").put(columnName).put(']');
             }
 
@@ -1556,7 +1569,7 @@ public class WalWriter implements TableWriterAPI {
         public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
-                throw CairoException.nonCritical().put("cannot rename column, column does not exists [table=").put(tableToken.getTableName())
+                throw CairoException.nonCritical().put("cannot rename column, column does not exist [table=").put(tableToken.getTableName())
                         .put(", column=").put(columnName).put(']');
             }
             if (columnIndex == metadata.getTimestampIndex()) {

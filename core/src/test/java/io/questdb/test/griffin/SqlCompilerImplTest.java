@@ -26,7 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -2948,16 +2948,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     "partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
                     );
 
-                    try (TableWriter writer = getWriter("x")) {
+                    try (TableWriter writer = getWriter("x");
+                         TableMetadata tableMetadata = engine.getMetadata(writer.getTableToken())) {
                         sink.clear();
-                        TableRecordMetadata metadata = writer.getMetadata();
-                        metadata.toJson(sink);
+                        tableMetadata.toJson(sink);
                         TestUtils.assertEquals(
                                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
                                 sink
                         );
-                        Assert.assertEquals(10000, metadata.getMaxUncommittedRows());
-                        Assert.assertEquals(250000, metadata.getO3MaxLag());
+                        Assert.assertEquals(10000, tableMetadata.getMaxUncommittedRows());
+                        Assert.assertEquals(250000, tableMetadata.getO3MaxLag());
                     }
                 }
         );
@@ -3145,6 +3145,43 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInLongTypeMismatch() throws Exception {
         assertFailure(43, "cannot compare LONG with type DOUBLE", "select 1 from long_sequence(1) where x in (123.456)");
+    }
+
+    @Test
+    public void testInnerJoinConditionPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
+            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+
+            for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
+                assertSql("count\n3\n",
+                        "SELECT count(T2.created) " +
+                                "FROM tab as T1 " +
+                                "JOIN (SELECT * FROM tab) as T2 ON T1.created < T2.created " +
+                                join + " JOIN tab as T3 ON T2.value=T3.value"
+                );
+            }
+            assertSql("count\n1\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "JOIN tab T4 on T3.created < T4.created");
+
+            assertSql("count\n3\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "LEFT JOIN tab T4 on T3.created < T4.created");
+
+            assertSql("count\n3\n",
+                    "SELECT count(T2.created) " +
+                            "FROM tab as T1 " +
+                            "JOIN tab T2 ON T1.created < T2.created " +
+                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                            "LEFT JOIN tab T4 on T3.created-T4.created = 0 ");
+        });
     }
 
     @Test
@@ -4297,26 +4334,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
-        // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)
-        // 2.- then it finds column t1.ts with no explicit alias, so it attempts to give it what it finds after the dot,
-        //     but alas that alias is taken, so it fabricates alias ts1
-        // 3.- then it finds column t1.ts again, but this time with an explicit alias ts1, which is taken by the prev.
-        //     column and therefore is a duplicate, so the reported error is correct -> Duplicate column 'ts1'
-        assertFailure(35, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;"
-        );
+        // wildcard aliases are created after all other aliases
+        // a duplicate column may be produced while optimiser does not have info on other aliases
+        // if this occurs, the column is renamed once we have full alias info for all columns and this error is avoided
 
-        // in this case, the optimizer, left to right, expands "t1.*" to x, ts1, and then the user defines
-        // t2.ts as ts1 which produces the error
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
-        );
+        assertSql("TS\tts2\tts1\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tts2\tx\tts3\tx1\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n", "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tx\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tx\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
     }
 
     @Test
@@ -4581,6 +4613,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 null, true, true
         );
     }
+
+    @Test
+    public void testOrderByEmptyIdentifier() throws Exception {
+        assertMemoryLeak(() -> {
+            assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by ''");
+            assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by \"\"");
+        });
+    }
+
 
     @Test
     public void testOrderByFloat() throws Exception {
@@ -5048,8 +5089,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertFailure(96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION"));
         assertFailure(99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION ALL"));
-        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
-        assertFailure(0, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+        assertFailure(97, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
+        assertFailure(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT ALL"));
+        assertFailure(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
+        assertFailure(103, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT ALL"));
     }
 
     @Test
@@ -5192,20 +5235,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampWithNanosInWhereClause() throws Exception {
-        assertQuery("x\tts\n" +
-                        "2\t2019-10-17T00:00:00.200000Z\n" +
-                        "3\t2019-10-17T00:00:00.700000Z\n" +
-                        "4\t2019-10-17T00:00:00.800000Z\n",
-                "select * from x where ts between '2019-10-17T00:00:00.200000123Z' and '2019-10-17T00:00:00.800000123Z'",
-                "create table x as " +
-                        "(SELECT x, timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_short(1,5) * 100000L) as ts FROM long_sequence(5)" +
-                        ")",
-                null, true, false
-        );
-    }
-
-    @Test
     public void testSelectTimestampInNullString() throws Exception {
         assertQuery("c\n\n",
                 "select * from x where c in null::string",
@@ -5316,6 +5345,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "k",
                 true,
                 false
+        );
+    }
+
+    @Test
+    public void testTimestampWithNanosInWhereClause() throws Exception {
+        assertQuery("x\tts\n" +
+                        "2\t2019-10-17T00:00:00.200000Z\n" +
+                        "3\t2019-10-17T00:00:00.700000Z\n" +
+                        "4\t2019-10-17T00:00:00.800000Z\n",
+                "select * from x where ts between '2019-10-17T00:00:00.200000123Z' and '2019-10-17T00:00:00.800000123Z'",
+                "create table x as " +
+                        "(SELECT x, timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_short(1,5) * 100000L) as ts FROM long_sequence(5)" +
+                        ")",
+                null, true, false
         );
     }
 

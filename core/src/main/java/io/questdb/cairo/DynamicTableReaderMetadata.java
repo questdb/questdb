@@ -40,21 +40,17 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
     private static final Log LOG = LogFactory.getLog(DynamicTableReaderMetadata.class);
     private final MillisecondClock clock;
     private final CairoConfiguration configuration;
+    private boolean initialized;
     private long rowCount;
     private TxReader txFile;
     private long txn = TableUtils.INITIAL_TXN;
 
-    public DynamicTableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
+    public DynamicTableReaderMetadata(CairoConfiguration configuration, TableToken tableToken, boolean lazy) {
         super(configuration, tableToken);
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        try (Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(tableToken);
-            this.txFile = new TxReader(configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(), getPartitionBy());
-            load();
-        } catch (Throwable e) {
-            close();
-            throw e;
+        if (!lazy) {
+            initialize(configuration, tableToken);
         }
     }
 
@@ -85,12 +81,16 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
     }
 
     public void reload() {
-        if (acquireTxn()) {
-            return;
+        if (!initialized) {
+            initialize(configuration, getTableToken());
+        } else {
+            if (acquireTxn()) {
+                return;
+            }
+            reloadSlow();
+            // partition reload will apply truncate if necessary
+            // applyTruncate for non-partitioned tables only
         }
-        reloadSlow();
-        // partition reload will apply truncate if necessary
-        // applyTruncate for non-partitioned tables only
     }
 
     public long size() {
@@ -108,6 +108,18 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
             return txFile.getVersion() == txFile.unsafeReadVersion();
         }
         return false;
+    }
+
+    private void initialize(CairoConfiguration configuration, TableToken tableToken) {
+        try (Path path = new Path()) {
+            path.of(configuration.getRoot()).concat(tableToken);
+            this.txFile = new TxReader(configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(), getPartitionBy());
+            load();
+            initialized = true;
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
     }
 
     private void readTxnSlow(long deadline) {

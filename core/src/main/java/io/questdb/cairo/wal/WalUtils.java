@@ -56,4 +56,5 @@ public class WalUtils {
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
+    public static final String WAL_PENDING_FS_MARKER = ".pending";
 }

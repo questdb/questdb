@@ -58,15 +58,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException critical(int errno) {
-        CairoException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new CairoException()) != null;
-        ex.message.clear();
-        ex.errno = errno;
-        ex.cacheable = false;
-        ex.interruption = false;
-        ex.authorizationError = false;
-        return ex;
+        return instance(errno);
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
@@ -112,7 +104,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException nonCritical() {
-        return critical(NON_CRITICAL);
+        return instance(NON_CRITICAL);
     }
 
     public static CairoException queryCancelled(int fd) {
@@ -243,5 +235,17 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public CairoException ts(long timestamp) {
         TimestampFormatUtils.appendDateTime(message, timestamp);
         return this;
+    }
+
+    private static CairoException instance(int errno) {
+        CairoException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new CairoException()) != null;
+        ex.message.clear();
+        ex.errno = errno;
+        ex.cacheable = false;
+        ex.interruption = false;
+        ex.authorizationError = false;
+        return ex;
     }
 }

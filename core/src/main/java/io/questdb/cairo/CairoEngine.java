@@ -133,32 +133,15 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
 
-        // Convert tables to WAL/non-WAL, if necessary.
-        final ObjList<TableToken> convertedTables;
-        try {
-            convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-
         try {
             tableNameRegistry = configuration.isReadOnlyInstance() ?
                     new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            tableNameRegistry.reloadTableNameCache(convertedTables);
+            tableNameRegistry.reloadTableNameCache();
         } catch (Throwable e) {
             close();
             throw e;
         }
 
-        if (convertedTables != null) {
-            for (int i = 0, n = convertedTables.size(); i < n; i++) {
-                final TableToken token = convertedTables.get(i);
-                try (TableWriter writer = getWriter(token, "tableTypeConversion")) {
-                    writer.commitSeqTxn(0);
-                }
-            }
-        }
         this.sqlCompilerPool = new SqlCompilerPool(this);
     }
 
@@ -492,7 +475,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
-    public TableRecordMetadata getMetadata(TableToken tableToken) {
+    public TableMetadata getMetadata(TableToken tableToken) {
         verifyTableToken(tableToken);
         try {
             return metadataPool.get(tableToken);
@@ -739,6 +722,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken.isWal();
     }
 
+    public void load() {
+        // Convert tables to WAL/non-WAL, if necessary.
+        final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
+        tableNameRegistry.reloadTableNameCache(convertedTables);
+    }
+
     public String lock(TableToken tableToken, String lockReason) {
         assert null != lockReason;
         // busy metadata is same as busy reader from user perspective
@@ -781,11 +770,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
+    @Nullable
+    public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
+        String tableNameStr = Chars.toString(tableName);
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
+    }
+
     public void notifyDropped(TableToken tableToken) {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyWalTxnCommitted(TableToken tableToken) {
+    public void notifyWalTxnCommitted(@NotNull TableToken tableToken) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
@@ -826,6 +821,11 @@ public class CairoEngine implements Closeable, WriterSource {
     public boolean releaseAllReaders() {
         boolean b1 = metadataPool.releaseAll();
         return readerPool.releaseAll() & b1;
+    }
+
+    @TestOnly
+    public void releaseAllWalWriters() {
+        walWriterPool.releaseAll();
     }
 
     @TestOnly
@@ -994,6 +994,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setReaderListener(ReaderPool.ReaderListener readerListener) {
         readerPool.setTableReaderListener(readerListener);
+    }
+
+    @TestOnly
+    public void setUp() {
     }
 
     public void setWalInitializer(@NotNull WalInitializer walInitializer) {

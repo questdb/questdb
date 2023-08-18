@@ -2759,7 +2759,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                if (model.getGroupBy().size() == 0) {//order by should not copy through group by
+                if (model.getGroupBy().size() == 0 && model.getSampleBy() == null) { // order by should not copy through group by or sample by
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
@@ -2914,7 +2914,11 @@ public class SqlOptimiser implements Mutable {
                 emitLiteralsTopDown(leftJoinWhere, jm);
                 emitLiteralsTopDown(leftJoinWhere, model);
             }
+        }
 
+        // propagate join models columns in separate loop to catch columns added to models prior to the current one 
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final QueryModel jm = joinModels.getQuick(i);
             propagateTopDownColumns0(jm, false, model, true);
         }
 
@@ -4117,6 +4121,14 @@ public class SqlOptimiser implements Mutable {
                             useOuterModel = true;
                         }
                     } else {
+                        //groupByModel is populated in createSelectColumn
+                        //groupByModel must be used as it is the only model that is populated with duplicate column names in createSelectColumn
+                        //The below if-statement will only evaluate to true when using wildcards in a join with duplicate column names
+                        //Because the other column aliases are not known at the time qc's alias gets set, we must wait until this point (when we know the other column aliases) to alter it if a duplicate has occurred
+                        if (groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
+                            CharSequence newAlias = createColumnAlias(qc.getAst(), groupByModel);
+                            qc.setAlias(newAlias);
+                        }
                         createSelectColumn(
                                 qc.getAlias(),
                                 qc.getAst(),
