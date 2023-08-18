@@ -2759,7 +2759,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                if (model.getGroupBy().size() == 0) {//order by should not copy through group by
+                if (model.getGroupBy().size() == 0 && model.getSampleBy() == null) { // order by should not copy through group by or sample by
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
