@@ -684,6 +684,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
+                        // Implicit cast from STRING to IPv4
+                        overloadPossible |= argTypeTag == ColumnType.STRING &&
+                                sigArgTypeTag == ColumnType.IPv4 && !factory.isGroupBy();
+
                         overloadPossible |= arg.isUndefined();
                     }
 
@@ -806,6 +810,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int fromType = function.getType();
         switch (fromType) {
             case ColumnType.STRING:
+                if(toType == ColumnType.IPv4) {
+                    return new CastStrToIPv4FunctionFactory.CastStrToIPv4Function(function);
+                }
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.UUID) {
                     return new CastStrToUuidFunctionFactory.Func(function);

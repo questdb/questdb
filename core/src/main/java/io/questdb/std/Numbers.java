@@ -652,6 +652,9 @@ public final class Numbers {
 
         //if no netmask provided, default to netmask of 255.255.255.255 (0xffffffff)
         if(mid == 0) {
+            if(parseIPv4Quiet(sequence) == IPv4_NULL) {
+                return -2;
+            }
             return netmask;
         }
 
