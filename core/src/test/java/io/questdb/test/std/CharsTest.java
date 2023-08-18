@@ -507,6 +507,54 @@ public class CharsTest {
         }
     }
 
+    @Test
+    public void testUtf8toUtf16() {
+        StringSink utf16Sink = new StringSink();
+        String empty = "";
+        String ascii = "abc";
+        String cyrillic = "абв";
+        String chinese = "你好";
+        String emoji = "😀";
+        String mixed = "abcабв你好😀";
+        String[] strings = {empty, ascii, cyrillic, chinese, emoji, mixed};
+        byte[] terminators = {':', '-', ' ', '\0'};
+        try (DirectByteCharSink utf8Sink = new DirectByteCharSink(4)) {
+            for (String left : strings) {
+                for (String right : strings) {
+                    for (byte terminator : terminators) {
+                        // test with terminator (left + terminator + right)
+                        String input = left + (char) terminator + right;
+                        int expectedUtf8ByteRead = left.getBytes(StandardCharsets.UTF_8).length;
+                        assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, input, left, terminator, expectedUtf8ByteRead);
+                    }
+                    for (byte terminator : terminators) {
+                        //test without terminator (left + right)
+                        String input = left + right;
+                        int expectedUtf8ByteRead = input.getBytes(StandardCharsets.UTF_8).length;
+                        assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, input, input, terminator, expectedUtf8ByteRead);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void assertUtf8ToUtf16WithTerminator(
+            DirectByteCharSink utf8Sink,
+            StringSink utf16Sink,
+            String inputString,
+            String expectedDecodedString,
+            byte terminator,
+            int expectedUtf8ByteRead
+    ) {
+        utf8Sink.clear();
+        utf16Sink.clear();
+
+        utf8Sink.encodeUtf8(inputString);
+        int n = Chars.utf8toUtf16(utf8Sink, utf16Sink, terminator);
+        Assert.assertEquals(expectedUtf8ByteRead, n);
+        TestUtils.assertEquals(expectedDecodedString, utf16Sink);
+    }
+
     private static void testUtf8Char(String x, long p, boolean failExpected) {
         byte[] bytes = x.getBytes(Files.UTF_8);
         for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
