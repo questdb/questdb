@@ -22,25 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.ObjectFactory;
+public class CombiningUsernamePasswordMatcher implements UsernamePasswordMatcher {
 
-public class EllipticCurveAuthenticatorFactory implements LineAuthenticatorFactory {
-    private final ObjectFactory<? extends ChallengeResponseMatcher> matcherFactory;
-    private final NetworkFacade networkFacade;
+    private final UsernamePasswordMatcher first;
+    private final UsernamePasswordMatcher second;
 
-    public EllipticCurveAuthenticatorFactory(NetworkFacade networkFacade, ObjectFactory<? extends ChallengeResponseMatcher> matcherFactory) {
-        this.networkFacade = networkFacade;
-        this.matcherFactory = matcherFactory;
+    public CombiningUsernamePasswordMatcher(UsernamePasswordMatcher first, UsernamePasswordMatcher second) {
+        this.first = first;
+        this.second = second;
     }
 
     @Override
-    public Authenticator getLineTCPAuthenticator() {
-        return new EllipticCurveAuthenticator(
-                networkFacade,
-                matcherFactory.newInstance());
+    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+        return first.verifyPassword(username, passwordPtr, passwordLen) || second.verifyPassword(username, passwordPtr, passwordLen);
     }
 }

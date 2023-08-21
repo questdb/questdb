@@ -25,5 +25,17 @@
 package io.questdb.cutlass.pgwire;
 
 public interface UsernamePasswordMatcher {
-    boolean verifyPassword(CharSequence username, CharSequence password);
+
+    /**
+     * Verify password for a user.
+     * <p>
+     * When the user has no active password then this method returns false.
+     * This also return false when username is empty or null.
+     *
+     * @param username    user name, cannot be null or empty
+     * @param passwordPtr pointer to password
+     * @param passwordLen length of password
+     * @return true if password matches
+     */
+    boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen);
 }
