@@ -456,7 +456,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getStatus() {
+        public int read() {
             return 0;
         }
 
@@ -471,7 +471,22 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public void shutdown() {
+        public void shutdown(int how) {
+        }
+
+        @Override
+        public boolean wantsRead() {
+            return false;
+        }
+
+        @Override
+        public boolean wantsWrite() {
+            return false;
+        }
+
+        @Override
+        public int write() {
+            return 0;
         }
     }
 

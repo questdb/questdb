@@ -51,6 +51,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected final RingQueue<IOEvent<C>> disconnectQueue;
     protected final SCSequence disconnectSubSeq;
     protected final long idleConnectionTimeout;
+    protected final int initialBias;
     protected final MPSequence interestPubSeq;
     protected final RingQueue<IOEvent<C>> interestQueue;
     protected final SCSequence interestSubSeq;
@@ -108,6 +109,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.clock = configuration.getClock();
         this.activeConnectionLimit = configuration.getLimit();
         this.ioContextFactory = ioContextFactory;
+        this.initialBias = configuration.getInitialBias();
         this.socketFactory = socketFactory;
         this.idleConnectionTimeout = configuration.getTimeout() > 0 ? configuration.getTimeout() : Long.MIN_VALUE;
         this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() > 0 ? configuration.getQueueTimeout() : 0;

@@ -74,18 +74,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-
-        @Override
-        public int getBindPort() {
-            return bindPort;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return 15;
-        }
-    };
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
     private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
@@ -109,6 +97,22 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+        @Override
+        public int getBindPort() {
+            return bindPort;
+        }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return 15;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return nf;
+        }
+    };
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {

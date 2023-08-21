@@ -83,10 +83,14 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             kqueue.setWriteOffset(offset);
 
             final int fd = (int) pending.get(i, OPM_FD);
-            long id = pending.get(i, OPM_ID);
-            final int operation = IOOperation.READ;
+            final long id = pending.get(i, OPM_ID);
+            final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
-            kqueue.readFD(fd, id);
+            if (operation == IOOperation.READ) {
+                kqueue.readFD(fd, id);
+            } else {
+                kqueue.writeFD(fd, id);
+            }
             if (++index > capacity - 1) {
                 registerWithKQueue(index);
                 index = 0;

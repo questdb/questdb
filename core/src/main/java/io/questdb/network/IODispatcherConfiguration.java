@@ -29,6 +29,8 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface IODispatcherConfiguration {
+    int BIAS_READ = 1;
+    int BIAS_WRITE = 2;
 
     int getBindIPv4Address();
 
@@ -54,6 +56,10 @@ public interface IODispatcherConfiguration {
 
     default int getIOQueueCapacity() {
         return Numbers.ceilPow2(getLimit());
+    }
+
+    default int getInitialBias() {
+        return BIAS_READ;
     }
 
     default int getInterestQueueCapacity() {

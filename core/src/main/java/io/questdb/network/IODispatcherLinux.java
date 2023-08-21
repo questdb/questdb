@@ -79,12 +79,12 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
+            final C context = pending.get(i);
             final long id = pending.get(i, OPM_ID);
             final int fd = (int) pending.get(i, OPM_FD);
-            int operation = IOOperation.READ;
+            final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
-            int event = EpollAccessor.EPOLLIN;
-            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, event) < 0) {
+            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, epollOp(operation, context)) < 0) {
                 LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
                         .$(", err=").$(nf.errno()).I$();
             }
@@ -123,28 +123,42 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             }
         } else {
             // We check EPOLLOUT flag and treat all other events, including EPOLLIN and EPOLLHUP, as a read.
-            final int readyOp = (epoll.getEvent() & EpollAccessor.EPOLLOUT) > 0 ? IOOperation.WRITE : IOOperation.READ;
-            final int requestedOp = (int) pending.get(row, OPM_OPERATION);
-            boolean wantsRead = context.getSocket().wantsRead();
-            boolean wantsWrite = context.getSocket().wantsWrite();
+            final boolean readyForWrite = (epoll.getEvent() & EpollAccessor.EPOLLOUT) > 0;
+            final boolean readyForRead = !readyForWrite || (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0;
+            final boolean wantsRead = context.getSocket().wantsRead();
+            final boolean wantsWrite = context.getSocket().wantsWrite();
 
-            if (readyOp == requestedOp) {
-                publishOperation(readyOp, context);
-                pending.deleteRow(row);
-                return true;
-            } else {
+            final int requestedOp = (int) pending.get(row, OPM_OPERATION);
+            final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)
+                    || (requestedOp == IOOperation.READ && readyForRead);
+
+            if (readyForRequestedOp) {
+                // If the socket is also ready for another operation type, do it.
                 // TODO handle errors properly
-                if (wantsWrite && readyOp == IOOperation.WRITE) {
+                if (requestedOp == IOOperation.READ && wantsWrite && readyForWrite) {
                     context.getSocket().write();
-                } else if (wantsRead) {
+                }
+                if (requestedOp == IOOperation.WRITE && wantsRead && readyForRead) {
                     context.getSocket().read();
                 }
-                // We need to re-arm epoll.
-                final int fd = (int) pending.get(row, OPM_FD);
-                if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, epollOp(requestedOp, context)) < 0) {
-                    LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(id)
-                            .$(", err=").$(nf.errno()).I$();
-                }
+                publishOperation(requestedOp, context);
+                pending.deleteRow(row);
+                return true;
+            }
+
+            // It's something different from the requested operation.
+            // TODO handle errors properly
+            if (wantsWrite && readyForWrite) {
+                context.getSocket().write();
+            }
+            if (wantsRead && readyForRead) {
+                context.getSocket().read();
+            }
+            // We need to re-arm epoll.
+            final int fd = (int) pending.get(row, OPM_FD);
+            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, epollOp(requestedOp, context)) < 0) {
+                LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(id)
+                        .$(", err=").$(nf.errno()).I$();
             }
         }
         return false;
