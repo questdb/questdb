@@ -252,6 +252,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);
     }
 
+    public void addFieldForNullAlias(QueryColumn column) {
+        bottomUpColumnNames.add(null);
+        bottomUpColumns.add(column);
+    }
+
     public void addGroupBy(ExpressionNode node) {
         groupBy.add(node);
     }
@@ -606,6 +611,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public int getColumnAliasIndex(CharSequence alias) {
         return columnAliasIndexes.get(alias);
+    }
+
+    public LowerCaseCharSequenceIntHashMap getColumnAliasIndexes() {
+        return columnAliasIndexes;
     }
 
     public LowerCaseCharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {

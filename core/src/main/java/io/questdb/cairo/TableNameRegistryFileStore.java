@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -295,7 +296,7 @@ public class TableNameRegistryFileStore implements Closeable {
     private void reloadFromTablesFile(
             ConcurrentHashMap<TableToken> nameTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap,
-            ObjList<TableToken> convertedTables
+            @Nullable ObjList<TableToken> convertedTables
     ) {
         int lastFileVersion;
         FilesFacade ff = configuration.getFilesFacade();
@@ -440,7 +441,7 @@ public class TableNameRegistryFileStore implements Closeable {
     void reload(
             ConcurrentHashMap<TableToken> nameTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap,
-            ObjList<TableToken> convertedTables
+            @Nullable ObjList<TableToken> convertedTables
     ) {
         tableIds.clear();
         reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap, convertedTables);

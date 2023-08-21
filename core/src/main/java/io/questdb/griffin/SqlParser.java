@@ -49,7 +49,9 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final CharacterStore characterStore;
+    private final CharSequence column;
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
+    private final ObjList<QueryColumn> columnsWithNoAlias = new ObjList<>();
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
@@ -70,6 +72,7 @@ public class SqlParser {
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
+    private int digit;
     private boolean subQueryMode = false;
 
     SqlParser(
@@ -98,6 +101,8 @@ public class SqlParser {
         this.characterStore = characterStore;
         this.optimiser = optimiser;
         this.expressionParser = new ExpressionParser(expressionNodePool, this, characterStore);
+        this.digit = 1;
+        this.column = "column";
     }
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
@@ -172,6 +177,21 @@ public class SqlParser {
                 model.getAliasToColumnMap(),
                 node.type != ExpressionNode.LITERAL
         );
+    }
+
+    private CharSequence createConstColumnAlias(LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap) {
+        final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+
+        characterStoreEntry.put(column);
+        int len = characterStoreEntry.length();
+        characterStoreEntry.put(digit);
+
+        while (aliasToColumnMap.contains(characterStoreEntry.toImmutable())) {
+            characterStoreEntry.trimTo(len);
+            digit++;
+            characterStoreEntry.put(digit);
+        }
+        return characterStoreEntry.toImmutable();
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
@@ -1723,7 +1743,9 @@ public class SqlParser {
             }
 
             if (tok != null && Chars.equals(tok, ';')) {
-                alias = createColumnAlias(expr, model);
+                alias = null;
+                col.setAlias(null);
+                columnsWithNoAlias.add(col);
             } else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
@@ -1737,18 +1759,25 @@ public class SqlParser {
                 }
                 tok = optTok(lexer);
             } else {
-                alias = createColumnAlias(expr, model);
+                alias = null;
+                col.setAlias(null);
+                columnsWithNoAlias.add(col);
             }
-            if (alias.length() == 0) {
-                throw err(lexer, null, "column alias cannot be a blank string");
-            }
-            col.setAlias(alias);
 
             // correlated sub-queries do not have expr.token values (they are null)
             if (expr.type == ExpressionNode.QUERY) {
                 expr.token = alias;
             }
-            model.addBottomUpColumn(colPosition, col, false);
+
+            if (alias != null) {
+                if (alias.length() == 0) {
+                    throw err(lexer, null, "column alias cannot be a blank string");
+                }
+                col.setAlias(alias);
+                model.addBottomUpColumn(colPosition, col, false); //add everywhere
+            } else {
+                model.addFieldForNullAlias(col);  //only add to bottom up columns / bottom up column names which are responsible for ordering, the others will be updated later
+            }
 
             if (model.getColumns().size() == 1 && tok == null && Chars.equals(expr.token, '*')) {
                 throw err(lexer, null, "'from' expected");
@@ -1773,6 +1802,19 @@ public class SqlParser {
                 throw err(lexer, tok, "',', 'from' or 'over' expected");
             }
         }
+
+        for (int i = 0; i < columnsWithNoAlias.size(); i++) {
+            QueryColumn column = columnsWithNoAlias.get(i);
+            CharSequence token = column.getAst().token;
+            CharSequence alias;
+            if (column.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(column.getAst().token, '.') != -1) {
+                alias = createConstColumnAlias(model.getAliasToColumnMap());
+            } else {
+                alias = createColumnAlias(column.getAst(), model);
+            }
+            updateAlias(model, alias, token, column);
+        }
+        columnsWithNoAlias.clear();
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel) throws SqlException {
@@ -2193,6 +2235,22 @@ public class SqlParser {
         return tok;
     }
 
+    private void updateAlias(QueryModel model, CharSequence alias, CharSequence token, QueryColumn column) {
+        int oldIndexColumns = model.getBottomUpColumns().indexOf(column);
+        int oldIndexColumnNames = model.getBottomUpColumnNames().indexOfNull();
+
+        column.setAlias(alias);
+
+        model.getBottomUpColumns().set(oldIndexColumns, column);
+        model.getBottomUpColumnNames().set(oldIndexColumnNames, column.getAlias());
+
+        model.getAliasToColumnMap().put(alias, column);
+        model.getAliasToColumnNameMap().put(alias, token);
+
+        model.getColumnNameToAliasMap().put(token, alias);
+        model.getColumnAliasIndexes().put(alias, model.getBottomUpColumnNames().indexOfNull());
+    }
+
     private void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (tok == null || tok.length() == 0) {
             throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
@@ -2238,6 +2296,8 @@ public class SqlParser {
         copyModelPool.clear();
         topLevelWithModel.clear();
         explainModelPool.clear();
+        columnsWithNoAlias.clear();
+        digit = 1;
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {

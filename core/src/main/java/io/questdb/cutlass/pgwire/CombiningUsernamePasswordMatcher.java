@@ -22,19 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.str.Path;
+public class CombiningUsernamePasswordMatcher implements UsernamePasswordMatcher {
 
-public class DefaultWalInitializer implements WalInitializer {
-    public static final DefaultWalInitializer INSTANCE = new DefaultWalInitializer();
+    private final UsernamePasswordMatcher first;
+    private final UsernamePasswordMatcher second;
 
-    @Override
-    public void initDirectory(Path dirPath) {
+    public CombiningUsernamePasswordMatcher(UsernamePasswordMatcher first, UsernamePasswordMatcher second) {
+        this.first = first;
+        this.second = second;
     }
 
     @Override
-    public void rollbackDirectory(Path path) {
+    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+        return first.verifyPassword(username, passwordPtr, passwordLen) || second.verifyPassword(username, passwordPtr, passwordLen);
     }
 }

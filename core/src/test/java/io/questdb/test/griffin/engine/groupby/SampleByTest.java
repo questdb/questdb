@@ -82,6 +82,51 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFillNullAndValue() throws Exception {
+        assertQuery(
+                "ts\tfirst\tlast\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-28T01:59:00.000000Z\t2021-03-28T01:59:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-03-31T00:00:00.000000Z\t2021-03-31T01:59:00.000000Z\t2021-03-31T01:59:00.000000Z\n" +
+                        "2021-04-01T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-04-02T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-04-03T00:00:00.000000Z\t2021-04-03T01:59:00.000000Z\t2021-04-03T01:59:00.000000Z\n" +
+                        "2021-04-04T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-04-05T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-04-06T00:00:00.000000Z\t2021-04-06T01:59:00.000000Z\t2021-04-06T01:59:00.000000Z\n" +
+                        "2021-04-07T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-04-08T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-04-09T00:00:00.000000Z\t2021-04-09T01:59:00.000000Z\t2021-04-09T01:59:00.000000Z\n" +
+                        "2021-04-10T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-04-11T00:00:00.000000Z\t\t2019-02-03T12:23:34.123456Z\n" +
+                        "2021-04-12T00:00:00.000000Z\t2021-04-12T01:59:00.000000Z\t2021-04-12T01:59:00.000000Z\n",
+                "select ts, first(ts), last(ts)\n" +
+                        "from trade\n" +
+                        "sample by 1d fill(null, '2019-02-03T12:23:34.123456Z') align to CALENDAR;", // oddly specific date to make sure it's parsed correctly up to microseconds
+                "create table trade as (" +
+                        "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
+                        ") timestamp(ts)",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampFillValueUnquoted() throws Exception {
+        assertException(
+                "select ts, first(ts), last(ts) " +
+                        "from trade " +
+                        "sample by 1d fill(null, 1236) align to CALENDAR;",
+                "create table trade as (" +
+                        "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
+                        ") timestamp(ts)",
+                66,
+                "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
+        );
+    }
+
+    @Test
     public void testGeohashFillNull() throws Exception {
         assertQuery(
                 "s\tk\tfirst\tfirst1\tfirst2\tfirst3\n" +
@@ -8976,7 +9021,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 94,
-                "invalid number"
+                "invalid fill value"
         );
     }
 
@@ -9826,7 +9871,33 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 43,
-                "invalid number: zz"
+                "invalid fill value: zz"
+        );
+    }
+
+    @Test
+    public void testSampleByWithOrderByDescTimestamp() throws Exception {
+        assertQuery(
+                "created_at\tfirst\n" +
+                        "1970-01-01T08:00:00.000000Z\t42.17768841969397\n" +
+                        "1970-01-01T06:00:00.000000Z\t34.91070363730514\n" +
+                        "1970-01-01T04:00:00.000000Z\t79.05675319675964\n" +
+                        "1970-01-01T02:00:00.000000Z\t8.43832076262595\n" +
+                        "1970-01-01T00:00:00.000000Z\t80.43224099968394\n",
+                "select created_at, first(price)" +
+                        " from trades" +
+                        " sample by 2h" +
+                        " order by created_at desc",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0) * 100 price," +
+                        " timestamp_sequence(0, 3600000000) created_at" + // 1 hour step
+                        " from long_sequence(10)" + // 10 rows
+                        ") timestamp(created_at) partition by day",
+                "created_at###DESC",
+                true,
+                false
         );
     }
 

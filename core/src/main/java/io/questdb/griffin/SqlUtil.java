@@ -632,9 +632,9 @@ public class SqlUtil {
             CharSequence base,
             int indexOfDot,
             LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
-            boolean cleanColumnNames
+            boolean nonLiteral
     ) {
-        final boolean disallowed = cleanColumnNames && disallowedAliases.contains(base);
+        final boolean disallowed = nonLiteral && disallowedAliases.contains(base);
 
         // short and sweet version
         if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
@@ -644,7 +644,7 @@ public class SqlUtil {
         final CharacterStoreEntry characterStoreEntry = store.newEntry();
 
         if (indexOfDot == -1) {
-            if (disallowed) {
+            if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NaN) {
                 characterStoreEntry.put("column");
             } else {
                 characterStoreEntry.put(base);
