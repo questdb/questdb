@@ -84,7 +84,7 @@ other installation and deployment methods.
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) for interactive SQL editor on port `9000`
+- [Web Console](https://questdb.io/docs/develop/web-console/) for an interactive SQL editor on port `9000`
 - [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for high-throughput ingestion on port `9009`
 - [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
 - [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on port `8812`
