@@ -36,6 +36,7 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
     private static final int STATE_CHUNK_DATA_END = 2;
     private static final int STATE_CHUNK_SIZE = 0;
     private final long bufLo;
+    private final long bufHi;
     private final DirectByteCharSequence chunkSize = new DirectByteCharSequence();
     private final int defaultTimeout;
     long available;
@@ -49,17 +50,21 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
     private int state = STATE_CHUNK_SIZE;
 
 
-    public AbstractChunkedResponse(long bufLo, int defaultTimeout) {
+    public AbstractChunkedResponse(long bufLo, long bufHi, int defaultTimeout) {
         this.bufLo = bufLo;
+        this.bufHi = bufHi;
         this.defaultTimeout = defaultTimeout;
     }
 
     public void begin(long lo, long hi) {
-        this.endOfChunk = true;
         this.dataLo = lo;
         this.dataHi = hi;
         this.state = STATE_CHUNK_SIZE;
-        this.receive = true;
+        this.receive = hi == lo;
+        this.endOfChunk = false;
+        size = 0;
+        available = 0;
+        consumed = 0;
     }
 
     @Override
@@ -72,12 +77,19 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
         return dataAddr;
     }
 
+    private byte getByte(long addr) {
+        assert addr != 0;
+        assert addr >= bufLo;
+        assert addr < bufHi;
+        return Unsafe.getUnsafe().getByte(addr);
+    }
+
     @Override
     public Chunk recv(int timeout) {
         while (true) {
             if (receive || dataLo == dataHi) {
                 compactBuffer();
-                dataHi += recvOrDie(dataHi, timeout);
+                dataHi += recvOrDie(dataHi, bufHi, timeout);
             }
             long p; // moving data pointer for scanning buffer
             switch (state) {
@@ -86,10 +98,10 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
                     // chunk size is hex encoded integer terminated with CRLF
                     long res = -1;
                     while (p < dataHi) {
-                        if (Unsafe.getUnsafe().getByte(p) == '\r') {
+                        if (getByte(p) == '\r') {
                             p++;
                             if (p < dataHi) {
-                                if (Unsafe.getUnsafe().getByte(p) == '\n') {
+                                if (getByte(p) == '\n') {
                                     res = p - CRLF_LEN;
                                     break;
                                 } else {
@@ -136,6 +148,7 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
                         if (chunkBytesRemaining <= bufBytesRemaining) {
                             // chunk data fits in the buffer
                             available = chunkBytesRemaining;
+                            consumed += chunkBytesRemaining;
                             endOfChunk = true;
                             // skip chunk data to begin processing chunk end
                             dataLo += chunkBytesRemaining;
@@ -143,6 +156,7 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
                             receive = false;
                         } else {
                             available = bufBytesRemaining;
+                            consumed += bufBytesRemaining;
                             endOfChunk = false;
                             // we consumed the entire buffer for chunk data
                             // we must recv more data
@@ -164,7 +178,7 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
                     // we are here to consume CRLF
                     // we have to have two bytes here
                     if (dataLo < dataHi && (dataHi - dataLo) >= CRLF_LEN) {
-                        if (Unsafe.getUnsafe().getByte(dataLo) == '\r' && Unsafe.getUnsafe().getByte(dataLo + 1) == '\n') {
+                        if (getByte(dataLo) == '\r' && getByte(dataLo + 1) == '\n') {
                             state = STATE_CHUNK_SIZE;
                             dataLo += CRLF_LEN;
                             receive = false;
@@ -201,5 +215,5 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
         }
     }
 
-    protected abstract int recvOrDie(long buf, int timeout);
+    protected abstract int recvOrDie(long bufLo, long bufHi, int timeout);
 }

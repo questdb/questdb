@@ -146,10 +146,10 @@ public class ChunkedResponseTest {
 
     @Test
     public void testFuzz() {
-        Rnd rnd = TestUtils.generateRandom(null, 39522426625300L, 1692211442088L);
-        int strLen = rnd.nextInt(1024);
-        int chunkCount = rnd.nextInt(strLen);
-        int fragCount = rnd.nextInt(strLen);
+        Rnd rnd = TestUtils.generateRandom(null);
+        int strLen = Math.max(1, rnd.nextInt(1024));
+        int chunkCount = Math.max(1, rnd.nextInt(strLen));
+        int fragCount = Math.max(1, rnd.nextInt(strLen));
         String input = rnd.nextString(strLen);
         String[] chunks = createChunks(rnd, input, chunkCount);
 
@@ -197,29 +197,40 @@ public class ChunkedResponseTest {
         long memSize = 4096;
         long mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            final AbstractChunkedResponse rsp = new AbstractChunkedResponse(mem, -1) {
+            final AbstractChunkedResponse rsp = new AbstractChunkedResponse(mem, mem + memSize, -1) {
                 int fragIndex = 0;
+                int fragOffset = 0;
 
                 @Override
-                protected int recvOrDie(long buf, int timeout) {
-                    String frag = fragments[fragIndex++];
-                    for (int i = 0, n = frag.length(); i < n; i++) {
-                        Unsafe.getUnsafe().putByte(buf + i, (byte) frag.charAt(i));
+                protected int recvOrDie(long bufLo, long bufHi, int timeout) {
+                    String frag = fragments[fragIndex];
+                    int fragLen = frag.length() - fragOffset;
+                    int bufRemaining = (int) (bufHi - bufLo);
+
+                    final int n;
+                    final int o = fragOffset;
+                    if (fragLen <= bufRemaining) {
+                        fragIndex++;
+                        fragOffset = 0;
+                        n = fragLen;
+                    } else {
+                        fragOffset += bufRemaining;
+                        n = bufRemaining;
                     }
-                    return frag.length();
+                    for (int i = 0; i < n; i++) {
+                        Unsafe.getUnsafe().putByte(bufLo + i, (byte) frag.charAt(o + i));
+                    }
+                    return n;
                 }
             };
 
             StringSink sink = new StringSink();
             Chunk chunk;
             rsp.begin(mem, mem);
-            int i = 0;
             while ((chunk = rsp.recv()) != null) {
-                System.out.println(i++);
                 for (long p = chunk.lo(); p < chunk.hi(); p++) {
                     sink.put((char) Unsafe.getUnsafe().getByte(p));
                 }
-                System.out.println("received: " + sink);
             }
             TestUtils.assertEquals(expected, sink);
         } finally {
@@ -251,7 +262,6 @@ public class ChunkedResponseTest {
             array[i] = chunks.getQuick(i);
             Assert.assertNotEquals(0, array[i].length());
         }
-
         return array;
     }
 

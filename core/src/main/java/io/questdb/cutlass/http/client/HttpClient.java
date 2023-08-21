@@ -49,7 +49,7 @@ public abstract class HttpClient implements QuietCloseable {
         this.defaultTimeout = configuration.getTimeout();
         this.bufferSize = configuration.getBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        this.responseHeaders = new ResponseHeaders(bufLo, defaultTimeout, 4096, csPool);
+        this.responseHeaders = new ResponseHeaders(bufLo, bufferSize, defaultTimeout, 4096, csPool);
     }
 
     @Override
@@ -113,13 +113,13 @@ public abstract class HttpClient implements QuietCloseable {
     protected abstract void setupIoWait();
 
     private class ChunkedResponseImpl extends AbstractChunkedResponse {
-        public ChunkedResponseImpl(long bufLo, int defaultTimeout) {
-            super(bufLo, defaultTimeout);
+        public ChunkedResponseImpl(long bufLo, long bufHi, int defaultTimeout) {
+            super(bufLo, bufHi, defaultTimeout);
         }
 
         @Override
-        protected int recvOrDie(long buf, int timeout) {
-            return HttpClient.this.recvOrDie(buf, timeout);
+        protected int recvOrDie(long bufLo, long bufHi, int timeout) {
+            return HttpClient.this.recvOrDie(bufLo, timeout);
         }
     }
 
@@ -371,11 +371,11 @@ public abstract class HttpClient implements QuietCloseable {
         private final ChunkedResponseImpl chunkedResponse;
         private final int defaultTimeout;
 
-        public ResponseHeaders(long bufLo, int defaultTimeout, int bufLen, ObjectPool<DirectByteCharSequence> pool) {
-            super(bufLen, pool);
-            this.bufLo = bufLo;
+        public ResponseHeaders(long respParserBufLo, int respParserBufSize, int defaultTimeout, int headerBufSize, ObjectPool<DirectByteCharSequence> pool) {
+            super(headerBufSize, pool);
+            this.bufLo = respParserBufLo;
             this.defaultTimeout = defaultTimeout;
-            this.chunkedResponse = new ChunkedResponseImpl(bufLo, defaultTimeout);
+            this.chunkedResponse = new ChunkedResponseImpl(respParserBufLo, respParserBufLo + respParserBufSize, defaultTimeout);
         }
 
         public void await() {
