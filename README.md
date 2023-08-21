@@ -103,9 +103,8 @@ Below are our official questdb clients for popular programming languages:
 
 ### End-to-end quickstart
 
-If you want to go over a quickstart covering batch and streaming ingestion, and data visualisation with QuestDB as the
-database and Grafana for the dashboard, please refer to
-our [quickstart repository](https://github.com/questdb/questdb-quickstart).
+Want to walk through everything, from streaming ingestion to visualization with Grafana? Check out
+our multi-path [quickstart repository](https://github.com/questdb/questdb-quickstart).
 
 ## How QuestDB compares to other open source TSDBs
 
