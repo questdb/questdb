@@ -120,6 +120,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 doDisconnect(context, id, DISCONNECT_SRC_PEER_DISCONNECT);
                 pending.deleteRow(row);
                 return true;
+            } else {
+                // the connection is alive, so we need to re-arm epoll to be able to detect broken connection
+                rearmEpoll(context, id, IOOperation.READ);
             }
         } else {
             // We check EPOLLOUT flag and treat all other events, including EPOLLIN and EPOLLHUP, as a read.
@@ -154,12 +157,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             if (wantsRead && readyForRead) {
                 context.getSocket().read();
             }
-            // We need to re-arm epoll.
-            final int fd = (int) pending.get(row, OPM_FD);
-            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, epollOp(requestedOp, context)) < 0) {
-                LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(id)
-                        .$(", err=").$(nf.errno()).I$();
-            }
+            rearmEpoll(context, id, requestedOp);
         }
         return false;
     }
@@ -364,12 +362,16 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         pendingEvents.zapTop(count);
     }
 
-    private void resumeOperation(C context, long id, int operation) {
-        // to resume a socket operation, we simply re-arm epoll
+    private void rearmEpoll(C context, long id, int operation) {
         if (epoll.control(context.getFd(), id, EpollAccessor.EPOLL_CTL_MOD, epollOp(operation, context)) < 0) {
-            LOG.critical().$("internal error: epoll_ctl operation mod failure [id=").$(id)
+            LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(id)
                     .$(", err=").$(nf.errno()).I$();
         }
+    }
+
+    private void resumeOperation(C context, long id, int operation) {
+        // to resume a socket operation, we simply re-arm epoll
+        rearmEpoll(context, id, operation);
         context.clearSuspendEvent();
     }
 

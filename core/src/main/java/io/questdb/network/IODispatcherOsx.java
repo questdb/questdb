@@ -82,19 +82,25 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
             kqueue.setWriteOffset(offset);
 
-            final int fd = (int) pending.get(i, OPM_FD);
+            final C context = pending.get(i);
             final long id = pending.get(i, OPM_ID);
             final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
-            if (operation == IOOperation.READ) {
-                kqueue.readFD(fd, id);
-            } else {
-                kqueue.writeFD(fd, id);
+            if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
+                kqueue.readFD(context.getFd(), id);
+                if (++index > capacity - 1) {
+                    registerWithKQueue(index);
+                    index = 0;
+                    offset = 0;
+                }
             }
-            if (++index > capacity - 1) {
-                registerWithKQueue(index);
-                index = 0;
-                offset = 0;
+            if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+                kqueue.writeFD(context.getFd(), id);
+                if (++index > capacity - 1) {
+                    registerWithKQueue(index);
+                    index = 0;
+                    offset = 0;
+                }
             }
         }
         if (index > 0) {
@@ -120,8 +126,21 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 doDisconnect(context, id, DISCONNECT_SRC_PEER_DISCONNECT);
                 pending.deleteRow(row);
                 return true;
+            } else {
+                // the connection is alive, so we need to re-arm kqueue to be able to detect broken connection
+                rearmKqueue(context, id, IOOperation.READ);
             }
         } else {
+            // TODO fix this broken code
+            final boolean readyForWrite = kqueue.getFilter() == KqueueAccessor.EVFILT_WRITE;
+            final boolean readyForRead = kqueue.getFilter() == KqueueAccessor.EVFILT_READ;
+            final boolean wantsRead = context.getSocket().wantsRead();
+            final boolean wantsWrite = context.getSocket().wantsWrite();
+
+            final int requestedOp = (int) pending.get(row, OPM_OPERATION);
+            final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)
+                    || (requestedOp == IOOperation.READ && readyForRead);
+
             publishOperation(
                     kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE,
                     context
@@ -156,14 +175,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 .$(", opId=").$(opId)
                 .$(", eventId=").$(eventId).I$();
 
+        rearmKqueue(context, opId, operation);
         context.clearSuspendEvent();
-        kqueue.setWriteOffset(0);
-        if (operation == IOOperation.READ) {
-            kqueue.readFD(context.getFd(), opId);
-        } else {
-            kqueue.writeFD(context.getFd(), opId);
-        }
-        registerWithKQueue(1);
 
         pendingEvents.deleteRow(eventsRow);
     }
@@ -181,17 +194,21 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         for (int i = 0; i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < timestamp; i++, count++) {
             final C context = pending.get(i);
 
-            // De-register pending operation from epoll. We'll register it later when we get a heartbeat pong.
+            // De-register pending operation from kqueue. We'll register it later when we get a heartbeat pong.
             int fd = context.getFd();
             final long opId = pending.get(i, OPM_ID);
             kqueue.setWriteOffset(0);
             long op = context.getSuspendEvent() != null ? IOOperation.READ : pending.get(i, OPM_OPERATION);
-            if (op == IOOperation.READ) {
+            int index = 0;
+            if (op == IOOperation.READ || context.getSocket().wantsRead()) {
                 kqueue.removeReadFD(fd);
-            } else {
-                kqueue.removeWriteFD(fd);
+                index++;
             }
-            if (kqueue.register(1) != 0) {
+            if (op == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+                kqueue.removeWriteFD(fd);
+                index++;
+            }
+            if (kqueue.register(index) != 0) {
                 LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
                         .$(", err=").$(nf.errno()).I$();
             } else {
@@ -213,14 +230,14 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             if (suspendEvent != null) {
-                // Also, de-register suspend event from epoll.
+                // Also, de-register suspend event from kqueue.
                 int eventRow = pendingEvents.binarySearch(opId, EVM_OPERATION_ID);
                 if (eventRow < 0) {
                     LOG.critical().$("internal error: suspend event not found on heartbeat [id=").$(opId).I$();
                 } else {
                     final long eventId = pendingEvents.get(eventRow, EVM_ID);
                     kqueue.setWriteOffset(0);
-                    kqueue.readFD(context.getFd(), eventId);
+                    kqueue.readFD(suspendEvent.getFd(), eventId);
                     registerWithKQueue(1);
                     pendingEvents.deleteRow(eventRow);
                 }
@@ -241,7 +258,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     private boolean processRegistrations(long timestamp) {
         long cursor;
         boolean useful = false;
-        int count = 0;
+        int index = 0;
         int offset = 0;
         while ((cursor = interestSubSeq.next()) > -1) {
             final IOEvent<C> event = interestQueue.get(cursor);
@@ -313,27 +330,33 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 kqueue.setWriteOffset(offset);
                 kqueue.readFD(suspendEvent.getFd(), eventId);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
-                if (++count > capacity - 1) {
-                    registerWithKQueue(count);
-                    count = offset = 0;
+                if (++index > capacity - 1) {
+                    registerWithKQueue(index);
+                    index = offset = 0;
                 }
             }
 
             kqueue.setWriteOffset(offset);
-            if (operation == IOOperation.READ) {
+            if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
                 kqueue.readFD(fd, opId);
-            } else {
-                kqueue.writeFD(fd, opId);
+                offset += KqueueAccessor.SIZEOF_KEVENT;
+                if (++index > capacity - 1) {
+                    registerWithKQueue(index);
+                    index = offset = 0;
+                }
             }
-            offset += KqueueAccessor.SIZEOF_KEVENT;
-            if (++count > capacity - 1) {
-                registerWithKQueue(count);
-                count = offset = 0;
+            if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+                kqueue.writeFD(fd, opId);
+                offset += KqueueAccessor.SIZEOF_KEVENT;
+                if (++index > capacity - 1) {
+                    registerWithKQueue(index);
+                    index = offset = 0;
+                }
             }
         }
 
-        if (count > 0) {
-            registerWithKQueue(count);
+        if (index > 0) {
+            registerWithKQueue(index);
         }
 
         return useful;
@@ -367,21 +390,41 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             // Next, close the event and resume the original operation.
             context.clearSuspendEvent();
             kqueue.setWriteOffset(offset);
-            if (operation == IOOperation.READ) {
+            if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
                 kqueue.readFD(context.getFd(), opId);
-            } else {
-                kqueue.writeFD(context.getFd(), opId);
+                offset += KqueueAccessor.SIZEOF_KEVENT;
+                if (++index > capacity - 1) {
+                    registerWithKQueue(index);
+                    index = offset = 0;
+                }
             }
-            offset += KqueueAccessor.SIZEOF_KEVENT;
-            if (++index > capacity - 1) {
-                registerWithKQueue(index);
-                index = offset = 0;
+            if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+                kqueue.writeFD(context.getFd(), opId);
+                offset += KqueueAccessor.SIZEOF_KEVENT;
+                if (++index > capacity - 1) {
+                    registerWithKQueue(index);
+                    index = offset = 0;
+                }
             }
         }
         if (index > 0) {
             registerWithKQueue(index);
         }
         pendingEvents.zapTop(count);
+    }
+
+    private void rearmKqueue(C context, long id, int operation) {
+        kqueue.setWriteOffset(0);
+        int index = 0;
+        if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
+            kqueue.readFD(context.getFd(), id);
+            index++;
+        }
+        if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+            kqueue.writeFD(context.getFd(), id);
+            index++;
+        }
+        registerWithKQueue(index);
     }
 
     private void registerWithKQueue(int changeCount) {
@@ -415,7 +458,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         if (n > 0) {
             // check all activated FDs
             LOG.debug().$("poll [n=").$(n).$(']').$();
-            for (int i = 0; i < n; i++) {
+            for (int i = 0; i < n; ) {
                 kqueue.setReadOffset(offset);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 final int fd = kqueue.getFd();
@@ -424,16 +467,20 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 if (fd == serverFd) {
                     accept(timestamp);
                     useful = true;
+                    i++;
                     continue;
                 }
                 if (isEventId(id)) {
                     handleSuspendEvent(id);
+                    i++;
                     continue;
                 }
+                // since we may register multiple times
                 if (handleSocketOperation(id)) {
                     useful = true;
                     watermark--;
                 }
+                i++;
             }
         }
 
