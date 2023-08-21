@@ -1159,6 +1159,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     @Override
     public FactoryProvider getFactoryProvider() {
+        if (factoryProvider == null) {
+            throw new IllegalStateException("configuration.init() has not been invoked");
+        }
         return factoryProvider;
     }
 
