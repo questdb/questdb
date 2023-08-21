@@ -119,10 +119,20 @@ public final class Net {
     public static void dumpAscii(long buffer, int len) {
         if (len > 0) {
             for (int i = 0; i < len; i++) {
-                StdoutSink.INSTANCE.put((char) (Unsafe.getUnsafe().getByte(buffer + i) & 0xff));
+                char c = (char) (Unsafe.getUnsafe().getByte(buffer + i) & 0xff);
+                switch (c) {
+                    case '\r':
+                        System.out.print("\\r");
+                        break;
+                    case '\n':
+                        System.out.print("\\n");
+                        System.out.print(c);
+                        break;
+                    default:
+                        System.out.print(c);
+                        break;
+                }
             }
-            StdoutSink.INSTANCE.put('\n');
-            StdoutSink.INSTANCE.flush();
         }
     }
 

@@ -34,19 +34,43 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 
 public class TestHttpClient implements QuietCloseable {
     private final HttpClient httpClient = HttpClientFactory.newInstance();
     private final StringSink sink = new StringSink();
 
     public void assertGet(CharSequence expectedResponse, CharSequence sql) {
-        assertGet("/query", expectedResponse, sql);
+        assertGet(expectedResponse, sql, null, null);
     }
 
-    public void assertGet(CharSequence url, CharSequence expectedResponse, CharSequence sql) {
+    public void assertGet(
+            CharSequence expectedResponse,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
+        assertGet("/query", expectedResponse, sql, username, password);
+    }
+
+    public void assertGet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql
+    ) {
+        assertGet(url, expectedResponse, sql, null, null);
+    }
+
+    public void assertGet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
         try {
             sink.clear();
-            toSink0(url, sql, sink);
+            toSink0(url, sql, sink, username, password);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             httpClient.disconnect();
@@ -60,19 +84,30 @@ public class TestHttpClient implements QuietCloseable {
 
     public void toSink(CharSequence url, CharSequence sql, CharSink sink) {
         try {
-            toSink0(url, sql, sink);
+            toSink0(url, sql, sink, null, null);
         } finally {
             httpClient.disconnect();
         }
     }
 
-    private void toSink0(CharSequence url, CharSequence sql, CharSink sink) {
+    private void toSink0(
+            CharSequence url,
+            CharSequence sql,
+            CharSink sink,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
         HttpClient.Request req = httpClient.newRequest();
-        HttpClient.ResponseHeaders rsp = req
+        req
                 .GET()
                 .url(url)
-                .query("query", sql)
-                .send("localhost", 9001);
+                .query("query", sql);
+
+        if (username != null && password != null) {
+            req.authBasic(username, password);
+        }
+
+        HttpClient.ResponseHeaders rsp = req.send("localhost", 9001);
 
         rsp.await();
         ChunkedResponse chunkedResponse = rsp.getChunkedResponse();

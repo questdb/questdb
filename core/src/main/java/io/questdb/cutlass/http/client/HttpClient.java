@@ -32,6 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
 
 public abstract class HttpClient implements QuietCloseable {
     protected final NetworkFacade nf;
@@ -112,6 +113,35 @@ public abstract class HttpClient implements QuietCloseable {
 
     protected abstract void setupIoWait();
 
+    private static class BinarySequenceAdaptor implements BinarySequence, Mutable {
+        private final StringSink asciiSink = new StringSink();
+
+        @Override
+        public byte byteAt(long index) {
+            return (byte) asciiSink.charAt((int) index);
+        }
+
+        @Override
+        public void clear() {
+            asciiSink.clear();
+        }
+
+        @Override
+        public long length() {
+            return asciiSink.length();
+        }
+
+        BinarySequenceAdaptor colon() {
+            asciiSink.put(':');
+            return this;
+        }
+
+        BinarySequenceAdaptor put(CharSequence value) {
+            asciiSink.put(value);
+            return this;
+        }
+    }
+
     private class ChunkedResponseImpl extends AbstractChunkedResponse {
         public ChunkedResponseImpl(long bufLo, long bufHi, int defaultTimeout) {
             super(bufLo, bufHi, defaultTimeout);
@@ -129,6 +159,7 @@ public abstract class HttpClient implements QuietCloseable {
         private static final int STATE_REQUEST = 0;
         private static final int STATE_URL = 1;
         private static final int STATE_URL_DONE = 2;
+        private BinarySequenceAdaptor binarySequenceAdaptor;
         private int state;
         private boolean urlEncode = false;
 
@@ -138,17 +169,22 @@ public abstract class HttpClient implements QuietCloseable {
             return put("GET ");
         }
 
-        public Request header(CharSequence name, CharSequence value) {
-            assert state == STATE_QUERY || state == STATE_URL_DONE || state == STATE_HEADER;
-
-            if (state == STATE_QUERY || state == STATE_URL_DONE) {
-                put(" HTTP/1.1").crlf();
-                state = STATE_HEADER;
-            } else {
-                crlf();
+        public Request authBasic(CharSequence username, CharSequence password) {
+            beforeHeader();
+            put("Authorization").put(": ").put("Basic ");
+            if (binarySequenceAdaptor == null) {
+                binarySequenceAdaptor = new BinarySequenceAdaptor();
             }
+            binarySequenceAdaptor.clear();
+            binarySequenceAdaptor.put(username).colon().put(password);
+            Chars.base64Encode(binarySequenceAdaptor, (int) binarySequenceAdaptor.length(), this);
+            return eol();
+        }
+
+        public Request header(CharSequence name, CharSequence value) {
+            beforeHeader();
             encodeUtf8(name).put(": ").encodeUtf8(value);
-            return crlf();
+            return eol();
         }
 
         @Override
@@ -202,12 +238,11 @@ public abstract class HttpClient implements QuietCloseable {
                 connect(host, port);
             }
 
-
             if (state == STATE_URL_DONE || state == STATE_QUERY) {
-                put(" HTTP/1.1").crlf();
+                put(" HTTP/1.1").eol();
             }
 
-            crlf();
+            eol();
             doSend(timeout);
             responseHeaders.clear();
             return responseHeaders;
@@ -217,6 +252,23 @@ public abstract class HttpClient implements QuietCloseable {
             assert state == STATE_URL;
             state = STATE_URL_DONE;
             return put(url);
+        }
+
+        private void beforeHeader() {
+            assert state == STATE_QUERY || state == STATE_URL_DONE || state == STATE_HEADER;
+            switch (state) {
+                case STATE_QUERY:
+                case STATE_URL_DONE:
+                    put(" HTTP/1.1").eol();
+                    state = STATE_HEADER;
+                    break;
+                case STATE_HEADER:
+                    break;
+                default:
+                    eol();
+                    break;
+
+            }
         }
 
         private void connect(CharSequence host, int port) {
@@ -238,11 +290,6 @@ public abstract class HttpClient implements QuietCloseable {
             nf.freeAddrInfo(addrInfo);
         }
 
-        private Request crlf() {
-            String CRLF = "\r\n";
-            return put(CRLF);
-        }
-
         private void doSend(int timeout) {
             setupIoWait();
             int len = (int) (ptr - bufLo);
@@ -256,6 +303,10 @@ public abstract class HttpClient implements QuietCloseable {
                     }
                 } while (len > 0);
             }
+        }
+
+        private Request eol() {
+            return put(Misc.EOL);
         }
 
         private void putUrlEncoded(char c) {
@@ -392,6 +443,12 @@ public abstract class HttpClient implements QuietCloseable {
             }
         }
 
+        @Override
+        public void clear() {
+            csPool.clear();
+            super.clear();
+        }
+
         public ChunkedResponse getChunkedResponse() {
             return chunkedResponse;
         }
@@ -401,12 +458,6 @@ public abstract class HttpClient implements QuietCloseable {
                 throw new HttpClientException("http response headers not yet received");
             }
             return Chars.equalsNc("chunked", getHeader("Transfer-Encoding"));
-        }
-
-        @Override
-        public void clear() {
-            csPool.clear();
-            super.clear();
         }
     }
 }
