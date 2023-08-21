@@ -496,7 +496,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
-        final Rnd rnd = new Rnd(Os.currentTimeMicros(), System.currentTimeMillis());
+        final Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < numberOfIterations; i++) {
             int symbolColIndex = rnd.nextInt(symbolColumnCount);
             SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);

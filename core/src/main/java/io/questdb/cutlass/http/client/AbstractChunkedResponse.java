@@ -29,10 +29,12 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectByteCharSequence;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-public abstract class AbstractChunkedResponse implements HttpClient.Chunk, ChunkedResponse {
+public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse {
+    private final static int CRLF_LEN = 2;
+    private static final int STATE_CHUNK_DATA = 1;
+    private static final int STATE_CHUNK_DATA_END = 2;
+    private static final int STATE_CHUNK_SIZE = 0;
     private final long bufLo;
     private final DirectByteCharSequence chunkSize = new DirectByteCharSequence();
     private final int defaultTimeout;
@@ -43,6 +45,9 @@ public abstract class AbstractChunkedResponse implements HttpClient.Chunk, Chunk
     long size;
     private long dataHi;
     private long dataLo;
+    private boolean receive = true;
+    private int state = STATE_CHUNK_SIZE;
+
 
     public AbstractChunkedResponse(long bufLo, int defaultTimeout) {
         this.bufLo = bufLo;
@@ -53,6 +58,8 @@ public abstract class AbstractChunkedResponse implements HttpClient.Chunk, Chunk
         this.endOfChunk = true;
         this.dataLo = lo;
         this.dataHi = hi;
+        this.state = STATE_CHUNK_SIZE;
+        this.receive = true;
     }
 
     @Override
@@ -66,61 +73,118 @@ public abstract class AbstractChunkedResponse implements HttpClient.Chunk, Chunk
     }
 
     @Override
-    public HttpClient.Chunk recv(int timeout) {
-        return endOfChunk ? chunkStart(timeout) : chunkContinue(timeout);
+    public Chunk recv(int timeout) {
+        while (true) {
+            if (receive || dataLo == dataHi) {
+                compactBuffer();
+                dataHi += recvOrDie(dataHi, timeout);
+            }
+            long p; // moving data pointer for scanning buffer
+            switch (state) {
+                case STATE_CHUNK_SIZE:
+                    p = dataLo;
+                    // chunk size is hex encoded integer terminated with CRLF
+                    long res = -1;
+                    while (p < dataHi) {
+                        if (Unsafe.getUnsafe().getByte(p) == '\r') {
+                            p++;
+                            if (p < dataHi) {
+                                if (Unsafe.getUnsafe().getByte(p) == '\n') {
+                                    res = p - CRLF_LEN;
+                                    break;
+                                } else {
+                                    throw new HttpClientException("malformed chunk size");
+                                }
+                            } else {
+                                // CRLF at chunk size is incomplete, we have to
+                                // wait until we receive the full thing
+                                break;
+                            }
+                        }
+                        p++;
+                    }
+
+                    if (res != -1) {
+                        // at this stage we consumed the chunk size end (CRLF)
+                        chunkSize.of(dataLo, res + 1);
+                        try {
+                            size = Numbers.parseHexLong(chunkSize);
+                            consumed = 0;
+                            // consume data buffer ignoring chunk size value and its furniture
+                            state = STATE_CHUNK_DATA;
+                            dataLo = res + CRLF_LEN + 1;
+                        } catch (NumericException e) {
+                            throw new HttpClientException("malformed chunk size");
+                        }
+
+                        // fall thru the switch to process remaining data buffer
+                    } else {
+                        // we have not received complete chunk size value yet
+                        receive = true;
+                        break;
+                    }
+                case STATE_CHUNK_DATA:
+
+                    // there is data in the buffer
+                    if (dataLo < dataHi) {
+                        long chunkBytesRemaining = size - consumed;
+                        long bufBytesRemaining = dataHi - dataLo;
+
+                        // chunk data starts with dataLo address
+                        dataAddr = dataLo;
+
+                        if (chunkBytesRemaining <= bufBytesRemaining) {
+                            // chunk data fits in the buffer
+                            available = chunkBytesRemaining;
+                            endOfChunk = true;
+                            // skip chunk data to begin processing chunk end
+                            dataLo += chunkBytesRemaining;
+                            state = STATE_CHUNK_DATA_END;
+                            receive = false;
+                        } else {
+                            available = bufBytesRemaining;
+                            endOfChunk = false;
+                            // we consumed the entire buffer for chunk data
+                            // we must recv more data
+                            dataLo = dataHi;
+                            receive = true;
+                        }
+                        return size > 0 ? this : null;
+                    }
+
+                    if (size == 0) {
+                        receive = false;
+                        return null;
+                    }
+
+                    // no chunk data in the buffer
+                    break;
+
+                case STATE_CHUNK_DATA_END:
+                    // we are here to consume CRLF
+                    // we have to have two bytes here
+                    if (dataLo < dataHi && (dataHi - dataLo) >= CRLF_LEN) {
+                        if (Unsafe.getUnsafe().getByte(dataLo) == '\r' && Unsafe.getUnsafe().getByte(dataLo + 1) == '\n') {
+                            state = STATE_CHUNK_SIZE;
+                            dataLo += CRLF_LEN;
+                            receive = false;
+                            break;
+                        } else {
+                            throw new HttpClientException("malformed chunk");
+                        }
+                    } else {
+                        receive = true;
+                    }
+                    break;
+                default:
+                    throw new HttpClientException("internal error [state=" + state + ']');
+            }
+        }
     }
 
     @Override
-    public HttpClient.Chunk recv() {
+    public Chunk recv() {
         return recv(defaultTimeout);
-    }
-
-    @NotNull
-    private AbstractChunkedResponse chunkContinue(int timeout) {
-        consumed += available;
-        compactBuffer();
-        final int len = recvOrDie(dataHi, timeout);
-
-        // we are consuming the remaining chunk bytes;
-        // chunk size includes `\r\n\`, which must not be included in
-        // "available" bytes of the last chunk
-
-        // configure chunk boundaries, chunk size contains two extra bytes for CRLF
-        // we must consume and ignore them
-        long chunkBytesRemaining = size - consumed;
-        boolean endOfChunk = chunkBytesRemaining <= len;
-        this.endOfChunk = endOfChunk;
-        dataAddr = dataHi;
-        available = Math.min(chunkBytesRemaining - 2, len);
-
-        if (endOfChunk) {
-            dataHi += len;
-            dataLo = dataAddr + available + 2;
-        } else {
-            // we just consumed the entire buffer
-            dataLo = bufLo;
-            dataHi = bufLo;
-        }
-        return this;
-    }
-
-    protected abstract int recvOrDie(long buf, int timeout);
-
-    @Nullable
-    private AbstractChunkedResponse chunkStart(int timeout) {
-        if (parseChunkSize0(dataLo, dataHi)) {
-            return size > 2 ? this : null;
-        }
-
-        while (true) {
-            compactBuffer();
-            final int len = recvOrDie(dataHi, timeout);
-            dataHi += len;
-            // try to read chunk prefix
-            if (parseChunkSize0(dataLo, dataHi)) {
-                return size > 0 ? this : null;
-            }
-        }
     }
 
     private void compactBuffer() {
@@ -137,56 +201,5 @@ public abstract class AbstractChunkedResponse implements HttpClient.Chunk, Chunk
         }
     }
 
-    private boolean parseChunkSize0(long lo, long hi) {
-        long p = lo;
-        long x = -1;
-        long len;
-        while (p < hi) {
-            char b = (char) Unsafe.getUnsafe().getByte(p++);
-            switch (b) {
-                case '\r':
-                    x = p;
-                    break;
-                case '\n':
-                    if (x == -1) {
-                        throw new HttpClientException("malformed chunkedResponse");
-                    }
-                    // parse the hex chunk length
-                    // last char, at(x) is `\r`, exclude
-                    chunkSize.of(lo, x - 1);
-                    try {
-                        len = Numbers.parseHexLong(chunkSize);
-                        dataAddr = p;
-                        // the chunk length does NOT include trailing chars `\r\n`
-                        size = len + 2;
-                        available = Math.min(len, hi - p);
-                        endOfChunk = len == available;
-                        consumed = 0;
-
-                        // if chunk size is smaller that the unprocessed data size
-                        // we will reduce unprocessed data size by chunk size; otherwise
-                        // we clear the unprocessed data
-                        long chunkHi = dataAddr + available;
-                        if (chunkHi < dataHi) {
-                            dataLo = chunkHi;
-                            // this data can also be CRLF only
-                            if (available == len) {
-                                // skip CRLF
-                                dataLo += 2;
-                            }
-                        } else {
-                            dataLo = bufLo;
-                            dataHi = bufLo;
-                        }
-
-                        return true;
-                    } catch (NumericException e) {
-                        throw new HttpClientException("could not parse chunkedResponse size");
-                    }
-                default:
-                    break;
-            }
-        }
-        return false;
-    }
+    protected abstract int recvOrDie(long buf, int timeout);
 }

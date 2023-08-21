@@ -76,7 +76,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     }
 
     @Override
-    public final void clear() {
+    public void clear() {
         this.needMethod = true;
         this._wptr = this._lo = this.headerPtr;
         this.incomplete = true;

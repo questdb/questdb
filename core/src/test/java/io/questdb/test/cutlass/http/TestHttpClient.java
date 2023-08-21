@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cutlass.http.client.Chunk;
 import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -75,7 +76,7 @@ public class TestHttpClient implements QuietCloseable {
 
         rsp.await();
         ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
-        HttpClient.Chunk chunk;
+        Chunk chunk;
 
         while ((chunk = chunkedResponse.recv()) != null) {
             Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);

@@ -60,7 +60,7 @@ public class HttpClientMain {
                     jsonToTableSerializer.clear();
 
                     ChunkedResponse chunkedRsp = rsp.getChunkedResponse();
-                    HttpClient.Chunk chunk;
+                    Chunk chunk;
 
                     long t = System.currentTimeMillis();
                     int chunkCount = 0;

@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
-import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
@@ -50,7 +49,7 @@ public abstract class HttpClient implements QuietCloseable {
         this.defaultTimeout = configuration.getTimeout();
         this.bufferSize = configuration.getBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        this.responseHeaders = new ResponseHeaders(bufLo, defaultTimeout);
+        this.responseHeaders = new ResponseHeaders(bufLo, defaultTimeout, 4096, csPool);
     }
 
     @Override
@@ -112,12 +111,6 @@ public abstract class HttpClient implements QuietCloseable {
     protected abstract void ioWait(int timeout, int op);
 
     protected abstract void setupIoWait();
-
-    public interface Chunk {
-        long hi();
-
-        long lo();
-    }
 
     private class ChunkedResponseImpl extends AbstractChunkedResponse {
         public ChunkedResponseImpl(long bufLo, int defaultTimeout) {
@@ -216,7 +209,7 @@ public abstract class HttpClient implements QuietCloseable {
 
             crlf();
             doSend(timeout);
-            responseHeaders.init();
+            responseHeaders.clear();
             return responseHeaders;
         }
 
@@ -373,13 +366,13 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    public class ResponseHeaders implements QuietCloseable {
+    public class ResponseHeaders extends HttpHeaderParser {
         private final long bufLo;
-        private final AbstractChunkedResponse chunkedResponse;
+        private final ChunkedResponseImpl chunkedResponse;
         private final int defaultTimeout;
-        private HttpHeaderParser headerParser = new HttpHeaderParser(4096, csPool);
 
-        public ResponseHeaders(long bufLo, int defaultTimeout) {
+        public ResponseHeaders(long bufLo, int defaultTimeout, int bufLen, ObjectPool<DirectByteCharSequence> pool) {
+            super(bufLen, pool);
             this.bufLo = bufLo;
             this.defaultTimeout = defaultTimeout;
             this.chunkedResponse = new ChunkedResponseImpl(bufLo, defaultTimeout);
@@ -390,42 +383,30 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         public void await(int timeout) {
-            while (headerParser.isIncomplete()) {
+            while (isIncomplete()) {
                 final int len = recvOrDie(bufLo, timeout);
                 if (len > 0) {
                     // dataLo & dataHi are boundaries of unprocessed data left in the buffer
-                    chunkedResponse.begin(
-                            headerParser.parse(bufLo, bufLo + len, false, true),
-                            bufLo + len
-                    );
+                    chunkedResponse.begin(parse(bufLo, bufLo + len, false, true), bufLo + len);
                 }
             }
-        }
-
-        @Override
-        public void close() {
-            headerParser = Misc.free(headerParser);
         }
 
         public ChunkedResponse getChunkedResponse() {
             return chunkedResponse;
         }
 
-        public HttpRequestHeader header() {
-            return headerParser;
-        }
-
         public boolean isChunked() {
-            if (headerParser.isIncomplete()) {
+            if (isIncomplete()) {
                 throw new HttpClientException("http response headers not yet received");
             }
-            return Chars.equalsNc("chunked", header().getHeader("Transfer-Encoding"));
+            return Chars.equalsNc("chunked", getHeader("Transfer-Encoding"));
         }
 
-        // todo: rename to clear()
-        private void init() {
+        @Override
+        public void clear() {
             csPool.clear();
-            headerParser.clear();
+            super.clear();
         }
     }
 }

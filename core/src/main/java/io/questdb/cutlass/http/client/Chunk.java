@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.http.client;
 
-public interface ChunkedResponse {
-    Chunk recv();
+public interface Chunk {
+    long hi();
 
-    Chunk recv(int timeout);
+    long lo();
 }
