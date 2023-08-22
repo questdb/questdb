@@ -257,7 +257,7 @@ public class Table2IlpTest {
 
         assertEventually(() -> {
             try {
-                TestUtils.assertEquals(engine, sqlExecutionContext, tableNameSrc, tableNameDst);
+                TestUtils.assertEquals(engine, sqlExecutionContext, sourceQuery, tableNameDst);
             } catch (SqlException e) {
                 throw new RuntimeException(e);
             }
