@@ -102,7 +102,7 @@ public class HttpSecurityTest extends AbstractTest {
                 engine -> testHttpClient.assertGet(
                         "/chk",
                         "{\"status\":\"Does not exist\"}",
-                        new CharSequenceObjHashMap<>() {{
+                        new CharSequenceObjHashMap<String>() {{
                             put("f", "json");
                             put("j", "x");
                         }},
@@ -120,7 +120,7 @@ public class HttpSecurityTest extends AbstractTest {
                         testHttpClient.assertGet(
                                 "/chk",
                                 "Unauthorized\r\n",
-                                new CharSequenceObjHashMap<>() {{
+                                new CharSequenceObjHashMap<String>() {{
                                     put("f", "json");
                                     put("j", "x");
                                 }},
@@ -137,7 +137,7 @@ public class HttpSecurityTest extends AbstractTest {
                 engine -> testHttpClient.assertGet(
                         "/chk",
                         "Unauthorized\r\n",
-                        new CharSequenceObjHashMap<>() {{
+                        new CharSequenceObjHashMap<String>() {{
                             put("f", "json");
                             put("j", "x");
                         }},
