@@ -8,7 +8,8 @@
     "i18n/README.pt.md",
     "i18n/README.ua-ua.md",
     "i18n/README.zh-cn.md",
-    "i18n/README.zh-hk.md"
+    "i18n/README.zh-hk.md",
+    "i18n/README.tr-tr.md"
   ],
   "imageSize": 100,
   "commit": false,
@@ -1060,7 +1061,17 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "kerimsenturk5734",
+      "name": "Kerim Şentürk",
+      "avatar_url": "https://avatars.githubusercontent.com/u/72925170?v=4",
+      "profile": "https://github.com/kerimsenturk5734",
+      "contributions": [
+        "doc"
+      ]
     }
+
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
   "contributorTemplate": "<a href=\"<%= contributor.profile %>\"><img src=\"<%= contributor.avatar_url %>\" width=\"<%= options.imageSize %>px;\" alt=\"\"/><br /><sub><b><%= contributor.login %></b></sub></a><br /><%= contributions %>",
