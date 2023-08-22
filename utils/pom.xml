@@ -76,9 +76,6 @@
                         </goals>
                     </execution>
                 </executions>
-                <configuration>
-                    <minimizeJar>true</minimizeJar>
-                </configuration>
             </plugin>
         </plugins>
     </build>

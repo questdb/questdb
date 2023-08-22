@@ -46,12 +46,14 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class Table2IlpTest {
     private static final int ILP_PORT = 9909;
@@ -67,6 +69,25 @@ public class Table2IlpTest {
     private static DatabaseSnapshotAgent snapshotAgent;
     private static SqlExecutionContextImpl sqlExecutionContext;
     private static WorkerPool workerPool;
+
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
 
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path().of(root).$()) {
@@ -96,7 +117,6 @@ public class Table2IlpTest {
         engine = new CairoEngine(configuration);
     }
 
-
     @BeforeClass
     public static void setUpStatic() throws SqlException {
         setCairoStatic();
@@ -111,6 +131,11 @@ public class Table2IlpTest {
                         null);
         bindVariableService.clear();
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public int getSendBufferSize() {
+                return 512;
+            }
+
             @Override
             public int getWorkerCount() {
                 return 3;
@@ -172,7 +197,7 @@ public class Table2IlpTest {
     @Test
     public void copyAllColumnTypes() throws SqlException, InterruptedException {
         String tableNameSrc = "src";
-        createTable(tableNameSrc, 20000);
+        createTable(tableNameSrc, 20_000);
 
         String tableNameDst = "dst";
         createTable(tableNameDst, 1);
@@ -198,7 +223,13 @@ public class Table2IlpTest {
         new Table2IlpCopier().copyTable(params);
         done.await();
 
-        TestUtils.assertEquals(compiler, sqlExecutionContext, tableNameSrc, tableNameDst);
+        assertEventually(() -> {
+            try {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, tableNameSrc, tableNameDst);
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            }
+        }, 60);
     }
 
     @Test
@@ -230,7 +261,13 @@ public class Table2IlpTest {
         Assert.assertEquals(10568 - 189, rowsSent);
         done.await();
 
-        TestUtils.assertEquals(compiler, sqlExecutionContext, sourceQuery, tableNameDst);
+        assertEventually(() -> {
+            try {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, sourceQuery, tableNameDst);
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            }
+        }, 60);
     }
 
     @Before
