@@ -2009,7 +2009,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     removeColumn(walWriter, "noColLikeThis");
                     assertException("Should not be able to remove non existent column");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "cannot remove column, column does not exists [table=testRemovingNonExistentColumn, column=noColLikeThis]");
+                    TestUtils.assertContains(e.getMessage(), "cannot remove column, column does not exist [table=testRemovingNonExistentColumn, column=noColLikeThis]");
                 }
                 row = walWriter.newRow(0);
                 row.putByte(0, (byte) 10);
@@ -3026,13 +3026,21 @@ public class WalWriterTest extends AbstractCairoTest {
 
             assertTableExistence(true, tableToken);
 
-            engine.setWalInitializer((segmentDir, tableToken1, walId, segmentId) -> {
-                final File segmentDirFile = new File(segmentDir.toString());
-                final File customInitFile = new File(segmentDirFile, "customInitFile");
-                try {
-                    customInitFile.createNewFile();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+            engine.setWalInitializer(new WalInitializer() {
+                @Override
+                public void initDirectory(Path dirPath) {
+                    final File segmentDirFile = new File(dirPath.toString());
+                    final File customInitFile = new File(segmentDirFile, "customInitFile");
+                    try {
+                        customInitFile.createNewFile();
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+
+                @Override
+                public void rollbackDirectory(Path path) {
+                    // do nothing
                 }
             });
 

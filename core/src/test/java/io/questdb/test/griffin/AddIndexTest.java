@@ -126,6 +126,38 @@ public class AddIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAlterColumnSyntaxError2() throws Exception {
+        assertException(
+                "alter table trades alter column price add index",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                32,
+                "indexes are only supported for symbol type [column=price, type=DOUBLE]"
+        );
+    }
+
+    @Test
+    public void testAlterTableAlterColumnSyntaxError3() throws Exception {
+        assertException(
+                "alter table trades alter column sym add index",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        "), index(sym) timestamp(ts) partition by DAY",
+                12,
+                "column is already indexed [column=sym]"
+        );
+    }
+
+    @Test
     public void testAlterTableAttachPartitionSyntaxError1() throws Exception {
         assertException(
                 "alter table trades attach bucket",

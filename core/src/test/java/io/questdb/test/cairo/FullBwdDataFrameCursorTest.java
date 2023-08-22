@@ -91,7 +91,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 w.commit();
                 Assert.assertEquals(N, w.size());
 
-                try (FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(w.getTableToken(), TableUtils.ANY_TABLE_ID, 0, GenericRecordMetadata.deepCopyOf(w.getMetadata()))) {
+                try (FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(w.getTableToken(), 0, GenericRecordMetadata.deepCopyOf(w.getMetadata()))) {
                     final TableReaderRecord record = new TableReaderRecord();
 
                     try (final DataFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC)) {

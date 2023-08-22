@@ -1331,107 +1331,112 @@ if __name__ == "__main__":
                 ResultSet rs = stmt.executeQuery();
                 assertEquals(testSize, rs.getFetchSize());
                 sink.clear();
-                assertResultSet("a[IPv4]\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n" +
-                        "1.1.1.1\n", sink, rs, map);
+                assertResultSet(
+                        "a[IPv4]\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n",
+                        sink,
+                        rs,
+                        map
+                );
             }
         });
     }
@@ -1467,107 +1472,112 @@ if __name__ == "__main__":
                 ResultSet rs = stmt.executeQuery();
                 assertEquals(testSize, rs.getFetchSize());
                 sink.clear();
-                assertResultSet("a[IPv4],b[INTEGER],c[IPv4],d[INTEGER]\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n" +
-                        "12.2.65.90,5,65.34.123.99,22\n", sink, rs, map);
+                assertResultSet(
+                        "a[IPv4],b[INTEGER],c[IPv4],d[INTEGER]\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n",
+                        sink,
+                        rs,
+                        map
+                );
             }
         });
     }
@@ -1621,107 +1631,112 @@ if __name__ == "__main__":
                 ResultSet rs = stmt.executeQuery();
                 assertEquals(testSize, rs.getFetchSize());
                 sink.clear();
-                assertResultSet("a[IPv4]\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n" +
-                        "null\n", sink, rs, map);
+                assertResultSet(
+                        "a[IPv4]\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n",
+                        sink,
+                        rs,
+                        map
+                );
             }
         });
     }
@@ -2800,9 +2815,9 @@ if __name__ == "__main__":
                 {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
-                {"drop all table if exists;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop all table if exists;", "ERROR: 'tables' expected"},
                 {"drop all tables if exists;", "ERROR: expected [;]"},
-                {"drop all ;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop all ;", "ERROR: 'tables' expected"},
                 {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -2810,7 +2825,7 @@ if __name__ == "__main__":
                 String[] testData = sqlExpectedErrMsg[i];
                 try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
                     statement.execute();
-                    Assert.fail();
+                    Assert.fail(testData[0]);
                 } catch (PSQLException e) {
                     assertContains(e.getMessage(), testData[1]);
                 }
@@ -6497,7 +6512,7 @@ nodejs code:
                     + " WHERE timestamp >= '2023-03-23T00:00:00.000000Z'"
                     + " ORDER BY timestamp ";
 
-            int countStar = getCountStar("SELECT COUNT(*) FROM table", conn);
+            int countStar = getCountStar(conn);
             int ascCount = getRowCount(queryBase + "ASC", conn);
             int ascLimitCount = getRowCount(queryBase + "ASC LIMIT 100000", conn);
             int descCount = getRowCount(queryBase + "DESC", conn);
@@ -8301,18 +8316,19 @@ create table tab as (
 
     @Test
     public void testSquashPartitionsReturnsOk() throws Exception {
-        final ConnectionAwareRunnable runnable = (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
-            connection.commit();
-            mayDrainWalQueue();
-            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
-                Assert.assertFalse(dropPartition.execute());
-            }
-        };
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+                    connection.commit();
+                    mayDrainWalQueue();
+                    try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
+                        Assert.assertFalse(dropPartition.execute());
+                    }
+                }
+        );
     }
 
     @Test
@@ -9337,7 +9353,7 @@ create table tab as (
     }
 
     @Test
-    public void testUuidType_update() throws Exception {
+    public void testUuidType_update_nonPartitionedTable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (u1 uuid)")) {
                 statement.execute();
@@ -9353,6 +9369,33 @@ create table tab as (
                     sink.clear();
                     String expected = "u1[OTHER]\n" +
                             "22222222-2222-2222-2222-222222222222\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUuidType_update_partitionedTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (ts timestamp, u1 uuid) timestamp(ts) partition by DAY")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?)")) {
+                    insert.setTimestamp(1, new Timestamp(0));
+                    insert.setObject(2, UUID.fromString("11111111-1111-1111-1111-111111111111"));
+                    insert.executeUpdate();
+                }
+                try (PreparedStatement update = connection.prepareStatement("update x set u1 = ?")) {
+                    update.setObject(1, UUID.fromString("12345678-1234-5467-9876-123321001987"));
+                    update.executeUpdate();
+                }
+                if (walEnabled) {
+                    drainWalQueue();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select u1  from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "u1[OTHER]\n" +
+                            "12345678-1234-5467-9876-123321001987\n";
                     assertResultSet(expected, sink, resultSet);
                 }
             }
@@ -9392,9 +9435,9 @@ create table tab as (
         return backendPid;
     }
 
-    private static int getCountStar(String query, Connection conn) throws Exception {
+    private static int getCountStar(Connection conn) throws Exception {
         int count = -1;
-        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM table")) {
             try (ResultSet result = stmt.executeQuery()) {
                 if (result.next()) {
                     count = result.getInt(1);
@@ -11178,11 +11221,11 @@ create table tab as (
         private final int initialAllowedSendCalls;
         // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
         // we also *read* it from a test thread -> volatile is needed
-        private volatile int remainingAllowedSendCalls;
+        private final AtomicInteger remainingAllowedSendCalls = new AtomicInteger();
         private volatile boolean socketClosed = false;
 
         private DisconnectOnSendNetworkFacade(int allowedSendCount) {
-            this.remainingAllowedSendCalls = allowedSendCount;
+            this.remainingAllowedSendCalls.set(allowedSendCount);
             this.initialAllowedSendCalls = allowedSendCount;
         }
 
@@ -11194,8 +11237,8 @@ create table tab as (
 
         @Override
         public int recvRaw(int fd, long buffer, int bufferLen) {
-            if (remainingAllowedSendCalls < 0) {
-                remainingAllowedSendCalls--;
+            if (remainingAllowedSendCalls.get() < 0) {
+                remainingAllowedSendCalls.decrementAndGet();
                 return -1;
             }
             return super.recvRaw(fd, buffer, bufferLen);
@@ -11203,18 +11246,17 @@ create table tab as (
 
         @Override
         public int sendRaw(int fd, long buffer, int bufferLen) {
-            remainingAllowedSendCalls--;
-            if (remainingAllowedSendCalls < 0) {
+            if (remainingAllowedSendCalls.decrementAndGet() < 0) {
                 return -1;
             }
             return super.sendRaw(fd, buffer, bufferLen);
         }
 
         int getAfterDisconnectInteractions() {
-            if (remainingAllowedSendCalls >= 0) {
+            if (remainingAllowedSendCalls.get() >= 0) {
                 return 0;
             }
-            return -(remainingAllowedSendCalls + 1);
+            return -(remainingAllowedSendCalls.incrementAndGet());
         }
 
         boolean isSocketClosed() {
@@ -11222,7 +11264,7 @@ create table tab as (
         }
 
         void reset() {
-            remainingAllowedSendCalls = initialAllowedSendCalls;
+            remainingAllowedSendCalls.set(initialAllowedSendCalls);
             socketClosed = false;
         }
     }

@@ -343,7 +343,14 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
         testReload(PartitionBy.DAY, increment, intervals, N, expected1, expected2);
     }
 
-    public void testReload(int partitionBy, long increment, LongList intervals, int rowCount, CharSequence expected1, CharSequence expected2) throws Exception {
+    public void testReload(
+            int partitionBy,
+            long increment,
+            LongList intervals,
+            int rowCount,
+            CharSequence expected1,
+            CharSequence expected2
+    ) throws Exception {
         assertMemoryLeak(() -> {
 
             TableToken tableToken;
@@ -371,11 +378,11 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             try (
                     final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
                             tableToken,
-                            -1,
                             0,
                             new RuntimeIntervalModel(intervals),
                             timestampIndex,
-                            metadata);
+                            metadata
+                    );
                     final DataFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
             ) {
 

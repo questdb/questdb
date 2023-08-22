@@ -227,8 +227,8 @@ public class IODispatcherTest extends AbstractTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 false,
-                PartitionBy.DAY,
                 0,
+                PartitionBy.DAY,
                 0,
                 0,
                 0
@@ -8069,16 +8069,24 @@ public class IODispatcherTest extends AbstractTest {
 
     private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
             boolean overwrite,
-            boolean durable,
+            boolean syncCommitMode,
             int partitionBy,
             long o3MaxLag,
             int maxUncommittedRows,
             long expectedO3MaxLag,
             int expectedMaxUncommittedRows
     ) throws Exception {
+        final int msyncsPerTableCreation = 5;
+        final int msyncsPerWriterInit = 1;
+
         final AtomicInteger msyncCallCount = new AtomicInteger();
         final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
+            @Override
+            public int getCommitMode() {
+                return syncCommitMode ? CommitMode.SYNC : super.getCommitMode();
+            }
+
             @Override
             public @NotNull FilesFacade getFilesFacade() {
                 return new TestFilesFacadeImpl() {
@@ -8094,7 +8102,6 @@ public class IODispatcherTest extends AbstractTest {
         String tableName = "test_table";
         String command = "POST /upload?fmt=json&" +
                 String.format("overwrite=%b&", overwrite) +
-                String.format("durable=%b&", durable) +
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 String.format("partitionBy=%s&", PartitionBy.toString(partitionBy)) +
@@ -8171,6 +8178,15 @@ public class IODispatcherTest extends AbstractTest {
                 "2021-01-01T00:01:00.000000Z\t1\n",
                 true
         );
+
+        if (syncCommitMode) {
+            int extraMsyncs = msyncsPerWriterInit + msyncsPerTableCreation;
+            if (overwrite) {
+                // We re-create the table when overwrite is set.
+                extraMsyncs += msyncsPerTableCreation;
+            }
+            Assert.assertTrue("at least " + (extraMsyncs + 1) + " msync calls expected, was " + msyncCallCount.get(), msyncCallCount.get() > extraMsyncs);
+        }
     }
 
     private void importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(

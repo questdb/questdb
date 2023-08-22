@@ -56,11 +56,12 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-    private final UsernamePasswordMatcher matcher;
+    private final boolean matcherOwned;
     private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
+    private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
     private long recvBufReadPos;
     private long recvBufStart;
@@ -78,9 +79,11 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener,
-            UsernamePasswordMatcher matcher
+            UsernamePasswordMatcher matcher,
+            boolean matcherOwned
     ) {
         this.matcher = matcher;
+        this.matcherOwned = matcherOwned;
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
@@ -103,6 +106,9 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     public void close() {
         registry.remove(circuitBreakerId);
         Misc.free(circuitBreaker);
+        if (matcherOwned) {
+            matcher = Misc.freeIfCloseable(matcher);
+        }
     }
 
     public CharSequence getPrincipal() {
@@ -378,8 +384,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
-        dbcs.of(recvBufReadPos, hi);
-        if (matcher.verifyPassword(username, dbcs)) {
+        if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
             recvBufReadPos = msgLimit;
             compactRecvBuf();
             prepareLoginOk();

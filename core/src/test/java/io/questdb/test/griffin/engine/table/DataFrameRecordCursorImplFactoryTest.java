@@ -100,7 +100,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true, BitmapIndexReader.DIR_FORWARD, null);
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
 
                     // entity index
                     final IntList columnIndexes = new IntList();
@@ -243,7 +243,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToekn, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToekn, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
                     DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
                             configuration,
@@ -353,7 +353,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tt, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
                     DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
                             configuration,

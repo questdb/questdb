@@ -40,7 +40,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     private final BitmapIndexWriter writer;
     private long columnTop;
     private volatile boolean distressed = false;
-    @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
+    @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
 
     public SymbolColumnIndexer(CairoConfiguration configuration) {

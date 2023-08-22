@@ -133,32 +133,15 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
 
-        // Convert tables to WAL/non-WAL, if necessary.
-        final ObjList<TableToken> convertedTables;
-        try {
-            convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-
         try {
             tableNameRegistry = configuration.isReadOnlyInstance() ?
                     new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            tableNameRegistry.reloadTableNameCache(convertedTables);
+            tableNameRegistry.reloadTableNameCache();
         } catch (Throwable e) {
             close();
             throw e;
         }
 
-        if (convertedTables != null) {
-            for (int i = 0, n = convertedTables.size(); i < n; i++) {
-                final TableToken token = convertedTables.get(i);
-                try (TableWriter writer = getWriter(token, "tableTypeConversion")) {
-                    writer.commitSeqTxn(0);
-                }
-            }
-        }
         this.sqlCompilerPool = new SqlCompilerPool(this);
     }
 
@@ -492,7 +475,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
-    public TableRecordMetadata getMetadata(TableToken tableToken) {
+    public TableMetadata getMetadata(TableToken tableToken) {
         verifyTableToken(tableToken);
         try {
             return metadataPool.get(tableToken);
@@ -507,7 +490,13 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             final TableRecordMetadata metadata = metadataPool.get(tableToken);
             if (metadataVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != metadataVersion) {
-                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(tableToken, metadata.getTableId(), metadata.getTableId(), metadataVersion, metadata.getMetadataVersion());
+                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                        tableToken,
+                        metadata.getTableId(),
+                        metadata.getTableId(),
+                        metadataVersion,
+                        metadata.getMetadataVersion()
+                );
                 metadata.close();
                 throw ex;
             }
@@ -536,13 +525,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.get(tableToken);
     }
 
-    public TableReader getReader(TableToken tableToken, long version) {
+    public TableReader getReader(TableToken tableToken, long metadataVersion) {
         verifyTableToken(tableToken);
         final int tableId = tableToken.getTableId();
         TableReader reader = readerPool.get(tableToken);
-        if ((version > -1 && reader.getVersion() != version)
+        if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
                 || tableId > -1 && reader.getMetadata().getTableId() != tableId) {
-            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(tableToken, tableId, reader.getMetadata().getTableId(), version, reader.getVersion());
+            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                    tableToken,
+                    tableId,
+                    reader.getMetadata().getTableId(),
+                    metadataVersion,
+                    reader.getMetadataVersion()
+            );
             reader.close();
             throw ex;
         }
@@ -685,7 +680,6 @@ public class CairoEngine implements Closeable, WriterSource {
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
     }
 
-    @TestOnly
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {
         verifyTableToken(tableToken);
         return walWriterPool.get(tableToken);
@@ -725,6 +719,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean isWalTable(TableToken tableToken) {
         return tableToken.isWal();
+    }
+
+    public void load() {
+        // Convert tables to WAL/non-WAL, if necessary.
+        final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
+        tableNameRegistry.reloadTableNameCache(convertedTables);
     }
 
     public String lock(TableToken tableToken, String lockReason) {
@@ -769,11 +769,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
+    @Nullable
+    public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
+        String tableNameStr = Chars.toString(tableName);
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
+    }
+
     public void notifyDropped(TableToken tableToken) {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyWalTxnCommitted(TableToken tableToken) {
+    public void notifyWalTxnCommitted(@NotNull TableToken tableToken) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
@@ -814,6 +820,11 @@ public class CairoEngine implements Closeable, WriterSource {
     public boolean releaseAllReaders() {
         boolean b1 = metadataPool.releaseAll();
         return readerPool.releaseAll() & b1;
+    }
+
+    @TestOnly
+    public void releaseAllWalWriters() {
+        walWriterPool.releaseAll();
     }
 
     @TestOnly
@@ -946,6 +957,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     throw EntryUnavailableException.instance(lockedReason);
                 }
             }
+
+            getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
+
             return toTableToken;
         } else {
             LOG.error().$("cannot rename, table does not exist [table=").utf8(fromTableName).I$();
@@ -979,6 +993,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setReaderListener(ReaderPool.ReaderListener readerListener) {
         readerPool.setTableReaderListener(readerListener);
+    }
+
+    @TestOnly
+    public void setUp() {
     }
 
     public void setWalInitializer(@NotNull WalInitializer walInitializer) {

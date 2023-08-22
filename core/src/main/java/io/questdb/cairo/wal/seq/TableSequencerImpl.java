@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.WalInitializer;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
@@ -39,12 +40,12 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 
 public class TableSequencerImpl implements TableSequencer {
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
     private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
-    private final EmptyOperationCursor emptyOperationCursor = new EmptyOperationCursor();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
@@ -57,6 +58,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final SeqTxnTracker seqTxnTracker;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
+    private final WalInitializer walInitializer;
     private volatile boolean closed = false;
     private boolean distressed;
     private TableToken tableToken;
@@ -67,10 +69,12 @@ public class TableSequencerImpl implements TableSequencer {
         this.seqTxnTracker = txnTracker;
 
         final CairoConfiguration configuration = engine.getConfiguration();
+        this.walInitializer = engine.getWalInitializer();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
-            path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR);
+            path.of(configuration.getRoot());
+            path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.length();
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();
@@ -121,9 +125,9 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         if (metadata.getMetadataVersion() == structureVersionLo) {
             // Nothing to do.
-            return emptyOperationCursor.of(tableToken);
+            return EmptyOperationCursor.INSTANCE;
         }
-        return tableTransactionLog.getTableMetadataChangeLog(tableToken, structureVersionLo, alterCommandWalFormatter);
+        return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
     }
 
     @Override
@@ -293,42 +297,14 @@ public class TableSequencerImpl implements TableSequencer {
         return txn;
     }
 
-    public void open(TableToken tableToken) {
-        try {
-            walIdGenerator.open(path);
-            metadata.open(path, rootLen, tableToken);
-            tableTransactionLog.open(path);
-        } catch (CairoException ex) {
-            closeLocked();
-            if (ex.isTableDropped()) {
-                throw ex;
-            }
-            if (ex.errnoReadPathDoesNotExist()) {
-                LOG.info().$("could not open sequencer, files deleted, assuming dropped [name=").utf8(tableToken.getDirName())
-                        .$(", path=").$(path)
-                        .$(", error=").$(ex.getMessage())
-                        .I$();
-                throw CairoException.tableDropped(tableToken);
-            }
-            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
-                    .$(", path=").$(path)
-                    .$(", error=").$(ex.getMessage())
-                    .I$();
-            throw ex;
-        } catch (Throwable th) {
-            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
-                    .$(", path=").$(path)
-                    .$(", error=").$(th.getMessage())
-                    .I$();
-            closeLocked();
-            throw th;
-        }
-    }
-
     @Override
     public TableToken reload() {
         tableTransactionLog.reload(path);
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getTableToken(), metadata.getMetadataVersion(), alterCommandWalFormatter)) {
+        if (tableTransactionLog.isDropped()) {
+            return null;
+        }
+
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(metadata.getMetadataVersion(), alterCommandWalFormatter)) {
             boolean updated = false;
             while (metaChangeCursor.hasNext()) {
                 TableMetadataChange change = metaChangeCursor.next();
@@ -388,6 +364,7 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw e;
         }
+        walInitializer.initDirectory(path);
         path.trimTo(rootLen);
     }
 
@@ -401,11 +378,46 @@ public class TableSequencerImpl implements TableSequencer {
         }
     }
 
+    void open(TableToken tableToken) {
+        try {
+            walIdGenerator.open(path);
+            metadata.open(path, rootLen, tableToken);
+            tableTransactionLog.open(path);
+        } catch (CairoException ex) {
+            closeLocked();
+            if (ex.isTableDropped()) {
+                throw ex;
+            }
+            if (ex.errnoReadPathDoesNotExist()) {
+                LOG.info().$("could not open sequencer, files deleted, assuming dropped [name=").utf8(tableToken.getDirName())
+                        .$(", path=").$(path)
+                        .$(", error=").$(ex.getMessage())
+                        .I$();
+                throw CairoException.tableDropped(tableToken);
+            }
+            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+                    .$(", path=").$(path)
+                    .$(", error=").$(ex.getMessage())
+                    .I$();
+            throw ex;
+        } catch (Throwable th) {
+            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+                    .$(", path=").$(path)
+                    .$(", error=").$(th.getMessage())
+                    .I$();
+            closeLocked();
+            throw th;
+        }
+    }
+
     void create(int tableId, TableStructure tableStruct) {
         schemaLock.writeLock().lock();
         try {
             createSequencerDir(ff, mkDirMode);
+            final long timestamp = microClock.getTicks();
             metadata.create(tableStruct, tableToken, path, rootLen, tableId);
+            tableTransactionLog.create(path, timestamp);
+            engine.getWalListener().tableCreated(tableToken, timestamp);
         } finally {
             schemaLock.writeLock().unlock();
         }

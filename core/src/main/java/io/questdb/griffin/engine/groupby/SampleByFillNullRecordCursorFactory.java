@@ -133,6 +133,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 return GeoLongConstant.NULL;
             case ColumnType.UUID:
                 return UuidConstant.NULL;
+            case ColumnType.TIMESTAMP:
+                return TimestampConstant.NULL;
             default:
                 throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }

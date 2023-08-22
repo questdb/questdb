@@ -31,17 +31,29 @@ import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.SocketFactory;
+import io.questdb.std.Misc;
+import io.questdb.std.str.DirectByteCharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderImpl implements FactoryProvider {
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
     private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
     private final SecurityContextFactory securityContextFactory;
+    private DirectByteCharSink defaultUserPasswordSink;
+    private DirectByteCharSink readOnlyUserPasswordSink;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
-        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration);
+        this.readOnlyUserPasswordSink = new DirectByteCharSink(4);
+        this.defaultUserPasswordSink = new DirectByteCharSink(4);
+        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink);
+    }
+
+    @Override
+    public void close() {
+        defaultUserPasswordSink = Misc.free(defaultUserPasswordSink);
+        readOnlyUserPasswordSink = Misc.free(readOnlyUserPasswordSink);
     }
 
     @Override

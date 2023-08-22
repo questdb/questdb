@@ -24,10 +24,13 @@
 
 package io.questdb.test.std.str;
 
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
 
 public class DirectByteCharSinkTest {
     @Test
@@ -81,5 +84,36 @@ public class DirectByteCharSinkTest {
             Assert.assertEquals(0, sink.length());
             Assert.assertEquals(initialCapacity, sink.getCapacity());
         }
+    }
+
+    @Test
+    public void testUtf8Encoding() {
+        final int initialCapacity = 4;
+        try (DirectByteCharSink sink = new DirectByteCharSink(initialCapacity)) {
+            assertUtf8Encoding(sink, "Hello world");
+            assertUtf8Encoding(sink, "Привет мир"); // Russian
+            assertUtf8Encoding(sink, "你好世界"); // Chinese
+            assertUtf8Encoding(sink, "こんにちは世界"); // Japanese
+            assertUtf8Encoding(sink, "안녕하세요 세계"); // Korean
+            assertUtf8Encoding(sink, "สวัสดีชาวโลก"); // Thai
+            assertUtf8Encoding(sink, "مرحبا بالعالم");  // Arabic
+            assertUtf8Encoding(sink, "שלום עולם"); // Hebrew
+            assertUtf8Encoding(sink, "Γειά σου Κόσμε"); // Greek
+            assertUtf8Encoding(sink, "���"); // 4 bytes code points
+        }
+    }
+
+    private static void assertUtf8Encoding(DirectByteCharSink sink, String s) {
+        sink.clear();
+        sink.encodeUtf8(s);
+
+        long ptr = sink.getPtr();
+        int len = sink.length();
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = Unsafe.getUnsafe().getByte(ptr + i);
+        }
+
+        TestUtils.assertEquals(s, new String(bytes, StandardCharsets.UTF_8));
     }
 }
