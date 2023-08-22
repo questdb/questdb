@@ -1,8 +1,14 @@
 {
   "files": [
     "README.md",
+    "i18n/README.ar-dz.md",
+    "i18n/README.es-es.md",
+    "i18n/README.it-it.md",
+    "i18n/README.ja-ja.md",
+    "i18n/README.pt.md",
+    "i18n/README.ua-ua.md",
     "i18n/README.zh-cn.md",
-    "i18n/README.ar-dz.md"
+    "i18n/README.zh-hk.md"
   ],
   "imageSize": 100,
   "commit": false,
