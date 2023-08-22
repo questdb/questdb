@@ -28,9 +28,7 @@ import io.questdb.cutlass.http.client.Chunk;
 import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -59,6 +57,47 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence sql
     ) {
         assertGet(url, expectedResponse, sql, null, null);
+    }
+
+    public void assertGet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            @Nullable CharSequenceObjHashMap<String> queryParams,
+            CharSequence username,
+            CharSequence password
+    ) {
+        try {
+            HttpClient.Request req = httpClient.newRequest();
+            req
+                    .GET()
+                    .url(url);
+
+            if (queryParams != null) {
+                for (int i = 0, n = queryParams.size(); i < n; i++) {
+                    CharSequence name = queryParams.keys().getQuick(i);
+                    req.query(name, queryParams.get(name));
+                }
+            }
+
+            if (username != null && password != null) {
+                req.authBasic(username, password);
+            }
+
+            HttpClient.ResponseHeaders rsp = req.send("localhost", 9001);
+
+            rsp.await();
+            ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
+            Chunk chunk;
+
+            sink.clear();
+            while ((chunk = chunkedResponse.recv()) != null) {
+                Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
+            }
+
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            httpClient.disconnect();
+        }
     }
 
     public void assertGet(
