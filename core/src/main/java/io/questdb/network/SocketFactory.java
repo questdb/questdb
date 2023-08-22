@@ -26,7 +26,6 @@ package io.questdb.network;
 
 import io.questdb.log.Log;
 
-// TODO(puzpuzpuz): add a way to configure a different factory per interface/port
 @FunctionalInterface
 public interface SocketFactory {
     Socket newInstance(NetworkFacade nf, int fd, Log log);

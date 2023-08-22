@@ -45,8 +45,18 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
+    public @NotNull SocketFactory getHttpSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
     public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
         return DefaultLineAuthenticatorFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getLineSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
     }
 
     @Override
@@ -55,12 +65,12 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
-    public @NotNull SecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
+    public @NotNull SocketFactory getPgWireSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
     }
 
     @Override
-    public @NotNull SocketFactory getSocketFactory() {
-        return PlainSocketFactory.INSTANCE;
+    public @NotNull SecurityContextFactory getSecurityContextFactory() {
+        return AllowAllSecurityContextFactory.INSTANCE;
     }
 }

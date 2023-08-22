@@ -136,8 +136,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         } else {
             final boolean readyForWrite = kqueue.getFilter() == KqueueAccessor.EVFILT_WRITE;
             final boolean readyForRead = kqueue.getFilter() == KqueueAccessor.EVFILT_READ;
-            final boolean wantsRead = context.getSocket().wantsRead();
             final boolean wantsWrite = context.getSocket().wantsWrite();
+            final boolean wantsRead = context.getSocket().wantsRead();
 
             final int requestedOp = (int) pending.get(row, OPM_OPERATION);
             final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)

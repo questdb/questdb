@@ -41,14 +41,20 @@ public interface FactoryProvider extends QuietCloseable {
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
     @NotNull
+    SocketFactory getHttpSocketFactory();
+
+    @NotNull
     LineAuthenticatorFactory getLineAuthenticatorFactory();
+
+    @NotNull
+    SocketFactory getLineSocketFactory();
 
     @NotNull
     PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
 
     @NotNull
-    SecurityContextFactory getSecurityContextFactory();
+    SocketFactory getPgWireSocketFactory();
 
     @NotNull
-    SocketFactory getSocketFactory();
+    SecurityContextFactory getSecurityContextFactory();
 }

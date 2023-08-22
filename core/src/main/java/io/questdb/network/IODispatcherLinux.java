@@ -128,8 +128,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             // We check EPOLLOUT flag and treat all other events, including EPOLLIN and EPOLLHUP, as a read.
             final boolean readyForWrite = (epoll.getEvent() & EpollAccessor.EPOLLOUT) > 0;
             final boolean readyForRead = !readyForWrite || (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0;
-            final boolean wantsRead = context.getSocket().wantsRead();
             final boolean wantsWrite = context.getSocket().wantsWrite();
+            final boolean wantsRead = context.getSocket().wantsRead();
 
             final int requestedOp = (int) pending.get(row, OPM_OPERATION);
             final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)

@@ -62,8 +62,18 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
+    public @NotNull SocketFactory getHttpSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
     public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
         return lineAuthenticatorFactory;
+    }
+
+    @Override
+    public @NotNull SocketFactory getLineSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
     }
 
     @Override
@@ -72,12 +82,12 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
-    public @NotNull SecurityContextFactory getSecurityContextFactory() {
-        return securityContextFactory;
+    public @NotNull SocketFactory getPgWireSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
     }
 
     @Override
-    public @NotNull SocketFactory getSocketFactory() {
-        return PlainSocketFactory.INSTANCE;
+    public @NotNull SecurityContextFactory getSecurityContextFactory() {
+        return securityContextFactory;
     }
 }

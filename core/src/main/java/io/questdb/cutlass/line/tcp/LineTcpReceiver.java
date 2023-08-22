@@ -59,7 +59,7 @@ public class LineTcpReceiver implements Closeable {
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory,
-                configuration.getFactoryProvider().getSocketFactory()
+                configuration.getFactoryProvider().getLineSocketFactory()
         );
         ioWorkerPool.assign(dispatcher);
         this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);

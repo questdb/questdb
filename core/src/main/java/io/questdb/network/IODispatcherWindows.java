@@ -281,8 +281,8 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                 final boolean readyForWrite = (newOp & SelectAccessor.FD_WRITE) > 0;
                 final boolean readyForRead = (newOp & SelectAccessor.FD_READ) > 0;
-                final boolean wantsRead = context.getSocket().wantsRead();
                 final boolean wantsWrite = context.getSocket().wantsWrite();
+                final boolean wantsRead = context.getSocket().wantsRead();
 
                 final int requestedOp = (int) pending.get(i, OPM_OPERATION);
                 final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)

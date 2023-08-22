@@ -67,7 +67,7 @@ public class PGWireServer implements Closeable {
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory,
-                configuration.getFactoryProvider().getSocketFactory()
+                configuration.getFactoryProvider().getPgWireSocketFactory()
         );
         this.metrics = engine.getMetrics();
         this.workerPool = workerPool;
