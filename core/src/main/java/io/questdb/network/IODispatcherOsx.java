@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.std.IntHashSet;
 import io.questdb.std.LongMatrix;
 
 public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatcher<C> {
@@ -31,9 +32,11 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
+    private final IntHashSet alreadyHandledFds = new IntHashSet();
     private final int capacity;
     private final Kqueue kqueue;
-    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1)
+    // the final ids are shifted by 1 bit which is reserved to distinguish
+    // socket operations (0) and suspend events (1)
     private long idSeq = 1;
 
     public IODispatcherOsx(
@@ -131,7 +134,6 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 rearmKqueue(context, id, IOOperation.READ);
             }
         } else {
-            // TODO fix this broken code
             final boolean readyForWrite = kqueue.getFilter() == KqueueAccessor.EVFILT_WRITE;
             final boolean readyForRead = kqueue.getFilter() == KqueueAccessor.EVFILT_READ;
             final boolean wantsRead = context.getSocket().wantsRead();
@@ -141,12 +143,31 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)
                     || (requestedOp == IOOperation.READ && readyForRead);
 
-            publishOperation(
-                    kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE,
-                    context
-            );
-            pending.deleteRow(row);
-            return true;
+            if (readyForRequestedOp) {
+                // disarm extra filter in case it was previously set and haven't fired yet
+                kqueue.setWriteOffset(0);
+                if (requestedOp == IOOperation.READ && context.getSocket().wantsWrite()) {
+                    kqueue.removeWriteFD(context.getFd());
+                }
+                if (requestedOp == IOOperation.WRITE && context.getSocket().wantsRead()) {
+                    kqueue.removeReadFD(context.getFd());
+                }
+                registerWithKQueue(1);
+                // publish the operation and we're done
+                publishOperation(requestedOp, context);
+                pending.deleteRow(row);
+                return true;
+            } else {
+                // that's not the requested operation, but something wanted by the socket
+                // TODO handle errors properly
+                if (wantsWrite && readyForWrite) {
+                    context.getSocket().write();
+                }
+                if (wantsRead && readyForRead) {
+                    context.getSocket().read();
+                }
+                rearmKqueue(context, id, requestedOp);
+            }
         }
         return false;
     }
@@ -363,8 +384,6 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     }
 
     private void processSuspendEventDeadlines(long timestamp) {
-        int index = 0;
-        int offset = 0;
         int count = 0;
         for (int i = 0, n = pendingEvents.size(); i < n && pendingEvents.get(i, EVM_DEADLINE) < timestamp; i++, count++) {
             final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
@@ -379,36 +398,14 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final int operation = (int) pending.get(pendingRow, OPM_OPERATION);
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             assert suspendEvent != null;
-            kqueue.setWriteOffset(offset);
+            kqueue.setWriteOffset(0);
             kqueue.removeReadFD(suspendEvent.getFd());
-            offset += KqueueAccessor.SIZEOF_KEVENT;
-            if (++index > capacity - 1) {
-                registerWithKQueue(index);
-                index = offset = 0;
-            }
+            registerWithKQueue(1);
 
             // Next, close the event and resume the original operation.
+            // to resume a socket operation, we simply re-arm kqueue
+            rearmKqueue(context, opId, operation);
             context.clearSuspendEvent();
-            kqueue.setWriteOffset(offset);
-            if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
-                kqueue.readFD(context.getFd(), opId);
-                offset += KqueueAccessor.SIZEOF_KEVENT;
-                if (++index > capacity - 1) {
-                    registerWithKQueue(index);
-                    index = offset = 0;
-                }
-            }
-            if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
-                kqueue.writeFD(context.getFd(), opId);
-                offset += KqueueAccessor.SIZEOF_KEVENT;
-                if (++index > capacity - 1) {
-                    registerWithKQueue(index);
-                    index = offset = 0;
-                }
-            }
-        }
-        if (index > 0) {
-            registerWithKQueue(index);
         }
         pendingEvents.zapTop(count);
     }
@@ -422,6 +419,15 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         }
         if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
             kqueue.writeFD(context.getFd(), id);
+            index++;
+        }
+        // disarm extra filter in case it was previously set and haven't fired yet
+        if (index == 1) {
+            if (operation == IOOperation.READ) {
+                kqueue.removeWriteFD(context.getFd());
+            } else {
+                kqueue.removeReadFD(context.getFd());
+            }
             index++;
         }
         registerWithKQueue(index);
@@ -452,13 +458,14 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
         final long timestamp = clock.getTicks();
         processDisconnects(timestamp);
+        alreadyHandledFds.clear();
         final int n = kqueue.poll();
         int watermark = pending.size();
         int offset = 0;
         if (n > 0) {
             // check all activated FDs
             LOG.debug().$("poll [n=").$(n).$(']').$();
-            for (int i = 0; i < n; ) {
+            for (int i = 0; i < n; i++) {
                 kqueue.setReadOffset(offset);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 final int fd = kqueue.getFd();
@@ -467,12 +474,15 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 if (fd == serverFd) {
                     accept(timestamp);
                     useful = true;
-                    i++;
+                    continue;
+                }
+                if (!alreadyHandledFds.add(fd)) {
+                    // we already handled this fd (socket), but for another event;
+                    // ignore this one as we already removed/re-armed kqueue filter
                     continue;
                 }
                 if (isEventId(id)) {
                     handleSuspendEvent(id);
-                    i++;
                     continue;
                 }
                 // since we may register multiple times
@@ -480,7 +490,6 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                     useful = true;
                     watermark--;
                 }
-                i++;
             }
         }
 
