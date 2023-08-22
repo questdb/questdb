@@ -234,7 +234,8 @@ public class TableListFunctionFactory implements FunctionFactory {
                 public boolean open(TableToken tableToken) {
                     if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
                             || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
-                            || Chars.startsWith(tableToken.getTableName(), sysTablePrefix))) {
+//                            || Chars.startsWith(tableToken.getTableName(), sysTablePrefix)
+                    )) {
                         return false;
                     }
 
