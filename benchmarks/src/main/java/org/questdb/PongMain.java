@@ -45,7 +45,11 @@ public class PongMain {
         // worker pool, which would handle jobs
         final WorkerPool workerPool = new WorkerPool(() -> 1);
         // event loop that accepts connections and publishes network events to event queue
-        final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(dispatcherConf, new IOContextFactoryImpl<>(PongConnectionContext::new, 8));
+        final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(
+                dispatcherConf,
+                new IOContextFactoryImpl<>(PongConnectionContext::new, 8),
+                PlainSocketFactory.INSTANCE
+        );
         // event queue processor
         final PongRequestProcessor processor = new PongRequestProcessor();
         // event loop job

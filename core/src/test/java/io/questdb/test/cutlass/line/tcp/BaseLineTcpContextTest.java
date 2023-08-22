@@ -318,7 +318,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         noNetworkIOJob.setScheduler(scheduler);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         Assert.assertNull(context.getDispatcher());
-        context.of(new TestSocket(lineTcpConfiguration.getNetworkFacade()), new IODispatcher<>() {
+        context.of(new TestSocket(lineTcpConfiguration.getNetworkFacade()), new IODispatcher<LineTcpConnectionContext>() {
             @Override
             public void close() {
             }
