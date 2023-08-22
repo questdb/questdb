@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -40,18 +41,16 @@ import io.questdb.std.str.DirectByteCharSequence;
 import java.security.SecureRandom;
 
 public class EllipticCurveAuthenticator implements Authenticator {
-    private static final int CHALLENGE_LEN = 512;
     private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
-    private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
+    private static final int MIN_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
 
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
-    private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
     private final ChallengeResponseMatcher challengeResponseMatcher;
     private final NetworkFacade nf;
-    private final DirectByteCharSequence signatureFlyweight = new DirectByteCharSequence();
     private final DirectByteCharSequence userNameFlyweight = new DirectByteCharSequence();
     protected long recvBufPseudoStart;
     private AuthState authState;
+    private long challengePtr;
     private int fd;
     private String principal;
     private long recvBufEnd;
@@ -61,6 +60,12 @@ public class EllipticCurveAuthenticator implements Authenticator {
     public EllipticCurveAuthenticator(NetworkFacade networkFacade, ChallengeResponseMatcher challengeResponseMatcher) {
         this.challengeResponseMatcher = challengeResponseMatcher;
         this.nf = networkFacade;
+        this.challengePtr = Unsafe.malloc(AuthUtils.CHALLENGE_LEN, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    @Override
+    public void close() {
+        challengePtr = Unsafe.free(challengePtr, AuthUtils.CHALLENGE_LEN, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
@@ -161,11 +166,11 @@ public class EllipticCurveAuthenticator implements Authenticator {
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             int n = 0;
             SecureRandom srand = tlSrand.get();
-            while (n < CHALLENGE_LEN) {
+            while (n < AuthUtils.CHALLENGE_LEN) {
                 assert recvBufStart + n < recvBufEnd;
                 int r = (int) (srand.nextDouble() * 0x5f) + 0x20;
                 Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) r);
-                challengeBytes[n] = (byte) r;
+                Unsafe.getUnsafe().putByte(challengePtr + n, (byte) r);
                 n++;
             }
             Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) '\n');
@@ -174,7 +179,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     private void sendChallenge() throws AuthenticatorException {
-        int n = CHALLENGE_LEN + 1 - (int) (recvBufPos - recvBufStart);
+        int n = AuthUtils.CHALLENGE_LEN + 1 - (int) (recvBufPos - recvBufStart);
         assert n > 0;
         while (true) {
             int nWritten = nf.send(fd, recvBufPos, n);
@@ -206,9 +211,8 @@ public class EllipticCurveAuthenticator implements Authenticator {
                 LOG.info().$('[').$(fd).$("] authentication signature is too long").$();
                 throw AuthenticatorException.INSTANCE;
             }
-            signatureFlyweight.of(recvBufStart, recvBufStart + lineEnd);
             authState = AuthState.FAILED;
-            boolean verified = challengeResponseMatcher.verifyLineToken(principal, challengeBytes, signatureFlyweight);
+            boolean verified = challengeResponseMatcher.verifyLineToken(principal, challengePtr, AuthUtils.CHALLENGE_LEN, recvBufStart, lineEnd);
             if (!verified) {
                 LOG.info().$('[').$(fd).$("] authentication failed, signature was not verified").$();
                 throw AuthenticatorException.INSTANCE;

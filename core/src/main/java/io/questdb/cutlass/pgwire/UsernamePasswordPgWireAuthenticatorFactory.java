@@ -20,6 +20,6 @@ public class UsernamePasswordPgWireAuthenticatorFactory implements PgWireAuthent
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener
     ) {
-        return new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreaker, registry, optionsListener, matcher);
+        return new CleartextPasswordPgWireAuthenticator(nf, configuration, circuitBreaker, registry, optionsListener, matcher, false);
     }
 }
