@@ -100,6 +100,8 @@ public class WalWriter implements TableWriterAPI {
     private int segmentLockFd = -1;
     private long segmentRowCount = -1;
     private TableToken tableToken;
+    //TODO: make it configurable. Truncate is turned off for now to make it play nice with replication
+    private final boolean truncate = false;
     private TxReader txReader;
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
@@ -288,11 +290,16 @@ public class WalWriter implements TableWriterAPI {
         if (open) {
             open = false;
             if (metadata != null) {
-                metadata.close(Vm.TRUNCATE_TO_POINTER);
+                metadata.close(truncate, Vm.TRUNCATE_TO_POINTER);
             }
-            Misc.free(events);
+            if (events != null) {
+                events.close(truncate, Vm.TRUNCATE_TO_POINTER);
+            }
             freeSymbolMapReaders();
-            Misc.free(symbolMapMem);
+            if (symbolMapMem != null) {
+                symbolMapMem.close(truncate, Vm.TRUNCATE_TO_POINTER);
+            }
+
             freeColumns(truncate);
 
             releaseSegmentLock(segmentId, segmentLockFd, segmentRowCount);
@@ -1038,9 +1045,9 @@ public class WalWriter implements TableWriterAPI {
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
         final MemoryMA primaryColumn = columns.getAndSetQuick(pi, NullMemory.INSTANCE);
         final MemoryMA secondaryColumn = columns.getAndSetQuick(si, NullMemory.INSTANCE);
-        primaryColumn.close(true, Vm.TRUNCATE_TO_POINTER);
+        primaryColumn.close(truncate, Vm.TRUNCATE_TO_POINTER);
         if (secondaryColumn != null) {
-            secondaryColumn.close(true, Vm.TRUNCATE_TO_POINTER);
+            secondaryColumn.close(truncate, Vm.TRUNCATE_TO_POINTER);
         }
     }
 
@@ -1134,7 +1141,7 @@ public class WalWriter implements TableWriterAPI {
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
         try {
             final MemoryMA mem1 = getPrimaryColumn(columnIndex);
-            mem1.close(true, Vm.TRUNCATE_TO_POINTER);
+            mem1.close(truncate, Vm.TRUNCATE_TO_POINTER);
             mem1.of(
                     ff,
                     dFile(path.trimTo(pathTrimToLen), name),
@@ -1147,7 +1154,7 @@ public class WalWriter implements TableWriterAPI {
 
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
             if (mem2 != null) {
-                mem2.close(true, Vm.TRUNCATE_TO_POINTER);
+                mem2.close(truncate, Vm.TRUNCATE_TO_POINTER);
                 mem2.of(
                         ff,
                         iFile(path.trimTo(pathTrimToLen), name),
@@ -1203,7 +1210,7 @@ public class WalWriter implements TableWriterAPI {
             }
 
             segmentRowCount = 0;
-            metadata.switchTo(path, segmentPathLen);
+            metadata.switchTo(path, segmentPathLen, truncate);
             events.openEventFile(path, segmentPathLen);
             if (commitMode != CommitMode.NOSYNC) {
                 events.sync();
@@ -1464,14 +1471,14 @@ public class WalWriter implements TableWriterAPI {
                 long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
                 primaryColumnFile.jumpTo(currentOffset);
 
-                primaryColumnFile.switchTo(newPrimaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
+                primaryColumnFile.switchTo(newPrimaryFd, newOffset, truncate, Vm.TRUNCATE_TO_POINTER);
                 int newSecondaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
                 if (newSecondaryFd > -1) {
                     MemoryMA secondaryColumnFile = getSecondaryColumn(i);
                     currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 4);
                     newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 5);
                     secondaryColumnFile.jumpTo(currentOffset);
-                    secondaryColumnFile.switchTo(newSecondaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
+                    secondaryColumnFile.switchTo(newSecondaryFd, newOffset, truncate, Vm.TRUNCATE_TO_POINTER);
                 }
             }
         }
@@ -1640,7 +1647,7 @@ public class WalWriter implements TableWriterAPI {
                         // we should switch metadata to this new segment
                         path.trimTo(rootLen).slash().put(segmentId);
                         // this will close old _meta file and create the new one
-                        metadata.switchTo(path, path.length());
+                        metadata.switchTo(path, path.length(), truncate);
                         openColumnFiles(columnName, columnIndex, path.length());
                     }
                     // if we did not have to roll uncommitted rows to a new segment
@@ -1710,7 +1717,7 @@ public class WalWriter implements TableWriterAPI {
                             // we should switch metadata to this new segment
                             path.trimTo(rootLen).slash().put(segmentId);
                             // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.length());
+                            metadata.switchTo(path, path.length(), truncate);
                         }
                         // if we did not have to roll uncommitted rows to a new segment
                         // it will switch metadata file on next row write
@@ -1760,7 +1767,7 @@ public class WalWriter implements TableWriterAPI {
                             // we should switch metadata to this new segment
                             path.trimTo(rootLen).slash().put(segmentId);
                             // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.length());
+                            metadata.switchTo(path, path.length(), truncate);
                             renameColumnFiles(columnType, columnName, newColumnName);
                         }
                         // if we did not have to roll uncommitted rows to a new segment

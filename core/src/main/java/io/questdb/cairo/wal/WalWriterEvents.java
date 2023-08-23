@@ -58,7 +58,11 @@ class WalWriterEvents implements Closeable {
 
     @Override
     public void close() {
-        eventMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    public void close(boolean truncate, byte truncateMode) {
+        eventMem.close(truncate, truncateMode);
         Unsafe.free(longBuffer, Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
         longBuffer = 0L;
         ff.close(indexFd);
