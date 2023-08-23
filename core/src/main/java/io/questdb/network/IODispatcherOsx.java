@@ -145,14 +145,19 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
             if (readyForRequestedOp) {
                 // disarm extra filter in case it was previously set and haven't fired yet
+                int index = 0;
                 kqueue.setWriteOffset(0);
-                if (requestedOp == IOOperation.READ && context.getSocket().wantsWrite()) {
+                if (requestedOp == IOOperation.READ && wantsWrite) {
                     kqueue.removeWriteFD(context.getFd());
+                    index++;
                 }
-                if (requestedOp == IOOperation.WRITE && context.getSocket().wantsRead()) {
+                if (requestedOp == IOOperation.WRITE && wantsRead) {
                     kqueue.removeReadFD(context.getFd());
+                    index++;
                 }
-                registerWithKQueue(1);
+                if (index > 0) {
+                    registerWithKQueue(index);
+                }
                 // publish the operation and we're done
                 publishOperation(requestedOp, context);
                 pending.deleteRow(row);
