@@ -35,8 +35,9 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     private final IntHashSet alreadyHandledFds = new IntHashSet();
     private final int capacity;
     private final Kqueue kqueue;
-    // the final ids are shifted by 1 bit which is reserved to distinguish
-    // socket operations (0) and suspend events (1)
+    // the final ids are shifted by 2 bits which are reserved:
+    // * First bit is used to distinguish read(0) and write(1) filters
+    // * Second bit is used to distinguish socket operations (0) and suspend events (1)
     private long idSeq = 1;
 
     public IODispatcherOsx(
@@ -58,8 +59,16 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         LOG.info().$("closed").$();
     }
 
+    private static long fromFilterMaskedId(long id) {
+        return id & (~1L);
+    }
+
     private static boolean isEventId(long id) {
         return (id & 1) == 1;
+    }
+
+    private static long toFilterMaskedId(long id, short filter) {
+        return filter == KqueueAccessor.EVFILT_WRITE ? id : id + 1;
     }
 
     private void doDisconnect(C context, long id, int reason) {
@@ -90,7 +99,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
             if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
-                kqueue.readFD(context.getFd(), id);
+                readFD(context.getFd(), id);
                 if (++index > capacity - 1) {
                     registerWithKQueue(index);
                     index = 0;
@@ -98,7 +107,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 }
             }
             if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
-                kqueue.writeFD(context.getFd(), id);
+                writeFD(context.getFd(), id);
                 if (++index > capacity - 1) {
                     registerWithKQueue(index);
                     index = 0;
@@ -156,7 +165,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                     index++;
                 }
                 if (index > 0) {
-                    registerWithKQueue(index);
+                    tryRegisterWithKQueue(index);
                 }
                 // publish the operation and we're done
                 publishOperation(requestedOp, context);
@@ -208,11 +217,11 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     }
 
     private long nextEventId() {
-        return (idSeq++ << 1) + 1;
+        return ((idSeq++ << 1) + 1) << 1;
     }
 
     private long nextOpId() {
-        return idSeq++ << 1;
+        return idSeq++ << 2;
     }
 
     private void processHeartbeats(int watermark, long timestamp) {
@@ -263,7 +272,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 } else {
                     final long eventId = pendingEvents.get(eventRow, EVM_ID);
                     kqueue.setWriteOffset(0);
-                    kqueue.readFD(suspendEvent.getFd(), eventId);
+                    readFD(suspendEvent.getFd(), eventId);
                     registerWithKQueue(1);
                     pendingEvents.deleteRow(eventRow);
                 }
@@ -354,7 +363,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
 
                 kqueue.setWriteOffset(offset);
-                kqueue.readFD(suspendEvent.getFd(), eventId);
+                readFD(suspendEvent.getFd(), eventId);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 if (++index > capacity - 1) {
                     registerWithKQueue(index);
@@ -364,7 +373,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
             kqueue.setWriteOffset(offset);
             if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
-                kqueue.readFD(fd, opId);
+                readFD(fd, opId);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 if (++index > capacity - 1) {
                     registerWithKQueue(index);
@@ -372,7 +381,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 }
             }
             if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
-                kqueue.writeFD(fd, opId);
+                writeFD(fd, opId);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 if (++index > capacity - 1) {
                     registerWithKQueue(index);
@@ -415,24 +424,19 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         pendingEvents.zapTop(count);
     }
 
+    private void readFD(int fd, long id) {
+        kqueue.readFD(fd, toFilterMaskedId(id, KqueueAccessor.EVFILT_READ));
+    }
+
     private void rearmKqueue(C context, long id, int operation) {
         kqueue.setWriteOffset(0);
         int index = 0;
         if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
-            kqueue.readFD(context.getFd(), id);
+            readFD(context.getFd(), id);
             index++;
         }
         if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
-            kqueue.writeFD(context.getFd(), id);
-            index++;
-        }
-        // disarm extra filter in case it was previously set and haven't fired yet
-        if (index == 1) {
-            if (operation == IOOperation.READ) {
-                kqueue.removeWriteFD(context.getFd());
-            } else {
-                kqueue.removeReadFD(context.getFd());
-            }
+            writeFD(context.getFd(), id);
             index++;
         }
         registerWithKQueue(index);
@@ -443,6 +447,16 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             throw NetworkError.instance(nf.errno()).put("could not register [changeCount=").put(changeCount).put(']');
         }
         LOG.debug().$("kqueued [count=").$(changeCount).$(']').$();
+    }
+
+    private void tryRegisterWithKQueue(int changeCount) {
+        // This call ignores potential errors like ENOENT or EINVAL.
+        // Useful for disarming previously registered filters.
+        kqueue.register(changeCount);
+    }
+
+    private void writeFD(int fd, long id) {
+        kqueue.writeFD(fd, toFilterMaskedId(id, KqueueAccessor.EVFILT_WRITE));
     }
 
     @Override
@@ -474,7 +488,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 kqueue.setReadOffset(offset);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 final int fd = kqueue.getFd();
-                final long id = kqueue.getData();
+                final long id = fromFilterMaskedId(kqueue.getData());
                 // this is server socket, accept if there aren't too many already
                 if (fd == serverFd) {
                     accept(timestamp);
