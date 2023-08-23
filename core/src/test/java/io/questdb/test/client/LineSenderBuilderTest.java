@@ -34,9 +34,6 @@ import io.questdb.test.tools.TlsProxyRule;
 import org.junit.ClassRule;
 import org.junit.Test;
 
-import java.net.URL;
-
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
 
 public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
@@ -310,9 +307,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testConnectTls_TruststoreFile() throws Exception {
-        URL trustStoreResource = LineSenderBuilderTest.class.getResource(TRUSTSTORE_PATH);
-        assertNotNull("Someone accidentally deleted trust store?", trustStoreResource);
-        String truststore = trustStoreResource.getFile();
+        String truststore = TestUtils.getResourcePath(TRUSTSTORE_PATH);
         runInContext(r -> {
             try (Sender sender = Sender.builder()
                     .address(LOCALHOST)

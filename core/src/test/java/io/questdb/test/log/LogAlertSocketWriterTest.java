@@ -334,13 +334,14 @@ public class LogAlertSocketWriterTest {
                     } finally {
                         Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
                     }
-                });
+                }
+        );
     }
 
     @Test
     public void testOnLogRecordWithExternalTemplate() throws Exception {
         final Path dstPath = Path.getThreadLocal(root).concat("test-alert-manager.json").$();
-        String resourcePath = Files.getResourcePath(LogAlertSocketWriter.class.getResource(DEFAULT_ALERT_TPT_FILE));
+        String resourcePath = TestUtils.getResourcePath(DEFAULT_ALERT_TPT_FILE);
         if (Os.isWindows() && resourcePath.charAt(0) == '/') {
             resourcePath = resourcePath.substring(1);
         }

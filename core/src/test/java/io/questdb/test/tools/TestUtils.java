@@ -61,7 +61,6 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.sql.Timestamp;
 import java.util.HashMap;
@@ -72,6 +71,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.std.Numbers.IPv4_NULL;
+import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
 
@@ -1068,13 +1068,7 @@ public final class TestUtils {
     }
 
     public static String getCsvRoot() {
-        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
-        try {
-            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
-            return new File(rootSource.toURI()).getParent();
-        } catch (URISyntaxException e) {
-            throw new AssertionError("missing test-import.csv", e);
-        }
+        return getResourcePath("/csv/test-import.csv");
     }
 
     public static int getJavaVersion() {
@@ -1088,6 +1082,12 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
+    }
+
+    public static String getResourcePath(String resourceName) {
+        URL resource = TestUtils.class.getResource(resourceName);
+        assertNotNull("Someone accidentally deleted file " + resourceName + "?", resource);
+        return Files.getResourcePath(resource);
     }
 
     @NotNull

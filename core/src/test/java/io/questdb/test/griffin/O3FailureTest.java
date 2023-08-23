@@ -48,9 +48,7 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
 import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -592,16 +590,20 @@ public class O3FailureTest extends AbstractO3Test {
         int storageLength = 8;
         long records = 500;
 
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
 
                     Assume.assumeFalse(Os.isWindows());
                     Assert.assertTrue("mixed IO should be enabled non-windows", engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
-                    compiler.compile("create table " + tableName + " as ( " +
+                    compiler.compile(
+                            "create table " + tableName + " as ( " +
                                     "select " +
                                     "x, " +
                                     " timestamp_sequence('2022-02-24', 1000) ts" +
@@ -619,7 +621,8 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(compiler,
+                    TestUtils.assertSql(
+                            compiler,
                             sqlExecutionContext,
                             "select * from " + tableName + " limit -5,5",
                             sink,
@@ -672,7 +675,8 @@ public class O3FailureTest extends AbstractO3Test {
     public void testOOOFollowedByAnotherOOO() throws Exception {
         counter.set(1);
         final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
-        executeWithPool(0,
+        executeWithPool(
+                0,
                 (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
                 new TestFilesFacadeImpl() {
                     boolean armageddon = false;
@@ -713,7 +717,8 @@ public class O3FailureTest extends AbstractO3Test {
                         }
                         return fd;
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -933,10 +938,13 @@ public class O3FailureTest extends AbstractO3Test {
         int storageLength = getStorageLength(strColVal);
         long records = 500;
 
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
 
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
@@ -960,7 +968,8 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(compiler,
+                    TestUtils.assertSql(
+                            compiler,
                             sqlExecutionContext,
                             "select * from " + tableName + " limit -5,5",
                             sink,
@@ -1047,12 +1056,9 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String resourceName
-    ) throws URISyntaxException, SqlException {
+    ) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "x");
-
-        URL url = O3FailureTest.class.getResource(resourceName);
-        Assert.assertNotNull(url);
-        TestUtils.assertEquals(new File(url.toURI()), sink);
+        TestUtils.assertEquals(TestUtils.getResourcePath(resourceName), sink);
     }
 
     private static void assertXCountAndMax(
@@ -1956,7 +1962,6 @@ public class O3FailureTest extends AbstractO3Test {
                 null,
                 null
         );
-
     }
 
     private static void testColumnTopLastOOOPrefixFailRetry0(
@@ -2376,19 +2381,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-       engine.ddl("alter table x add column v double", sqlExecutionContext);
-       engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-       engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-       engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-       engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-       engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-       engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-       engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-       engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-       engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-       engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-       engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-       engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v double", sqlExecutionContext);
+        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
+        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
+        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
+        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
+        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
+        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
+        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
+        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
+        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -2623,7 +2628,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_long256(5) l256," +
                         " timestamp_sequence('2020-02-24',100L) ts" +
                         " from long_sequence(50000)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
@@ -2674,7 +2680,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_str(5,160,2) str," +
                         " timestamp_sequence('2020-02-24',100L) ts" +
                         " from long_sequence(50000)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
@@ -2727,7 +2734,8 @@ public class O3FailureTest extends AbstractO3Test {
                             " from long_sequence(500000)" +
                             "union all " +
                             "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                    executionContext);
+                    executionContext
+            );
             Assert.fail();
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "commit failed");
@@ -2737,7 +2745,8 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)" +
                         "union all select -2, -2, CAST('2020-02-25T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
         assertXCountAndMax(
                 engine,
@@ -2778,7 +2787,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " from long_sequence(500000)" +
                         "union all " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
         compiler.compile(
                 "insert into x " +
@@ -2789,7 +2799,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " from long_sequence(500000)" +
                         "union all " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
