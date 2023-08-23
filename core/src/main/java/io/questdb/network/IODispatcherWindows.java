@@ -298,6 +298,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         context.getSocket().read();
                     }
                     // publish event and remove from pending
+                    publishOperation(requestedOp, context);
                     pending.deleteRow(i);
                     n--;
                     watermark--;
@@ -310,7 +311,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                     if (wantsRead && readyForRead) {
                         context.getSocket().read();
                     }
-                    // We need to add the operation back to pool.
+                    // Now we need to re-arm poll.
                     if (requestedOp == IOOperation.READ || context.getSocket().wantsRead()) {
                         readFdSet.add(fd);
                         readFdCount++;
