@@ -1043,8 +1043,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNewLambdaQuerySyntax() {
-        assertFail("x in (select a,b, from T)", 23, "column name expected");
+    public void testNewLambdaQuerySyntax() throws SqlException {
+        x("x  (select-choose a, b from (T)) in", "x in (select a,b, from T)");
     }
 
     @Test

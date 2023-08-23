@@ -954,11 +954,11 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean cleanColumnNames) throws SqlException {
+    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean nonLiteral) throws SqlException {
         // column names are not allowed to have a dot
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, cleanColumnNames);
+            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, nonLiteral);
             QueryColumn column = queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0), true, m.getColumnType(i));
             model.addField(column);
         }
@@ -979,8 +979,8 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private CharSequence createColumnAlias(CharSequence name, QueryModel model, boolean cleanColumnNames) {
-        return SqlUtil.createColumnAlias(characterStore, name, -1, model.getAliasToColumnMap(), cleanColumnNames);
+    private CharSequence createColumnAlias(CharSequence name, QueryModel model, boolean nonLiteral) {
+        return SqlUtil.createColumnAlias(characterStore, name, -1, model.getAliasToColumnMap(), nonLiteral);
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model) {
@@ -3437,6 +3437,9 @@ public class SqlOptimiser implements Mutable {
                 int timestampKey = current.getColumnNameToAliasMap().keyIndex(nested.getTimestamp().token);
                 if (timestampKey < 0) {
                     int timestampIdx = current.getColumnAliasIndex(current.getColumnNameToAliasMap().valueAt(timestampKey));
+                    if (timestampIdx == -1) {
+                        System.out.println("oops");
+                    }
                     current.setTimestamp(current.getColumns().get(timestampIdx).getAst());
                 }
                 //not needed if limit = -1
@@ -4669,7 +4672,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
-
     }
 
     QueryModel optimise(@Transient final QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {

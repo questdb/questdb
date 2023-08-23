@@ -2825,7 +2825,7 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 as (select x+10 j from long_sequence(3))");
             compile("create table t3 as (select x+1 k from long_sequence(3))");
 
-            String query = "select * from t1 left join (select * k from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j";
+            String query = "select * from t1 left join (select * from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j";
 
             assertSql("i\tj\tk\n" +
                     "1\t11\tNaN\n" +
