@@ -134,6 +134,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         return true;
     }
 
+    public void notifyRenameTable(TableToken tableToken) {
+        this.tableToken = tableToken;
+    }
+
     public void open(Path path, int pathLen, TableToken tableToken) {
         reset();
         openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);

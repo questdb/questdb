@@ -58,4 +58,6 @@ public interface ServerConfiguration {
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
     }
+
+    default boolean isReadOnlyReplica() { return false; }
 }

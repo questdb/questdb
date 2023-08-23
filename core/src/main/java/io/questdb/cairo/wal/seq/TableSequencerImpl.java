@@ -318,6 +318,11 @@ public class TableSequencerImpl implements TableSequencer {
         return tableToken = metadata.getTableToken();
     }
 
+    public void notifyRename(TableToken tableToken) {
+        this.tableToken = tableToken;
+        this.metadata.notifyRenameTable(tableToken);
+    }
+
     @Override
     public void resumeTable() {
         metadata.resumeTable();

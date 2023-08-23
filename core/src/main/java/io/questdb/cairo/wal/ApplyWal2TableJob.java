@@ -195,7 +195,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return false;
     }
 
-    // Returns true if the application is finished and false if it's early terminated
     private void applyOutstandingWalTransactions(
             TableToken tableToken,
             TableWriter writer,
