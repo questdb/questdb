@@ -64,7 +64,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     }
 
     private static boolean isEventId(long id) {
-        return (id & 1) == 1;
+        return (id & 2) == 2;
     }
 
     private static long toFilterMaskedId(long id, short filter) {
@@ -541,7 +541,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
     @Override
     protected void unregisterListenerFd() {
-        if (this.kqueue.removeListen(serverFd) != 0) {
+        if (kqueue.removeListen(serverFd) != 0) {
             throw NetworkError.instance(nf.errno(), "could not kqueue.removeListen()");
         }
     }
