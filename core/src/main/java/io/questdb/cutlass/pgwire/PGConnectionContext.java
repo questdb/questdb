@@ -2462,6 +2462,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             } catch (PeerIsSlowToReadException e) {
                 Os.sleep(1);
+                circuitBreaker.statefulThrowExceptionIfTimeout();
             }
         }
         responseAsciiSink.reset();

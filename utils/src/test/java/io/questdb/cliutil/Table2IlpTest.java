@@ -191,7 +191,7 @@ public class Table2IlpTest {
     @Test
     public void copyAllColumnTypes() throws SqlException, InterruptedException {
         String tableNameSrc = "src";
-        createTable(tableNameSrc, 20_000);
+        createTable(tableNameSrc, 40_000);
 
         String tableNameDst = "dst";
         createTable(tableNameDst, 1);
