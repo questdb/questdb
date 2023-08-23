@@ -192,6 +192,12 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public LineTcpConnectionContext of(Socket socket, IODispatcher<LineTcpConnectionContext> dispatcher) {
+        if (socket != null) {
+            if (socket.supportsTls()) {
+                // TODO handle errors
+                socket.startTlsSession();
+            }
+        }
         authenticator.init(socket, recvBufStart, recvBufEnd, 0, 0);
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume

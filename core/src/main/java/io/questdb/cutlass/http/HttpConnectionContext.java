@@ -244,6 +244,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             responseSink.close();
             securityContext = DenyAllSecurityContext.INSTANCE;
         } else {
+            if (socket.supportsTls()) {
+                // TODO handle errors
+                socket.startTlsSession();
+            }
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
                 recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);

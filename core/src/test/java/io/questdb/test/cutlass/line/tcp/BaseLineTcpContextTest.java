@@ -456,6 +456,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isTlsSessionStarted() {
+            return false;
+        }
+
+        @Override
         public int read() {
             return 0;
         }
@@ -472,6 +477,16 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
         @Override
         public void shutdown(int how) {
+        }
+
+        @Override
+        public boolean startTlsSession() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean supportsTls() {
+            return false;
         }
 
         @Override

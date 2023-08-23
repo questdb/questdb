@@ -316,14 +316,14 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         // To issue a cancel request, the frontend opens a new connection to the server and sends a CancelRequest message, rather than the StartupMessage message
         // that would ordinarily be sent across a new connection. The server will process this request and then close the connection.
         // For security reasons, no direct reply is made to the cancel request message.
-        int pid = getIntUnsafe(recvBufReadPos);//thread id really
+        int pid = getIntUnsafe(recvBufReadPos); // thread id really
         recvBufReadPos += Integer.BYTES;
         int secret = getIntUnsafe(recvBufReadPos);
         recvBufReadPos += Integer.BYTES;
         LOG.info().$("cancel request [pid=").$(pid).I$();
         try {
             registry.cancel(pid, secret);
-        } catch (CairoException e) {//error message should not be sent to client
+        } catch (CairoException e) { // error message should not be sent to client
             LOG.error().$(e.getMessage()).$();
         }
     }

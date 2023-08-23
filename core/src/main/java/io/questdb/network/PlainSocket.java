@@ -48,6 +48,11 @@ public class PlainSocket implements Socket {
     }
 
     @Override
+    public boolean isTlsSessionStarted() {
+        return false;
+    }
+
+    @Override
     public int read() {
         return 0;
     }
@@ -65,6 +70,16 @@ public class PlainSocket implements Socket {
     @Override
     public void shutdown(int how) {
         nf.shutdown(fd, how);
+    }
+
+    @Override
+    public boolean startTlsSession() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean supportsTls() {
+        return false;
     }
 
     @Override

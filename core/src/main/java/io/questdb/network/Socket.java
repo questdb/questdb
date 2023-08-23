@@ -37,6 +37,8 @@ public interface Socket extends QuietCloseable {
      */
     int getFd();
 
+    boolean isTlsSessionStarted();
+
     /**
      * Reads encrypted data from the socket into internal buffer.
      * No-op on plain socket.
@@ -73,6 +75,10 @@ public interface Socket extends QuietCloseable {
      * @param how valid shutdown flag, e.g. {@link Net#SHUT_WR}.
      */
     void shutdown(int how);
+
+    boolean startTlsSession();
+
+    boolean supportsTls();
 
     /**
      * @return true if a {@link #read()} call should be made once
