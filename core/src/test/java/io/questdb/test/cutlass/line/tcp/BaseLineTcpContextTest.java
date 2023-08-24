@@ -480,7 +480,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean startTlsSession() {
+        public int startTlsSession() {
             throw new UnsupportedOperationException();
         }
 

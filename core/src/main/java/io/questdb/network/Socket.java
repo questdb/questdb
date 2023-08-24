@@ -37,6 +37,9 @@ public interface Socket extends QuietCloseable {
      */
     int getFd();
 
+    /**
+     * @return true if TLS session was already started.
+     */
     boolean isTlsSessionStarted();
 
     /**
@@ -73,11 +76,20 @@ public interface Socket extends QuietCloseable {
      * Does a shutdown() call on the socket.
      *
      * @param how valid shutdown flag, e.g. {@link Net#SHUT_WR}.
+     * @return 0 if the call is successful; -1 if there was an error.
      */
-    void shutdown(int how);
+    int shutdown(int how);
 
-    boolean startTlsSession();
+    /**
+     * Starts a TLS session, if supported.
+     *
+     * @return 0 if the call is successful; -1 if there was an error.
+     */
+    int startTlsSession();
 
+    /**
+     * @return true if the socket support TLS encryption; false otherwise.
+     */
     boolean supportsTls();
 
     /**

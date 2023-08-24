@@ -68,12 +68,12 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public void shutdown(int how) {
-        nf.shutdown(fd, how);
+    public int shutdown(int how) {
+        return nf.shutdown(fd, how);
     }
 
     @Override
-    public boolean startTlsSession() {
+    public int startTlsSession() {
         throw new UnsupportedOperationException();
     }
 

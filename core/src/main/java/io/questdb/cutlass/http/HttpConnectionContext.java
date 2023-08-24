@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -245,8 +246,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             securityContext = DenyAllSecurityContext.INSTANCE;
         } else {
             if (socket.supportsTls()) {
-                // TODO handle errors
-                socket.startTlsSession();
+                if (socket.startTlsSession() != 0) {
+                    throw CairoException.nonCritical().put("failed to create new TLS session");
+                }
             }
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {

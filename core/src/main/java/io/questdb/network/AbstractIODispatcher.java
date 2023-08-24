@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -223,14 +224,22 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private void addPending(int fd, long timestamp) {
         // append pending connection
         // all rows below watermark will be registered with epoll (or similar)
+        final Socket socket = socketFactory.newInstance(nf, fd, LOG);
+        C context;
+        try {
+            context = ioContextFactory.newInstance(socket, this);
+        } catch (CairoException e) {
+            LOG.error().$("could not create connection context [fd=").$(fd).$(", e=").$(e.getFlyweightMessage()).I$();
+            socket.close();
+            return;
+        }
         int r = pending.addRow();
-        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
+        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).I$();
         pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
         pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
         pending.set(r, OPM_FD, fd);
         pending.set(r, OPM_OPERATION, -1);
-        final Socket socket = socketFactory.newInstance(nf, fd, LOG);
-        pending.set(r, ioContextFactory.newInstance(socket, this));
+        pending.set(r, context);
         pendingAdded(r);
     }
 
@@ -290,13 +299,13 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
             if (fd < 0) {
                 if (nf.errno() != Net.EWOULDBLOCK) {
-                    LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                    LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).I$();
                 }
                 break;
             }
 
             if (nf.configureNonBlocking(fd) < 0) {
-                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).I$();
                 nf.close(fd, LOG);
                 break;
             }
@@ -304,7 +313,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             if (nf.setTcpNoDelay(fd, true) < 0) {
                 // Randomly on OS X, if a client connects and the peer TCP socket has SO_LINGER set to false, then setting the TCP_NODELAY
                 // option fails!
-                LOG.info().$("could not turn off Nagle's algorithm [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                LOG.info().$("could not turn off Nagle's algorithm [fd=").$(fd).$(", errno=").$(nf.errno()).I$();
             }
 
             if (peerNoLinger) {
@@ -319,7 +328,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 nf.setRcvBuf(fd, rcvBufSize);
             }
 
-            LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
+            LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).I$();
             tlConCount = connectionCount.incrementAndGet();
             addPending(fd, timestamp);
         }

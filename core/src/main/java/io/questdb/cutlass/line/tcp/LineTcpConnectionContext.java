@@ -194,8 +194,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public LineTcpConnectionContext of(Socket socket, IODispatcher<LineTcpConnectionContext> dispatcher) {
         if (socket != null) {
             if (socket.supportsTls()) {
-                // TODO handle errors
-                socket.startTlsSession();
+                if (socket.startTlsSession() != 0) {
+                    throw CairoException.nonCritical().put("failed to create new TLS session");
+                }
             }
         }
         authenticator.init(socket, recvBufStart, recvBufEnd, 0, 0);
