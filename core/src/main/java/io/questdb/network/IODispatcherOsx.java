@@ -211,7 +211,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             if (op == IOOperation.WRITE || context.getSocket().wantsWrite()) {
                 keventWriter.removeWriteFD(fd);
             }
-            if (!keventWriter.done()) {
+            if (keventWriter.done() != 0) {
                 LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
                         .$(", err=").$(nf.errno()).I$();
             } else {
@@ -467,21 +467,21 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     }
 
     private class KeventWriter {
-        private boolean gotError;
         private int index;
+        private int lastError; // 0 means no error
         private int offset;
         private boolean tolerateErrors;
 
-        public boolean done() {
+        public int done() {
             if (index > 0) {
                 register(index);
             }
             index = 0;
             offset = 0;
             tolerateErrors = false;
-            boolean gotError = this.gotError;
-            this.gotError = false;
-            return gotError;
+            int lastError = this.lastError;
+            this.lastError = 0;
+            return lastError;
         }
 
         public KeventWriter readFD(int fd, long id) {
@@ -545,7 +545,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             if (!tolerateErrors && res != 0) {
                 throw NetworkError.instance(nf.errno()).put("could not register [changeCount=").put(changeCount).put(']');
             }
-            gotError |= (res != 0);
+            lastError = res != 0 ? res : lastError;
             LOG.debug().$("kqueued [count=").$(changeCount).$(']').$();
         }
     }
