@@ -1068,7 +1068,7 @@ public final class TestUtils {
     }
 
     public static String getCsvRoot() {
-        return getResourcePath("/csv/test-import.csv");
+        return getResourcePath("/csv");
     }
 
     public static int getJavaVersion() {
