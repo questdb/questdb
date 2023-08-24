@@ -144,12 +144,19 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 return true;
             } else {
                 // that's not the requested operation, but something wanted by the socket
-                // TODO handle errors properly
                 if (wantsWrite && readyForWrite) {
-                    context.getSocket().write();
+                    if (context.getSocket().write() < 0) {
+                        doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
+                        pending.deleteRow(row);
+                        return true;
+                    }
                 }
                 if (wantsRead && readyForRead) {
-                    context.getSocket().read();
+                    if (context.getSocket().read() < 0) {
+                        doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
+                        pending.deleteRow(row);
+                        return true;
+                    }
                 }
                 rearmKqueue(context, id, requestedOp);
             }

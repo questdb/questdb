@@ -46,6 +46,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
+    protected static final int DISCONNECT_SRC_TLS_ERROR = 4;
     protected static final int OPM_CREATE_TIMESTAMP = 0;
     protected static final int OPM_FD = 1;
     protected static final int OPM_HEARTBEAT_TIMESTAMP = 3;

@@ -290,12 +290,23 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                 if (readyForRequestedOp) {
                     // If the socket is also ready for another operation type, do it.
-                    // TODO handle errors properly
                     if (requestedOp == IOOperation.READ && wantsWrite && readyForWrite) {
-                        context.getSocket().write();
+                        if (context.getSocket().write() < 0) {
+                            doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                            pending.deleteRow(i);
+                            n--;
+                            watermark--;
+                            continue;
+                        }
                     }
                     if (requestedOp == IOOperation.WRITE && wantsRead && readyForRead) {
-                        context.getSocket().read();
+                        if (context.getSocket().read() < 0) {
+                            doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                            pending.deleteRow(i);
+                            n--;
+                            watermark--;
+                            continue;
+                        }
                     }
                     // publish event and remove from pending
                     publishOperation(requestedOp, context);
@@ -304,12 +315,23 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                     watermark--;
                 } else {
                     // It's something different from the requested operation.
-                    // TODO handle errors properly
                     if (wantsWrite && readyForWrite) {
-                        context.getSocket().write();
+                        if (context.getSocket().write() < 0) {
+                            doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                            pending.deleteRow(i);
+                            n--;
+                            watermark--;
+                            continue;
+                        }
                     }
                     if (wantsRead && readyForRead) {
-                        context.getSocket().read();
+                        if (context.getSocket().read() < 0) {
+                            doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                            pending.deleteRow(i);
+                            n--;
+                            watermark--;
+                            continue;
+                        }
                     }
                     // Now we need to re-arm poll.
                     if (requestedOp == IOOperation.READ || context.getSocket().wantsRead()) {
