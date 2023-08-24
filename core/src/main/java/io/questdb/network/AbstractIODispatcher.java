@@ -32,6 +32,14 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Base class for all I/O dispatchers.
+ * <p>
+ * Important invariant:
+ * dispatcher should never process a fd concurrently with I/O context. Instead, each of them does whatever
+ * it has to do with a fd and sends a message over an in-memory queue to tell the other party that it's
+ * free to proceed.
+ */
 public abstract class AbstractIODispatcher<C extends IOContext<C>> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int DISCONNECT_SRC_IDLE = 1;
     protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
