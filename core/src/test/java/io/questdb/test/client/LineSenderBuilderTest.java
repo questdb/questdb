@@ -307,7 +307,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testConnectTls_TruststoreFile() throws Exception {
-        String truststore = TestUtils.getResourcePath(TRUSTSTORE_PATH);
+        String truststore = TestUtils.getTestResourcePath(TRUSTSTORE_PATH);
         runInContext(r -> {
             try (Sender sender = Sender.builder()
                     .address(LOCALHOST)

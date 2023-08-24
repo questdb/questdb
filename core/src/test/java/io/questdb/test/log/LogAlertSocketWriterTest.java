@@ -342,9 +342,6 @@ public class LogAlertSocketWriterTest {
     public void testOnLogRecordWithExternalTemplate() throws Exception {
         final Path dstPath = Path.getThreadLocal(root).concat("test-alert-manager.json").$();
         String resourcePath = TestUtils.getResourcePath(DEFAULT_ALERT_TPT_FILE);
-        if (Os.isWindows() && resourcePath.charAt(0) == '/') {
-            resourcePath = resourcePath.substring(1);
-        }
         Path template = Path.getThreadLocal2(resourcePath).$();
         int result = Files.copy(template, dstPath);
         Assert.assertTrue("Copying " + resourcePath + " to " + dstPath + " result: " + result, result >= 0);

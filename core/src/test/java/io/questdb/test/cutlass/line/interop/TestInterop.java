@@ -46,7 +46,7 @@ public class TestInterop {
     @Test
     public void testInterop() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        String pp = TestUtils.getResourcePath("/io/questdb/test/cutlass/line/interop/ilp-client-interop-test.json");
+        String pp = TestUtils.getTestResourcePath("/io/questdb/test/cutlass/line/interop/ilp-client-interop-test.json");
         if (Os.isWindows()) {
             // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
             // with OS file open methods.

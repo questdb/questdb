@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
+import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -61,7 +62,9 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
+import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Paths;
 import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.Map;
@@ -1068,7 +1071,7 @@ public final class TestUtils {
     }
 
     public static String getCsvRoot() {
-        return getResourcePath("/csv");
+        return getTestResourcePath("/csv");
     }
 
     public static int getJavaVersion() {
@@ -1085,9 +1088,13 @@ public final class TestUtils {
     }
 
     public static String getResourcePath(String resourceName) {
-        URL resource = TestUtils.class.getResource(resourceName);
-        assertNotNull("Someone accidentally deleted file " + resourceName + "?", resource);
-        return Files.getResourcePath(resource);
+        URL resource = ServerMain.class.getResource(resourceName);
+        assertNotNull("Someone accidentally deleted resource " + resourceName + "?", resource);
+        try {
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath();
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Could not determine resource path", e);
+        }
     }
 
     @NotNull
@@ -1123,6 +1130,16 @@ public final class TestUtils {
                 Chars.toString(root),
                 Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
         };
+    }
+
+    public static String getTestResourcePath(String resourceName) {
+        URL resource = TestUtils.class.getResource(resourceName);
+        assertNotNull("Someone accidentally deleted test resource " + resourceName + "?", resource);
+        try {
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath();
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Could not determine resource path", e);
+        }
     }
 
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {

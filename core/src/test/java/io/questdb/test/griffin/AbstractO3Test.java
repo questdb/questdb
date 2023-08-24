@@ -50,6 +50,7 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.rules.Timeout;
 
+import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test extends AbstractTest {
@@ -242,7 +243,7 @@ public class AbstractO3Test extends AbstractTest {
             String resourceName
     ) throws SqlException {
         AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, sql);
-        TestUtils.assertEquals(TestUtils.getResourcePath(resourceName), sink);
+        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {

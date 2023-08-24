@@ -48,6 +48,7 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.net.URISyntaxException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1058,7 +1059,7 @@ public class O3FailureTest extends AbstractO3Test {
             String resourceName
     ) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "x");
-        TestUtils.assertEquals(TestUtils.getResourcePath(resourceName), sink);
+        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     private static void assertXCountAndMax(
