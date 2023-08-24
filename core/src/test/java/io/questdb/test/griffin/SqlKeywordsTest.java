@@ -64,11 +64,14 @@ public class SqlKeywordsTest {
             String name;
             int m = method.getModifiers() & Modifier.methodModifiers();
             if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
-                String keyword = specialCases.get(name);
-                if (keyword == null && name.endsWith("Keyword")) {
-                    keyword = name.substring(2, name.length() - 7).toLowerCase();
+                String methodParam = specialCases.get(name);
+                if (methodParam == null) {
+                    if (!name.endsWith("Keyword")) {
+                        Assert.fail("if method name does not end with 'Keyword', it has to be a special case");
+                    }
+                    methodParam = name.substring(2, name.length() - 7).toLowerCase();
                 }
-                Assert.assertTrue((boolean) method.invoke(null, keyword));
+                Assert.assertTrue((boolean) method.invoke(null, methodParam));
             }
         }
     }
