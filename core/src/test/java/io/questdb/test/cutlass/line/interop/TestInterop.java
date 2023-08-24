@@ -47,11 +47,6 @@ public class TestInterop {
     public void testInterop() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         String pp = TestUtils.getTestResourcePath("/io/questdb/test/cutlass/line/interop/ilp-client-interop-test.json");
-        if (Os.isWindows()) {
-            // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
-            // with OS file open methods.
-            pp = pp.substring(1);
-        }
 
         StringChannel channel = new StringChannel();
         try (JsonLexer lexer = new JsonLexer(1024, 1024);
