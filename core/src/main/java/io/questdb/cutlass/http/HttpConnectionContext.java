@@ -36,6 +36,7 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.network.IODispatcher.*;
 
@@ -237,7 +238,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
-    public HttpConnectionContext of(Socket socket, IODispatcher<HttpConnectionContext> dispatcher) {
+    public HttpConnectionContext of(@Nullable Socket socket, @Nullable IODispatcher<HttpConnectionContext> dispatcher) {
         HttpConnectionContext r = super.of(socket, dispatcher);
         if (socket == null) {
             // The context is about to be returned to the pool, so we should release the memory.

@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
     protected IODispatcher<T> dispatcher;
@@ -75,7 +76,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     @SuppressWarnings("unchecked")
-    public T of(Socket socket, IODispatcher<T> dispatcher) {
+    public T of(@Nullable Socket socket, @Nullable IODispatcher<T> dispatcher) {
         this.socket = socket;
         this.dispatcher = dispatcher;
         return (T) this;

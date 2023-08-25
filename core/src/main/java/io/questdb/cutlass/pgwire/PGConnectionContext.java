@@ -455,7 +455,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public PGConnectionContext of(Socket socket, IODispatcher<PGConnectionContext> dispatcher) {
+    public PGConnectionContext of(@Nullable Socket socket, @Nullable IODispatcher<PGConnectionContext> dispatcher) {
         PGConnectionContext r = super.of(socket, dispatcher);
         final int fd = socket != null ? socket.getFd() : -1;
         sqlExecutionContext.with(fd);

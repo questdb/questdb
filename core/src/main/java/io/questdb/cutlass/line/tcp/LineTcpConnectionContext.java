@@ -43,6 +43,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.Nullable;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -191,7 +192,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    public LineTcpConnectionContext of(Socket socket, IODispatcher<LineTcpConnectionContext> dispatcher) {
+    public LineTcpConnectionContext of(@Nullable Socket socket, @Nullable IODispatcher<LineTcpConnectionContext> dispatcher) {
         if (socket != null) {
             if (socket.supportsTls()) {
                 if (socket.startTlsSession() != 0) {
