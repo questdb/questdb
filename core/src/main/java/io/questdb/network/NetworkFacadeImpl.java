@@ -277,7 +277,7 @@ public class NetworkFacadeImpl implements NetworkFacade {
         if (fd == -1) {
             return true;
         }
-        // TODO(puzpuzpuz): check if we needed the old HTTP-specific logic here
+
         final int nRead = Net.peek(fd, buffer, bufferSize);
         return nRead < 0;
     }
