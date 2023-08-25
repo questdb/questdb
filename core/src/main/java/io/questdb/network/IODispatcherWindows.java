@@ -291,7 +291,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 if (readyForRequestedOp) {
                     // If the socket is also ready for another operation type, do it.
                     if (requestedOp == IOOperation.READ && wantsWrite && readyForWrite) {
-                        if (context.getSocket().write() < 0) {
+                        if (context.getSocket().writeTls() < 0) {
                             doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
                             pending.deleteRow(i);
                             n--;
@@ -300,7 +300,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         }
                     }
                     if (requestedOp == IOOperation.WRITE && wantsRead && readyForRead) {
-                        if (context.getSocket().read() < 0) {
+                        if (context.getSocket().readTls() < 0) {
                             doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
                             pending.deleteRow(i);
                             n--;
@@ -316,7 +316,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 } else {
                     // It's something different from the requested operation.
                     if (wantsWrite && readyForWrite) {
-                        if (context.getSocket().write() < 0) {
+                        if (context.getSocket().writeTls() < 0) {
                             doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
                             pending.deleteRow(i);
                             n--;
@@ -325,7 +325,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         }
                     }
                     if (wantsRead && readyForRead) {
-                        if (context.getSocket().read() < 0) {
+                        if (context.getSocket().readTls() < 0) {
                             doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
                             pending.deleteRow(i);
                             n--;

@@ -443,7 +443,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     private int readFromSocket() {
-        int bytesRead = socket.recv(recvBufWritePos, (int) (recvBufEnd - recvBufWritePos));
+        int bytesRead = socket.read(recvBufWritePos, (int) (recvBufEnd - recvBufWritePos));
         if (bytesRead < 0) {
             return Authenticator.NEEDS_DISCONNECT;
         }
@@ -453,7 +453,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
     private int writeToSocketAndAdvance(State nextState) {
         int toWrite = (int) (sendBufWritePos - sendBufReadPos);
-        int n = socket.send(sendBufReadPos, toWrite);
+        int n = socket.write(sendBufReadPos, toWrite);
         if (n < 0) {
             return Authenticator.NEEDS_DISCONNECT;
         }

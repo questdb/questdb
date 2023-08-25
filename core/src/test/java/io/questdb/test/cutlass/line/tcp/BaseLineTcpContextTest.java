@@ -461,18 +461,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public int read() {
-            return 0;
-        }
-
-        @Override
-        public int recv(long bufferPtr, int bufferLen) {
+        public int read(long bufferPtr, int bufferLen) {
             return nf.recvRaw(FD, bufferPtr, bufferLen);
         }
 
         @Override
-        public int send(long bufferPtr, int bufferLen) {
-            return nf.sendRaw(FD, bufferPtr, bufferLen);
+        public int readTls() {
+            return 0;
         }
 
         @Override
@@ -501,7 +496,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public int write() {
+        public int write(long bufferPtr, int bufferLen) {
+            return nf.sendRaw(FD, bufferPtr, bufferLen);
+        }
+
+        @Override
+        public int writeTls() {
             return 0;
         }
     }

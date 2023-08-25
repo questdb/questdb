@@ -145,14 +145,14 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             } else {
                 // that's not the requested operation, but something wanted by the socket
                 if (wantsWrite && readyForWrite) {
-                    if (context.getSocket().write() < 0) {
+                    if (context.getSocket().writeTls() < 0) {
                         doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
                         pending.deleteRow(row);
                         return true;
                     }
                 }
                 if (wantsRead && readyForRead) {
-                    if (context.getSocket().read() < 0) {
+                    if (context.getSocket().readTls() < 0) {
                         doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
                         pending.deleteRow(row);
                         return true;

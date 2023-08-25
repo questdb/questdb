@@ -247,7 +247,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int nSend = (int) sendBuf.getReadNAvailable();
         while (nSend > 0) {
-            int n = socket.send(sendBuf.getReadAddress(), nSend);
+            int n = socket.write(sendBuf.getReadAddress(), nSend);
             if (n < 0) {
                 // disconnected
                 LOG.error()

@@ -431,7 +431,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         long spinsRemaining = multipartIdleSpinCount;
 
         while (true) {
-            final int n = socket.recv(buf, bufRemaining);
+            final int n = socket.read(buf, bufRemaining);
             if (n < 0) {
                 dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_MULTIPART_RECV);
                 break;
@@ -564,7 +564,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (newRequest) {
                 while (headerParser.isIncomplete()) {
                     // read headers
-                    read = socket.recv(recvBuffer, recvBufferSize);
+                    read = socket.read(recvBuffer, recvBufferSize);
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
                     if (read < 0) {
                         LOG.debug()
@@ -618,7 +618,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // we respond back to client. We will disconnect the client when
                     // they abuse protocol. In addition, we will not call processor
                     // if client has disconnected before we had a chance to reply.
-                    read = socket.recv(recvBuffer, 1);
+                    read = socket.read(recvBuffer, 1);
                     if (read != 0) {
                         dumpBuffer(recvBuffer, read);
                         LOG.info().$("disconnect after request [fd=").$(getFd()).I$();

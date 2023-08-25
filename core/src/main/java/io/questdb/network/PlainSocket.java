@@ -53,18 +53,13 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public int read() {
-        return 0;
-    }
-
-    @Override
-    public int recv(long bufferPtr, int bufferLen) {
+    public int read(long bufferPtr, int bufferLen) {
         return nf.recvRaw(fd, bufferPtr, bufferLen);
     }
 
     @Override
-    public int send(long bufferPtr, int bufferLen) {
-        return nf.sendRaw(fd, bufferPtr, bufferLen);
+    public int readTls() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -93,7 +88,12 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public int write() {
-        return 0;
+    public int write(long bufferPtr, int bufferLen) {
+        return nf.sendRaw(fd, bufferPtr, bufferLen);
+    }
+
+    @Override
+    public int writeTls() {
+        throw new UnsupportedOperationException();
     }
 }

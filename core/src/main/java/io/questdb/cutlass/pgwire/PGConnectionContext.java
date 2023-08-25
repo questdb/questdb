@@ -1291,7 +1291,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int remaining = bufferSize;
 
         while (remaining > 0) {
-            int m = socket.send(sendBuffer + offset, remaining);
+            int m = socket.write(sendBuffer + offset, remaining);
             if (m < 0) {
                 LOG.info().$("disconnected on write [code=").$(m).I$();
                 throw PeerDisconnectedException.INSTANCE;
@@ -2707,13 +2707,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     int doReceive(int remaining) {
         final long data = recvBuffer + recvBufferWriteOffset;
-        final int n = socket.recv(data, remaining);
+        final int n = socket.read(data, remaining);
         dumpBuffer('>', data, n);
         return n;
     }
 
     void doSend(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final int n = socket.send(sendBuffer + offset, size);
+        final int n = socket.write(sendBuffer + offset, size);
         dumpBuffer('<', sendBuffer + offset, n);
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;

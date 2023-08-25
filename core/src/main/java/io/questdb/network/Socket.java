@@ -43,34 +43,23 @@ public interface Socket extends QuietCloseable {
     boolean isTlsSessionStarted();
 
     /**
-     * Reads encrypted data from the socket into internal buffer.
-     * No-op on plain socket.
-     *
-     * @return non-negative value if there were no errors.
-     */
-    int read();
-
-    /**
      * Receives plain data into the given buffer from the socket. On encrypted
-     * sockets this call includes {@link #read()}, so an extra read() call
-     * is not required.
+     * sockets this call includes {@link #readTls()}, so an extra readTls()
+     * call is not required.
      *
      * @param bufferPtr pointer to the buffer
      * @param bufferLen buffer length
      * @return recv() result; non-negative if there were no errors.
      */
-    int recv(long bufferPtr, int bufferLen);
+    int read(long bufferPtr, int bufferLen);
 
     /**
-     * Sends plain data from the given buffer to the socket. On encrypted
-     * sockets this call includes {@link #write()}, so an extra write() call
-     * is not required.
+     * Reads encrypted data from the socket into internal buffer.
+     * Should never be called on plain socket.
      *
-     * @param bufferPtr pointer to the buffer
-     * @param bufferLen buffer length
-     * @return send() result; non-negative if there were no errors.
+     * @return non-negative value if there were no errors.
      */
-    int send(long bufferPtr, int bufferLen);
+    int readTls();
 
     /**
      * Does a shutdown() call on the socket.
@@ -93,22 +82,33 @@ public interface Socket extends QuietCloseable {
     boolean supportsTls();
 
     /**
-     * @return true if a {@link #read()} call should be made once
+     * @return true if a {@link #readTls()} call should be made once
      * the socket becomes readable.
      */
     boolean wantsRead();
 
     /**
-     * @return true if a {@link #write()} call should be made once
+     * @return true if a {@link #writeTls()} call should be made once
      * the socket becomes writable.
      */
     boolean wantsWrite();
 
     /**
+     * Sends plain data from the given buffer to the socket. On encrypted
+     * sockets this call includes {@link #writeTls()}, so an extra writeTls()
+     * call is not required.
+     *
+     * @param bufferPtr pointer to the buffer
+     * @param bufferLen buffer length
+     * @return send() result; non-negative if there were no errors.
+     */
+    int write(long bufferPtr, int bufferLen);
+
+    /**
      * Writes encrypted data from the internal buffer to the socket.
-     * No-op on plain socket.
+     * Should never be called on plain socket.
      *
      * @return non-negative value if there were no errors.
      */
-    int write();
+    int writeTls();
 }
