@@ -183,11 +183,35 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeListUsers() {
+    public void authorizeShowUser(CharSequence userName) {
     }
 
     @Override
-    public void authorizeUserDetails() {
+    public void authorizeShowUsers() {
+    }
+
+    @Override
+    public void authorizeShowGroups() {
+    }
+
+    @Override
+    public void authorizeShowGroups(CharSequence userName) {
+    }
+
+    @Override
+    public void authorizeShowServiceAccount(CharSequence serviceAccountName) {
+    }
+
+    @Override
+    public void authorizeShowServiceAccounts() {
+    }
+
+    @Override
+    public void authorizeShowServiceAccounts(CharSequence userOrGroupName) {
+    }
+
+    @Override
+    public void authorizeShowPermissions(CharSequence entityName) {
     }
 
     @Override

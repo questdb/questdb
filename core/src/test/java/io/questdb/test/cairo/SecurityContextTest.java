@@ -64,6 +64,8 @@ public class SecurityContextTest {
                             method.invoke(sc, sc);
                         } else if (name.equals("authorizeTableBackup")) {
                             method.invoke(sc, new ObjHashSet<CharSequence>());
+                        } else if (name.startsWith("authorizeShow")) {
+                            method.invoke(sc, "userName");
                         } else {
                             method.invoke(sc, ONE_PARAM_ARGS);
                         }
@@ -99,6 +101,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.startsWith("authorizeShow")) {
+                                method.invoke(sc, "userName");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
@@ -132,7 +136,7 @@ public class SecurityContextTest {
                     switch (parameters.length) {
                         case 0:
                             method.invoke(sc, NO_PARAM_ARGS);
-                            if (name.equals("authorizeListUsers") || name.equals("authorizeUserDetails")) {
+                            if (name.startsWith("authorizeShow")) {
                                 continue;
                             }
                             Assert.fail();
@@ -142,14 +146,19 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.startsWith("authorizeShow")) {
+                                method.invoke(sc, "userName");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
+                            }
+                            if (name.startsWith("authorizeShow")) {
+                                continue;
                             }
                             Assert.fail();
                             break;
                         case 2:
                             method.invoke(sc, TWO_PARAM_ARGS);
-                            if (name.equals("authorizeSelect") || name.equals("authorizeListUsers") || name.equals("authorizeUserDetails")) {
+                            if (name.equals("authorizeSelect")) {
                                 continue;
                             }
                             Assert.fail();
