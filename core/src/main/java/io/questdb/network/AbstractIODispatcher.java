@@ -405,6 +405,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected abstract void unregisterListenerFd();
 
     static {
-        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown", "peer"};
+        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown", "peer", "tls_error"};
     }
 }

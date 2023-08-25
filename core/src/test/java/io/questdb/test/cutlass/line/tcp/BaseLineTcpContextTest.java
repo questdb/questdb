@@ -476,7 +476,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public void shutdown(int how) {
+        public int shutdown(int how) {
+            return 0;
         }
 
         @Override
