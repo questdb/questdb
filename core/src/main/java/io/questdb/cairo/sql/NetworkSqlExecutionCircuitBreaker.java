@@ -158,6 +158,17 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         }
     }
 
+    public void statefulThrowExceptionIfTimeout() {
+        // Same as statefulThrowExceptionIfTripped but does not check the connection state.
+        // Useful to check timeout before trying to send something on the connection.
+        if (testCount < throttle) {
+            testCount++;
+        } else {
+            testCount = 0;
+            testTimeout();
+        }
+    }
+
     @Override
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         testCount = 0;
