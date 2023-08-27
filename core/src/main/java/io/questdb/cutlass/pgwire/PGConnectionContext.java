@@ -2499,6 +2499,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseAsciiSink.reset();
     }
 
+    private void sendAndResetWait() throws PeerDisconnectedException {
+        // This is simplified waited send for very limited use cases where introducing another state is an overkill.
+        // This method busy waits to send buffer.
+        while (true) {
+            try {
+                doSend(0, (int) (sendBufferPtr - sendBuffer));
+                break;
+            } catch (PeerIsSlowToReadException e) {
+                Os.sleep(1);
+                circuitBreaker.statefulThrowExceptionIfTimeout();
+            }
+        }
+        responseAsciiSink.reset();
+    }
+
     // This method is currently unused. it's used for the COPY sub-protocol, which is currently not implemented.
     // It's left here so when we add the sub-protocol later we won't need to reimplemented it.
     // We could keep it just in git history, but chances are nobody would recall to search for it there
@@ -2603,6 +2618,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             prepareCommandComplete(true);
         } else {
+            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
+                sendAndResetWait();
+            }
             prepareSuspended();
             // Prevents re-sending current record row when buffer is sent fully.
             resumeProcessor = null;
@@ -2749,9 +2767,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    void prepareReadyForQuery() {
+    void prepareReadyForQuery() throws PeerDisconnectedException {
         if (sendRNQ) {
             LOG.debug().$("RNQ sent").$();
+            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
+                sendAndResetWait();
+            }
+
             responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
             responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
             switch (transactionState) {
