@@ -169,8 +169,8 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             ddl(
                     "CREATE TABLE '" + tableName + "' (\n" +
                             "  Status SYMBOL capacity 16 CACHE,\n" +
-                            "  Reportedtime TIMESTAMP\n" +
-                            "  ) timestamp (\"Reportedtime\") PARTITION BY DAY WAL  DEDUP UPSERT KEYS(\"Reportedtime\");"
+                            "  \"Reported time\" TIMESTAMP\n" +
+                            "  ) timestamp (\"Reported time\") PARTITION BY DAY WAL  DEDUP UPSERT KEYS(\"Reported time\");"
             );
             try (TableWriter writer = getWriter(tableName)) {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(1));
@@ -178,16 +178,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
                             "Status\tSYMBOL\tfalse\t256\ttrue\t16\tfalse\tfalse\n" +
-                            "Reportedtime\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n",
+                            "Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n",
                     "SHOW COLUMNS FROM '" + tableName + '\''
             );
             ddl("alter table '" + tableName + "' DEDUP DISABLE;");
-            ddl("alter table '" + tableName + "' DEDUP ENABLE UPSERT KEYS(\"Reportedtime\");");
+            ddl("alter table '" + tableName + "' DEDUP ENABLE UPSERT KEYS(\"Reported time\");");
             drainWalQueue();
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
                             "Status\tSYMBOL\tfalse\t256\ttrue\t16\tfalse\tfalse\n" +
-                            "Reportedtime\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n",
+                            "Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n",
                     "SHOW COLUMNS FROM '" + tableName + '\''
             );
         });
