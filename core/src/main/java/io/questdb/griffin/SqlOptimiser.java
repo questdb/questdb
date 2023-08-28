@@ -3436,10 +3436,7 @@ public class SqlOptimiser implements Mutable {
 
                 int timestampKey = current.getColumnNameToAliasMap().keyIndex(nested.getTimestamp().token);
                 if (timestampKey < 0) {
-                    int timestampIdx = current.getColumnAliasIndex(current.getColumnNameToAliasMap().valueAt(timestampKey));
-                    if (timestampIdx == -1) {
-                        System.out.println("oops");
-                    }
+                    final int timestampIdx = current.getColumnAliasIndex(current.getColumnNameToAliasMap().valueAt(timestampKey));
                     current.setTimestamp(current.getColumns().get(timestampIdx).getAst());
                 }
                 //not needed if limit = -1
