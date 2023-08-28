@@ -35,7 +35,7 @@ import java.io.Closeable;
 import java.util.Arrays;
 
 public class TextDelimiterScanner implements Closeable {
-    private static final double DOUBLE_TOLERANCE = 0.05d;
+    private static final double DOUBLE_TOLERANCE = 0.0000005d;
     private static final Log LOG = LogFactory.getLog(TextDelimiterScanner.class);
     private static final byte[] potentialDelimiterBytes = new byte[256];
     private static final byte[] priorities = new byte[Byte.MAX_VALUE + 1];
