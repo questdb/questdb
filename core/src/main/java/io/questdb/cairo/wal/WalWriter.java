@@ -94,21 +94,18 @@ public class WalWriter implements TableWriterAPI {
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
     private int lastSegmentTxn = -1;
+    private long lastSeqTxn = NO_TXN;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
     private int segmentLockFd = -1;
     private long segmentRowCount = -1;
     private TableToken tableToken;
-    //TODO: make it configurable. Truncate is turned off for now to make it play nice with replication
-    private final boolean truncate = false;
     private TxReader txReader;
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
     private int walLockFd = -1;
-    private long lastSeqTxn = NO_TXN;
-
     public WalWriter(
             CairoConfiguration configuration,
             TableToken tableToken,
@@ -1045,9 +1042,9 @@ public class WalWriter implements TableWriterAPI {
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
         final MemoryMA primaryColumn = columns.getAndSetQuick(pi, NullMemory.INSTANCE);
         final MemoryMA secondaryColumn = columns.getAndSetQuick(si, NullMemory.INSTANCE);
-        primaryColumn.close(truncate, Vm.TRUNCATE_TO_POINTER);
+        primaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
         if (secondaryColumn != null) {
-            secondaryColumn.close(truncate, Vm.TRUNCATE_TO_POINTER);
+            secondaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
         }
     }
 
@@ -1103,6 +1100,10 @@ public class WalWriter implements TableWriterAPI {
         return false;
     }
 
+    private boolean isTruncateFilesOnClose() {
+        return this.walInitializer.isTruncateFilesOnClose();
+    }
+
     private void lockWal() {
         try {
             lockName(path);
@@ -1141,7 +1142,7 @@ public class WalWriter implements TableWriterAPI {
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
         try {
             final MemoryMA mem1 = getPrimaryColumn(columnIndex);
-            mem1.close(truncate, Vm.TRUNCATE_TO_POINTER);
+            mem1.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
             mem1.of(
                     ff,
                     dFile(path.trimTo(pathTrimToLen), name),
@@ -1154,7 +1155,7 @@ public class WalWriter implements TableWriterAPI {
 
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
             if (mem2 != null) {
-                mem2.close(truncate, Vm.TRUNCATE_TO_POINTER);
+                mem2.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
                 mem2.of(
                         ff,
                         iFile(path.trimTo(pathTrimToLen), name),
@@ -1210,7 +1211,7 @@ public class WalWriter implements TableWriterAPI {
             }
 
             segmentRowCount = 0;
-            metadata.switchTo(path, segmentPathLen, truncate);
+            metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
             events.openEventFile(path, segmentPathLen);
             if (commitMode != CommitMode.NOSYNC) {
                 events.sync();
@@ -1471,14 +1472,14 @@ public class WalWriter implements TableWriterAPI {
                 long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
                 primaryColumnFile.jumpTo(currentOffset);
 
-                primaryColumnFile.switchTo(newPrimaryFd, newOffset, truncate, Vm.TRUNCATE_TO_POINTER);
+                primaryColumnFile.switchTo(newPrimaryFd, newOffset, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
                 int newSecondaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
                 if (newSecondaryFd > -1) {
                     MemoryMA secondaryColumnFile = getSecondaryColumn(i);
                     currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 4);
                     newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 5);
                     secondaryColumnFile.jumpTo(currentOffset);
-                    secondaryColumnFile.switchTo(newSecondaryFd, newOffset, truncate, Vm.TRUNCATE_TO_POINTER);
+                    secondaryColumnFile.switchTo(newSecondaryFd, newOffset, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
                 }
             }
         }
@@ -1647,7 +1648,7 @@ public class WalWriter implements TableWriterAPI {
                         // we should switch metadata to this new segment
                         path.trimTo(rootLen).slash().put(segmentId);
                         // this will close old _meta file and create the new one
-                        metadata.switchTo(path, path.length(), truncate);
+                        metadata.switchTo(path, path.length(), isTruncateFilesOnClose());
                         openColumnFiles(columnName, columnIndex, path.length());
                     }
                     // if we did not have to roll uncommitted rows to a new segment
@@ -1717,7 +1718,7 @@ public class WalWriter implements TableWriterAPI {
                             // we should switch metadata to this new segment
                             path.trimTo(rootLen).slash().put(segmentId);
                             // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.length(), truncate);
+                            metadata.switchTo(path, path.length(), isTruncateFilesOnClose());
                         }
                         // if we did not have to roll uncommitted rows to a new segment
                         // it will switch metadata file on next row write
@@ -1767,7 +1768,7 @@ public class WalWriter implements TableWriterAPI {
                             // we should switch metadata to this new segment
                             path.trimTo(rootLen).slash().put(segmentId);
                             // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.length(), truncate);
+                            metadata.switchTo(path, path.length(), isTruncateFilesOnClose());
                             renameColumnFiles(columnType, columnName, newColumnName);
                         }
                         // if we did not have to roll uncommitted rows to a new segment

@@ -3042,6 +3042,11 @@ public class WalWriterTest extends AbstractCairoTest {
                 public void rollbackDirectory(Path path) {
                     // do nothing
                 }
+
+                @Override
+                public boolean isTruncateFilesOnClose() {
+                    return true;
+                }
             });
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {

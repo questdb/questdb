@@ -31,4 +31,6 @@ public interface WalInitializer {
     void initDirectory(Path dirPath);
 
     void rollbackDirectory(Path path);
+
+    boolean isTruncateFilesOnClose();
 }

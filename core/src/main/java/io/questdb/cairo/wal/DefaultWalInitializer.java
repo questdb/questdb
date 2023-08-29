@@ -37,4 +37,9 @@ public class DefaultWalInitializer implements WalInitializer {
     @Override
     public void rollbackDirectory(Path path) {
     }
+
+    @Override
+    public boolean isTruncateFilesOnClose() {
+        return true;
+    }
 }
