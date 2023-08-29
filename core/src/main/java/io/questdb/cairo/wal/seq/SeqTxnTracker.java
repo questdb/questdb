@@ -99,6 +99,14 @@ public class SeqTxnTracker {
         this.suspendedState = 1;
     }
 
+    public long getSeqTxn() {
+        return seqTxn;
+    }
+
+    public long getWriterTxn() {
+        return writerTxn;
+    }
+
     static {
         SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
         WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");

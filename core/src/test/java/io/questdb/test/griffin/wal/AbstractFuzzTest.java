@@ -87,12 +87,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.after();
     }
 
-    private static String getWalParallelApplyTableName(String tableNameBase, int i) {
-        return tableNameBase + "_" + i + "_wal_parallel";
-    }
-
-    private static void setWalPurgeInterval(long interval) {
-        node1.getConfigurationOverrides().setWalPurgeInterval(interval);
+    private static void setZeroWalPurgeInterval() {
+        node1.getConfigurationOverrides().setWalPurgeInterval(0);
     }
 
     protected void fullRandomFuzz(Rnd rnd) throws Exception {
@@ -160,7 +156,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
             try {
                 configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
-                setWalPurgeInterval(0L);
+                setZeroWalPurgeInterval();
                 fuzzer.runFuzz(getTestName(), rnd);
             } finally {
                 sharedWorkerPool.halt();
@@ -174,7 +170,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             sharedWorkerPool.start(LOG);
 
             try {
-                setWalPurgeInterval(0L);
+                setZeroWalPurgeInterval();
                 fuzzer.runFuzz(rnd, tableNameBase, tableCount, randomiseProbs, randomiseCounts);
             } finally {
                 sharedWorkerPool.halt();
