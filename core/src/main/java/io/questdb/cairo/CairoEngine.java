@@ -223,7 +223,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
-        tableSequencerAPI.applyRename(updatedTableToken);
+        if (token.isWal()) {
+            tableSequencerAPI.applyRename(updatedTableToken);
+        }
     }
 
     @TestOnly
