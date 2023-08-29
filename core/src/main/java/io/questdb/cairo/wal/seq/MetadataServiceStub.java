@@ -26,10 +26,12 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataServiceStub extends MetadataService {
 
@@ -84,6 +86,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default void removeColumn(@NotNull CharSequence columnName, @Nullable SecurityContext securityContext) {
+        throw CairoException.critical(0).put("remove column flag does not update sequencer metadata");
     }
 
     @Override

@@ -60,6 +60,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -488,7 +489,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
-            SecurityContext securityContext
+            @Nullable SecurityContext securityContext
     ) {
         assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -582,6 +583,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (securityContext != null) {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
+
+        LOG.info().$("ADDED column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("]' to ").$(path).$();
     }
 
     @Override
@@ -1929,7 +1932,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void removeColumn(@NotNull CharSequence name) {
+    public void removeColumn(@NotNull CharSequence name, @Nullable SecurityContext securityContext) {
         assert txWriter.getLagRowCount() == 0;
 
         checkDistressed();
@@ -1999,6 +2002,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         finishColumnPurge();
+
+        if (securityContext != null) {
+            ddlListener.onColumnRemoved(securityContext, tableToken, name, index);
+        }
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$(path).$();
     }
 

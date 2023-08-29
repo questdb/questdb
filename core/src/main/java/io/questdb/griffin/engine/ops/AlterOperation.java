@@ -404,7 +404,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDropColumn(MetadataService svc) {
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
-            svc.removeColumn(activeExtraStrInfo.getStrA(i));
+            svc.removeColumn(activeExtraStrInfo.getStrA(i), sqlExecutionContext.getSecurityContext());
         }
     }
 

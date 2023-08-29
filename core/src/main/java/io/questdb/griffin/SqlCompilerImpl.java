@@ -974,7 +974,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
             }
 
-            CharSequence columnName = tok;
+            CharSequence columnName = GenericLexer.unquote(tok);
             dropColumnStatement.ofDropColumn(columnName);
             tok = SqlUtil.fetchNext(lexer);
 

@@ -48,6 +48,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
@@ -1690,7 +1691,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName, @Nullable SecurityContext securityContext) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
                 int type = metadata.getColumnType(columnIndex);

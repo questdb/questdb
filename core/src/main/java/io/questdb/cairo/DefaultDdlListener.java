@@ -8,6 +8,11 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
+    public void onColumnRemoved(SecurityContext securityContext, TableToken tableToken, CharSequence columnName, int columnIdx) {
+
+    }
+
+    @Override
     public void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
 
     }
