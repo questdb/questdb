@@ -626,14 +626,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
-            String tableNameWal = tableNameBase + "_wal";
+            String tableNameDedup = tableNameBase + "_wal";
             String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
-            createInitialTable(tableNameWalNoDedup, true, initialRowCount);
-            createInitialTable(tableNameWal, true, initialRowCount);
+            fuzzer.createInitialTable(tableNameWalNoDedup, true);
+            fuzzer.createInitialTable(tableNameDedup, true);
 
             // Add long256 type to have to be a chance of a dedup key
-            compile("alter table " + tableNameWal + " add column col256 long256");
+            compile("alter table " + tableNameDedup + " add column col256 long256");
             compile("alter table " + tableNameWalNoDedup + " add column col256 long256");
 
             drainWalQueue();
@@ -652,7 +652,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
             String alterStatement = String.format(
                     "alter table %s dedup upsert keys(%s))",
-                    tableNameWal,
+                    tableNameDedup,
                     comaSeparatedUpsertCols
             );
             compile(alterStatement);
@@ -662,7 +662,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             try {
                 applyWal(transactions, tableNameWalNoDedup, 1, new Rnd());
-                applyWal(transactions, tableNameWal, 1 + rnd.nextInt(4), rnd);
+                applyWal(transactions, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
                 String renamedUpsertKeys;
                 ObjList<CharSequence> upsertKeyNames = new ObjList<>();
@@ -675,7 +675,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 assertSqlCursorsNoDups(
                         tableNameWalNoDedup,
                         upsertKeyNames,
-                        tableNameWal
+                        tableNameDedup
                 );
             } finally {
                 sharedWorkerPool.halt();
@@ -686,35 +686,30 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void runFuzzWithRepeatDedup(Rnd rnd) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
-            String tableNameWal = tableNameBase + "_wal";
+            String tableNameDedup = tableNameBase + "_wal";
             String tableNameNoWal = tableNameBase + "_nonwal";
 
-            createInitialTable(tableNameWal, true, initialRowCount);
-            createInitialTable(tableNameNoWal, false, initialRowCount);
+            fuzzer.createInitialTable(tableNameDedup, true);
+            fuzzer.createInitialTable(tableNameNoWal, false);
 
-            ObjList<FuzzTransaction> transactions;
-            try (TableReader reader = getReader(tableNameWal)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-
-                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
-                long end = start + partitionCount * Timestamps.DAY_MICROS;
-                transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
-            }
+            long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+            long end = start + fuzzer.partitionCount * Timestamps.DAY_MICROS;
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             transactions = uniqueInserts(transactions);
             O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
             sharedWorkerPool.start(LOG);
 
             try {
-                applyNonWal(transactions, tableNameNoWal, rnd);
+                fuzzer.applyNonWal(transactions, tableNameNoWal, rnd);
 
                 ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
-                ddl("alter table " + tableNameWal + " dedup upsert keys(ts)", sqlExecutionContext);
-                applyWal(transactionsWithDups, tableNameWal, 1 + rnd.nextInt(4), rnd);
+                ddl("alter table " + tableNameDedup + " dedup upsert keys(ts)", sqlExecutionContext);
+                applyWal(transactionsWithDups, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
                 String limit = "";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal + limit, tableNameDedup + limit, LOG);
+                fuzzer.assertRandomIndexes(tableNameNoWal, tableNameDedup, rnd);
             } finally {
                 sharedWorkerPool.halt();
             }

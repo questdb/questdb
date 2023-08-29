@@ -32,6 +32,8 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 
+import static io.questdb.test.griffin.wal.FuzzTester.*;
+
 // These test is designed to produce unstable runs, e.g. random generator is created
 // using current execution time.
 // This improves coverage. To debug failures in CI find the line logging random seeds
