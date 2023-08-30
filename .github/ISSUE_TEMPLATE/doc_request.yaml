@@ -1,0 +1,25 @@
+name: Documentation change request
+description: For changes to documentation at questdb.io/docs 
+labels: Documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for improving the docs at QuestDB!
+  - type: textarea
+    attributes:
+      label: What would you like to add or change?
+      description:
+        A concise overview of the doc improvement. Additions, updates and feedback are all welcome.
+      placeholder: |
+        In the QuestDB docs, I'd suggest these changes to the following pages...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Provide a draft
+      description: Want to write it yourself? Please do! Add a draft of your markdown and any images.
+      placeholder: |
+        My markdown draft looks like this...
+    validations:
+      required: false
