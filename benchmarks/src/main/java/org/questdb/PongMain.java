@@ -47,7 +47,7 @@ public class PongMain {
         // event loop that accepts connections and publishes network events to event queue
         final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(
                 dispatcherConf,
-                new IOContextFactoryImpl<>(PongConnectionContext::new, 8)
+                new IOContextFactoryImpl<>(() -> new PongConnectionContext(PlainSocketFactory.INSTANCE, dispatcherConf.getNetworkFacade(), LOG), 8)
         );
         // event queue processor
         final PongRequestProcessor processor = new PongRequestProcessor();
@@ -67,6 +67,10 @@ public class PongMain {
         private long buf = bufStart;
         private final DirectByteCharSequence flyweight = new DirectByteCharSequence();
         private int writtenLen;
+
+        protected PongConnectionContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
+            super(socketFactory, nf, log);
+        }
 
         @Override
         public void clear() {
