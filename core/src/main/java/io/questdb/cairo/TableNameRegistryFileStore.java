@@ -38,6 +38,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 import static io.questdb.std.Files.DT_FILE;
@@ -49,13 +50,15 @@ public class TableNameRegistryFileStore implements Closeable {
     private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
     private final CairoConfiguration configuration;
     private final StringSink nameSink = new StringSink();
+    private final Predicate<CharSequence> protectedTableResolver;
     private final IntHashSet tableIds = new IntHashSet();
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();
     private int lockFd = -1;
 
-    public TableNameRegistryFileStore(CairoConfiguration configuration) {
+    public TableNameRegistryFileStore(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
         this.configuration = configuration;
+        this.protectedTableResolver = protectedTableResolver;
     }
 
     public static int findLastTablesFileVersion(FilesFacade ff, Path path, StringSink nameSink) {
@@ -281,7 +284,7 @@ public class TableNameRegistryFileStore implements Closeable {
                                 continue;
                             }
 
-                            boolean isSystem = TableUtils.isSystemTable(configuration.getSystemTableNamePrefix(), tableName);
+                            boolean isSystem = protectedTableResolver.test(tableName);
                             TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem);
                             nameTableTokenMap.put(tableName, token);
                             reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
@@ -366,7 +369,7 @@ public class TableNameRegistryFileStore implements Closeable {
                     continue;
                 }
 
-                boolean isSystem = TableUtils.isSystemTable(configuration.getSystemTableNamePrefix(), tableName);
+                boolean isSystem = protectedTableResolver.test(tableName);
                 final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem);
                 nameTableTokenMap.put(tableName, token);
                 if (!Chars.startsWith(token.getDirName(), token.getTableName())) {

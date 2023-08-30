@@ -29,20 +29,20 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.function.Predicate;
+
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
-    private final CharSequence systemTableNamePrefix;
 
-    public TableNameRegistryRW(CairoConfiguration configuration) {
-        super(configuration);
+    public TableNameRegistryRW(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+        super(configuration, protectedTableResolver);
         if (!this.nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
             }
         }
         setNameMaps(nameTableTokenMap, reverseTableNameTokenMap);
-        this.systemTableNamePrefix = configuration.getSystemTableNamePrefix();
     }
 
     @Override
@@ -71,7 +71,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
-            boolean isSystem = TableUtils.isSystemTable(systemTableNamePrefix, tableName);
+            boolean isSystem = protectedTableResolver.test(tableName);
             return new TableToken(tableName, dirName, tableId, isWal, isSystem);
         } else {
             return null;

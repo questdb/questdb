@@ -774,13 +774,6 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
-    public static boolean isSystemTable(CharSequence systemTableNamePrefix, CharSequence tableName) {
-        // todo:
-        // 1. what about the telemetry table? should we treat it as system table
-        // 2. are really all tables with the prefix systemTableNamePrefix system tables? there is e.g. SQL COPY IMPORT log, etc.
-        return Chars.startsWithIgnoreCase(tableName, systemTableNamePrefix);
-    }
-
     public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
         int l = seq.length();
         if (l > fsFileNameLimit) {
