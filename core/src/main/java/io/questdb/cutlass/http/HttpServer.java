@@ -63,11 +63,7 @@ public class HttpServer implements Closeable {
         }
 
         this.httpContextFactory = new HttpContextFactory(configuration.getHttpContextConfiguration(), metrics);
-        this.dispatcher = IODispatchers.create(
-                configuration.getDispatcherConfiguration(),
-                httpContextFactory,
-                configuration.getFactoryProvider().getHttpSocketFactory()
-        );
+        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
         pool.assign(this.rescheduleContext);

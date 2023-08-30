@@ -47,8 +47,7 @@ public class PongMain {
         // event loop that accepts connections and publishes network events to event queue
         final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(
                 dispatcherConf,
-                new IOContextFactoryImpl<>(PongConnectionContext::new, 8),
-                PlainSocketFactory.INSTANCE
+                new IOContextFactoryImpl<>(PongConnectionContext::new, 8)
         );
         // event queue processor
         final PongRequestProcessor processor = new PongRequestProcessor();

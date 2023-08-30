@@ -38,12 +38,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
-import io.questdb.network.Socket;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -73,6 +72,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long nextCommitTime;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+        super(configuration.getFactoryProvider().getLineSocketFactory(), configuration.getNetworkFacade(), LOG);
         this.configuration = configuration;
         nf = configuration.getNetworkFacade();
         disconnectOnError = configuration.getDisconnectOnError();
@@ -80,8 +80,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
         parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
-        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
-        recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
         clear();
         this.checkIdleInterval = configuration.getMaintenanceInterval();
@@ -105,9 +103,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public void clear() {
+        super.clear();
         securityContext = DenyAllSecurityContext.INSTANCE;
         authenticator.clear();
-        recvBufPos = recvBufStart;
+        recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
         peerDisconnected = false;
         resetParser();
         ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
@@ -121,9 +120,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public void close() {
-        recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
-        Misc.free(authenticator);
         clear();
+        Misc.free(authenticator);
     }
 
     public long commitWalTables(long wallClockMillis) {
@@ -192,13 +190,18 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    public LineTcpConnectionContext of(@Nullable Socket socket, @Nullable IODispatcher<LineTcpConnectionContext> dispatcher) {
-        if (socket != null) {
-            if (socket.supportsTls()) {
-                if (socket.startTlsSession() != 0) {
-                    throw CairoException.nonCritical().put("failed to create new TLS session");
-                }
+    public LineTcpConnectionContext of(int fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
+        super.of(fd, dispatcher);
+        if (socket.supportsTls()) {
+            if (socket.startTlsSession() != 0) {
+                throw CairoException.nonCritical().put("failed to start TLS session");
             }
+        }
+        if (recvBufStart == 0) {
+            recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
+            recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
+            recvBufPos = recvBufStart;
+            resetParser();
         }
         authenticator.init(socket, recvBufStart, recvBufEnd, 0, 0);
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
@@ -206,7 +209,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             // this is an authenticated, anonymous user
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, SecurityContextFactory.ILP);
         }
-        return super.of(socket, dispatcher);
+        return this;
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -343,7 +346,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         }
 
                         startNewMeasurement();
-
                         continue;
                     }
 

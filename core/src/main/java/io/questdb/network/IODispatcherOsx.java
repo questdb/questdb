@@ -42,10 +42,9 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
     public IODispatcherOsx(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            SocketFactory socketFactory
+            IOContextFactory<C> ioContextFactory
     ) {
-        super(configuration, ioContextFactory, socketFactory);
+        super(configuration, ioContextFactory);
         this.capacity = configuration.getEventCapacity();
         // bind socket
         this.kqueue = new Kqueue(configuration.getKqueueFacade(), capacity);

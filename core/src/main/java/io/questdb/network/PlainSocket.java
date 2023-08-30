@@ -27,19 +27,21 @@ package io.questdb.network;
 import io.questdb.log.Log;
 
 public class PlainSocket implements Socket {
-    private final int fd;
     private final Log log;
     private final NetworkFacade nf;
+    private int fd = -1;
 
-    public PlainSocket(NetworkFacade nf, int fd, Log log) {
+    public PlainSocket(NetworkFacade nf, Log log) {
         this.nf = nf;
-        this.fd = fd;
         this.log = log;
     }
 
     @Override
     public void close() {
-        nf.close(fd, log);
+        if (fd != -1) {
+            nf.close(fd, log);
+            fd = -1;
+        }
     }
 
     @Override
@@ -50,6 +52,12 @@ public class PlainSocket implements Socket {
     @Override
     public boolean isTlsSessionStarted() {
         return false;
+    }
+
+    @Override
+    public void of(int fd) {
+        assert this.fd == -1;
+        this.fd = fd;
     }
 
     @Override

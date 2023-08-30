@@ -56,11 +56,7 @@ public class LineTcpReceiver implements Closeable {
                 factory,
                 configuration.getConnectionPoolInitialCapacity()
         );
-        this.dispatcher = IODispatchers.create(
-                configuration.getDispatcherConfiguration(),
-                contextFactory,
-                configuration.getFactoryProvider().getLineSocketFactory()
-        );
+        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
         ioWorkerPool.assign(dispatcher);
         this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
 

@@ -33,19 +33,18 @@ public class IODispatchers {
 
     public static <C extends IOContext<C>> IODispatcher<C> create(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            SocketFactory socketFactory
+            IOContextFactory<C> ioContextFactory
     ) {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
-                return new IODispatcherLinux<>(configuration, ioContextFactory, socketFactory);
+                return new IODispatcherLinux<>(configuration, ioContextFactory);
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
             case Os.FREEBSD:
-                return new IODispatcherOsx<>(configuration, ioContextFactory, socketFactory);
+                return new IODispatcherOsx<>(configuration, ioContextFactory);
             case Os.WINDOWS:
-                return new IODispatcherWindows<>(configuration, ioContextFactory, socketFactory);
+                return new IODispatcherWindows<>(configuration, ioContextFactory);
             default:
                 throw new RuntimeException();
         }

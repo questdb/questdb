@@ -60,13 +60,13 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
-    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-        return DefaultPgWireAuthenticatorFactory.INSTANCE;
+    public @NotNull SocketFactory getPGWireSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
     }
 
     @Override
-    public @NotNull SocketFactory getPgWireSocketFactory() {
-        return PlainSocketFactory.INSTANCE;
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+        return DefaultPgWireAuthenticatorFactory.INSTANCE;
     }
 
     @Override

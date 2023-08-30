@@ -36,7 +36,7 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.network.IODispatcher.*;
 
@@ -71,6 +71,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long totalBytesSent;
 
     public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
+        super(configuration.getFactoryProvider().getHttpSocketFactory(), configuration.getNetworkFacade(), LOG);
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
@@ -90,27 +91,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public void clear() {
         LOG.debug().$("clear [fd=").$(getFd()).I$();
-        this.totalBytesSent += responseSink.getTotalBytesSent();
-        this.responseSink.clear();
-        this.nCompletedRequests++;
-        this.resumeProcessor = null;
-        this.headerParser.clear();
-        this.multipartContentParser.clear();
-        this.multipartContentHeaderParser.clear();
-        this.csPool.clear();
-        this.localValueMap.clear();
+        super.clear();
+        reset();
         if (this.pendingRetry) {
             LOG.error().$("reused context with retry pending").$();
         }
         this.pendingRetry = false;
-        this.multipartParserState.multipartRetry = false;
-        this.retryAttemptAttributes.waitStartTimestamp = 0;
-        this.retryAttemptAttributes.lastRunTimestamp = 0;
-        this.retryAttemptAttributes.attempt = 0;
-        this.receivedBytes = 0;
-        this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.authenticator.clear();
-        clearSuspendEvent();
+        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
     }
 
     @Override
@@ -120,13 +107,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @Override
     public void close() {
-        LOG.debug().$("close [fd=").$(getFd()).I$();
+        final int fd = getFd();
+        LOG.debug().$("close [fd=").$(fd).I$();
+        super.close();
         if (this.pendingRetry) {
             this.pendingRetry = false;
             LOG.info().$("closed context with retry pending [fd=").$(getFd()).I$();
-            closeSocket();
         }
-        this.dispatcher = null;
         this.nCompletedRequests = 0;
         this.totalBytesSent = 0;
         this.csPool.clear();
@@ -139,8 +126,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.close();
-        clearSuspendEvent();
-        LOG.debug().$("closed").$();
+        LOG.debug().$("closed [fd=").$(fd).I$();
     }
 
     @Override
@@ -238,26 +224,40 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
-    public HttpConnectionContext of(@Nullable Socket socket, @Nullable IODispatcher<HttpConnectionContext> dispatcher) {
-        HttpConnectionContext r = super.of(socket, dispatcher);
-        if (socket == null) {
-            // The context is about to be returned to the pool, so we should release the memory.
-            recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            responseSink.close();
-            securityContext = DenyAllSecurityContext.INSTANCE;
-        } else {
-            if (socket.supportsTls()) {
-                if (socket.startTlsSession() != 0) {
-                    throw CairoException.nonCritical().put("failed to create new TLS session");
-                }
+    public HttpConnectionContext of(int fd, @NotNull IODispatcher<HttpConnectionContext> dispatcher) {
+        super.of(fd, dispatcher);
+        if (socket.supportsTls()) {
+            if (socket.startTlsSession() != 0) {
+                throw CairoException.nonCritical().put("failed to start TLS session");
             }
-            // The context is obtained from the pool, so we should initialize the memory.
-            if (recvBuffer == 0) {
-                recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            }
-            responseSink.of(socket);
         }
-        return r;
+        // The context is obtained from the pool, so we should initialize the memory.
+        if (recvBuffer == 0) {
+            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        }
+        responseSink.of(socket);
+        return this;
+    }
+
+    public void reset() {
+        LOG.debug().$("reset [fd=").$(getFd()).$(']').$();
+        this.totalBytesSent += responseSink.getTotalBytesSent();
+        this.responseSink.clear();
+        this.nCompletedRequests++;
+        this.resumeProcessor = null;
+        this.headerParser.clear();
+        this.multipartContentParser.clear();
+        this.multipartContentHeaderParser.clear();
+        this.csPool.clear();
+        this.localValueMap.clear();
+        this.multipartParserState.multipartRetry = false;
+        this.retryAttemptAttributes.waitStartTimestamp = 0;
+        this.retryAttemptAttributes.lastRunTimestamp = 0;
+        this.retryAttemptAttributes.attempt = 0;
+        this.receivedBytes = 0;
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.authenticator.clear();
+        clearSuspendEvent();
     }
 
     public void resumeResponseSend() throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -330,7 +330,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @SuppressWarnings("StatementWithEmptyBody")
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
-        clear();
+        reset();
         if (configuration.getServerKeepAlive()) {
             while (handleClientRecv(selector, rescheduleContext)) ;
         } else {
@@ -345,7 +345,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.debug().$("complete [fd=").$(getFd()).I$();
         try {
             processor.onRequestComplete(this);
-            clear();
+            reset();
         } catch (RetryOperationException e) {
             pendingRetry = true;
             scheduleRetry(processor, rescheduleContext);
@@ -518,7 +518,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private void failProcessor(HttpRequestProcessor processor, HttpException e, int reason) {
         pendingRetry = false;
-        boolean canClear = true;
+        boolean canReset = true;
         try {
             LOG.info()
                     .$("failed query result cannot be delivered. Kicked out [fd=").$(getFd())
@@ -533,12 +533,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             processor.parkRequest(this, false);
             resumeProcessor = processor;
             dispatcher.registerChannel(this, IOOperation.WRITE);
-            canClear = false;
+            canReset = false;
         } catch (ServerDisconnectException serverDisconnectException) {
             dispatcher.disconnect(this, reason);
         } finally {
-            if (canClear) {
-                clear();
+            if (canReset) {
+                reset();
             }
         }
     }
@@ -629,7 +629,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         LOG.debug().$("good [fd=").$(getFd()).I$();
                         processor.onRequestComplete(this);
                         resumeProcessor = null;
-                        clear();
+                        reset();
                     }
                 }
             } catch (RetryOperationException e) {
@@ -673,7 +673,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (resumeProcessor != null) {
             try {
                 resumeProcessor.resumeSend(this);
-                clear();
+                reset();
                 return true;
             } catch (PeerIsSlowToReadException ignore) {
                 resumeProcessor.parkRequest(this, false);
@@ -724,7 +724,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        clear();
+        reset();
         LOG.error().$(userMessage).$();
         simpleResponse().sendStatus(404, userMessage);
         dispatcher.registerChannel(this, IOOperation.READ);
@@ -732,7 +732,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean rejectUnauthenticatedRequest() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        clear();
+        reset();
         LOG.error().$("rejecting unauthenticated request [fd=").$(getFd()).I$();
         simpleResponse().sendStatusWithHeader(401, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
         dispatcher.registerChannel(this, IOOperation.READ);

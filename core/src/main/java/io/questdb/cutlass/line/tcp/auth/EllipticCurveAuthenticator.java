@@ -37,6 +37,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.NotNull;
 
 import java.security.SecureRandom;
 
@@ -103,7 +104,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     @Override
-    public void init(Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+    public void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
         if (recvBufferLimit - recvBuffer < MIN_BUF_SIZE) {
             throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }

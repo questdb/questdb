@@ -77,13 +77,13 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
-    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-        return pgWireAuthenticatorFactory;
+    public @NotNull SocketFactory getPGWireSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
     }
 
     @Override
-    public @NotNull SocketFactory getPgWireSocketFactory() {
-        return PlainSocketFactory.INSTANCE;
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+        return pgWireAuthenticatorFactory;
     }
 
     @Override

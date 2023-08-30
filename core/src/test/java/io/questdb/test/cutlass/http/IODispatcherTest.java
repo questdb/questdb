@@ -143,11 +143,10 @@ public class IODispatcherTest extends AbstractTest {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
                     },
-                    (socket, dispatcher1) -> {
+                    (fd, dispatcher1) -> {
                         connectLatch.countDown();
-                        return new HelloContext(socket, contextClosedLatch, dispatcher1);
-                    },
-                    PlainSocketFactory.INSTANCE
+                        return new HelloContext(fd, contextClosedLatch, dispatcher1);
+                    }
             )) {
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
@@ -265,8 +264,7 @@ public class IODispatcherTest extends AbstractTest {
                             return nf;
                         }
                     },
-                    (socket, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics).of(socket, dispatcher1),
-                    PlainSocketFactory.INSTANCE
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics).of(fd, dispatcher1)
             )) {
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
@@ -336,7 +334,7 @@ public class IODispatcherTest extends AbstractTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(Socket socket, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -349,10 +347,9 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(socket, dispatcher1);
+                            }.of(fd, dispatcher1);
                         }
-                    },
-                    PlainSocketFactory.INSTANCE
+                    }
             )) {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
 
@@ -5387,7 +5384,7 @@ public class IODispatcherTest extends AbstractTest {
                     new IOContextFactory<HttpConnectionContext>() {
                         @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(Socket socket, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -5395,10 +5392,9 @@ public class IODispatcherTest extends AbstractTest {
                                     closeCount.incrementAndGet();
                                     super.close();
                                 }
-                            }.of(socket, dispatcher1);
+                            }.of(fd, dispatcher1);
                         }
-                    },
-                    PlainSocketFactory.INSTANCE
+                    }
             )) {
                 HttpRequestProcessorSelector selector =
                         new HttpRequestProcessorSelector() {
@@ -6374,7 +6370,7 @@ public class IODispatcherTest extends AbstractTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(Socket socket, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -6387,10 +6383,9 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(socket, dispatcher1);
+                            }.of(fd, dispatcher1);
                         }
-                    },
-                    PlainSocketFactory.INSTANCE
+                    }
             )) {
                 StringSink sink = new StringSink();
 
@@ -6545,7 +6540,7 @@ public class IODispatcherTest extends AbstractTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(Socket socket, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -6558,10 +6553,9 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(socket, dispatcher1);
+                            }.of(fd, dispatcher1);
                         }
-                    },
-                    PlainSocketFactory.INSTANCE
+                    }
             )) {
                 StringSink sink = new StringSink();
 
@@ -6709,7 +6703,7 @@ public class IODispatcherTest extends AbstractTest {
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(Socket socket, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -6722,10 +6716,9 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(socket, dispatcher1);
+                            }.of(fd, dispatcher1);
                         }
-                    },
-                    PlainSocketFactory.INSTANCE
+                    }
             )) {
                 StringSink sink = new StringSink();
 
@@ -7671,8 +7664,7 @@ public class IODispatcherTest extends AbstractTest {
                             return true;
                         }
                     },
-                    (socket, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics).of(socket, dispatcher1),
-                    PlainSocketFactory.INSTANCE
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics).of(fd, dispatcher1)
             )) {
 
                 // server will publish status of each request to this queue
@@ -8546,15 +8538,18 @@ public class IODispatcherTest extends AbstractTest {
                 private final IntHashSet serverConnectedFds;
                 private long heartbeatId;
 
-                public TestIOContext(Socket socket, IntHashSet serverConnectedFds) {
-                    this.socket = socket;
+                public TestIOContext(int fd, IntHashSet serverConnectedFds) {
+                    super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
+                    socket.of(fd);
                     this.serverConnectedFds = serverConnectedFds;
                 }
 
                 @Override
                 public void close() {
-                    LOG.info().$(getFd()).$(" disconnected").$();
-                    serverConnectedFds.remove(getFd());
+                    final int fd = getFd();
+                    super.close();
+                    LOG.info().$(fd).$(" disconnected").$();
+                    serverConnectedFds.remove(fd);
                 }
 
                 @Override
@@ -8595,11 +8590,11 @@ public class IODispatcherTest extends AbstractTest {
             final AtomicInteger nConnected = new AtomicInteger();
             final IntHashSet serverConnectedFds = new IntHashSet();
             final IntHashSet clientActiveFds = new IntHashSet();
-            IOContextFactory<TestIOContext> contextFactory = (socket, dispatcher) -> {
-                LOG.info().$(socket.getFd()).$(" connected").$();
-                serverConnectedFds.add(socket.getFd());
+            IOContextFactory<TestIOContext> contextFactory = (fd, dispatcher) -> {
+                LOG.info().$(fd).$(" connected").$();
+                serverConnectedFds.add(fd);
                 nConnected.incrementAndGet();
-                return new TestIOContext(socket, serverConnectedFds);
+                return new TestIOContext(fd, serverConnectedFds);
             };
             final String request = "\n";
             long mem = TestUtils.toMemory(request);
@@ -8607,7 +8602,7 @@ public class IODispatcherTest extends AbstractTest {
             Thread serverThread;
             long sockAddr = 0;
             final CountDownLatch serverLatch = new CountDownLatch(1);
-            try (IODispatcher<TestIOContext> dispatcher = IODispatchers.create(configuration, contextFactory, PlainSocketFactory.INSTANCE)) {
+            try (IODispatcher<TestIOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
                 final int resolvedPort = dispatcher.getPort();
                 sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
                 serverThread = new Thread("test-io-dispatcher") {
@@ -8801,8 +8796,9 @@ public class IODispatcherTest extends AbstractTest {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
 
-        public HelloContext(Socket socket, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
-            this.socket = socket;
+        public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
+            socket.of(fd);
             this.closeLatch = closeLatch;
             this.dispatcher = dispatcher;
         }
@@ -8811,6 +8807,7 @@ public class IODispatcherTest extends AbstractTest {
         public void close() {
             Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
             closeLatch.countDown();
+            super.close();
         }
 
         @Override

@@ -38,10 +38,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            SocketFactory socketFactory
+            IOContextFactory<C> ioContextFactory
     ) {
-        super(configuration, ioContextFactory, socketFactory);
+        super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
         registerListenerFd();
     }

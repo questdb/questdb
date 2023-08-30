@@ -25,6 +25,7 @@
 package io.questdb.cutlass.auth;
 
 import io.questdb.network.Socket;
+import org.jetbrains.annotations.NotNull;
 
 public class AnonymousAuthenticator implements Authenticator {
 
@@ -51,7 +52,7 @@ public class AnonymousAuthenticator implements Authenticator {
     }
 
     @Override
-    public void init(Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+    public void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
     }
 
     @Override

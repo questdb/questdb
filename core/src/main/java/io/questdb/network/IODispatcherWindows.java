@@ -40,10 +40,9 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
     public IODispatcherWindows(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            SocketFactory socketFactory
+            IOContextFactory<C> ioContextFactory
     ) {
-        super(configuration, ioContextFactory, socketFactory);
+        super(configuration, ioContextFactory);
         this.sf = configuration.getSelectFacade();
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());

@@ -46,6 +46,7 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
@@ -197,6 +198,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private NamedStatementWrapper wrapper;
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, NetworkSqlExecutionCircuitBreaker circuitBreaker) {
+        super(configuration.getFactoryProvider().getPGWireSocketFactory(), configuration.getNetworkFacade(), LOG);
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
@@ -289,14 +291,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public void clear() {
-        sendBufferPtr = sendBuffer;
+        super.clear();
+        freeBuffers();
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
         responseAsciiSink.reset();
         prepareForNewQuery();
         typeManager.clear();
         clearWriters();
-        clearRecvBuffer();
         typesAndInsertCache.clear();
         evictNamedStatementWrappersAndClear();
         namedPortalMap.clear();
@@ -330,15 +332,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public void close() {
+        clear();
         // We're about to close the context, so no need to return pending factory to cache.
         typesAndSelectIsCached = false;
         typesAndUpdateIsCached = false;
-        clear();
         sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
         Misc.free(authenticator);
-        freeBuffers();
     }
 
     @Override
@@ -455,27 +456,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public PGConnectionContext of(@Nullable Socket socket, @Nullable IODispatcher<PGConnectionContext> dispatcher) {
-        PGConnectionContext r = super.of(socket, dispatcher);
-        final int fd = socket != null ? socket.getFd() : -1;
+    public PGConnectionContext of(int fd, @NotNull IODispatcher<PGConnectionContext> dispatcher) {
+        super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
-        if (socket == null) {
-            // The context is about to be returned to the pool, so we should release the memory.
-            freeBuffers();
-            authenticator.init(null, 0, 0, 0, 0);
-        } else {
-            // The context is obtained from the pool, so we should initialize the memory.
-            if (recvBuffer == 0) {
-                this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            }
-            if (sendBuffer == 0) {
-                this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-                this.sendBufferPtr = sendBuffer;
-                this.sendBufferLimit = sendBuffer + sendBufferSize;
-            }
-            authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
+        if (recvBuffer == 0) {
+            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         }
-        return r;
+        if (sendBuffer == 0) {
+            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            this.sendBufferPtr = sendBuffer;
+            this.sendBufferLimit = sendBuffer + sendBufferSize;
+        }
+        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
+        return this;
     }
 
     public void setAuthenticator(Authenticator authenticator) {

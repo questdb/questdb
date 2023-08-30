@@ -39,6 +39,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.NotNull;
 
 public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
@@ -98,6 +99,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
 
     @Override
     public void clear() {
+        circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
         circuitBreaker.unsetTimer();
     }
@@ -194,12 +196,8 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     @Override
-    public void init(Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
-        if (socket == null) {
-            this.circuitBreaker.setSecret(-1);
-        } else {
-            this.circuitBreaker.setSecret(registry.getNewSecret());
-        }
+    public void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+        this.circuitBreaker.setSecret(registry.getNewSecret());
         this.state = State.EXPECT_INIT_MESSAGE;
         this.username = null;
         this.socket = socket;

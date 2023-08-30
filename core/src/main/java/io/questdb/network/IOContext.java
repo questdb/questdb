@@ -24,29 +24,32 @@
 
 package io.questdb.network;
 
-import io.questdb.std.Misc;
+import io.questdb.log.Log;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
+    protected final Socket socket;
     protected IODispatcher<T> dispatcher;
     protected long heartbeatId = -1;
-    protected Socket socket;
+
+    protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
+        this.socket = socketFactory.newInstance(nf, log);
+    }
 
     @Override
     public void clear() {
-        assert socket == null : "socket must be closed before clear call";
-        heartbeatId = -1;
-        dispatcher = null;
+        _clear();
     }
 
     public void clearSuspendEvent() {
         // no-op
     }
 
-    public void closeSocket() {
-        socket = Misc.free(socket);
+    @Override
+    public void close() {
+        _clear();
     }
 
     public long getAndResetHeartbeatId() {
@@ -72,17 +75,24 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     public boolean invalid() {
-        return socket == null;
+        return socket.getFd() == -1;
     }
 
     @SuppressWarnings("unchecked")
-    public T of(@Nullable Socket socket, @Nullable IODispatcher<T> dispatcher) {
-        this.socket = socket;
+    public T of(int fd, @NotNull IODispatcher<T> dispatcher) {
+        socket.of(fd);
         this.dispatcher = dispatcher;
         return (T) this;
     }
 
     public void setHeartbeatId(long heartbeatId) {
         this.heartbeatId = heartbeatId;
+    }
+
+    private void _clear() {
+        heartbeatId = -1;
+        socket.close();
+        dispatcher = null;
+        clearSuspendEvent();
     }
 }

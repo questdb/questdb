@@ -28,5 +28,5 @@ import io.questdb.log.Log;
 
 @FunctionalInterface
 public interface SocketFactory {
-    Socket newInstance(NetworkFacade nf, int fd, Log log);
+    Socket newInstance(NetworkFacade nf, Log log);
 }

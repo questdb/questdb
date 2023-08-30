@@ -30,7 +30,7 @@ public class PlainSocketFactory implements SocketFactory {
     public static final SocketFactory INSTANCE = new PlainSocketFactory();
 
     @Override
-    public Socket newInstance(NetworkFacade nf, int fd, Log log) {
-        return new PlainSocket(nf, fd, log);
+    public Socket newInstance(NetworkFacade nf, Log log) {
+        return new PlainSocket(nf, log);
     }
 }

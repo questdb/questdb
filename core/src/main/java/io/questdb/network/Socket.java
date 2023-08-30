@@ -29,6 +29,9 @@ import io.questdb.std.QuietCloseable;
 /**
  * Abstraction for plain and encrypted TCP sockets. Encrypted sockets use additional buffer
  * to accumulate messages, so they require extra calls to convert encrypted data to raw data.
+ * <p>
+ * {@link #close()} implementations must be idempotent. Also, supports object reuse after
+ * {@link #close()}: see {@link #of(int)}.
  */
 public interface Socket extends QuietCloseable {
 
@@ -41,6 +44,14 @@ public interface Socket extends QuietCloseable {
      * @return true if TLS session was already started.
      */
     boolean isTlsSessionStarted();
+
+    /**
+     * Sets the file descriptor associated with the socket.
+     * The socket owns the fd after this call.
+     *
+     * @param fd file descriptor
+     */
+    void of(int fd);
 
     /**
      * Receives plain data into the given buffer from the socket. On encrypted

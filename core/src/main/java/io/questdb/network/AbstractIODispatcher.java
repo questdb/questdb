@@ -78,7 +78,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final long queuedConnectionTimeoutMs;
     private final int rcvBufSize;
     private final int sndBufSize;
-    private final SocketFactory socketFactory;
     private final int testConnectionBufSize;
     protected boolean closed = false;
     protected long heartbeatIntervalMs;
@@ -91,8 +90,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory,
-            SocketFactory socketFactory
+            IOContextFactory<C> ioContextFactory
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
@@ -120,7 +118,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.activeConnectionLimit = configuration.getLimit();
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
-        this.socketFactory = socketFactory;
         this.idleConnectionTimeout = configuration.getTimeout() > 0 ? configuration.getTimeout() : Long.MIN_VALUE;
         this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() > 0 ? configuration.getQueueTimeout() : 0;
         this.sndBufSize = configuration.getSndBufSize();
@@ -225,13 +222,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private void addPending(int fd, long timestamp) {
         // append pending connection
         // all rows below watermark will be registered with epoll (or similar)
-        final Socket socket = socketFactory.newInstance(nf, fd, LOG);
-        C context;
+        final C context;
         try {
-            context = ioContextFactory.newInstance(socket, this);
+            context = ioContextFactory.newInstance(fd, this);
         } catch (CairoException e) {
             LOG.error().$("could not create connection context [fd=").$(fd).$(", e=").$(e.getFlyweightMessage()).I$();
-            socket.close();
             return;
         }
         int r = pending.addRow();
@@ -355,7 +350,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$(", fd=").$(fd)
                 .$(", src=").$(DISCONNECT_SOURCES[src])
                 .I$();
-        context.closeSocket();
         if (closed) {
             Misc.free(context);
         } else {

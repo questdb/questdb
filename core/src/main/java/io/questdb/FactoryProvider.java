@@ -50,10 +50,10 @@ public interface FactoryProvider extends QuietCloseable {
     SocketFactory getLineSocketFactory();
 
     @NotNull
-    PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
+    SocketFactory getPGWireSocketFactory();
 
     @NotNull
-    SocketFactory getPgWireSocketFactory();
+    PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
 
     @NotNull
     SecurityContextFactory getSecurityContextFactory();

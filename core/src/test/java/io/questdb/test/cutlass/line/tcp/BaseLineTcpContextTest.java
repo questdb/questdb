@@ -124,7 +124,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             workerPool.halt();
             Assert.assertFalse(context.invalid());
             Assert.assertEquals(FD, context.getFd());
-            context.closeSocket();
             context.close();
             Assert.assertTrue(context.invalid());
             Assert.assertEquals(-1, context.getFd());
@@ -318,7 +317,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         noNetworkIOJob.setScheduler(scheduler);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         Assert.assertNull(context.getDispatcher());
-        context.of(new TestSocket(lineTcpConfiguration.getNetworkFacade()), new IODispatcher<LineTcpConnectionContext>() {
+        context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
             @Override
             public void close() {
             }
@@ -439,74 +438,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
     }
 
-    private static class TestSocket implements Socket {
-        private final NetworkFacade nf;
-
-        public TestSocket(NetworkFacade nf) {
-            this.nf = nf;
-        }
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public int getFd() {
-            return FD;
-        }
-
-        @Override
-        public boolean isTlsSessionStarted() {
-            return false;
-        }
-
-        @Override
-        public int read(long bufferPtr, int bufferLen) {
-            return nf.recvRaw(FD, bufferPtr, bufferLen);
-        }
-
-        @Override
-        public int readTls() {
-            return 0;
-        }
-
-        @Override
-        public int shutdown(int how) {
-            return 0;
-        }
-
-        @Override
-        public int startTlsSession() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean supportsTls() {
-            return false;
-        }
-
-        @Override
-        public boolean wantsRead() {
-            return false;
-        }
-
-        @Override
-        public boolean wantsWrite() {
-            return false;
-        }
-
-        @Override
-        public int write(long bufferPtr, int bufferLen) {
-            return nf.sendRaw(FD, bufferPtr, bufferLen);
-        }
-
-        @Override
-        public int writeTls() {
-            return 0;
-        }
-    }
-
     class LineTcpNetworkFacade extends NetworkFacadeImpl {
+        @Override
+        public void close(int fd, Log log) {
+            Assert.assertEquals(FD, fd);
+        }
+
         @Override
         public int recvRaw(int fd, long buffer, int bufferLen) {
             Assert.assertEquals(FD, fd);

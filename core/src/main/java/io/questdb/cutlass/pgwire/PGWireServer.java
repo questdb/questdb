@@ -64,11 +64,7 @@ public class PGWireServer implements Closeable {
             PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
-        this.dispatcher = IODispatchers.create(
-                configuration.getDispatcherConfiguration(),
-                contextFactory,
-                configuration.getFactoryProvider().getPgWireSocketFactory()
-        );
+        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
         this.metrics = engine.getMetrics();
         this.workerPool = workerPool;
         this.registry = registry;
@@ -164,19 +160,30 @@ public class PGWireServer implements Closeable {
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
         ) {
-            super(() -> {
-                NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
-                PGConnectionContext pgConnectionContext = new PGConnectionContext(
-                        engine,
-                        configuration,
-                        executionContextObjectFactory.newInstance(),
-                        circuitBreaker
-                );
-                FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(configuration, circuitBreaker, registry, pgConnectionContext);
-                pgConnectionContext.setAuthenticator(authenticator);
-                return pgConnectionContext;
-            }, configuration.getConnectionPoolInitialCapacity());
+            super(
+                    () -> {
+                        NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                                configuration.getCircuitBreakerConfiguration(),
+                                MemoryTag.NATIVE_CB5
+                        );
+                        PGConnectionContext pgConnectionContext = new PGConnectionContext(
+                                engine,
+                                configuration,
+                                executionContextObjectFactory.newInstance(),
+                                circuitBreaker
+                        );
+                        FactoryProvider factoryProvider = configuration.getFactoryProvider();
+                        Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
+                                configuration,
+                                circuitBreaker,
+                                registry,
+                                pgConnectionContext
+                        );
+                        pgConnectionContext.setAuthenticator(authenticator);
+                        return pgConnectionContext;
+                    },
+                    configuration.getConnectionPoolInitialCapacity()
+            );
         }
     }
 }
