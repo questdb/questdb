@@ -41,7 +41,7 @@ import org.junit.BeforeClass;
 public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
-    protected final FuzzTester fuzzer = new FuzzTester();
+    protected final FuzzRunner fuzzer = new FuzzRunner();
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
 
     public static int getRndO3PartitionSplit(Rnd rnd) {

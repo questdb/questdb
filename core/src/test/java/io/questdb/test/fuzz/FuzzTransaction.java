@@ -32,7 +32,6 @@ public class FuzzTransaction {
     public int structureVersion;
     public boolean waitAllDone;
     public int waitBarrierVersion;
-
     public void forceWait() {
         waitAllDone = true;
     }
