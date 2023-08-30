@@ -197,5 +197,4 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         dataAppendPageSize = 1L << (minPage + rnd.nextInt(22 - minPage)); // MAX page size 4Mb
         LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
     }
-
 }

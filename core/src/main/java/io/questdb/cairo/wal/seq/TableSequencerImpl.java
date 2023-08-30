@@ -297,6 +297,11 @@ public class TableSequencerImpl implements TableSequencer {
         return txn;
     }
 
+    public void notifyRename(TableToken tableToken) {
+        this.tableToken = tableToken;
+        this.metadata.notifyRenameTable(tableToken);
+    }
+
     @Override
     public TableToken reload() {
         tableTransactionLog.reload(path);
@@ -315,12 +320,10 @@ public class TableSequencerImpl implements TableSequencer {
                 metadata.syncToMetaFile();
             }
         }
+        long lastTxn = tableTransactionLog.lastTxn();
+        LOG.info().$("reloaded table sequencer [name=").utf8(tableToken.getDirName()).$(", lastTxn=").$(lastTxn).I$();
+        seqTxnTracker.notifyOnCommit(lastTxn);
         return tableToken = metadata.getTableToken();
-    }
-
-    public void notifyRename(TableToken tableToken) {
-        this.tableToken = tableToken;
-        this.metadata.notifyRenameTable(tableToken);
     }
 
     @Override
@@ -383,6 +386,19 @@ public class TableSequencerImpl implements TableSequencer {
         }
     }
 
+    void create(int tableId, TableStructure tableStruct) {
+        schemaLock.writeLock().lock();
+        try {
+            createSequencerDir(ff, mkDirMode);
+            final long timestamp = microClock.getTicks();
+            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
+            tableTransactionLog.create(path, timestamp);
+            engine.getWalListener().tableCreated(tableToken, timestamp);
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
+    }
+
     void open(TableToken tableToken) {
         try {
             walIdGenerator.open(path);
@@ -412,19 +428,6 @@ public class TableSequencerImpl implements TableSequencer {
                     .I$();
             closeLocked();
             throw th;
-        }
-    }
-
-    void create(int tableId, TableStructure tableStruct) {
-        schemaLock.writeLock().lock();
-        try {
-            createSequencerDir(ff, mkDirMode);
-            final long timestamp = microClock.getTicks();
-            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
-            tableTransactionLog.create(path, timestamp);
-            engine.getWalListener().tableCreated(tableToken, timestamp);
-        } finally {
-            schemaLock.writeLock().unlock();
         }
     }
 

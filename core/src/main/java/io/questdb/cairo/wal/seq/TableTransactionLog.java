@@ -87,15 +87,9 @@ public class TableTransactionLog implements Closeable {
     }
 
     public boolean reload(Path path) {
-        if (txnMem.isOpen()) {
-            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
-            if (maxTxnInFile == maxTxn.get()) {
-                return false;
-            }
-            txnMem.close(false);
-            txnMetaMem.close(false);
-            txnMetaMemIndex.close(false);
-        }
+        txnMem.close(false);
+        txnMetaMem.close(false);
+        txnMetaMemIndex.close(false);
         open(path);
         return true;
     }
