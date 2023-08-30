@@ -769,6 +769,11 @@ public final class Chars {
         return _this.length() > 0 && _this.charAt(0) == c;
     }
 
+    public static boolean startsWithIgnoreCase(CharSequence _this, CharSequence that) {
+        final int len = that.length();
+        return _this.length() >= len && equalsCharsIgnoreCase(_this, that, len);
+    }
+
     public static String stringFromUtf8Bytes(long lo, long hi) {
         if (hi == lo) {
             return "";
@@ -1306,6 +1311,15 @@ public final class Chars {
         }
         for (; i < len; i++) {
             if (l.byteAt(i) != r.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsCharsIgnoreCase(CharSequence l, CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
                 return false;
             }
         }

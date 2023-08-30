@@ -82,7 +82,8 @@ public class TableConverter {
                                 }
 
                                 final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled);
+                                boolean system = TableUtils.isSystemTable(configuration.getSystemTableNamePrefix(), tableName);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, system);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);

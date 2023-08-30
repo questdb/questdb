@@ -32,6 +32,7 @@ import org.jetbrains.annotations.Nullable;
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
+    private final CharSequence systemTableNamePrefix;
 
     public TableNameRegistryRW(CairoConfiguration configuration) {
         super(configuration);
@@ -41,6 +42,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             }
         }
         setNameMaps(nameTableTokenMap, reverseTableNameTokenMap);
+        this.systemTableNamePrefix = configuration.getSystemTableNamePrefix();
     }
 
     @Override
@@ -69,7 +71,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
-            return new TableToken(tableName, dirName, tableId, isWal);
+            boolean isSystem = TableUtils.isSystemTable(systemTableNamePrefix, tableName);
+            return new TableToken(tableName, dirName, tableId, isWal, isSystem);
         } else {
             return null;
         }

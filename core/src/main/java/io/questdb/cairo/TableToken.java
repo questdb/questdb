@@ -33,20 +33,22 @@ import org.jetbrains.annotations.NotNull;
 public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
+    private final boolean isSystem;
     private final boolean isWal;
     private final int tableId;
     @NotNull
     private final String tableName;
 
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal) {
-        this(tableName, new GcUtf8String(dirName), tableId, isWal);
+    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem) {
+        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem);
     }
 
-    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal) {
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
         this.isWal = isWal;
+        this.isSystem = isSystem;
     }
 
     @Override
@@ -58,6 +60,7 @@ public class TableToken implements Sinkable {
 
         if (tableId != that.tableId) return false;
         if (isWal != that.isWal) return false;
+        if (isSystem != that.isSystem) return false;
         if (!tableName.equals(that.tableName)) return false;
         return dirName.equals(that.dirName);
     }
@@ -95,12 +98,16 @@ public class TableToken implements Sinkable {
         return tableId;
     }
 
+    public boolean isSystem() {
+        return isSystem;
+    }
+
     public boolean isWal() {
         return isWal;
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isWal);
+        return new TableToken(newName, dirName, tableId, isWal, isSystem);
     }
 
     @Override

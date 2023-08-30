@@ -281,7 +281,8 @@ public class TableNameRegistryFileStore implements Closeable {
                                 continue;
                             }
 
-                            TableToken token = new TableToken(tableName, dirName, tableId, isWal);
+                            boolean isSystem = TableUtils.isSystemTable(configuration.getSystemTableNamePrefix(), tableName);
+                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem);
                             nameTableTokenMap.put(tableName, token);
                             reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
                         }
@@ -365,7 +366,8 @@ public class TableNameRegistryFileStore implements Closeable {
                     continue;
                 }
 
-                final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL);
+                boolean isSystem = TableUtils.isSystemTable(configuration.getSystemTableNamePrefix(), tableName);
+                final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem);
                 nameTableTokenMap.put(tableName, token);
                 if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                     // This table is renamed, log system to real table name mapping
