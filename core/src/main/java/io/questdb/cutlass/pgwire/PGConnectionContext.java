@@ -315,7 +315,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         authenticator.clear();
         isPausedQuery = false;
         isEmptyQuery = false;
-        clearSuspendEvent();
         queryContainsSecret = false;
         tlsSessionStarting = false;
     }
@@ -332,10 +331,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public void close() {
-        clear();
         // We're about to close the context, so no need to return pending factory to cache.
         typesAndSelectIsCached = false;
         typesAndUpdateIsCached = false;
+        clear();
         sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
@@ -2097,7 +2096,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.EXPLAIN:
-                //explain results should not be cached
+                // explain results should not be cached
                 typesAndSelectIsCached = false;
                 typesAndSelect = typesAndSelectPool.pop();
                 typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
@@ -2647,7 +2646,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     currentCursor = currentFactory.getCursor(sqlExecutionContext);
                     recompileStale = false;
                     // cache random if it was replaced
-                    this.rnd = sqlExecutionContext.getRandom();
+                    rnd = sqlExecutionContext.getRandom();
                 } catch (TableReferenceOutOfDateException e) {
                     if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                         throw e;
