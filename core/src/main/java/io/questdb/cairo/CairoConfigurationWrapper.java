@@ -848,6 +848,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalPurgeWaitBeforeDelete() {
+        return delegate.getWalPurgeWaitBeforeDelete();
+    }
+
+    @Override
     public int getWalRecreateDistressedSequencerAttempts() {
         return delegate.getWalRecreateDistressedSequencerAttempts();
     }
