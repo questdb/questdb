@@ -295,8 +295,7 @@ public final class Chars {
     }
 
     /**
-     * Compares two char sequences on assumption and right value is always lower case.
-     * Method converts every char of right sequence before comparing to left sequence.
+     * Case-insensitive comparison of two char sequences.
      *
      * @param l left sequence
      * @param r right sequence
@@ -312,13 +311,7 @@ public final class Chars {
             return false;
         }
 
-        for (int i = 0; i < ll; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
-                return false;
-            }
-        }
-
-        return true;
+        return equalsCharsIgnoreCase(l, r, ll);
     }
 
     public static boolean equalsIgnoreCaseNc(@NotNull CharSequence l, @Nullable CharSequence r) {
