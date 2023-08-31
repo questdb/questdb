@@ -49,7 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PGTlsCompatTest extends BasePGTest {
 
     @Test
-    public void testTlsCompat() throws Exception {
+    public void testTlsSessionGetsCreatedWhenSocketSupportsTls() throws Exception {
         assertMemoryLeak(() -> {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
@@ -60,7 +60,7 @@ public class PGTlsCompatTest extends BasePGTest {
                     return new DefaultFactoryProvider() {
                         @Override
                         public @NotNull SocketFactory getPGWireSocketFactory() {
-                            return new FakeTlsSocketFactory(createTlsSessionCalls, tlsIOCalls);
+                            return new FakeTlsSocketFactory(true, createTlsSessionCalls, tlsIOCalls);
                         }
                     };
                 }
@@ -72,12 +72,8 @@ public class PGTlsCompatTest extends BasePGTest {
 
                 workerPool.start(LOG);
 
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
+                Properties properties = newPGProperties();
                 properties.setProperty("sslmode", "require");
-                properties.setProperty("binaryTransfer", "true");
 
                 final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
                 try (Connection ignore = DriverManager.getConnection(url, properties)) {
@@ -93,13 +89,65 @@ public class PGTlsCompatTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testTlsSessionIsNotCreatedWhenSocketDoesNotSupportTls() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger createTlsSessionCalls = new AtomicInteger();
+            final AtomicInteger tlsIOCalls = new AtomicInteger();
+
+            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+                @Override
+                public FactoryProvider getFactoryProvider() {
+                    return new DefaultFactoryProvider() {
+                        @Override
+                        public @NotNull SocketFactory getPGWireSocketFactory() {
+                            return new FakeTlsSocketFactory(false, createTlsSessionCalls, tlsIOCalls);
+                        }
+                    };
+                }
+            };
+
+            final WorkerPool workerPool = new TestWorkerPool(1, metrics);
+            try (final PGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+                Assert.assertNotNull(server);
+
+                workerPool.start(LOG);
+
+                Properties properties = newPGProperties();
+
+                final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
+                try (Connection ignore = DriverManager.getConnection(url, properties)) {
+                    Assert.fail();
+                } catch (PSQLException ignore) {
+                } finally {
+                    workerPool.halt();
+                }
+
+                Assert.assertEquals("No create TLS session calls expected: " + createTlsSessionCalls.get(), 0, createTlsSessionCalls.get());
+                Assert.assertEquals("No TLS I/O calls expected: " + tlsIOCalls.get(), 0, tlsIOCalls.get());
+            }
+        });
+    }
+
+    @NotNull
+    private static Properties newPGProperties() {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "require");
+        properties.setProperty("binaryTransfer", "true");
+        return properties;
+    }
+
     private static class FakeTlsSocket extends PlainSocket {
         private final AtomicInteger createTlsSessionCalls;
         private final AtomicInteger tlsIOCalls;
+        private final boolean tlsSupported;
         private boolean tlsSessionStarted;
 
-        public FakeTlsSocket(NetworkFacade nf, Log log, AtomicInteger createTlsSessionCalls, AtomicInteger tlsIOCalls) {
+        public FakeTlsSocket(NetworkFacade nf, Log log, boolean tlsSupported, AtomicInteger createTlsSessionCalls, AtomicInteger tlsIOCalls) {
             super(nf, log);
+            this.tlsSupported = tlsSupported;
             this.createTlsSessionCalls = createTlsSessionCalls;
             this.tlsIOCalls = tlsIOCalls;
         }
@@ -133,7 +181,7 @@ public class PGTlsCompatTest extends BasePGTest {
 
         @Override
         public boolean supportsTls() {
-            return true;
+            return tlsSupported;
         }
 
         @Override
@@ -159,15 +207,17 @@ public class PGTlsCompatTest extends BasePGTest {
     private static class FakeTlsSocketFactory implements SocketFactory {
         private final AtomicInteger createTlsSessionCalls;
         private final AtomicInteger tlsIOCalls;
+        private final boolean tlsSupported;
 
-        private FakeTlsSocketFactory(AtomicInteger createTlsSessionCalls, AtomicInteger tlsIOCalls) {
+        private FakeTlsSocketFactory(boolean tlsSupported, AtomicInteger createTlsSessionCalls, AtomicInteger tlsIOCalls) {
+            this.tlsSupported = tlsSupported;
             this.createTlsSessionCalls = createTlsSessionCalls;
             this.tlsIOCalls = tlsIOCalls;
         }
 
         @Override
         public Socket newInstance(NetworkFacade nf, Log log) {
-            return new FakeTlsSocket(nf, log, createTlsSessionCalls, tlsIOCalls);
+            return new FakeTlsSocket(nf, log, tlsSupported, createTlsSessionCalls, tlsIOCalls);
         }
     }
 }
