@@ -85,10 +85,10 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final long id = pending.get(i, OPM_ID);
             final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
-            if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
+            if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                 keventWriter.readFD(context.getFd(), id);
             }
-            if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+            if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                 keventWriter.writeFD(context.getFd(), id);
             }
         }
@@ -118,22 +118,17 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 rearmKqueue(context, id, IOOperation.READ);
             }
         } else {
+            final int requestedOp = (int) pending.get(row, OPM_OPERATION);
             final boolean readyForWrite = kqueue.getFilter() == KqueueAccessor.EVFILT_WRITE;
             final boolean readyForRead = kqueue.getFilter() == KqueueAccessor.EVFILT_READ;
-            final boolean wantsWrite = context.getSocket().wantsWrite();
-            final boolean wantsRead = context.getSocket().wantsRead();
 
-            final int requestedOp = (int) pending.get(row, OPM_OPERATION);
-            final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)
-                    || (requestedOp == IOOperation.READ && readyForRead);
-
-            if (readyForRequestedOp) {
+            if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
                 // disarm extra filter in case it was previously set and haven't fired yet
                 keventWriter.prepare().tolerateErrors();
-                if (requestedOp == IOOperation.READ && wantsWrite) {
+                if (requestedOp == IOOperation.READ && context.getSocket().wantsTlsWrite()) {
                     keventWriter.removeWriteFD(context.getFd());
                 }
-                if (requestedOp == IOOperation.WRITE && wantsRead) {
+                if (requestedOp == IOOperation.WRITE && context.getSocket().wantsTlsRead()) {
                     keventWriter.removeReadFD(context.getFd());
                 }
                 keventWriter.done();
@@ -143,19 +138,10 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 return true;
             } else {
                 // that's not the requested operation, but something wanted by the socket
-                if (wantsWrite && readyForWrite) {
-                    if (context.getSocket().writeTls() < 0) {
-                        doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
-                        pending.deleteRow(row);
-                        return true;
-                    }
-                }
-                if (wantsRead && readyForRead) {
-                    if (context.getSocket().readTls() < 0) {
-                        doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
-                        pending.deleteRow(row);
-                        return true;
-                    }
+                if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
+                    doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
+                    pending.deleteRow(row);
+                    return true;
                 }
                 rearmKqueue(context, id, requestedOp);
             }
@@ -211,10 +197,10 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final long opId = pending.get(i, OPM_ID);
             long op = context.getSuspendEvent() != null ? IOOperation.READ : pending.get(i, OPM_OPERATION);
             keventWriter.prepare().tolerateErrors();
-            if (op == IOOperation.READ || context.getSocket().wantsRead()) {
+            if (op == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                 keventWriter.removeReadFD(fd);
             }
-            if (op == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+            if (op == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                 keventWriter.removeWriteFD(fd);
             }
             if (keventWriter.done() != 0) {
@@ -336,10 +322,10 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 keventWriter.readFD(suspendEvent.getFd(), eventId);
             }
 
-            if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
+            if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                 keventWriter.readFD(fd, opId);
             }
-            if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+            if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                 keventWriter.writeFD(fd, opId);
             }
         }
@@ -376,10 +362,10 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
     private void rearmKqueue(C context, long id, int operation) {
         keventWriter.prepare();
-        if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
+        if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
             keventWriter.readFD(context.getFd(), id);
         }
-        if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+        if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
             keventWriter.writeFD(context.getFd(), id);
         }
         keventWriter.done();

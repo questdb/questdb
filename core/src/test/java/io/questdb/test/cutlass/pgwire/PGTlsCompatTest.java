@@ -164,19 +164,13 @@ public class PGTlsCompatTest extends BasePGTest {
         }
 
         @Override
-        public int readTls() {
-            if (tlsSessionStarted) {
-                tlsIOCalls.incrementAndGet();
-                return -1; // return error code to force close the connection
-            }
-            throw new IllegalStateException("TLS session wasn't started");
-        }
-
-        @Override
         public int startTlsSession() {
-            createTlsSessionCalls.incrementAndGet();
-            tlsSessionStarted = true;
-            return 0;
+            if (!tlsSessionStarted) {
+                createTlsSessionCalls.incrementAndGet();
+                tlsSessionStarted = true;
+                return 0;
+            }
+            return -1;
         }
 
         @Override
@@ -185,22 +179,22 @@ public class PGTlsCompatTest extends BasePGTest {
         }
 
         @Override
-        public boolean wantsRead() {
-            return tlsSessionStarted;
-        }
-
-        @Override
-        public boolean wantsWrite() {
-            return tlsSessionStarted;
-        }
-
-        @Override
-        public int writeTls() {
+        public int tlsIO(int readinessFlags) {
             if (tlsSessionStarted) {
                 tlsIOCalls.incrementAndGet();
                 return -1; // return error code to force close the connection
             }
-            throw new IllegalStateException("TLS session wasn't started");
+            return 0;
+        }
+
+        @Override
+        public boolean wantsTlsRead() {
+            return tlsSessionStarted;
+        }
+
+        @Override
+        public boolean wantsTlsWrite() {
+            return tlsSessionStarted;
         }
     }
 

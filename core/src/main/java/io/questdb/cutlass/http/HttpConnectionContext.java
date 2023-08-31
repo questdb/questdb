@@ -219,6 +219,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
+    public void init() {
+        if (socket.supportsTls()) {
+            if (socket.startTlsSession() != 0) {
+                throw CairoException.nonCritical().put("failed to start TLS session");
+            }
+        }
+    }
+
+    @Override
     public boolean invalid() {
         return pendingRetry || receivedBytes > 0 || this.socket == null;
     }
@@ -226,11 +235,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public HttpConnectionContext of(int fd, @NotNull IODispatcher<HttpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
-        if (socket.supportsTls()) {
-            if (socket.startTlsSession() != 0) {
-                throw CairoException.nonCritical().put("failed to start TLS session");
-            }
-        }
         // The context is obtained from the pool, so we should initialize the memory.
         if (recvBuffer == 0) {
             recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
@@ -431,7 +435,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         long spinsRemaining = multipartIdleSpinCount;
 
         while (true) {
-            final int n = socket.read(buf, bufRemaining);
+            final int n = socket.recv(buf, bufRemaining);
             if (n < 0) {
                 dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_MULTIPART_RECV);
                 break;
@@ -564,7 +568,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (newRequest) {
                 while (headerParser.isIncomplete()) {
                     // read headers
-                    read = socket.read(recvBuffer, recvBufferSize);
+                    read = socket.recv(recvBuffer, recvBufferSize);
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
                     if (read < 0) {
                         LOG.debug()
@@ -618,7 +622,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // we respond back to client. We will disconnect the client when
                     // they abuse protocol. In addition, we will not call processor
                     // if client has disconnected before we had a chance to reply.
-                    read = socket.read(recvBuffer, 1);
+                    read = socket.recv(recvBuffer, 1);
                     if (read != 0) {
                         dumpBuffer(recvBuffer, read);
                         LOG.info().$("disconnect after request [fd=").$(getFd()).I$();

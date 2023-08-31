@@ -190,13 +190,17 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    public LineTcpConnectionContext of(int fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
+    public void init() {
         if (socket.supportsTls()) {
             if (socket.startTlsSession() != 0) {
                 throw CairoException.nonCritical().put("failed to start TLS session");
             }
         }
+    }
+
+    @Override
+    public LineTcpConnectionContext of(int fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
+        super.of(fd, dispatcher);
         if (recvBufStart == 0) {
             recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
             recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
@@ -399,7 +403,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         int bufferRemaining = (int) (recvBufEnd - recvBufPos);
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
-            int bytesRead = socket.read(recvBufPos, bufferRemaining);
+            int bytesRead = socket.recv(recvBufPos, bufferRemaining);
             if (bytesRead > 0) {
                 recvBufPos += bytesRead;
                 bufferRemaining -= bytesRead;

@@ -59,7 +59,7 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
 
     public void freeThreadLocal() {
         // helper call, it will free only thread-local instance and not others
-        Misc.free(this.contextPool);
+        Misc.free(contextPool);
     }
 
     public C newInstance(int fd, @NotNull IODispatcher<C> dispatcher) {

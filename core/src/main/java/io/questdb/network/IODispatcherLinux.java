@@ -92,10 +92,10 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     private int epollOp(int operation, C context) {
         int op = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
-        if (context.getSocket().wantsRead()) {
+        if (context.getSocket().wantsTlsRead()) {
             op |= EpollAccessor.EPOLLIN;
         }
-        if (context.getSocket().wantsWrite()) {
+        if (context.getSocket().wantsTlsWrite()) {
             op |= EpollAccessor.EPOLLOUT;
         }
         return op;
@@ -124,31 +124,17 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 rearmEpoll(context, id, IOOperation.READ);
             }
         } else {
+            final int requestedOp = (int) pending.get(row, OPM_OPERATION);
             // We check EPOLLOUT flag and treat all other events, including EPOLLIN and EPOLLHUP, as a read.
             final boolean readyForWrite = (epoll.getEvent() & EpollAccessor.EPOLLOUT) > 0;
             final boolean readyForRead = !readyForWrite || (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0;
-            final boolean wantsWrite = context.getSocket().wantsWrite();
-            final boolean wantsRead = context.getSocket().wantsRead();
 
-            final int requestedOp = (int) pending.get(row, OPM_OPERATION);
-            final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)
-                    || (requestedOp == IOOperation.READ && readyForRead);
-
-            if (readyForRequestedOp) {
+            if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
                 // If the socket is also ready for another operation type, do it.
-                if (requestedOp == IOOperation.READ && wantsWrite && readyForWrite) {
-                    if (context.getSocket().writeTls() < 0) {
-                        doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
-                        pending.deleteRow(row);
-                        return true;
-                    }
-                }
-                if (requestedOp == IOOperation.WRITE && wantsRead && readyForRead) {
-                    if (context.getSocket().readTls() < 0) {
-                        doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
-                        pending.deleteRow(row);
-                        return true;
-                    }
+                if (context.getSocket().tlsIO(tlsIOFlags(requestedOp, readyForRead, readyForWrite)) < 0) {
+                    doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
+                    pending.deleteRow(row);
+                    return true;
                 }
                 publishOperation(requestedOp, context);
                 pending.deleteRow(row);
@@ -156,19 +142,10 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             }
 
             // It's something different from the requested operation.
-            if (wantsWrite && readyForWrite) {
-                if (context.getSocket().writeTls() < 0) {
-                    doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
-                    pending.deleteRow(row);
-                    return true;
-                }
-            }
-            if (wantsRead && readyForRead) {
-                if (context.getSocket().readTls() < 0) {
-                    doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
-                    pending.deleteRow(row);
-                    return true;
-                }
+            if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
+                doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
+                pending.deleteRow(row);
+                return true;
             }
             rearmEpoll(context, id, requestedOp);
         }

@@ -74,6 +74,13 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return null;
     }
 
+    /**
+     * @throws io.questdb.cairo.CairoException if initialization fails
+     */
+    public void init() {
+        // no-op
+    }
+
     public boolean invalid() {
         return socket.getFd() == -1;
     }

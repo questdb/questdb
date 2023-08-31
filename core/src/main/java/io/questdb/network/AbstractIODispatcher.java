@@ -222,11 +222,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private void addPending(int fd, long timestamp) {
         // append pending connection
         // all rows below watermark will be registered with epoll (or similar)
-        final C context;
+        final C context = ioContextFactory.newInstance(fd, this);
         try {
-            context = ioContextFactory.newInstance(fd, this);
+            context.init();
         } catch (CairoException e) {
-            LOG.error().$("could not create connection context [fd=").$(fd).$(", e=").$(e.getFlyweightMessage()).I$();
+            LOG.error().$("could not initialize connection context [fd=").$(fd).$(", e=").$(e.getFlyweightMessage()).I$();
+            ioContextFactory.done(context);
             return;
         }
         int r = pending.addRow();
@@ -282,6 +283,15 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             }
         }
         doDisconnect(context, DISCONNECT_SRC_QUEUE);
+    }
+
+    protected static int tlsIOFlags(int requestedOp, boolean readyForRead, boolean readyForWrite) {
+        return (requestedOp == IOOperation.READ && readyForWrite ? Socket.WRITE_FLAG : 0)
+                | (requestedOp == IOOperation.WRITE && readyForRead ? Socket.READ_FLAG : 0);
+    }
+
+    protected static int tlsIOFlags(boolean readyForRead, boolean readyForWrite) {
+        return (readyForWrite ? Socket.WRITE_FLAG : 0) | (readyForRead ? Socket.READ_FLAG : 0);
     }
 
     protected void accept(long timestamp) {

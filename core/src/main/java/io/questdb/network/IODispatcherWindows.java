@@ -243,11 +243,11 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         operation = IOOperation.READ;
                     }
 
-                    if (operation == IOOperation.READ || context.getSocket().wantsRead()) {
+                    if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                         readFdSet.add(fd);
                         readFdCount++;
                     }
-                    if (operation == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+                    if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                         writeFdSet.add(fd);
                         writeFdCount++;
                     }
@@ -266,7 +266,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         readFdSet.add(fd);
                         readFdCount++;
 
-                        if (context.getSocket().wantsWrite()) {
+                        if (context.getSocket().wantsTlsWrite()) {
                             writeFdSet.add(fd);
                             writeFdCount++;
                         }
@@ -278,34 +278,18 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 // we got a (potentially requested) event
                 useful = true;
 
+                final int requestedOp = (int) pending.get(i, OPM_OPERATION);
                 final boolean readyForWrite = (newOp & SelectAccessor.FD_WRITE) > 0;
                 final boolean readyForRead = (newOp & SelectAccessor.FD_READ) > 0;
-                final boolean wantsWrite = context.getSocket().wantsWrite();
-                final boolean wantsRead = context.getSocket().wantsRead();
 
-                final int requestedOp = (int) pending.get(i, OPM_OPERATION);
-                final boolean readyForRequestedOp = (requestedOp == IOOperation.WRITE && readyForWrite)
-                        || (requestedOp == IOOperation.READ && readyForRead);
-
-                if (readyForRequestedOp) {
+                if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
                     // If the socket is also ready for another operation type, do it.
-                    if (requestedOp == IOOperation.READ && wantsWrite && readyForWrite) {
-                        if (context.getSocket().writeTls() < 0) {
-                            doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
-                            pending.deleteRow(i);
-                            n--;
-                            watermark--;
-                            continue;
-                        }
-                    }
-                    if (requestedOp == IOOperation.WRITE && wantsRead && readyForRead) {
-                        if (context.getSocket().readTls() < 0) {
-                            doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
-                            pending.deleteRow(i);
-                            n--;
-                            watermark--;
-                            continue;
-                        }
+                    if (context.getSocket().tlsIO(tlsIOFlags(requestedOp, readyForRead, readyForWrite)) < 0) {
+                        doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                        pending.deleteRow(i);
+                        n--;
+                        watermark--;
+                        continue;
                     }
                     // publish event and remove from pending
                     publishOperation(requestedOp, context);
@@ -314,30 +298,19 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                     watermark--;
                 } else {
                     // It's something different from the requested operation.
-                    if (wantsWrite && readyForWrite) {
-                        if (context.getSocket().writeTls() < 0) {
-                            doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
-                            pending.deleteRow(i);
-                            n--;
-                            watermark--;
-                            continue;
-                        }
-                    }
-                    if (wantsRead && readyForRead) {
-                        if (context.getSocket().readTls() < 0) {
-                            doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
-                            pending.deleteRow(i);
-                            n--;
-                            watermark--;
-                            continue;
-                        }
+                    if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
+                        doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                        pending.deleteRow(i);
+                        n--;
+                        watermark--;
+                        continue;
                     }
                     // Now we need to re-arm poll.
-                    if (requestedOp == IOOperation.READ || context.getSocket().wantsRead()) {
+                    if (requestedOp == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                         readFdSet.add(fd);
                         readFdCount++;
                     }
-                    if (requestedOp == IOOperation.WRITE || context.getSocket().wantsWrite()) {
+                    if (requestedOp == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                         writeFdSet.add(fd);
                         writeFdCount++;
                     }

@@ -61,13 +61,13 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public int read(long bufferPtr, int bufferLen) {
+    public int recv(long bufferPtr, int bufferLen) {
         return nf.recvRaw(fd, bufferPtr, bufferLen);
     }
 
     @Override
-    public int readTls() {
-        throw new UnsupportedOperationException();
+    public int send(long bufferPtr, int bufferLen) {
+        return nf.sendRaw(fd, bufferPtr, bufferLen);
     }
 
     @Override
@@ -86,22 +86,17 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public boolean wantsRead() {
+    public int tlsIO(int readinessFlags) {
+        return 0;
+    }
+
+    @Override
+    public boolean wantsTlsRead() {
         return false;
     }
 
     @Override
-    public boolean wantsWrite() {
+    public boolean wantsTlsWrite() {
         return false;
-    }
-
-    @Override
-    public int write(long bufferPtr, int bufferLen) {
-        return nf.sendRaw(fd, bufferPtr, bufferLen);
-    }
-
-    @Override
-    public int writeTls() {
-        throw new UnsupportedOperationException();
     }
 }

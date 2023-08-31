@@ -35,6 +35,9 @@ import io.questdb.std.QuietCloseable;
  */
 public interface Socket extends QuietCloseable {
 
+    int READ_FLAG = 1 << 1;
+    int WRITE_FLAG = 1;
+
     /**
      * @return file descriptor associated with the socket.
      */
@@ -55,22 +58,25 @@ public interface Socket extends QuietCloseable {
 
     /**
      * Receives plain data into the given buffer from the socket. On encrypted
-     * sockets this call includes {@link #readTls()}, so an extra readTls()
+     * sockets this call includes {@link #tlsIO(int)}, so an extra tlsIO()
      * call is not required.
      *
      * @param bufferPtr pointer to the buffer
      * @param bufferLen buffer length
      * @return recv() result; non-negative if there were no errors.
      */
-    int read(long bufferPtr, int bufferLen);
+    int recv(long bufferPtr, int bufferLen);
 
     /**
-     * Reads encrypted data from the socket into internal buffer.
-     * Should never be called on plain socket.
+     * Sends plain data from the given buffer to the socket. On encrypted
+     * sockets this call includes {@link #tlsIO(int)}, so an extra tlsIO()
+     * call is not required.
      *
-     * @return non-negative value if there were no errors.
+     * @param bufferPtr pointer to the buffer
+     * @param bufferLen buffer length
+     * @return send() result; non-negative if there were no errors.
      */
-    int readTls();
+    int send(long bufferPtr, int bufferLen);
 
     /**
      * Does a shutdown() call on the socket.
@@ -93,33 +99,25 @@ public interface Socket extends QuietCloseable {
     boolean supportsTls();
 
     /**
-     * @return true if a {@link #readTls()} call should be made once
+     * Reads or writes encrypted data to/from the internal buffer from/to
+     * the socket. Can be called safely even if the socket doesn't
+     * support TLS.
+     *
+     * @param readinessFlags socket readiness flags (see {@link #READ_FLAG}
+     *                       and {@link #WRITE_FLAG}).
+     * @return 0 if the call is successful; -1 if there was an error.
+     */
+    int tlsIO(int readinessFlags);
+
+    /**
+     * @return true if a {@link #tlsIO(int)} call should be made once
      * the socket becomes readable.
      */
-    boolean wantsRead();
+    boolean wantsTlsRead();
 
     /**
-     * @return true if a {@link #writeTls()} call should be made once
+     * @return true if a {@link #tlsIO(int)} call should be made once
      * the socket becomes writable.
      */
-    boolean wantsWrite();
-
-    /**
-     * Sends plain data from the given buffer to the socket. On encrypted
-     * sockets this call includes {@link #writeTls()}, so an extra writeTls()
-     * call is not required.
-     *
-     * @param bufferPtr pointer to the buffer
-     * @param bufferLen buffer length
-     * @return send() result; non-negative if there were no errors.
-     */
-    int write(long bufferPtr, int bufferLen);
-
-    /**
-     * Writes encrypted data from the internal buffer to the socket.
-     * Should never be called on plain socket.
-     *
-     * @return non-negative value if there were no errors.
-     */
-    int writeTls();
+    boolean wantsTlsWrite();
 }

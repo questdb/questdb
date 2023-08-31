@@ -123,7 +123,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
     private int findLineEnd() throws AuthenticatorException {
         int bufferRemaining = (int) (recvBufEnd - recvBufPos);
         if (bufferRemaining > 0) {
-            int bytesRead = socket.read(recvBufPos, bufferRemaining);
+            int bytesRead = socket.recv(recvBufPos, bufferRemaining);
             if (bytesRead > 0) {
                 recvBufPos += bytesRead;
             } else if (bytesRead < 0) {
@@ -181,7 +181,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
         int n = AuthUtils.CHALLENGE_LEN + 1 - (int) (recvBufPos - recvBufStart);
         assert n > 0;
         while (true) {
-            int nWritten = socket.write(recvBufPos, n);
+            int nWritten = socket.send(recvBufPos, n);
             if (nWritten > 0) {
                 if (n == nWritten) {
                     recvBufPos = recvBufStart;
