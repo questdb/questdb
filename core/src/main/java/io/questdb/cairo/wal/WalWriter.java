@@ -243,7 +243,7 @@ public class WalWriter implements TableWriterAPI {
                     rollback();
                 }
             } finally {
-                doClose(true);
+                doClose(walInitializer.isTruncateFilesOnClose());
             }
         }
     }
