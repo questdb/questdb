@@ -82,12 +82,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_O3 = 1;
     // partitionUpdateSink (offset, description):
     // 0, partitionTimestamp
-    // 1, timestampMin
-    // 2, newPartitionSize
-    // 3, oldPartitionSize
-    // 4, flags (partitionMutates INT, isLastWrittenPartition INT)
+    // 1, split (donor) partitionTimestamp
+    // 2, timestampMin
+    // 3, newPartitionSize
+    // 4, oldPartitionSize
+    // 5, flags (partitionMutates INT, isLastWrittenPartition INT)
     // ... column top for every column
-    public static final int PARTITION_SINK_SIZE_LONGS = 5;
+    public static final int PARTITION_SINK_SIZE_LONGS = 6;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
@@ -4364,12 +4365,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             final long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
             long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
-            long timestampMin = Unsafe.getUnsafe().getLong(blockAddress + Long.BYTES);
+            long timestampMin = Unsafe.getUnsafe().getLong(blockAddress + 2 * Long.BYTES);
 
             if (partitionTimestamp != -1L && timestampMin != -1L) {
-                long newPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 2 * Long.BYTES);
-                long oldPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 3 * Long.BYTES);
-                long flags = Unsafe.getUnsafe().getLong(blockAddress + 4 * Long.BYTES);
+                long newPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 3 * Long.BYTES);
+                long oldPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 4 * Long.BYTES);
+                long flags = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
                 boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 boolean isLastWrittenPartition = Numbers.decodeHighInt(flags) != 0;
 
@@ -4572,6 +4573,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final RingQueue<O3CallbackTask> queue = messageBus.getO3CallbackQueue();
 
         o3DoneLatch.reset();
+        o3ErrorCount.set(0);
+
         int queuedCount = 0;
         for (int i = 0; i < columnCount; i++) {
             final int type = metadata.getColumnType(i);
@@ -5215,6 +5218,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
             final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
             o3DoneLatch.reset();
+            o3ErrorCount.set(0);
             int queuedCount = 0;
 
             for (int colIndex = 0; colIndex < columnCount; colIndex++) {
@@ -5291,6 +5295,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
 
         o3DoneLatch.reset();
+        o3ErrorCount.set(0);
         int queuedCount = 0;
         long excludeSymbolsL = excludeSymbols ? 1 : 0;
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
@@ -5337,6 +5342,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
 
         o3DoneLatch.reset();
+        o3ErrorCount.set(0);
         int queuedCount = 0;
         for (int i = 0; i < columnCount; i++) {
             final int type = metadata.getColumnType(i);
@@ -5885,6 +5891,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, partitionTimestamp); // original partition timestamp in case it is split
 
                     if (append) {
                         // we are appending last partition, make sure it has been mapped!
@@ -7582,6 +7589,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
             long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
+            long oldPartitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress + Long.BYTES);
+
+            boolean splitPartition = partitionTimestamp != oldPartitionTimestamp;
+            if (splitPartition) {
+                // This is partition split. Copy all the column name txns from the donor partition.
+                columnVersionWriter.copyPartition(oldPartitionTimestamp, partitionTimestamp);
+            }
 
             if (partitionTimestamp > -1) {
                 blockAddress += PARTITION_SINK_SIZE_LONGS * Long.BYTES;
@@ -7593,6 +7607,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Upsert even when colTop value is 0.
                         // TableReader uses the record to determine if the column is supposed to be present for the partition.
                         columnVersionWriter.upsertColumnTop(partitionTimestamp, column, colTop);
+                    } else if (splitPartition) {
+                        // Remove column tops for the new partition part.
+                        columnVersionWriter.removeColumnTop(partitionTimestamp, column);
                     }
                 }
             }
