@@ -329,33 +329,33 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
         TableToken tableToken = new TableToken("test", "test~1", 42, true);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, false, false);
-        logic.trackDiscoveredSegment(1, 2, false, false);
-        logic.trackDiscoveredSegment(1, 3, false, false);
-        logic.trackDiscoveredSegment(1, 4, false, false);
-        logic.trackDiscoveredSegment(1, 5, false, false);
-        logic.trackDiscoveredSegment(1, 6, false, true);
-        logic.trackDiscoveredSegment(1, 7, false, false);
-        logic.trackDiscoveredWal(1, false, true);
-        logic.trackDiscoveredSegment(2, 0, false, false);
-        logic.trackDiscoveredSegment(2, 1, false, false);
-        logic.trackDiscoveredSegment(2, 2, false, false);
-        logic.trackDiscoveredSegment(2, 3, false, false);
-        logic.trackDiscoveredSegment(2, 4, false, true);
-        logic.trackDiscoveredWal(2, false, true);
-        logic.trackDiscoveredSegment(3, 0, false, false);
-        logic.trackDiscoveredSegment(3, 1, false, false);
-        logic.trackDiscoveredSegment(3, 2, false, false);
-        logic.trackDiscoveredSegment(3, 3, false, true);
-        logic.trackDiscoveredWal(3, false, true);
-        logic.trackDiscoveredSegment(4, 0, false, false);
-        logic.trackDiscoveredSegment(4, 1, false, false);
-        logic.trackDiscoveredSegment(4, 2, false, false);
-        logic.trackDiscoveredSegment(4, 3, false, false);
-        logic.trackDiscoveredSegment(4, 4, false, false);
-        logic.trackDiscoveredSegment(4, 5, false, false);
-        logic.trackDiscoveredSegment(4, 6, false, true);
-        logic.trackDiscoveredWal(4, false, true);
+        logic.trackDiscoveredSegment(1, 1, 1);
+        logic.trackDiscoveredSegment(1, 2, 2);
+        logic.trackDiscoveredSegment(1, 3, 3);
+        logic.trackDiscoveredSegment(1, 4, 4);
+        logic.trackDiscoveredSegment(1, 5, 5);
+        logic.trackDiscoveredSegment(1, 6, -1);
+        logic.trackDiscoveredSegment(1, 7, 6);
+        logic.trackDiscoveredWal(1, -1);
+        logic.trackDiscoveredSegment(2, 0, 7);
+        logic.trackDiscoveredSegment(2, 1, 8);
+        logic.trackDiscoveredSegment(2, 2, 9);
+        logic.trackDiscoveredSegment(2, 3, 10);
+        logic.trackDiscoveredSegment(2, 4, -1);
+        logic.trackDiscoveredWal(2, -1);
+        logic.trackDiscoveredSegment(3, 0, 11);
+        logic.trackDiscoveredSegment(3, 1, 12);
+        logic.trackDiscoveredSegment(3, 2, 13);
+        logic.trackDiscoveredSegment(3, 3, -1);
+        logic.trackDiscoveredWal(3, -1);
+        logic.trackDiscoveredSegment(4, 0, 14);
+        logic.trackDiscoveredSegment(4, 1, 15);
+        logic.trackDiscoveredSegment(4, 2, 16);
+        logic.trackDiscoveredSegment(4, 3, 17);
+        logic.trackDiscoveredSegment(4, 4, 18);
+        logic.trackDiscoveredSegment(4, 5, 19);
+        logic.trackDiscoveredSegment(4, 6, -1);
+        logic.trackDiscoveredWal(4, -1);
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.trackNextToApplySegment(3, 0);
@@ -380,12 +380,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
         TableToken tableToken = new TableToken("test", "test~1", 42, true);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, false, false);
-        logic.trackDiscoveredSegment(1, 2, false, true);
-        logic.trackDiscoveredSegment(1, 3, false, false);
-        logic.trackDiscoveredWal(1, false, true);
-        logic.trackDiscoveredSegment(2, 0, false, true);
-        logic.trackDiscoveredWal(2, false, true);
+        logic.trackDiscoveredSegment(1, 1, 1);
+        logic.trackDiscoveredSegment(1, 2, -1);
+        logic.trackDiscoveredSegment(1, 3, 2);
+        logic.trackDiscoveredWal(1, -1);
+        logic.trackDiscoveredSegment(2, 0, -1);
+        logic.trackDiscoveredWal(2, -1);
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.run();
@@ -560,11 +560,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
+            public int rmdir(Path name) {
                 if (!allowRemove.get()) {
-                    return false;
+                    return 5;
                 } else {
-                    return super.remove(name);
+                    return super.rmdir(name);
                 }
             }
         };
@@ -580,16 +580,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             drainWalQueue();
 
+            allowRemove.set(true);
             engine.releaseInactive();
-
 
             allowRemove.set(false);
             runWalPurgeJob(ff);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalExistence(true, tableName, 1);
 
             allowRemove.set(true);
             runWalPurgeJob(ff);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalExistence(false, tableName, 1);
         });
     }
 
@@ -1158,15 +1158,23 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
         public final ObjList<DeletionEvent> events = new ObjList<>();
+        public final IntList closedFds = new IntList();
 
         @Override
-        public void deleteSegmentDirectory(int walId, int segmentId) {
+        public void deleteSegmentDirectory(int walId, int segmentId, int lockId) {
             events.add(new DeletionEvent(walId, segmentId));
         }
 
         @Override
-        public void deleteWalDirectory(int walId) {
+        public void deleteWalDirectory(int walId, int lockId) {
             events.add(new DeletionEvent(walId));
+        }
+
+        @Override
+        public void unlock(int lockId) {
+            if (lockId > -1) {
+                closedFds.add(lockId);
+            }
         }
     }
 }
