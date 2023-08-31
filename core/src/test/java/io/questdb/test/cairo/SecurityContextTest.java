@@ -151,7 +151,8 @@ public class SecurityContextTest {
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
-                            if (name.startsWith("authorizeShow")) {
+                            if (name.startsWith("authorizeShow")
+                                    || name.startsWith("authorizeSelect")) {
                                 continue;
                             }
                             Assert.fail();
