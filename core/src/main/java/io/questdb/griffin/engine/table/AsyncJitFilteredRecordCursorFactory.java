@@ -179,6 +179,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async JIT Filter");
+        sink.meta("workers").val(workerCount);
         //calc order and limit if possible 
         long rowsRemaining;
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
@@ -204,7 +205,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             sink.attr("limit").val(rowsRemaining);
         }
         sink.attr("filter").val(filterAtom);
-        sink.attr("workers").val(workerCount);
         sink.child(base, order);
     }
 

@@ -644,7 +644,14 @@ public class SqlOptimiser implements Mutable {
                         // single table reference
                         jc.slaveIndex = lhi;
                         if (canMovePredicate) {
-                            addWhereNode(parent, lhi, node);
+                            // we can't push anything into other left join
+                            if (jc.slaveIndex != joinIndex &&
+                                    joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
+                                addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
+                            } else {
+                                addWhereNode(parent, lhi, node);
+                            }
+                            return;
                         }
                     } else if (lhi < rhi) {
                         // we must align "a" nodes with slave index
@@ -3316,10 +3323,12 @@ public class SqlOptimiser implements Mutable {
 
     //push aggregate function calls to group by model, replace key column expressions with group by aliases
     //raise error if raw column usage doesn't match one of expressions on group by list
-    private ExpressionNode rewriteGroupBySelectExpression(final @Transient ExpressionNode topLevelNode,
-                                                          QueryModel groupByModel,
-                                                          ObjList<ExpressionNode> groupByNodes,
-                                                          ObjList<CharSequence> groupByAliases) throws SqlException {
+    private ExpressionNode rewriteGroupBySelectExpression(
+            final @Transient ExpressionNode topLevelNode,
+            QueryModel groupByModel,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases
+    ) throws SqlException {
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal

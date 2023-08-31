@@ -107,17 +107,20 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
     @Test//triggers DeferredSingleSymbolFilterDataFrameRecordCursorFactory
     public void testOrderByDescSelectByIndexedSymbolColumn() throws Exception {
-        runQueries("CREATE TABLE trips(l long,s symbol index capacity 10, ts TIMESTAMP) timestamp(ts) partition by month;",
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 10, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x, case when x <= 5 then 'ABC' when x <= 7 then 'DEF' else 'GHI' end," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
 
         assertQuery("l\ts\tts\n" +
                         "7\tDEF\t2022-01-09T22:40:00.000000Z\n" +
                         "6\tDEF\t2022-01-08T18:53:20.000000Z\n",
                 "select l, s, ts from trips where s = 'DEF' order by ts desc",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
@@ -132,18 +135,21 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByDescWithDataFrameRecordCursorFactory() throws Exception {
-        runQueries("CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x, 'A' || ( x%3 )," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
         //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
         assertQuery("l\ts\tts\n" +
                         "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
                         "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
@@ -153,11 +159,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByDescWithFilterOnExcludedValuesRecordCursorFactory() throws Exception {
-        runQueries("CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x, 'A' || ( x%3 )," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
         assertQuery("l\ts\tts\n" +
                         "9\tA0\t2022-01-12T06:13:20.000000Z\n" +
                         "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
@@ -166,16 +174,19 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "3\tA0\t2022-01-05T07:33:20.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s != 'A1' and test_match() order by ts desc",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
     public void testOrderByDescWithFilterOnSubQueryRecordCursorFactory() throws Exception {
-        runQueries("CREATE TABLE trips(l long,s symbol index capacity 10, ts TIMESTAMP) timestamp(ts) partition by month;",
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 10, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x, case when x<=3 then 'ABC' when x>6 and x <= 9 then 'DEF' else 'GHI' end," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
 
         assertQuery("l\ts\tts\n" +
                         "9\tDEF\t2022-01-12T06:13:20.000000Z\n" +
@@ -185,16 +196,19 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "2\tABC\t2022-01-04T03:46:40.000000Z\n" +
                         "1\tABC\t2022-01-03T00:00:00.000000Z\n",
                 "select l, s, ts from trips where s in (select 'DEF' union all select 'ABC' ) and length(s) = 3 order by ts desc",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
     public void testOrderByDescWithFilterOnValuesRecordCursorFactory() throws Exception {
-        runQueries("CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x, 'A' || ( x%3 )," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
         //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
         assertQuery("l\ts\tts\n" +
                         "9\tA0\t2022-01-12T06:13:20.000000Z\n" +
@@ -204,7 +218,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "3\tA0\t2022-01-05T07:33:20.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s in ('A2', 'A0') and length(s) = 2 order by ts desc",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
@@ -224,17 +239,20 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByDescWithMultipleNotEqualsSymbolConditions() throws Exception {
-        runQueries("CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x, 'A' || ( x%3 )," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
         assertQuery("l\ts\tts\n" +
                         "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
                         "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s != 'A1' and s != 'A0' and test_match() order by ts desc",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
@@ -285,9 +303,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "        VirtualRecord\n" +
                     "          functions: [timestamp_floor('minute',ts),concat([address,workspace]),address]\n" +
                     "            SelectedRecord\n" +
-                    "                Async JIT Filter\n" +
+                    "                Async JIT Filter workers: 1\n" +
                     "                  filter: (workspace='a' and method_id='d')\n" +
-                    "                  workers: 1\n" +
                     "                    DataFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: tab\n");
@@ -326,9 +343,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "      keys: [ts, month, method_id]\n" +
                     "        VirtualRecord\n" +
                     "          functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]\n" +
-                    "            Async JIT Filter\n" +
+                    "            Async JIT Filter workers: 1\n" +
                     "              filter: (workspace='a' and method_id='d')\n" +
-                    "              workers: 1\n" +
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: tab\n");
@@ -371,16 +387,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "            SelectedRecord\n" +
                     "                Hash Join Light\n" +
                     "                  condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace\n" +
-                    "                    Async JIT Filter\n" +
+                    "                    Async JIT Filter workers: 1\n" +
                     "                      filter: (workspace='a' and method_id='d')\n" +
-                    "                      workers: 1\n" +
                     "                        DataFrame\n" +
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: tab\n" +
                     "                    Hash\n" +
-                    "                        Async JIT Filter\n" +
+                    "                        Async JIT Filter workers: 1\n" +
                     "                          filter: (method_id='d' and workspace='a')\n" +
-                    "                          workers: 1\n" +
                     "                            DataFrame\n" +
                     "                                Row forward scan\n" +
                     "                                Frame forward scan on: tab\n");
@@ -421,9 +435,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "    Sort light\n" +
                     "      keys: [mta_tax]\n" +
                     "        SelectedRecord\n" +
-                    "            Async Filter\n" +
+                    "            Async Filter workers: 1\n" +
                     "              filter: vendor_id in [A1,A2]\n" +
-                    "              workers: 1\n" +
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: trips\n" +
@@ -473,9 +486,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n" +
                     "                Hash\n" +
-                    "                    Async Filter\n" +
+                    "                    Async Filter workers: 1\n" +
                     "                      filter: vendor_id in [A1,A2]\n" +
-                    "                      workers: 1\n" +
                     "                        DataFrame\n" +
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: t2\n");
@@ -488,7 +500,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByTimestampWithColumnTops() throws Exception {
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
+        runQueries(
+                "CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000) " +
@@ -500,7 +513,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  timestamp_sequence(to_timestamp('2022-01-02T12:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000), " +
                         "  x * 10, " +
                         "  cast(x * 100 as string) " +
-                        "  from long_sequence(10)");
+                        "  from long_sequence(10)"
+        );
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "10\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
@@ -508,7 +522,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "8\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
                         "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
                 "select l as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "1010\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
@@ -516,7 +531,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "1008\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
                         "1010\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
                 "select l + 1000 as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "9\t2022-01-01T22:13:20.000000Z\tNaN\t\n" +
@@ -524,7 +540,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "9\t2022-01-03T10:13:20.000000Z\t90\t900\n" +
                         "10\t2022-01-03T13:00:00.000000Z\t100\t1000\n",
                 "select l, ts, col1, col2 from trips where l > 8 order by ts",
-                null, "ts", true, false);
+                null, "ts", true, false
+        );
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "4\t2022-01-02T20:20:00.000000Z\t40\t400\n" +
@@ -533,32 +550,38 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "8\t2022-01-01T19:26:40.000000Z\tNaN\t\n" +
                         "7\t2022-01-01T16:40:00.000000Z\tNaN\t\n",
                 "select l, ts, col1, col2 from trips where ts between '2022-01-01T14' and '2022-01-02T23' and l > 3 order by ts desc limit 5",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
     public void testOrderByTimestampWithComplexJitFilter() throws Exception {
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
+        runQueries(
+                "CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(1000);");
+                        "  from long_sequence(1000);"
+        );
 
         assertQuery("l\tts\n" +
                         "5\t2022-01-07T15:06:40.000000Z\n",
                 "select l, ts from trips " +
                         "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
                         "order by ts desc limit 1",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
     public void testOrderByTimestampWithComplexJitFilterAndLimit() throws Exception {
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
+        runQueries(
+                "CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(1000);");
+                        "  from long_sequence(1000);"
+        );
 
         assertQuery("l\tts\n" +
                         "2\t2022-01-04T03:46:40.000000Z\n" +
@@ -566,17 +589,20 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
                         "order by ts desc limit 3, 5",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
     public void testOrderByTimestampWithJitAndIntervalFilters() throws Exception {
 
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
+        runQueries(
+                "CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence('2022-01-03', 50000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
 
         assertQuery("l\tts\n" +
                         "3\t2022-01-04T03:46:40.000000Z\n" +
@@ -585,17 +611,20 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < '2022-01-04T04' " +
                         "order by ts desc",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
     public void testOrderByTimestampWithJitFilterAndLimitAsc() throws Exception {
 
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+        runQueries(
+                "CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
 
         assertQuery("l\tts\n" +
                         "1\t2022-01-03T00:00:00.000000Z\n" +
@@ -604,17 +633,20 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "4\t2022-01-06T11:20:00.000000Z\n" +
                         "5\t2022-01-07T15:06:40.000000Z\n",
                 "select l, ts from trips where l <=5 order by ts asc limit 5",
-                null, "ts###ASC", true, false);
+                null, "ts###ASC", true, false
+        );
     }
 
     @Test
     public void testOrderByTimestampWithJitFilterAndLimitDesc() throws Exception {
 
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+        runQueries(
+                "CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
 
         assertQuery("l\tts\n" +
                         "5\t2022-01-07T15:06:40.000000Z\n" +
@@ -623,7 +655,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "2\t2022-01-04T03:46:40.000000Z\n" +
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <=5 order by ts desc limit 5",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     @Test
@@ -636,11 +669,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         int jitMode = sqlExecutionContext.getJitMode();
         try {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+            runQueries(
+                    "CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                     "insert into trips " +
                             "  select x," +
                             "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                            "  from long_sequence(10);");
+                            "  from long_sequence(10);"
+            );
 
             assertQuery("l\tts\n" +
                             "5\t2022-01-07T15:06:40.000000Z\n" +
@@ -649,7 +684,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                             "2\t2022-01-04T03:46:40.000000Z\n" +
                             "1\t2022-01-03T00:00:00.000000Z\n",
                     "select l, ts from trips where l <=5 order by ts desc limit 5",
-                    null, "ts###DESC", true, false);
+                    null, "ts###DESC", true, false
+            );
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
         }
@@ -678,7 +714,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "order by ts",
                 "create table weather as " +
                         "(select cast(x*36000000000 as timestamp) ts, \n" +
-                        "  rnd_float(0)*100 temp from long_sequence(1000));", null);
+                        "  rnd_float(0)*100 temp from long_sequence(1000));", null
+        );
     }
 
     private void runQueries(String... queries) throws Exception {
@@ -690,11 +727,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     }
 
     private void testOrderByTimestampWithFilterDesc() throws Exception {
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+        runQueries(
+                "CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
 
         assertQuery("l\tts\n" +
                         "5\t2022-01-07T15:06:40.000000Z\n" +
@@ -703,7 +742,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "2\t2022-01-04T03:46:40.000000Z\n" +
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <= 5 order by ts desc",
-                null, "ts###DESC", true, false);
+                null, "ts###DESC", true, false
+        );
     }
 
     private void testOrderByWithFilter(String type, int order) throws Exception {
@@ -723,7 +763,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
             function = "rnd_#TYPE#(4,100,50)";
         }
 
-        runQueries("CREATE TABLE test(x #TYPE#, ts TIMESTAMP) timestamp(ts) partition by month;".replace("#TYPE#", type),
+        runQueries(
+                "CREATE TABLE test(x #TYPE#, ts TIMESTAMP) timestamp(ts) partition by month;".replace("#TYPE#", type),
                 //should create 3+ partitions with randomly ordered x values
                 ("insert into test " +
                         "select #FUNC#,\n" +
@@ -736,7 +777,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "union all " +
                         "select cast(3 as #TYPE#), rnd_timestamp('2022-01-01'::timestamp + 67*100000000000, '2022-01-03'::timestamp + 100*100000000000 , 0)\n")
                         .replace("#FUNC#", function)
-                        .replace("#TYPE#", type));
+                        .replace("#TYPE#", type)
+        );
         //add new column and create more partitions to trigger jit col tops case
         assertMemoryLeak(() -> compile("alter table test add column y double;"));
         runQueries(("insert into test select #FUNC#, timestamp_sequence('2022-01-01'::timestamp + 100*100000000000, 100000000000), rnd_double() " +
@@ -767,15 +809,18 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         if ("string".equals(type) || "symbol".equals(type)) {
             assertQuery(expectedResult,
                     ("select x from test where x in ('1', '2', '3') and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false);
+                    null, null, true, false
+            );
         } else if ("char".equals(type)) {
             assertQuery(expectedResult,
                     ("select x from test where x in (cast(1 as char), cast(2 as char), cast(3 as char)) and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false);
+                    null, null, true, false
+            );
         } else {
             assertQuery(expectedResult,
                     ("select x from test where x <= 3 and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false);
+                    null, null, true, false
+            );
         }
     }
 }
