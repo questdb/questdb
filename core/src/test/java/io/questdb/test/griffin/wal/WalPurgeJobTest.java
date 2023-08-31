@@ -326,7 +326,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
               (1,1),(2,0),(3,0),(4,0)]
          */
         TestDeleter deleter = new TestDeleter();
-        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", 42, true);
         logic.reset(tableToken);
         logic.trackDiscoveredSegment(1, 1, 1);
@@ -377,7 +377,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
               (1,1),(2,0)]
          */
         TestDeleter deleter = new TestDeleter();
-        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", 42, true);
         logic.reset(tableToken);
         logic.trackDiscoveredSegment(1, 1, 1);

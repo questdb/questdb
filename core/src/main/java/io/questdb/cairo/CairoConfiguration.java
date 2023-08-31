@@ -466,6 +466,10 @@ public interface CairoConfiguration {
 
     long getWalPurgeInterval();
 
+    default int getWalPurgeWaitBeforeDelete() {
+        return 0;
+    }
+
     int getWalRecreateDistressedSequencerAttempts();
 
     long getWalSegmentRolloverRowCount();

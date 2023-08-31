@@ -296,6 +296,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walEnabledDefault;
     private final int walMaxLagTxnCount;
     private final long walPurgeInterval;
+    private final int walPurgeWaitBeforeDelete;
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
     private final double walSquashUncommittedRowsMultiplier;
@@ -503,6 +504,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
         this.walPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
+        this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
@@ -2487,6 +2489,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalPurgeInterval() {
             return walPurgeInterval;
+        }
+
+        @Override
+        public int getWalPurgeWaitBeforeDelete() {
+            return walPurgeWaitBeforeDelete;
         }
 
         @Override

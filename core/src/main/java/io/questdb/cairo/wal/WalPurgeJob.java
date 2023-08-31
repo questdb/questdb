@@ -76,7 +76,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         assert WalUtils.WAL_NAME_BASE.equals("wal");
         configuration = engine.getConfiguration();
 
-        logic = new Logic(new FsDeleter());
+        logic = new Logic(new FsDeleter(), engine.getConfiguration().getWalPurgeWaitBeforeDelete());
     }
 
     public WalPurgeJob(CairoEngine engine) {
@@ -156,8 +156,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             discoverWalSegments();
             if (logic.hasOnDiskSegments()) {
 
-                tableDropped = fetchSequencerPairs();
-
+                try {
+                    tableDropped = fetchSequencerPairs();
+                } catch (Throwable th) {
+                    logic.releaseLocks();
+                    throw th;
+                }
                 // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
                 // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
                 // pending segments that are yet to be applied to the table.
@@ -206,18 +210,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", msg=").$((Throwable) ce)
                     .$(", errno=").$(ff.errno()).$(']').$();
         }
-    }
-
-    private boolean deleteFile(Path path) {
-        if (!ff.remove(path)) {
-            final int errno = ff.errno();
-            if (errno != 2) {
-                LOG.error().$("Could not delete file [path=").$(path)
-                        .$(", errno=").$(errno).$(']').$();
-                return false;
-            }
-        }
-        return true;
     }
 
     private void discoverWalSegments() {
@@ -448,13 +440,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     public static class Logic {
         private final StringSink debugBuffer = new StringSink();
         private final Deleter deleter;
+        private final int waitBeforeDelete;
         private final IntList discovered = new IntList();
         private final IntIntHashMap nextToApply = new IntIntHashMap();
         private boolean sequencerPending;
         private TableToken tableToken;
 
-        public Logic(Deleter deleter) {
+
+        public Logic(Deleter deleter, int waitBeforeDelete) {
             this.deleter = deleter;
+            this.waitBeforeDelete = waitBeforeDelete;
         }
 
         public void accumDebugState() {
@@ -505,6 +500,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             return false;
         }
 
+        public void releaseLocks() {
+            for (int i = 0, n = getStateSize(); i < n; ++i) {
+                deleter.unlock(decodeLockId(discovered, i));
+            }
+        }
+
         public void reset(TableToken tableToken) {
             this.tableToken = tableToken;
             nextToApply.clear();
@@ -515,6 +516,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         public void run() {
             accumDebugState();
             int i = 0, n = getStateSize();
+            if (n > 0 && waitBeforeDelete > 0) {
+                Os.sleep(waitBeforeDelete);
+            }
 
             try {
                 for (; i < n; i++) {
@@ -548,7 +552,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                 }
             } finally {
-                for (; i < n; ++i) {
+                for (; i < n; i++) {
                     deleter.unlock(decodeLockId(discovered, i));
                 }
             }
