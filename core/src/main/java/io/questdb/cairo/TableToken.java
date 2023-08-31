@@ -33,22 +33,22 @@ import org.jetbrains.annotations.NotNull;
 public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
-    private final boolean isSystem;
+    private final boolean isProtected;
     private final boolean isWal;
     private final int tableId;
     @NotNull
     private final String tableName;
 
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem) {
-        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem);
+    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isProtected) {
+        this(tableName, new GcUtf8String(dirName), tableId, isWal, isProtected);
     }
 
-    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem) {
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isProtected) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
         this.isWal = isWal;
-        this.isSystem = isSystem;
+        this.isProtected = isProtected;
     }
 
     @Override
@@ -60,7 +60,7 @@ public class TableToken implements Sinkable {
 
         if (tableId != that.tableId) return false;
         if (isWal != that.isWal) return false;
-        if (isSystem != that.isSystem) return false;
+        if (isProtected != that.isProtected) return false;
         if (!tableName.equals(that.tableName)) return false;
         return dirName.equals(that.dirName);
     }
@@ -98,8 +98,8 @@ public class TableToken implements Sinkable {
         return tableId;
     }
 
-    public boolean isSystem() {
-        return isSystem;
+    public boolean isProtected() {
+        return isProtected;
     }
 
     public boolean isWal() {
@@ -107,7 +107,7 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isWal, isSystem);
+        return new TableToken(newName, dirName, tableId, isWal, isProtected);
     }
 
     @Override

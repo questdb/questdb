@@ -284,8 +284,8 @@ public class TableNameRegistryFileStore implements Closeable {
                                 continue;
                             }
 
-                            boolean isSystem = protectedTableResolver.test(tableName);
-                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem);
+                            boolean isProtected = protectedTableResolver.test(tableName);
+                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isProtected);
                             nameTableTokenMap.put(tableName, token);
                             reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
                         }
@@ -369,8 +369,8 @@ public class TableNameRegistryFileStore implements Closeable {
                     continue;
                 }
 
-                boolean isSystem = protectedTableResolver.test(tableName);
-                final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem);
+                boolean isProtected = protectedTableResolver.test(tableName);
+                final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isProtected);
                 nameTableTokenMap.put(tableName, token);
                 if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                     // This table is renamed, log system to real table name mapping

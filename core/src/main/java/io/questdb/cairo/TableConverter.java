@@ -84,8 +84,8 @@ public class TableConverter {
                                 }
 
                                 final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                                boolean system = protectedTableResolver.test(tableName);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, system);
+                                boolean isProtected = protectedTableResolver.test(tableName);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isProtected);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);

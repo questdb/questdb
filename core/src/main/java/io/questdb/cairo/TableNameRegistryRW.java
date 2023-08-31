@@ -71,8 +71,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
-            boolean isSystem = protectedTableResolver.test(tableName);
-            return new TableToken(tableName, dirName, tableId, isWal, isSystem);
+            boolean isProtected = protectedTableResolver.test(tableName);
+            return new TableToken(tableName, dirName, tableId, isWal, isProtected);
         } else {
             return null;
         }
