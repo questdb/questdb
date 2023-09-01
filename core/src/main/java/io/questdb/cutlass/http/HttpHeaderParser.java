@@ -163,6 +163,10 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         return urlParams.get(name);
     }
 
+    public boolean hasBoundary() {
+        return boundary != null;
+    }
+
     public boolean isIncomplete() {
         return incomplete;
     }
