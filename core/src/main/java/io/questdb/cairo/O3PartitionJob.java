@@ -95,8 +95,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // and the size of new (o3Partition) will be non-zero
         long srcDataNewPartitionSize = newPartitionSize;
 
-        long o3NewPartitionSize = 0;
-
+        long o3SplitPartitionSize = 0;
 
         if (srcDataMax < 1) {
 
@@ -562,14 +561,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         srcDataNewPartitionSize = prefixHi + 1;
 
                         // size of the new partition, old (0) and new
-                        o3NewPartitionSize = newPartitionSize - srcDataNewPartitionSize;
+                        o3SplitPartitionSize = newPartitionSize - srcDataNewPartitionSize;
 
                         // large prefix copy, better to split the partition
                         LOG.info().$("o3 split partition [table=").$(tableWriter.getTableToken())
                                 .$(", timestamp=").$ts(oldPartitionTimestamp)
                                 .$(", nameTxn=").$(srcNameTxn)
                                 .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
-                                .$(", o3NewPartitionSize=").$(o3NewPartitionSize)
+                                .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
                                 .$(", newPartitionTimestamp=").$ts(partitionTimestamp)
                                 .$(", nameTxn=").$(txn)
                                 .I$();
@@ -639,7 +638,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     sortedTimestampsAddr,
                     srcDataNewPartitionSize,
                     oldPartitionSize,
-                    o3NewPartitionSize,
+                    o3SplitPartitionSize,
                     tableWriter,
                     columnCounter,
                     o3Basket,
@@ -923,7 +922,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int activeVarFd,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
-            long o3NewPartitionSize,
+            long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
@@ -976,7 +975,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     activeVarFd,
                     srcDataNewPartitionSize,
                     srcDataOldPartitionSize,
-                    o3NewPartitionSize,
+                    o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
                     partitionUpdateSinkAddr,
@@ -1024,7 +1023,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     activeVarFd,
                     srcDataNewPartitionSize,
                     srcDataOldPartitionSize,
-                    o3NewPartitionSize,
+                    o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
                     partitionUpdateSinkAddr,
@@ -1075,7 +1074,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int activeVarFd,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
-            long o3NewPartitionSize,
+            long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
@@ -1123,7 +1122,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 activeVarFd,
                 srcDataNewPartitionSize,
                 srcDataOldPartitionSize,
-                o3NewPartitionSize,
+                o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
                 partitionUpdateSinkAddr,
@@ -1166,7 +1165,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
-            long o3NewPartitionSize,
+            long o3SplitPartitionSize,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
@@ -1179,7 +1178,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         tableWriter.addPhysicallyWrittenRows(
                 isOpenColumnModeForAppend(openColumnMode)
                         ? srcOooBatchRowSize
-                        : o3NewPartitionSize == 0 ? srcDataNewPartitionSize : o3NewPartitionSize
+                        : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize
         );
 
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).I$();
@@ -1229,7 +1228,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                     final long duplicateCount = mergeRowCount - dedupRows;
                     if (duplicateCount > 0) {
-                        srcDataNewPartitionSize -= duplicateCount;
+                        // we could be de-duping a split partition
+                        // in which case only its size will be affected
+                        if (o3SplitPartitionSize > 0) {
+                            o3SplitPartitionSize -= duplicateCount;
+                        } else {
+                            srcDataNewPartitionSize -= duplicateCount;
+                        }
                         LOG.info()
                                 .$("dedup row reduction [table=").utf8(tableWriter.getTableToken().getTableName())
                                 .$(", partition=").$ts(partitionTimestamp)
@@ -1359,7 +1364,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 activeVarFd,
                                 srcDataNewPartitionSize,
                                 srcDataOldPartitionSize,
-                                o3NewPartitionSize,
+                                o3SplitPartitionSize,
                                 tableWriter,
                                 indexWriter,
                                 partitionUpdateSinkAddr,
@@ -1408,7 +1413,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 activeVarFd,
                                 srcDataNewPartitionSize,
                                 srcDataOldPartitionSize,
-                                o3NewPartitionSize,
+                                o3SplitPartitionSize,
                                 tableWriter,
                                 indexWriter,
                                 partitionUpdateSinkAddr,

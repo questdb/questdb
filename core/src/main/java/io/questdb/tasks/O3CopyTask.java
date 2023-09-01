@@ -50,7 +50,7 @@ public class O3CopyTask {
     private long dstVarSize;
     private int indexBlockCapacity;
     private BitmapIndexWriter indexWriter;
-    private long o3NewPartitionSize;
+    private long o3SplitPartitionSize;
     private AtomicInteger partCounter;
     private boolean partitionMutates;
     private long partitionTimestamp;
@@ -164,8 +164,8 @@ public class O3CopyTask {
         return indexWriter;
     }
 
-    public long getO3NewPartitionSize() {
-        return o3NewPartitionSize;
+    public long getO3SplitPartitionSize() {
+        return o3SplitPartitionSize;
     }
 
     public AtomicInteger getPartCounter() {
@@ -400,7 +400,7 @@ public class O3CopyTask {
         this.partitionMutates = partitionMutates;
         this.srcDataNewPartitionSize = srcDataNewPartitionSize;
         this.srcDataOldPartitionSize = srcDataOldPartitionSize;
-        this.o3NewPartitionSize = o3NewPartitionSize;
+        this.o3SplitPartitionSize = o3NewPartitionSize;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;

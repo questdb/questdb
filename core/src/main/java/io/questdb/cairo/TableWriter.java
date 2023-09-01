@@ -4291,11 +4291,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             AtomicInteger columnCounter,
             long maxTimestamp,
             long sortedTimestampsAddr,
-            long srcOooLo, long srcOooHi, long srcOooMax,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
             long oooTimestampMin,
             long oooTimestampMax,
             long partitionTimestamp,
-            long srcDataMax, boolean last,
+            long srcDataMax,
+            boolean last,
             long srcNameTxn,
             O3Basket o3Basket,
             long newPartitionSize,
@@ -4377,7 +4380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long flags = Unsafe.getUnsafe().getLong(blockAddress + 4 * Long.BYTES);
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = Numbers.decodeHighInt(flags) != 0;
-                final long o3NewPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+                final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
 
                 txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
                 int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
@@ -4407,15 +4410,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (partitionTimestamp < lastPartitionTimestamp) {
                     // increment fixedRowCount by number of rows old partition incremented
-                    this.txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3NewPartitionSize;
+                    this.txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
                 } else if (partitionTimestamp == lastPartitionTimestamp) {
                     // this is existing "last" partition
                     // was this partition split?
-                    if (o3NewPartitionSize > 0) {
+                    if (o3SplitPartitionSize > 0) {
                         // yep, it was
                         // the "current" active becomes fixed
                         this.txWriter.fixedRowCount += srcDataNewPartitionSize;
-                        commitTransientRowCount = o3NewPartitionSize;
+                        commitTransientRowCount = o3SplitPartitionSize;
                     } else {
                         commitTransientRowCount = srcDataNewPartitionSize;
                     }
@@ -4423,11 +4426,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // this is potentially a new last partition
                     this.txWriter.fixedRowCount += commitTransientRowCount;
                     // was this "new" partition split?
-                    if (o3NewPartitionSize > 0) {
+                    if (o3SplitPartitionSize > 0) {
                         // yep, it was
                         // the "current" partition instantly becomes fixed
                         this.txWriter.fixedRowCount += srcDataNewPartitionSize;
-                        commitTransientRowCount = o3NewPartitionSize;
+                        commitTransientRowCount = o3SplitPartitionSize;
                     } else {
                         commitTransientRowCount = srcDataNewPartitionSize;
                     }
@@ -4440,7 +4443,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", lastPartitionTimestamp=").$(lastPartitionTimestamp)
                         .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
                         .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
-                        .$(", o3NewPartitionSize=").$(o3NewPartitionSize)
+                        .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
                         .$(", commitTransientRowCount=").$(commitTransientRowCount)
                         .$(", fixedRowCount=").$(this.txWriter.fixedRowCount)
                         .I$();
@@ -4459,11 +4462,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             )
                             .$(", part1NewSize=").$(srcDataOldPartitionSize)
                             .$(", part2=").$(formatPartitionForTimestamp(newPartitionTimestamp, txWriter.txn))
-                            .$(", part2Size=").$(o3NewPartitionSize)
+                            .$(", part2Size=").$(o3SplitPartitionSize)
                             .I$();
                     this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, newPartitionTimestamp);
                     txWriter.bumpPartitionTableVersion();
-                    txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3NewPartitionSize, txWriter.txn);
+                    txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
                     if (partitionTimestamp == lastPartitionTimestamp) {
                         // Close last partition without truncating it.
                         long committedLastPartitionSize = txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp);

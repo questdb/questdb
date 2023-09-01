@@ -45,7 +45,7 @@ public class O3OpenColumnTask {
     private long mergeOOOHi;
     private long mergeOOOLo;
     private int mergeType;
-    private long o3NewPartitionSize;
+    private long o3SplitPartitionSize;
     private long oldPartitionTimestamp;
     private int openColumnMode;
     private AtomicInteger partCounter;
@@ -133,8 +133,8 @@ public class O3OpenColumnTask {
         return mergeType;
     }
 
-    public long getO3NewPartitionSize() {
-        return o3NewPartitionSize;
+    public long getO3SplitPartitionSize() {
+        return o3SplitPartitionSize;
     }
 
     public long getOldPartitionTimestamp() {
@@ -348,6 +348,6 @@ public class O3OpenColumnTask {
         this.columnNameTxn = columnNameTxn;
         this.srcDataNewPartitionSize = srcDataNewPartitionSize;
         this.srcDataOldPartitionSize = srcDataOldPartitionSize;
-        this.o3NewPartitionSize = o3NewPartitionSize;
+        this.o3SplitPartitionSize = o3NewPartitionSize;
     }
 }
