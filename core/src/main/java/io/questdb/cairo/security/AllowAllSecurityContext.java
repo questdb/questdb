@@ -183,11 +183,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeShowUser(CharSequence userName) {
-    }
-
-    @Override
-    public void authorizeShowUsers() {
+    public void authorizeSelectOnAnyColumn(TableToken tableToken) {
     }
 
     @Override
@@ -196,6 +192,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeShowGroups(CharSequence userName) {
+    }
+
+    @Override
+    public void authorizeShowPermissions(CharSequence entityName) {
     }
 
     @Override
@@ -211,7 +211,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeShowPermissions(CharSequence entityName) {
+    public void authorizeShowUser(CharSequence userName) {
+    }
+
+    @Override
+    public void authorizeShowUsers() {
     }
 
     @Override
