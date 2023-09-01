@@ -37,41 +37,43 @@ public class DirectIntListTest {
     private static final Log LOG = LogFactory.getLog(DirectIntListTest.class);
 
     @Test
-    public void testAddList() {
-        DirectIntList list = new DirectIntList(256, MemoryTag.NATIVE_DEFAULT);
-        DirectIntList list2 = new DirectIntList(256, MemoryTag.NATIVE_DEFAULT);
-        final int N = 100;
-        for (int i = 0; i < N; ++i) {
-            list.add(i);
-            list2.add(N + i);
+    public void testAddAll() {
+        try (
+                DirectIntList list = new DirectIntList(256, MemoryTag.NATIVE_DEFAULT);
+                DirectIntList list2 = new DirectIntList(256, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            final int N = 100;
+            for (int i = 0; i < N; i++) {
+                list.add(i);
+                list2.add(N + i);
+            }
+            list.addAll(list2);
+            Assert.assertEquals(256, list.getCapacity());
+            Assert.assertEquals(2 * N, list.size());
+            for (long i = 0; i < list.size(); i++) {
+                Assert.assertEquals(i, list.get(i));
+            }
         }
-        list.add(list2);
-        Assert.assertEquals(256, list.getCapacity());
-        Assert.assertEquals(2 * N, list.size());
-        for (long i = 0; i < list.size(); ++i) {
-            Assert.assertEquals(i, list.get(i));
-        }
-        list.close();
-        list2.close();
     }
 
     @Test
-    public void testAddListExpand() {
-        DirectIntList list = new DirectIntList(128, MemoryTag.NATIVE_DEFAULT);
-        DirectIntList list2 = new DirectIntList(128, MemoryTag.NATIVE_DEFAULT);
-        final int N = 100;
-        for (int i = 0; i < N; ++i) {
-            list.add(i);
-            list2.add(N + i);
+    public void testAddAllExpand() {
+        try (
+                DirectIntList list = new DirectIntList(128, MemoryTag.NATIVE_DEFAULT);
+                DirectIntList list2 = new DirectIntList(128, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            final int N = 100;
+            for (int i = 0; i < N; i++) {
+                list.add(i);
+                list2.add(N + i);
+            }
+            list.addAll(list2);
+            Assert.assertEquals(200, list.getCapacity()); // 128 + 100 - 28
+            Assert.assertEquals(2 * N, list.size());
+            for (long i = 0; i < list.size(); i++) {
+                Assert.assertEquals(i, list.get(i));
+            }
         }
-        list.add(list2);
-        Assert.assertEquals(200, list.getCapacity()); // 128 + 100 - 28
-        Assert.assertEquals(2 * N, list.size());
-        for (long i = 0; i < list.size(); ++i) {
-            Assert.assertEquals(i, list.get(i));
-        }
-        list.close();
-        list2.close();
     }
 
     @Test
@@ -79,35 +81,35 @@ public class DirectIntListTest {
         // use logger so that static memory allocation happens before our control measurement
         LOG.info().$("testCapacityAndSize").$();
         long expected = Unsafe.getMemUsed();
-        DirectIntList list = new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT);
-        Assert.assertEquals(1024, list.getCapacity());
+        try (DirectIntList list = new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(1024, list.getCapacity());
 
-        list.setCapacity(2048);
-        Assert.assertEquals(2048, list.getCapacity());
-        // verify that extend also shrinks capacity
-        list.setCapacity(1024);
-        Assert.assertEquals(1024, list.getCapacity());
+            list.setCapacity(2048);
+            Assert.assertEquals(2048, list.getCapacity());
+            // verify that extend also shrinks capacity
+            list.setCapacity(1024);
+            Assert.assertEquals(1024, list.getCapacity());
 
-        Assert.assertEquals(0, list.size());
-        long addr = list.getAddress();
-        Unsafe.getUnsafe().putLong(addr, 42);
-        Assert.assertEquals(42, list.get(0));
-        for (int i = 0; i < list.getCapacity(); ++i) {
-            list.add(i);
+            Assert.assertEquals(0, list.size());
+            long addr = list.getAddress();
+            Unsafe.getUnsafe().putLong(addr, 42);
+            Assert.assertEquals(42, list.get(0));
+            for (int i = 0; i < list.getCapacity(); i++) {
+                list.add(i);
+            }
+            for (long i = 0; i < list.size(); i++) {
+                Assert.assertEquals(i, list.get(i));
+            }
+            list.clear(0);
+            Assert.assertEquals(0, list.size());
+            for (long i = 0; i < list.getCapacity(); i++) {
+                Assert.assertEquals(0, list.get(i));
+            }
+            list.setPos(42);
+            Assert.assertEquals(42, list.size());
+            list.clear();
+            Assert.assertEquals(0, list.size());
         }
-        for (long i = 0; i < list.size(); ++i) {
-            Assert.assertEquals(i, list.get(i));
-        }
-        list.clear(0);
-        Assert.assertEquals(0, list.size());
-        for (long i = 0; i < list.getCapacity(); ++i) {
-            Assert.assertEquals(0, list.get(i));
-        }
-        list.setPos(42);
-        Assert.assertEquals(42, list.size());
-        list.clear();
-        Assert.assertEquals(0, list.size());
-        list.close(); //release memory
         Assert.assertEquals(expected, Unsafe.getMemUsed());
     }
 
@@ -125,17 +127,64 @@ public class DirectIntListTest {
     }
 
     @Test
+    public void testSet() {
+        try (DirectIntList list = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)) {
+            final int N = 100;
+            for (int i = 0; i < N; i++) {
+                list.add(i);
+            }
+            Assert.assertEquals(128, list.getCapacity());
+            Assert.assertEquals(N, list.size());
+            for (long i = 0; i < list.size(); i++) {
+                Assert.assertEquals(i, list.get(i));
+            }
+
+            for (int i = 0; i < N; i++) {
+                list.set(i, N - i);
+            }
+            Assert.assertEquals(128, list.getCapacity());
+            Assert.assertEquals(N, list.size());
+            for (long i = 0; i < list.size(); i++) {
+                Assert.assertEquals(N - i, list.get(i));
+            }
+        }
+    }
+
+    @Test
+    public void testShrink() {
+        try (DirectIntList list = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)) {
+            final int N = 100;
+            for (int i = 0; i < N; i++) {
+                list.add(i);
+            }
+            Assert.assertEquals(128, list.getCapacity());
+            Assert.assertEquals(N, list.size());
+            for (long i = 0; i < list.size(); i++) {
+                Assert.assertEquals(i, list.get(i));
+            }
+
+            list.shrink(N);
+            Assert.assertEquals(N, list.getCapacity());
+            Assert.assertEquals(N, list.size());
+
+            list.shrink(16);
+            Assert.assertEquals(16, list.getCapacity());
+            Assert.assertEquals(16, list.size());
+        }
+    }
+
+    @Test
     public void testToString() {
         try (DirectIntList list = new DirectIntList(1001, MemoryTag.NATIVE_DEFAULT)) {
             final int N = 1000;
-            for (int i = 0; i < N; ++i) {
+            for (int i = 0; i < N; i++) {
                 list.add(i);
             }
             String str1 = list.toString();
             list.add(1001);
             String str2 = list.toString();
 
-            Assert.assertEquals(str1.substring(0, str1.length() - 1) + ", .. }", str2);
+            Assert.assertEquals(str1.substring(0, str1.length() - 1) + ", .. ]", str2);
         }
     }
 }
