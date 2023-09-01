@@ -693,8 +693,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             createInitialTable(tableNameNoWal, false, initialRowCount);
 
             ObjList<FuzzTransaction> transactions;
+            String timestampColumnName;
             try (TableReader reader = getReader(tableNameWal)) {
                 TableReaderMetadata metadata = reader.getMetadata();
+                timestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
                 long end = start + partitionCount * Timestamps.DAY_MICROS;
@@ -709,12 +711,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 applyNonWal(transactions, tableNameNoWal, rnd);
 
                 ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
-                ddl("alter table " + tableNameWal + " dedup upsert keys(ts)", sqlExecutionContext);
+                ddl("alter table " + tableNameWal + " dedup upsert keys(ts)");
                 applyWal(transactionsWithDups, tableNameWal, 1 + rnd.nextInt(4), rnd);
 
-                String limit = "";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                // assert table count() values
+                assertCounts(tableNameWal, timestampColumnName);
+                assertCounts(tableNameNoWal, timestampColumnName);
             } finally {
                 sharedWorkerPool.halt();
             }
