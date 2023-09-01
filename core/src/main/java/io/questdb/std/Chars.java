@@ -295,8 +295,7 @@ public final class Chars {
     }
 
     /**
-     * Compares two char sequences on assumption and right value is always lower case.
-     * Method converts every char of right sequence before comparing to left sequence.
+     * Case-insensitive comparison of two char sequences.
      *
      * @param l left sequence
      * @param r right sequence
@@ -312,13 +311,7 @@ public final class Chars {
             return false;
         }
 
-        for (int i = 0; i < ll; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
-                return false;
-            }
-        }
-
-        return true;
+        return equalsCharsIgnoreCase(l, r, ll);
     }
 
     public static boolean equalsIgnoreCaseNc(@NotNull CharSequence l, @Nullable CharSequence r) {
@@ -767,6 +760,11 @@ public final class Chars {
 
     public static boolean startsWith(CharSequence _this, char c) {
         return _this.length() > 0 && _this.charAt(0) == c;
+    }
+
+    public static boolean startsWithIgnoreCase(CharSequence _this, CharSequence that) {
+        final int len = that.length();
+        return _this.length() >= len && equalsCharsIgnoreCase(_this, that, len);
     }
 
     public static String stringFromUtf8Bytes(long lo, long hi) {
@@ -1306,6 +1304,15 @@ public final class Chars {
         }
         for (; i < len; i++) {
             if (l.byteAt(i) != r.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsCharsIgnoreCase(CharSequence l, CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
                 return false;
             }
         }

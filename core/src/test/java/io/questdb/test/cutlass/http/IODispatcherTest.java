@@ -7975,7 +7975,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
-        TableToken tableToken = new TableToken(tableName, dirName, 1, false);
+        TableToken tableToken = new TableToken(tableName, dirName, 1, false, false);
         try (TableReader reader = new TableReader(configuration, tableToken)) {
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
@@ -7991,7 +7991,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false);
         try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
             final StringSink sink = new StringSink();
             sink.clear();
