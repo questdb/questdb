@@ -35,13 +35,15 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
+import java.util.function.Predicate;
+
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
 public class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
 
-    public static ObjList<TableToken> convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public static ObjList<TableToken> convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI, Predicate<CharSequence> protectedTableResolver) {
         final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
             LOG.info().$("Table type conversion is disabled").$();
@@ -82,7 +84,8 @@ public class TableConverter {
                                 }
 
                                 final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled);
+                                boolean isProtected = protectedTableResolver.test(tableName);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isProtected);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);

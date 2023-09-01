@@ -103,7 +103,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
                 if (eventCallback != null) {
                     eventCallback.onSuspendEvent(event);
                 }
-                throw DataUnavailableException.instance(new TableToken("foo", "foo", 1, false), "2022-01-01", event);
+                throw DataUnavailableException.instance(new TableToken("foo", "foo", 1, false, false), "2022-01-01", event);
             }
             rows++;
             record.of(rows);
