@@ -4379,7 +4379,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long srcDataOldPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 3 * Long.BYTES);
                 final long flags = Unsafe.getUnsafe().getLong(blockAddress + 4 * Long.BYTES);
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
-                final boolean isLastWrittenPartition = Numbers.decodeHighInt(flags) != 0;
+                final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
 
                 txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);

@@ -214,8 +214,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcDataVarFd,
                 srcDataVarAddr,
                 srcDataVarSize,
-                srcOooMax,
-                srcOooPartitionHi,
                 timestampMin,
                 partitionTimestamp,
                 dstFixFd,
@@ -443,8 +441,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
-            long srcOooMax,
-            long srcOooPartitionHi,
             long timestampMin,
             long partitionTimestamp,
             int dstFixFd,
@@ -543,8 +539,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 updatePartition(
                         timestampMergeIndexAddr,
                         timestampMergeIndexSize,
-                        srcOooMax,
-                        srcOooPartitionHi,
                         timestampMin,
                         partitionTimestamp,
                         srcTimestampFd,
@@ -856,8 +850,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void updatePartition(
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcOooMax,
-            long srcOooPartitionHi,
             long timestampMin,
             long partitionTimestamp,
             int srcTimestampFd,
@@ -884,8 +876,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcDataNewPartitionSize,
                         srcDataOldPartitionSize,
                         o3SplitPartitionSize,
-                        partitionMutates,
-                        srcOooPartitionHi + 1 == srcOooMax
+                        partitionMutates
                 );
             }
         } finally {
@@ -1201,15 +1192,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             final long srcDataNewPartitionSize,
             final long srcDataOldPartitionSize,
             final long o3SplitPartitionSize,
-            boolean partitionMutates,
-            boolean isLastWrittenPartition
+            boolean partitionMutates
     ) {
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
-        long flags = Numbers.encodeLowHighInts(partitionMutates ? 1 : 0, isLastWrittenPartition ? 1 : 0);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, flags);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
 
         LOG.info()
