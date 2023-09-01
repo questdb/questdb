@@ -4436,7 +4436,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                LOG.info().$("o3 partition update [timestampMin=").$ts(timestampMin)
+                LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampMin)
                         .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
                         .$(", partitionTimestamp=").$ts(partitionTimestamp)
                         .$(", partitionMutates=").$(partitionMutates)

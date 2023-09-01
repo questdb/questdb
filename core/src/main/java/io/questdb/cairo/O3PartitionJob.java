@@ -480,7 +480,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                LOG.info()
+                LOG.debug()
                         .$("o3 merge [branch=").$(branch)
                         .$(", prefixType=").$(prefixType)
                         .$(", prefixLo=").$(prefixLo)
@@ -1238,11 +1238,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         LOG.info()
                                 .$("dedup row reduction [table=").utf8(tableWriter.getTableToken().getTableName())
                                 .$(", partition=").$ts(partitionTimestamp)
-                                .$(", old=").$(mergeDataHi - mergeDataLo + 1)
-                                .$(", new=").$(mergeOOOHi - mergeOOOLo + 1)
-                                .$(", dups=").$(duplicateCount)
+                                .$(", duplicateCount=").$(duplicateCount)
                                 .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                                 .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
+                                .$(", o3SplitPartitionSize=").$(srcDataOldPartitionSize)
+                                .$(", mergeDataLo=").$(mergeDataLo)
+                                .$(", mergeDataHi=").$(mergeDataHi)
+                                .$(", mergeOOOLo=").$(mergeOOOLo)
+                                .$(", mergeOOOHi=").$(mergeOOOHi)
                                 .I$();
                     }
                 } catch (Throwable e) {
