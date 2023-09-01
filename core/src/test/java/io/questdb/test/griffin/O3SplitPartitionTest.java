@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Vect;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -458,7 +459,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     compiler.compile("update x set str = str where ts >= '2020-02-04'", executionContext).execute(null).await();
 
-                    var colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
+                    LPSZ colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
                     LOG.info().$("deleting ").$(colVer).$();
                     Assert.assertTrue(Os.isWindows() || Files.remove(colVer));
 
