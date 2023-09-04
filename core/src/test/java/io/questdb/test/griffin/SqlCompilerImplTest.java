@@ -27,10 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -153,6 +150,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select * from a " +
                         "join b on a.ts = b.ts and a.i - b.i and b.i - a.i"
         );
+    }
+
+    @Test
+    public void testCachedRecordCursorFactory() throws SqlException {
+        try (SqlCompilerImpl compilerX = new SqlCompilerImpl(engine) {
+            @Override
+            protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) {
+                return new DummyRCF(Chars.toString(tok));
+            }
+        }) {
+            CompiledQuery compiledQuery = compilerX.compile("SHOW BANANAS", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.SELECT, compiledQuery.getType());
+            CompiledQuery compiledQuery2 = compilerX.compile("SHOW APPLES", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.SELECT, compiledQuery2.getType());
+        }
     }
 
     @Test
@@ -1867,13 +1879,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCompareStringAndChar() throws Exception {
         assertMemoryLeak(() -> {
-            // constant 
+            // constant
             assertSql("column\ntrue\n", "select 'ab' > 'a'");
             assertSql("column\nfalse\n", "select 'ab' = 'a'");
             assertSql("column\ntrue\n", "select 'ab' != 'a'");
             assertSql("column\nfalse\n", "select 'ab' < 'a'");
 
-            // non-constant 
+            // non-constant
             assertSql("column\ntrue\ntrue\n", "select x < 'd' from (select 'a' x union all select 'cd')");
             assertSql("column\ntrue\n", "select rnd_str('be', 'cd') < 'd' ");
             assertSql("column\ntrue\n", "select rnd_str('ac', 'be', 'cd') != 'd'");
@@ -3154,33 +3166,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             compile("insert into tab values (0, 0), (1, 1), (2,2)");
 
             for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
-                assertSql("count\n3\n",
+                assertSql(
+                        "count\n3\n",
                         "SELECT count(T2.created) " +
                                 "FROM tab as T1 " +
                                 "JOIN (SELECT * FROM tab) as T2 ON T1.created < T2.created " +
                                 join + " JOIN tab as T3 ON T2.value=T3.value"
                 );
             }
-            assertSql("count\n1\n",
+            assertSql(
+                    "count\n1\n",
                     "SELECT count(T2.created) " +
                             "FROM tab as T1 " +
                             "JOIN tab T2 ON T1.created < T2.created " +
                             "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
-                            "JOIN tab T4 on T3.created < T4.created");
+                            "JOIN tab T4 on T3.created < T4.created"
+            );
 
-            assertSql("count\n3\n",
+            assertSql(
+                    "count\n3\n",
                     "SELECT count(T2.created) " +
                             "FROM tab as T1 " +
                             "JOIN tab T2 ON T1.created < T2.created " +
                             "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
-                            "LEFT JOIN tab T4 on T3.created < T4.created");
+                            "LEFT JOIN tab T4 on T3.created < T4.created"
+            );
 
-            assertSql("count\n3\n",
+            assertSql(
+                    "count\n3\n",
                     "SELECT count(T2.created) " +
                             "FROM tab as T1 " +
                             "JOIN tab T2 ON T1.created < T2.created " +
                             "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
-                            "LEFT JOIN tab T4 on T3.created-T4.created = 0 ");
+                            "LEFT JOIN tab T4 on T3.created-T4.created = 0 "
+            );
         });
     }
 
@@ -4600,6 +4619,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotCachedRecordCursorFactory() throws SqlException {
+        try (SqlCompilerImpl compilerX = new SqlCompilerImpl(engine) {
+            @Override
+            protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) {
+                return new DummyNotCachedRCF(Chars.toString(tok));
+            }
+        }) {
+            CompiledQuery compiledQuery = compilerX.compile("SHOW BANANAS", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.PSEUDO_SELECT, compiledQuery.getType());
+            CompiledQuery compiledQuery2 = compilerX.compile("SHOW APPLES", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.PSEUDO_SELECT, compiledQuery2.getType());
+        }
+    }
+
+    @Test
     public void testOrderByDouble() throws Exception {
         assertQuery("d\n" +
                         "NaN\n" +
@@ -4621,7 +4655,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by \"\"");
         });
     }
-
 
     @Test
     public void testOrderByFloat() throws Exception {
@@ -5404,7 +5437,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
     }
 
-
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws SqlException {
         ddl(ddl);
         try (TableReader reader = getReader("y")) {
@@ -5724,6 +5756,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean isHappy();
 
         void run(CairoEngine engine);
+    }
+
+    private static class DummyNotCachedRCF extends DummyRCF implements NotCachedRecordCursorFactory {
+        public DummyNotCachedRCF(String name) {
+            super(name);
+        }
+    }
+
+    private static class DummyRCF extends AbstractRecordCursorFactory {
+        private final String name;
+
+        public DummyRCF(String name) {
+            super(null);
+            this.name = name;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return name != null;
+        }
     }
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
