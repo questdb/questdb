@@ -7585,9 +7585,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
             long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
             long oldPartitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress + Long.BYTES);
+            final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
 
-            boolean splitPartition = partitionTimestamp != oldPartitionTimestamp;
-            if (splitPartition) {
+            if (o3SplitPartitionSize > 0) {
                 // This is partition split. Copy all the column name txns from the donor partition.
                 columnVersionWriter.copyPartition(oldPartitionTimestamp, partitionTimestamp);
             }
@@ -7602,7 +7602,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Upsert even when colTop value is 0.
                         // TableReader uses the record to determine if the column is supposed to be present for the partition.
                         columnVersionWriter.upsertColumnTop(partitionTimestamp, column, colTop);
-                    } else if (splitPartition) {
+                    } else if (o3SplitPartitionSize > 0) {
                         // Remove column tops for the new partition part.
                         columnVersionWriter.removeColumnTop(partitionTimestamp, column);
                     }
