@@ -25,6 +25,11 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -32,6 +37,7 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -226,6 +232,25 @@ public final class TableUtils {
             }
         }
         return count;
+    }
+
+    public static long computeCursorSizeFromMap(RecordCursor masterCursor, Map map, RecordSink keySink) {
+        final Record masterRecord = masterCursor.getRecord();
+        long size = 0;
+        try {
+            masterCursor.toTop();
+            while (masterCursor.hasNext()) {
+                MapKey key = map.withKey();
+                key.put(masterRecord, keySink);
+                MapValue value = key.findValue();
+                if (value != null) {
+                    size += value.getLong(2);
+                }
+            }
+            return size;
+        } finally {
+            masterCursor.toTop();
+        }
     }
 
     public static void createColumnVersionFile(MemoryMARW mem) {
@@ -950,7 +975,7 @@ public final class TableUtils {
      */
     public static long mapRO(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         assert fd != -1;
-        assert offset % ff.getPageSize() == 0;
+        assert offset % Files.PAGE_SIZE == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
             throw CairoException.critical(ff.errno())
@@ -983,7 +1008,7 @@ public final class TableUtils {
      */
     public static long mapRW(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         assert fd != -1;
-        assert offset % ff.getPageSize() == 0;
+        assert offset % Files.PAGE_SIZE == 0;
         allocateDiskSpace(ff, fd, size + offset);
         return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
     }
@@ -1059,6 +1084,13 @@ public final class TableUtils {
         return page;
     }
 
+    public static void msync(FilesFacade ff, long addr, long len, boolean async) {
+        // Linux requires the msync address to be page aligned
+        long alignedAddr = Files.floorPageSize(addr);
+        long alignedExtraLen = addr - alignedAddr;
+        ff.msync(alignedAddr, len + alignedExtraLen, async);
+    }
+
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".o");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
@@ -1121,6 +1153,58 @@ public final class TableUtils {
         memory.jumpTo(0);
         createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    public static void populateRowIDHashMap(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            RecordCursor cursor,
+            Map keyMap,
+            RecordSink recordSink,
+            LongChain rowIDChain
+    ) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+
+            MapKey key = keyMap.withKey();
+            key.put(record, recordSink);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                final long offset = rowIDChain.put(record.getRowId(), -1);
+                value.putLong(0, offset);
+                value.putLong(1, offset);
+                value.putLong(2, 1);
+            } else {
+                value.putLong(1, rowIDChain.put(record.getRowId(), value.getLong(1)));
+                value.addLong(2, 1);
+            }
+        }
+    }
+
+    public static void populateRecordHashMap(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            RecordCursor cursor,
+            Map map,
+            RecordSink recordSink,
+            RecordChain chain
+    ) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+
+            MapKey key = map.withKey();
+            key.put(record, recordSink);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                long offset = chain.put(record, -1);
+                value.putLong(0, offset);
+                value.putLong(1, offset);
+                value.putLong(2, 1);
+            } else {
+                value.putLong(1, chain.put(record, value.getLong(1)));
+                value.addLong(2, 1);
+            }
+        }
     }
 
     public static int readIntOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, Path path) {

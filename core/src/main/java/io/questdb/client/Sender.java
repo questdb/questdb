@@ -459,7 +459,7 @@ public interface Sender extends Closeable {
              * the Sender to load a trust store from a classpath.
              *
              * @param trustStorePath     a path to a trust store.
-             * @param trustStorePassword a password to for the trustore
+             * @param trustStorePassword a password to for the truststore
              * @return an instance of LineSenderBuilder for further configuration
              */
             public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {

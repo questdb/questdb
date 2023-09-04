@@ -28,7 +28,7 @@ import io.questdb.mp.Job;
 
 import java.io.Closeable;
 
-public interface IODispatcher<C extends IOContext> extends Closeable, Job {
+public interface IODispatcher<C extends IOContext<C>> extends Closeable, Job {
     int DISCONNECT_REASON_KEEPALIVE_OFF = 1;
     int DISCONNECT_REASON_KEEPALIVE_OFF_RECV = 4;
     int DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES = 13;

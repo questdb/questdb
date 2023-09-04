@@ -57,9 +57,9 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     }
 
     public DataFrameCursor of(TableReader reader) {
-        this.reader = reader;
         partitionHi = reader.getPartitionCount();
         toTop();
+        this.reader = reader;
         return this;
     }
 

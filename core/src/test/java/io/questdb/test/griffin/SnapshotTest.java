@@ -79,7 +79,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
     }
@@ -656,13 +656,13 @@ public class SnapshotTest extends AbstractCairoTest {
             // all updates above should be applied to table
             assertSql(
                     "x\tsym\tts\tsym2\tiii\tjjj\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n",
+                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
+                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
+                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
+                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
+                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
+                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
+                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n",
                     tableName
             );
 
@@ -690,14 +690,14 @@ public class SnapshotTest extends AbstractCairoTest {
 
             assertSql(
                     "x\tsym\tts\tsym2\tiii\tjjj\tkkk\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
-                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n",
+                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
+                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
+                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
+                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\tNaN\n" +
+                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
+                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
+                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
+                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n",
                     tableName
             );
 
@@ -711,16 +711,16 @@ public class SnapshotTest extends AbstractCairoTest {
 
             assertSql(
                     "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
-                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
-                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
-                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n",
+                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
+                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\n" +
+                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\n" +
+                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
+                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
+                            "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
+                            "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n",
                     tableName
             );
 
@@ -758,18 +758,18 @@ public class SnapshotTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql(
                     "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\tNaN\n" +
-                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\tNaN\n" +
-                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
-                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
-                    "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
-                    "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n",
+                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\tNaN\n" +
+                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\tNaN\n" +
+                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\tNaN\n" +
+                            "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
+                            "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
+                            "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
+                            "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n",
                     tableName
             );
         });

@@ -91,8 +91,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr
@@ -115,6 +116,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .$(", srcOooPartitionLo=").$(srcOooPartitionLo)
                 .$(", srcOooPartitionHi=").$(srcOooPartitionHi)
                 .$(", mixedIOFlag=").$(mixedIOFlag)
+                .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
+                .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
+                .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
                 .I$();
 
         try {
@@ -208,8 +212,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcDataVarFd,
                 srcDataVarAddr,
                 srcDataVarSize,
-                srcOooMax,
-                srcOooPartitionHi,
                 timestampMin,
                 partitionTimestamp,
                 dstFixFd,
@@ -227,8 +229,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcTimestampAddr,
                 srcTimestampSize,
                 partitionMutates,
-                newPartitionSize,
-                oldPartitionSize,
+                srcDataNewPartitionSize,
+                srcDataOldPartitionSize,
+                o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
                 partitionUpdateSinkAddr
@@ -282,8 +285,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long srcTimestampAddr = task.getSrcTimestampAddr();
         final long srcTimestampSize = task.getSrcTimestampSize();
         final boolean partitionMutates = task.isPartitionMutates();
-        final long newPartitionSize = task.getNewPartitionSize();
-        final long oldPartitionSize = task.getOldPartitionSize();
+        final long srcDataNewPartitionSize = task.getSrcDataNewPartitionSize();
+        final long srcDataOldPartitionSize = task.getSrcDataOldPartitionSize();
+        final long o3SplitPartitionSize = task.getO3SplitPartitionSize();
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
         final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
@@ -337,8 +341,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcTimestampAddr,
                 srcTimestampSize,
                 partitionMutates,
-                newPartitionSize,
-                oldPartitionSize,
+                srcDataNewPartitionSize,
+                srcDataOldPartitionSize,
+                o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
                 partitionUpdateSinkAddr
@@ -432,8 +437,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
-            long srcOooMax,
-            long srcOooPartitionHi,
             long timestampMin,
             long partitionTimestamp,
             int dstFixFd,
@@ -451,8 +454,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr
@@ -531,16 +535,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 updatePartition(
                         timestampMergeIndexAddr,
                         timestampMergeIndexSize,
-                        srcOooMax,
-                        srcOooPartitionHi,
                         timestampMin,
                         partitionTimestamp,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
-                        newPartitionSize,
-                        oldPartitionSize,
+                        srcDataNewPartitionSize,
+                        srcDataOldPartitionSize,
+                        o3SplitPartitionSize,
                         partitionUpdateSinkAddr,
                         tableWriter
                 );
@@ -838,16 +841,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void updatePartition(
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcOooMax,
-            long srcOooPartitionHi,
             long timestampMin,
             long partitionTimestamp,
             int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
             long partitionUpdateSinkAddr,
             TableWriter tableWriter
     ) {
@@ -862,10 +864,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         partitionUpdateSinkAddr,
                         timestampMin,
                         partitionTimestamp,
-                        newPartitionSize,
-                        oldPartitionSize,
-                        partitionMutates,
-                        srcOooPartitionHi + 1 == srcOooMax
+                        srcDataNewPartitionSize,
+                        srcDataOldPartitionSize,
+                        o3SplitPartitionSize,
+                        partitionMutates
                 );
             }
         } finally {
@@ -1178,17 +1180,25 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             final long partitionUpdateSinkAddr,
             long timestampMin,
             long partitionTimestamp,
-            final long newPartitionSize,
-            final long oldPartitionSize,
-            boolean partitionMutates,
-            boolean isLastWrittenPartition
+            final long srcDataNewPartitionSize,
+            final long srcDataOldPartitionSize,
+            final long o3SplitPartitionSize,
+            boolean partitionMutates
     ) {
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
-        long flags = Numbers.encodeLowHighInts(partitionMutates ? 1 : 0, isLastWrittenPartition ? 1 : 0);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, flags);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
+
+        LOG.debug()
+                .$("sending partition update [partitionTimestamp=").$ts(partitionTimestamp)
+                .$(", partitionTimestamp=").$ts(timestampMin)
+                .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
+                .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
+                .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
+                .$();
 
         tableWriter.o3ClockDownPartitionUpdateCount();
     }

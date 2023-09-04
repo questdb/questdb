@@ -182,9 +182,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("GroupBy");
         sink.meta("vectorized").val(true);
+        sink.meta("workers").val(workerCount);
         sink.attr("keys").val("[").putBaseColumnNameNoRemap(keyColumnIndex).val("]");
         sink.optAttr("values", vafList, true);
-        sink.attr("workers").val(workerCount);
         sink.child(base);
     }
 
@@ -541,31 +541,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             private final Long256Impl long256A = new Long256Impl();
             private final Long256Impl long256B = new Long256Impl();
             private long pRow;
-
-            @Override
-            public BinarySequence getBin(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public long getBinLen(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public boolean getBool(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public byte getByte(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public char getChar(int col) {
-                throw new UnsupportedOperationException();
-            }
 
             @Override
             public long getDate(int col) {

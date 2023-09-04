@@ -257,7 +257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             @NotNull CharSequence query,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
+    ) throws Exception {
         clear();
         lexer.of(query);
         isSingleQueryMode = false;

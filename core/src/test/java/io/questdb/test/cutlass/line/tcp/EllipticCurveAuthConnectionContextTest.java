@@ -63,7 +63,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         integerDefaultColumnType = ColumnType.LONG;
         lineTcpConfiguration = createReceiverConfiguration(true, new LineTcpNetworkFacade() {
             @Override
-            public int send(int fd, long buffer, int bufferLen) {
+            public int sendRaw(int fd, long buffer, int bufferLen) {
                 Assert.assertEquals(FD, fd);
                 if (null != sentBytes) {
                     return 0;
@@ -305,7 +305,8 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                         false,
                         false,
                         true,
-                        null);
+                        null
+                );
                 Assert.assertTrue(authSequenceCompleted);
             } catch (RuntimeException ex) {
                 // Expected that Java 8 does not have SHA256withECDSAinP1363
@@ -331,7 +332,8 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         runInAuthContext(() -> {
             try {
                 boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1,
-                        "weather,location=us-midwest temperature=82 1465839830100400200\n");
+                        "weather,location=us-midwest temperature=82 1465839830100400200\n"
+                );
                 Assert.assertTrue(authSequenceCompleted);
             } catch (RuntimeException ex) {
                 // Expected that Java 8 does not have SHA256withECDSAinP1363
@@ -421,25 +423,30 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                 false,
                 false,
                 null,
-                extraData);
+                extraData
+        );
     }
 
-    private boolean authenticate(boolean fragmentKeyId,
-                                 boolean fragmentChallenge,
-                                 boolean fragmentSignature,
-                                 boolean useP1363Encoding,
-                                 byte[] junkSignature) {
+    private boolean authenticate(
+            boolean fragmentKeyId,
+            boolean fragmentChallenge,
+            boolean fragmentSignature,
+            boolean useP1363Encoding,
+            byte[] junkSignature
+    ) {
         return authenticate(AbstractLineTcpReceiverTest.AUTH_KEY_ID1, AbstractLineTcpReceiverTest.AUTH_PRIVATE_KEY1, fragmentKeyId, fragmentChallenge, fragmentSignature, useP1363Encoding, junkSignature, "");
     }
 
-    private boolean authenticate(String authKeyId,
-                                 PrivateKey authPrivateKey,
-                                 boolean fragmentKeyId,
-                                 boolean fragmentChallenge,
-                                 boolean fragmentSignature,
-                                 boolean useP1363Encoding,
-                                 byte[] junkSignature,
-                                 String extraData) {
+    private boolean authenticate(
+            String authKeyId,
+            PrivateKey authPrivateKey,
+            boolean fragmentKeyId,
+            boolean fragmentChallenge,
+            boolean fragmentSignature,
+            boolean useP1363Encoding,
+            byte[] junkSignature,
+            String extraData
+    ) {
         send(authKeyId + "\n", fragmentKeyId);
         byte[] challengeBytes = readChallenge(fragmentChallenge);
         if (null == challengeBytes) {

@@ -30,7 +30,6 @@ import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.QueryCache;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -39,7 +38,6 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.rules.TemporaryFolder;
 
-import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -124,6 +122,6 @@ public class HttpHealthCheckTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
+        void run(CairoEngine engine);
     }
 }

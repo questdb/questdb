@@ -110,10 +110,6 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
         return true;
     }
 
-    public boolean excludes(int key) {
-        return keyIndex(key) > -1;
-    }
-
     public int get(int index) {
         return list.getQuick(index);
     }

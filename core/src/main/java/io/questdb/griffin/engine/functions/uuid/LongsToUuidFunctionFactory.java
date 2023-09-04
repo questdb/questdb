@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
@@ -44,7 +43,7 @@ public final class LongsToUuidFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function loLong = args.getQuick(0);
         final Function hiLong = args.getQuick(1);
         if (loLong.isConstant() && hiLong.isConstant()) {
