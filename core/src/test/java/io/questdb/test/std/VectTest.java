@@ -314,14 +314,14 @@ public class VectTest {
                     for (int i = 0; i < srcLen; i++) {
                         src.set(i, (i + 1) * 10);
                     }
-                    Assert.assertEquals("{10, 20, 30, 40, 50, 60, 70, 80, 90, 100}", src.toString());
+                    Assert.assertEquals("[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]", src.toString());
 
                     index.setPos(indexLen * 2);
                     for (int i = 0; i < indexLen * 2; i += 2) {
                         index.set(i, (i + 1) * 10L);
                         index.set(i + 1, i / 2);
                     }
-                    Assert.assertEquals("{10, 0, 30, 1, 50, 2, 70, 3, 90, 4, 110, 5, 130, 6, 150, 7, 170, 8, 190, 9}", index.toString());
+                    Assert.assertEquals("[10, 0, 30, 1, 50, 2, 70, 3, 90, 4, 110, 5, 130, 6, 150, 7, 170, 8, 190, 9]", index.toString());
 
                     long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
                             src.getAddress(),
@@ -350,10 +350,10 @@ public class VectTest {
                     for (int i = 0; i < srcLen; i++) {
                         src.set(i, (i + 1) * 10);
                     }
-                    Assert.assertEquals("{10, 20, 30, 40, 50, 60, 70, 80, 90, 100}", src.toString());
+                    Assert.assertEquals("[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]", src.toString());
 
                     index.setPos(indexLen * 2);
-                    Assert.assertEquals("{}", index.toString());
+                    Assert.assertEquals("[]", index.toString());
 
                     long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
                             src.getAddress(),
@@ -446,14 +446,14 @@ public class VectTest {
                     for (int i = 0; i < srcLen; i++) {
                         src.set(i, (i + 1) / 2 * 2 * 10);
                     }
-                    Assert.assertEquals("{0, 20, 20, 40, 40, 60, 60, 80, 80, 100}", src.toString());
+                    Assert.assertEquals("[0, 20, 20, 40, 40, 60, 60, 80, 80, 100]", src.toString());
 
                     index.setPos(indexLen * 2);
                     for (int i = 0; i < indexLen * 2; i += 2) {
                         index.set(i, (4 + i / 2 * 2) * 10);
                         index.set(i + 1, i / 2);
                     }
-                    Assert.assertEquals("{40, 0, 60, 1, 80, 2, 100, 3, 120, 4}", index.toString());
+                    Assert.assertEquals("[40, 0, 60, 1, 80, 2, 100, 3, 120, 4]", index.toString());
 
                     long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
                             src.getAddress(),

@@ -60,11 +60,6 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
         public CharSequence getStr(Record rec) {
             final long value = arg.getLong(rec);
             if (value == Numbers.LONG_NaN) {

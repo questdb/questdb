@@ -548,7 +548,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 final AtomicInteger writerCount = new AtomicInteger();
 
                 for (int i = 0; i < N; i++) {
-                    TableToken tableName = new TableToken("table_" + i, "table_" + i, i, false);
+                    TableToken tableName = new TableToken("table_" + i, "table_" + i, i, false, false);
                     new Thread(() -> {
                         try {
                             barrier.await();

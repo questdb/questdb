@@ -30,7 +30,7 @@ public class SelectAccessor {
     static final int FD_READ = 1;
     static final int FD_WRITE = 2;
 
-    public static native int select(long readfds, long writefds, long exceptfds);
+    public static native int select(long readfds, long writefds, long exceptfds, int timeout);
 
     private static native int arrayOffset();
 

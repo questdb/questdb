@@ -69,16 +69,6 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
     }
 
     @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public String getName() {
         return "first";
     }

@@ -91,7 +91,7 @@ public class OooCppBenchmarkSetMemoryShuffle {
                 double timeout1 = runReshuffle64(iterations, i, index, src, dest);
                 double timeout2 = runReshuffle32(iterations, i, index, src, dest);
                 double timeout3 = runReshuffle16(iterations, i, index, src, dest);
-                System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
+                System.out.println(i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
             }
         } finally {
             Unsafe.free(index, BUFFER_MAX_SIZE * 2, MemoryTag.NATIVE_DEFAULT);

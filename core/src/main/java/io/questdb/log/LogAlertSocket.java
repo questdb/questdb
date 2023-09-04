@@ -252,7 +252,7 @@ public class LogAlertSocket implements Closeable {
                 long p = outBufferPtr;
                 boolean sendFail = false;
                 while (remaining > 0) {
-                    int n = nf.send(socketFd, p, remaining);
+                    int n = nf.sendRaw(socketFd, p, remaining);
                     if (n > 0) {
                         remaining -= n;
                         p += n;
@@ -269,7 +269,7 @@ public class LogAlertSocket implements Closeable {
                 if (!sendFail) {
                     // receive ack
                     p = inBufferPtr;
-                    final int n = nf.recv(socketFd, p, inBufferSize);
+                    final int n = nf.recvRaw(socketFd, p, inBufferSize);
                     if (n > 0) {
                         logResponse(n);
                         break;
@@ -287,7 +287,8 @@ public class LogAlertSocket implements Closeable {
                     $alertHost(
                             alertHostIdx,
                             log.info().$("Failing over from")
-                    ).$(" to"));
+                    ).$(" to")
+            );
             if (alertHostIdx == this.alertHostIdx) {
                 logFailOver.$(" with a delay of ")
                         .$(reconnectDelay / 1000000)
@@ -393,7 +394,8 @@ public class LogAlertSocket implements Closeable {
                         throw new LogError(String.format(
                                 "Unexpected ':' found at position %d: %s",
                                 i,
-                                alertTargets));
+                                alertTargets
+                        ));
                     }
                     portIdx = i;
                     break;

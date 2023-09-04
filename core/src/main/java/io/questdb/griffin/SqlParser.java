@@ -641,8 +641,8 @@ public class SqlParser {
                 int columnListPos = lexer.lastTokenPosition();
 
                 while (tok != null && !Chars.equals(tok, ')')) {
-                    final CharSequence columnName = tok;
                     validateLiteral(lexer.lastTokenPosition(), tok);
+                    final CharSequence columnName = GenericLexer.unquote(tok);
 
                     int colIndex = model.getColumnIndex(columnName);
                     if (colIndex < 0) {

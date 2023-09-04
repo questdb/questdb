@@ -35,10 +35,10 @@ import org.junit.rules.TestName;
 public class AbstractTest {
     protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
     @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
+    public static final TemporaryFolder temp = new TemporaryFolder();
     protected static String root;
     @Rule
-    public TestName testName = new TestName();
+    public final TestName testName = new TestName();
 
     @SuppressWarnings("unused")
     public static ServerMain newServer(
@@ -80,7 +80,7 @@ public class AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         TestUtils.removeTestPath(root);
     }
 

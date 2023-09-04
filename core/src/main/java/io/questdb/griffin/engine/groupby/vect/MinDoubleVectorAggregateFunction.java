@@ -115,11 +115,6 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntMinDoubleMerge(pRostiA, pRostiB, valueOffset);
     }

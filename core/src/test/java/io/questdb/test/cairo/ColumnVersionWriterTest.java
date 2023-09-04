@@ -295,7 +295,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$());
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(configuration.getFilesFacade(), path)
             ) {
-                CVStringTable.setupColumnVersionWriter(w, "" +
+                CVStringTable.setupColumnVersionWriter(w,
                         "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2      -1      10\n" +
                         "       0       3      -1      10\n" +
@@ -312,7 +312,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 w.removePartition(0);
                 w.commit();
 
-                String expected = "" +
+                String expected =
                         "     pts  colIdx  colTxn  colTop\n" +
                         "       1       0      -1      10\n" +
                         "       1       2      -1      10\n" +
@@ -331,8 +331,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2      -1      10\n" +
                         "       0       3      -1      10\n" +
                         "       0       5      -1      10\n" +
@@ -343,8 +342,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         "       2      15      -1      10\n" +
                         "       3       0      -1      10\n" +
                         "       4       7      -1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n" +
                         "       1       0      -1      10\n" +
@@ -352,8 +350,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         "       2      11       2       1\n" +
                         "       2      15       2    1001\n" +
                         "       3       0       3     110\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2      -1      10\n" +
                         "       0       3      -1      10\n" +
                         "       0       5      -1      10\n" +
@@ -370,19 +367,16 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionDstContainsPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       2      11       0      99\n" +
                         "       2      12       1      17\n" +
                         "       3      11       1       8\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n" +
                         "       2      11       5      12\n" +
                         "       2      12       5      12\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n" +
                         "       2      11       0      99\n" +
@@ -394,15 +388,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionDstDoesNotContainPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       2      11       1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n" +
                         "       2      11       1      10\n", // Gets added
@@ -413,15 +404,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionSrcDoesNotContainPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       2      11       1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" + // No changes
+                "     pts  colIdx  colTxn  colTop\n" + // No changes
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n",
                 0
@@ -544,7 +532,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 writer.join();
                 reader.join();
 
-                if (exceptions.size() != 0) {
+                if (!exceptions.isEmpty()) {
                     Assert.fail(exceptions.poll().toString());
                 }
             }

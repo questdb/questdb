@@ -29,12 +29,14 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.function.Predicate;
+
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
 
-    public TableNameRegistryRW(CairoConfiguration configuration) {
-        super(configuration);
+    public TableNameRegistryRW(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+        super(configuration, protectedTableResolver);
         if (!this.nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
@@ -69,7 +71,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
-            return new TableToken(tableName, dirName, tableId, isWal);
+            boolean isProtected = protectedTableResolver.test(tableName);
+            return new TableToken(tableName, dirName, tableId, isWal, isProtected);
         } else {
             return null;
         }
@@ -137,11 +140,6 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.appendEntry(replaceWith);
             reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
         }
-    }
-
-    @Override
-    public void resetMemory() {
-        nameStore.resetMemory();
     }
 
     @Override

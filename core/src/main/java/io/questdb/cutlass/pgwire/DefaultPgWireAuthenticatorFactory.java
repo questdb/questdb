@@ -27,7 +27,6 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.ServerMain;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.network.NetworkFacade;
 import io.questdb.std.str.DirectByteCharSink;
 
 public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
@@ -35,7 +34,6 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
 
     @Override
     public Authenticator getPgWireAuthenticator(
-            NetworkFacade nf,
             PGWireConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
@@ -57,7 +55,6 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
         );
 
         return new CleartextPasswordPgWireAuthenticator(
-                nf,
                 configuration,
                 circuitBreaker,
                 registry,

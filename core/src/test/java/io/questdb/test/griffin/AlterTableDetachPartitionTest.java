@@ -68,7 +68,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         purgeJob = Misc.free(purgeJob);
         AbstractCairoTest.tearDownStatic();
     }

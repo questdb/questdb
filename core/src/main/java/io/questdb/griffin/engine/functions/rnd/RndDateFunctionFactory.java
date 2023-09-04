@@ -68,11 +68,6 @@ public class RndDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_date(").val(lo).val(',').val(range).val(')');
         }

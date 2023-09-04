@@ -92,7 +92,7 @@ public class DBeaverTest extends AbstractCairoTest {
                         "ORDER BY ord",
                 null,
                 true,
-                false
+                true
         );
     }
 

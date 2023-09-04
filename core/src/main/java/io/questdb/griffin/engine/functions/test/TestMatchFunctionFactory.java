@@ -88,16 +88,6 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }

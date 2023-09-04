@@ -1566,6 +1566,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return row;
     }
 
+    @Override
+    public Row newRowDeferTimestamp() {
+        throw new UnsupportedOperationException();
+    }
+
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
     }
@@ -4175,11 +4180,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int n = o3LastTimestampSpreads.length - 1;
 
                     if (lagError > 0) {
-                        o3EffectiveLag += lagError * configuration.getO3LagIncreaseFactor();
+                        o3EffectiveLag += (long) (lagError * configuration.getO3LagIncreaseFactor());
                         o3EffectiveLag = Math.min(o3EffectiveLag, o3MaxLag);
                     } else {
                         // avoid using negative o3EffectiveLag
-                        o3EffectiveLag += lagError * configuration.getO3LagDecreaseFactor();
+                        o3EffectiveLag += (long) (lagError * configuration.getO3LagDecreaseFactor());
                         o3EffectiveLag = Math.max(0, o3EffectiveLag);
                     }
 

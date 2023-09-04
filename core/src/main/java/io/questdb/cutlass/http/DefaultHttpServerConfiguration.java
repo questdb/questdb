@@ -83,7 +83,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration) {
-        this(httpContextConfiguration, new DefaultIODispatcherConfiguration());
+        this(httpContextConfiguration, DefaultIODispatcherConfiguration.INSTANCE);
     }
 
     public DefaultHttpServerConfiguration(
@@ -102,6 +102,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {
         return dispatcherConfiguration;
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
     }
 
     @Override
