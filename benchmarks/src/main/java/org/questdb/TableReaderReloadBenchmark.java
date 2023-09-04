@@ -110,7 +110,7 @@ public class TableReaderReloadBenchmark {
     }
 
     @TearDown(Level.Iteration)
-    public void tearDown() throws NumericException {
+    public void tearDown() {
         System.out.println("writer size = " + Math.max(writer.size(), writer.size()));
         writer.close();
         reader.close();

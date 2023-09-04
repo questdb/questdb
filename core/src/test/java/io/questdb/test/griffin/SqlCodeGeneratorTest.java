@@ -91,7 +91,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 
@@ -112,7 +112,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 
@@ -421,7 +421,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 

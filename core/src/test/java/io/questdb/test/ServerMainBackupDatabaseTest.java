@@ -106,11 +106,6 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         }
     }
 
-    @AfterClass
-    public static void tearDownStatic() throws Exception {
-        AbstractBootstrapTest.tearDownStatic();
-    }
-
     @Override
     public void setUp() {
         super.setUp();

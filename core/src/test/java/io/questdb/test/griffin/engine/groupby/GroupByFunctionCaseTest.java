@@ -124,10 +124,9 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE;
 
                     planSink.clear();
-                    planSink.put("GroupBy vectorized: ").put(vectorized).put("\n")
+                    planSink.put("GroupBy vectorized: ").put(vectorized).put(vectorized ? " workers: 1" : "").put("\n")
                             .put("  keys: [key]\n")
                             .put("  values: [").put(expectedFunction).put("]\n")
-                            .put(vectorized ? "  workers: 1\n" : "")
                             .put("    DataFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: test\n");
@@ -200,7 +199,8 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     "  notional_base_ccy DOUBLE\n" +
                     ") timestamp (trade_timestamp) PARTITION BY DAY;");
 
-            assertPlan("SELECT  \n" +
+            assertPlan(
+                    "SELECT  \n" +
                             "    trade_timestamp as candle_st,\n" +
                             "    venue,\n" +
                             "    count(*) AS num_ticks,\n" +
@@ -219,13 +219,13 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             "      keys: [candle_st,venue]\n" +
                             "      values: [count(*),sum(qty*price),sum(qty)]\n" +
                             "        SelectedRecord\n" +
-                            "            Async Filter\n" +
+                            "            Async Filter workers: 1\n" +
                             "              filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
-                            "              workers: 1\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Interval forward scan on: spot_trades\n" +
-                            "                      intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n");
+                            "                      intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n"
+            );
         });
     }
 

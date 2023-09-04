@@ -26,10 +26,12 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.network.NetworkFacade;
 
 public interface PgWireAuthenticatorFactory {
-    Authenticator getPgWireAuthenticator(NetworkFacade nf, PGWireConfiguration configuration,
-                                         NetworkSqlExecutionCircuitBreaker circuitBreaker, CircuitBreakerRegistry registry,
-                                         OptionsListener optionsListener);
+    Authenticator getPgWireAuthenticator(
+            PGWireConfiguration configuration,
+            NetworkSqlExecutionCircuitBreaker circuitBreaker,
+            CircuitBreakerRegistry registry,
+            OptionsListener optionsListener
+    );
 }

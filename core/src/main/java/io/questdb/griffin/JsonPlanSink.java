@@ -38,7 +38,7 @@ public class JsonPlanSink extends BasePlanSink {
     final int NODE_NONE = 0;
     final int NODE_TYPE = 1;
     final int NODE_VALUE = 5;
-    String childIndent = "    ";
+    final String childIndent = "    ";
     int lastNodeDepth = 0;
     int lastNodeType = 0;
     boolean quoteValue = false;
@@ -296,12 +296,9 @@ public class JsonPlanSink extends BasePlanSink {
         if (newNodeType == NODE_CHILD) {
             if (lastNodeType != NODE_CHILD) {
                 sink.putNoEsc("\"Plans\": [\n");
-                indent();
-                sink.putNoEsc("{\n");
-            } else {
-                indent();
-                sink.putNoEsc("{\n");
             }
+            indent();
+            sink.putNoEsc("{\n");
         } else {
             char c = '"';
             if (newNodeType == NODE_VALUE) {

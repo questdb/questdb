@@ -94,9 +94,5 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
             return hi;
         }
 
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
     }
 }

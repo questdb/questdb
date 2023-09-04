@@ -25,12 +25,13 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderFactoryImpl implements FactoryProviderFactory {
     public static final FactoryProviderFactory INSTANCE = new FactoryProviderFactoryImpl();
 
     @Override
-    public FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit) {
+    public @NotNull FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit) {
         return new FactoryProviderImpl(configuration);
     }
 }

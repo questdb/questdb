@@ -263,9 +263,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    SelectedRecord\n" +
                         "        Nested Loop Left Join\n" +
                         "          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: age=10\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_1\n" +
@@ -420,12 +419,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        SelectedRecord\n" +
-                            "            Sort light\n" +
-                            "              keys: [ts, i]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: b\n"
+                            "        Sort light\n" +
+                            "          keys: [ts, i]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n"
             );
         });
     }
@@ -590,10 +588,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "count(dat) cdat, " +
                         "count(ts) cts " +
                         "from x",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [k]\n" +
                         "  values: [count(*),count(*),count(i),count(l),count(d),count(dat),count(ts)]\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: x\n"
@@ -853,9 +850,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: y=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -871,9 +867,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: y=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -889,9 +884,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
-                        "            Async Filter\n" +
+                        "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -907,9 +901,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
-                        "            Async Filter\n" +
+                        "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -925,9 +918,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
-                        "            Async Filter\n" +
+                        "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -942,10 +934,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Sort light lo: 10\n" +
                         "  keys: [x]\n" +
                         "    DistinctKey\n" +
-                        "        GroupBy vectorized: true\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
                         "          values: [count(*)]\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -960,10 +951,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Sort light lo: 10\n" +
                         "  keys: [x desc]\n" +
                         "    DistinctKey\n" +
-                        "        GroupBy vectorized: true\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
                         "          values: [count(*)]\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -977,10 +967,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct x from di limit 10",
                 "Limit lo: 10\n" +
                         "    DistinctKey\n" +
-                        "        GroupBy vectorized: true\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
                         "          values: [count(*)]\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -994,10 +983,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct x from di limit -10",
                 "Limit lo: -10\n" +
                         "    DistinctKey\n" +
-                        "        GroupBy vectorized: true\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
                         "          values: [count(*)]\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -1013,9 +1001,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: y=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -1031,9 +1018,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: y=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -1049,9 +1035,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
-                        "            Async Filter\n" +
+                        "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -1067,9 +1052,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
-                        "            Async Filter\n" +
+                        "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -1085,9 +1069,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
-                        "            Async Filter\n" +
+                        "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
@@ -1286,9 +1269,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (s string)",
                 "select * from a where s = '\b\f\n\r\t\\u0013'",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: s='\\b\\f\\n\\r\\t\\u0013'\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -1317,9 +1299,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
-                        "    Async JIT Filter\n" +
+                        "    Async JIT Filter workers: 1\n" +
                         "      filter: i=0\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -1408,9 +1389,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Update table: a\n" +
                         "    VirtualRecord\n" +
                         "      functions: [20,d+rnd_double()]\n" +
-                        "        Async Filter\n" +
+                        "        Async Filter workers: 1\n" +
                         "          filter: d<100.0\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Interval forward scan on: a\n" +
@@ -1470,9 +1450,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "                    \"Plans\": [\n" +
                     "                    {\n" +
                     "                        \"Node Type\": \"Async JIT Filter\",\n" +
+                    "                        \"workers\": \"1\",\n" +
                     "                        \"limit\": \"4\",\n" +
                     "                        \"filter\": \"10<l\",\n" +
-                    "                        \"workers\": \"1\",\n" +
                     "                        \"Plans\": [\n" +
                     "                        {\n" +
                     "                            \"Node Type\": \"DataFrame\",\n" +
@@ -1658,9 +1638,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    GroupBy vectorized: false\n" +
                         "      values: [last(timestamp),last(price)]\n" +
-                        "        Async JIT Filter\n" +
+                        "        Async JIT Filter workers: 1\n" +
                         "          filter: symbol='BTC-USD'\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Interval forward scan on: trades\n" +
@@ -1684,10 +1663,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
                             "            Hash\n" +
-                            "                Async JIT Filter\n" +
+                            "                Async JIT Filter workers: 1\n" +
                             "                  limit: 4\n" +
                             "                  filter: 10<l\n" +
-                            "                  workers: 1\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: a\n",
@@ -2059,10 +2037,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( ts timestamp, d double)",
                 "select hour(ts), min(d) from a group by hour(ts)",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [ts]\n" +
                         "  values: [min(d)]\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2076,10 +2053,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select min(d), i from a group by i",
                 "VirtualRecord\n" +
                         "  functions: [min,i]\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(d)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -2091,10 +2067,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a ( i int, d double)", "select i, i, min(d) from a group by i, i",
                 "VirtualRecord\n" +
                         "  functions: [i,i,min]\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(d)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -2106,10 +2081,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
                 "select s as symbol, count() from a",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [symbol]\n" +
                         "  values: [count(*)]\n" +
-                        "  workers: 1\n" +
                         "    SelectedRecord\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
@@ -2122,10 +2096,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
                 "select s, count() from a",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [s]\n" +
                         "  values: [count(*)]\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2329,9 +2302,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select max(i) from a where i < 10",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
-                        "    Async JIT Filter\n" +
+                        "    Async JIT Filter workers: 1\n" +
                         "      filter: i<10\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -2390,10 +2362,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select x, count(*) from di group by x order by 1 limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [x]\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -2407,10 +2378,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select x, count(*) from di group by x order by 1 desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [x desc]\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -2423,10 +2393,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di group by x limit 10",
                 "Limit lo: 10\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -2439,10 +2408,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di group by x limit -10",
                 "Limit lo: -10\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -2458,9 +2426,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter\n" +
+                        "        Async JIT Filter workers: 1\n" +
                         "          filter: y=5\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -2476,9 +2443,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter\n" +
+                        "        Async JIT Filter workers: 1\n" +
                         "          filter: y=5\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -2494,9 +2460,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter\n" +
+                        "        Async Filter workers: 1\n" +
                         "          filter: abs(y)=5\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -2512,9 +2477,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter\n" +
+                        "        Async Filter workers: 1\n" +
                         "          filter: abs(y)=5\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -2530,9 +2494,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async Filter\n" +
+                        "        Async Filter workers: 1\n" +
                         "          filter: abs(y)=5\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -2549,9 +2512,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [ts]\n" +
                         "      values: [count(*)]\n" +
-                        "        Async JIT Filter\n" +
+                        "        Async JIT Filter workers: 1\n" +
                         "          filter: y=5\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
@@ -2696,9 +2658,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2731,9 +2692,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
                         "    Hash\n" +
-                        "        Async JIT Filter\n" +
+                        "        Async JIT Filter workers: 1\n" +
                         "          filter: 0<i\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
@@ -2936,15 +2896,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    LatestBy\n" +
                         "        Union\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: i=10\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: i=20\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n"
@@ -3056,10 +3014,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctKey\n" +
-                        "            GroupBy vectorized: true\n" +
+                        "            GroupBy vectorized: true workers: 1\n" +
                         "              keys: [s]\n" +
                         "              values: [count(*)]\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n" +
@@ -3078,10 +3035,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctKey\n" +
-                        "            GroupBy vectorized: true\n" +
+                        "            GroupBy vectorized: true workers: 1\n" +
                         "              keys: [s]\n" +
                         "              values: [count(*)]\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n" +
@@ -3099,10 +3055,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctKey\n" +
-                        "            GroupBy vectorized: true\n" +
+                        "            GroupBy vectorized: true workers: 1\n" +
                         "              keys: [s]\n" +
                         "              values: [count(*)]\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n" +
@@ -3120,10 +3075,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctKey\n" +
-                        "            GroupBy vectorized: true\n" +
+                        "            GroupBy vectorized: true workers: 1\n" +
                         "              keys: [s]\n" +
                         "              values: [count(*)]\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n" +
@@ -3180,9 +3134,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBy light order_by_timestamp: true\n" +
                         "    SelectedRecord\n" +
                         "        SelectedRecord\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: (0<i and i<10)\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n"
@@ -3794,6 +3747,208 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinWithPostJoinFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
+
+
+            String[] joinTypes = {"LEFT", "LT", "ASOF"};
+            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join", "AsOf Join"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                // do not push down predicate to the 'right' table of left join but apply it after join
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+
+                assertPlan(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                "WHERE not T2.value<>T2.value",
+                        "GroupBy vectorized: false\n" +
+                                "  values: [count(*)]\n" +
+                                "    Filter filter: T2.value=T2.value\n" +
+                                "        " + factoryType + "\n" +
+                                (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
+                                "            DataFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n" +
+                                (i == 0 ? "            Hash\n" : "") +
+                                (i == 0 ? "    " : "") + "            DataFrame\n" +
+                                (i == 0 ? "    " : "") + "                Row forward scan\n" +
+                                (i == 0 ? "    " : "") + "                Frame forward scan on: tab\n"
+                );
+
+                assertPlan(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                "WHERE not T2.value=1",
+                        "GroupBy vectorized: false\n" +
+                                "  values: [count(*)]\n" +
+                                "    Filter filter: T2.value!=1\n" +
+                                "        " + factoryType + "\n" +
+                                (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
+                                "            DataFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n" +
+                                (i == 0 ? "            Hash\n" : "") +
+                                (i == 0 ? "    " : "") + "            DataFrame\n" +
+                                (i == 0 ? "    " : "") + "                Row forward scan\n" +
+                                (i == 0 ? "    " : "") + "                Frame forward scan on: tab\n"
+                );
+
+                // push down predicate to the 'left' table of left join
+                assertPlan(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                "WHERE not T1.value=1",
+                        "GroupBy vectorized: false\n" +
+                                "  values: [count(*)]\n" +
+                                "    " + factoryType + "\n" +
+                                (i == 0 ? "      condition: T2.created=T1.created\n" : "") +
+                                "        Async JIT Filter workers: 1\n" +
+                                "          filter: value!=1\n" +
+                                "            DataFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n" +
+                                (i == 0 ? "        Hash\n" : "") +
+                                (i == 0 ? "    " : "") + "        DataFrame\n" +
+                                (i == 0 ? "    " : "") + "            Row forward scan\n" +
+                                (i == 0 ? "    " : "") + "            Frame forward scan on: tab\n"
+                );
+            }
+
+
+            // two joins
+            assertPlan(
+                    "SELECT count(1) " +
+                            "FROM tab as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
+                            "JOIN tab as T3 ON T2.created=T3.created " +
+                            "WHERE T1.value=1",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [count(*)]\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: T3.created=T2.created\n" +
+                            "        Hash Outer Join Light\n" +
+                            "          condition: T2.created=T1.created\n" +
+                            "            Async JIT Filter workers: 1\n" +
+                            "              filter: value=1\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT count(1) " +
+                            "FROM tab as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
+                            "JOIN tab as T3 ON T2.created=T3.created " +
+                            "WHERE T2.created=1",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [count(*)]\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: T3.created=T2.created\n" +
+                            "        Filter filter: T2.created=1\n" +
+                            "            Hash Outer Join Light\n" +
+                            "              condition: T2.created=T1.created\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT count(1) " +
+                            "FROM tab as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
+                            "JOIN tab as T3 ON T2.created=T3.created " +
+                            "WHERE T3.value=1",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [count(*)]\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: T3.created=T2.created\n" +
+                            "        Hash Outer Join Light\n" +
+                            "          condition: T2.created=T1.created\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "        Hash\n" +
+                            "            Async JIT Filter workers: 1\n" +
+                            "              filter: value=1\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n"
+            );
+
+            // where clause in parent model
+            assertPlan(
+                    "SELECT count(1) " +
+                            "FROM ( " +
+                            "SELECT * " +
+                            "FROM tab as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
+                            "WHERE not value1<>value1",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [count(*)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Filter filter: T2.value=T2.value\n" +
+                            "            Hash Outer Join Light\n" +
+                            "              condition: T2.created=T1.created\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "SELECT count(1) " +
+                            "FROM ( " +
+                            "SELECT * " +
+                            "FROM tab as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
+                            "WHERE not value<>value",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [count(*)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Hash Outer Join Light\n" +
+                            "          condition: T2.created=T1.created\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
     public void testLtJoin0() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -3967,12 +4122,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        SelectedRecord\n" +
-                            "            Sort light\n" +
-                            "              keys: [ts, i]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: b\n"
+                            "        Sort light\n" +
+                            "          keys: [ts, i]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n"
             );
         });
     }
@@ -4160,18 +4314,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                 String expectedPlan = "SelectedRecord\n" +
                         "    " + joinType + " Join\n" +
-                        "        SelectedRecord\n" +
-                        "            Sort light\n" +
-                        "              keys: [timestamp, galon_price desc]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: gas_prices\n" +
-                        "        SelectedRecord\n" +
-                        "            Sort light\n" +
-                        "              keys: [timestamp, galon_price desc]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: gas_prices\n";
+                        "        Sort light\n" +
+                        "          keys: [timestamp, galon_price desc]\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: gas_prices\n" +
+                        "        Sort light\n" +
+                        "          keys: [timestamp, galon_price desc]\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: gas_prices\n";
 
                 assertPlan(query, expectedPlan);
             }
@@ -4195,18 +4347,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  keys: [timestamp]\n" +
                     "    SelectedRecord\n" +
                     "        Splice Join\n" +
-                    "            SelectedRecord\n" +
-                    "                Sort light\n" +
-                    "                  keys: [timestamp, galon_price desc]\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: gas_prices\n" +
-                    "            SelectedRecord\n" +
-                    "                Sort light\n" +
-                    "                  keys: [timestamp, galon_price desc]\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: gas_prices\n";
+                    "            Sort light\n" +
+                    "              keys: [timestamp, galon_price desc]\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: gas_prices\n" +
+                    "            Sort light\n" +
+                    "              keys: [timestamp, galon_price desc]\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: gas_prices\n";
 
             assertPlan(query, expectedPlan);
         });
@@ -5237,10 +5387,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
                 "DistinctKey\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [s]\n" +
                         "      values: [count(*)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n"
@@ -5253,10 +5402,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
                 "DistinctKey\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [s]\n" +
                         "      values: [count(*)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n"
@@ -5283,9 +5431,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "select * from t where d in (5, -1, 1, null)",
-                    "Async Filter\n" +
+                    "Async Filter workers: 1\n" +
                             "  filter: d in [-1.0,1.0,5.0,NaN]\n" +
-                            "  workers: 1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -5293,9 +5440,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "select * from t where d not in (5, -1, 1, null)",
-                    "Async Filter\n" +
+                    "Async Filter workers: 1\n" +
                             "  filter: not (d in [-1.0,1.0,5.0,NaN])\n" +
-                            "  workers: 1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -5308,9 +5454,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > sysdate()",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: sysdate()<ts\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -5322,9 +5467,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > systimestamp()",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: systimestamp()<ts\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -5551,10 +5695,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = $1 or s = $2 order by ts desc limit 1",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: (s=$0::string or s=$1::string)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -5566,10 +5709,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: (s='S1' or s='S2')\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -5904,9 +6046,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "order by s1,ts desc",
                     "Sort light\n" +
                             "  keys: [s1, ts desc]\n" +
-                            "    Async JIT Filter\n" +
+                            "    Async JIT Filter workers: 1\n" +
                             "      filter: (s1='S1' or s1='S2')\n" +
-                            "      workers: 1\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: a\n" +
@@ -5963,9 +6104,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "select * from t where l in (5, -1, 1, null)",
-                    "Async Filter\n" +
+                    "Async Filter workers: 1\n" +
                             "  filter: l in [NaN,-1,1,5]\n" +
-                            "  workers: 1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -5973,9 +6113,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan(
                     "select * from t where l not in (5, -1, 1, null)",
-                    "Async Filter\n" +
+                    "Async Filter workers: 1\n" +
                             "  filter: not (l in [NaN,-1,1,5])\n" +
-                            "  workers: 1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -5997,6 +6136,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            Row backward scan\n" +
                         "            Frame backward scan on: a\n"
         );
+    }
+
+    @Test
+    public void testSelectNoOrderByWithNegativeLimitArithmetic() throws Exception {
+        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        compile("insert into a select x,x::timestamp from long_sequence(10)");
+
+        assertPlan(
+                "select * from a limit -10+2",
+                "Sort light\n" +
+                        "  keys: [ts]\n" +
+                        "    Limit lo: 8\n" +
+                        "        DataFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectOrderByTsAsIndexDescNegativeLimit() throws Exception {
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
+                "select * from a order by 2 desc limit -10",
+                "Sort light\n" +
+                        "  keys: [ts desc]\n" +
+                        "    Limit lo: 10\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
     }
 
     @Test
@@ -6112,10 +6279,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "select i, count(*)  from a group by i limit -5",
                 "Limit lo: -5\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [count(*)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -6124,10 +6290,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "select i, count(*)  from a limit -5",
                 "Limit lo: -5\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [count(*)]\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -6137,10 +6302,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct(i) from a limit -5",
                 "Limit lo: -5\n" +
                         "    DistinctKey\n" +
-                        "        GroupBy vectorized: true\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [i]\n" +
                         "          values: [count(*)]\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
@@ -6253,9 +6417,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6288,9 +6451,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: ((1583020800000000<ts and ts<1583798400000000) or (1585699200000000<ts and ts<1586476800000000))\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6302,9 +6464,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6340,9 +6501,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where ts > '2020-03-01'",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: 1583020800000000<ts\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6356,9 +6516,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from xx where str = 'A' order by str,x limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [str, x]\n" +
-                        "    Async Filter\n" +
+                        "    Async Filter workers: 1\n" +
                         "      filter: str='A'\n" +
-                        "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: xx\n"
@@ -6370,9 +6529,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: 100<l\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6384,9 +6542,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where s in ( 'A', 'B' )",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: s in [A,B]\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6398,9 +6555,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-02' )",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: ts in [1577836800000000,1577923200000000]\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6412,9 +6568,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: (ts in [1577836800000000,1578009600000000] and s='ABC')\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6426,9 +6581,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: (ts in [1577836800000000,1577923199999999] and s='ABC')\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6440,9 +6594,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12 or l = 15 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (l=12 or l=15)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6454,9 +6607,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12.345 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: l=12.345\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6468,9 +6620,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where b = false ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: b=false\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6482,9 +6633,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where not(b = false or ts = 123) ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (b!=false and ts!=123)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6496,9 +6646,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l1 long, l2 long);",
                 "select * from tab where l1 < l2 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: l1<l2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6510,9 +6659,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l1 long, l2 long);",
                 "select * from tab where l1 * l2 > 0  ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: 0<l1*l2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6524,9 +6672,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (100<l and l<1000)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6538,9 +6685,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l1 long, l2 long, l3 long);",
                 "select * from tab where l1 * l2 > l3  ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: l3<l1*l2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6552,9 +6698,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: l=$0::long\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6566,9 +6711,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = 1024.1 + 1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: d=1024.1+1\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6580,9 +6724,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = null ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: d is null\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6594,10 +6737,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts limit 1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6609,10 +6751,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts limit -1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -6624,10 +6765,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 limit -1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -6639,10 +6779,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -6654,10 +6793,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 limit -1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -6671,10 +6809,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 limit :maxRows ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -6686,10 +6823,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -6701,10 +6837,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts limit -1 ",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -6716,9 +6851,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: ((100<l and l<1000) and ts=1640995200000000)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6730,9 +6864,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and l = 20",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: ((100<l and l<1000) and l=20)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6744,9 +6877,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 or l = 20",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: ((100<l and l<1000) or l=20)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6758,9 +6890,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 or ts = 123",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: ((100<l and l<1000) or ts=123)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6772,9 +6903,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: ((100<l and l<1000) or 1609459200000000<ts)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6786,9 +6916,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (100<l and l<1000)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
@@ -6801,9 +6930,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l in ( 100, 200 )",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l in [100,200]\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6865,9 +6993,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12::short ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l=12::short\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6879,9 +7006,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s short, ts timestamp);",
                 "select * from tab where s = 1::short ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: s=1::short\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6893,9 +7019,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where b = true::boolean ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: b=true\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6907,9 +7032,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 1024::long ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l=1024::long\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6921,9 +7045,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = 1024.1::double ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: d=1024.1\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6935,9 +7058,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = null::double ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: d is null\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6949,9 +7071,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l | l) > 0  ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: 0<l|l\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6963,9 +7084,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l & l) > 0  ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: 0<l&l\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6977,9 +7097,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l ^ l) > 0  ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: 0<l^l\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -6991,10 +7110,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l ^ l) > 0 limit -1",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: 0<l^l\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -7009,10 +7127,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l ^ l) > 0 limit :maxRows",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: 0<l^l\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -7024,9 +7141,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12::byte ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l=12::byte\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7038,9 +7154,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = '123' ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l='123'\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7052,9 +7167,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l=rnd_long()\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7066,9 +7180,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l=case([0<l,1,l=0,0,-1])\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7080,9 +7193,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1::string ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l=$0::double::string\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7094,9 +7206,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s string, ts timestamp);",
                 "select * from tab where s = 'test' ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: s='test'\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7108,9 +7219,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s string, ts timestamp);",
                 "select * from tab where s = null ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: s is null\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7122,9 +7232,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( b byte, ts timestamp);",
                 "select * from tab where b = 1::byte ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: b=1::byte\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7136,9 +7245,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "CREATE TABLE tst ( timestamp TIMESTAMP );",
                 "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: not (timestamp between 1609459200000000 and 1610236800000000)\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tst\n"
@@ -7220,9 +7328,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
                 "select ts, l, i from a where l<i",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: l<i\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -7234,9 +7341,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
                 "select ts, l, i from a where l::short<i",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: l::short<i\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -7257,10 +7363,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Filter filter: l1*i2!=0\n" +
                         "        SelectedRecord\n" +
                         "            SelectedRecord\n" +
-                        "                Async Filter\n" +
+                        "                Async Filter workers: 1\n" +
                         "                  limit: 100\n" +
                         "                  filter: l::short<i\n" +
-                        "                  workers: 1\n" +
                         "                    DataFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: a\n"
@@ -7298,9 +7403,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [k]\n" +
                         "  values: [max(ts)]\n" +
                         "    SelectedRecord\n" +
-                        "        Async Filter\n" +
+                        "        Async Filter workers: 1\n" +
                         "          filter: (l::short<i and l<0)\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
@@ -7320,9 +7424,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      keys: [k]\n" +
                         "      values: [max(i*l),min(l),min(i)]\n" +
                         "        SelectedRecord\n" +
-                        "            Async Filter\n" +
+                        "            Async Filter workers: 1\n" +
                         "              filter: l::short<i\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n"
@@ -7680,12 +7783,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        SelectedRecord\n" +
-                            "            Sort light\n" +
-                            "              keys: [ts, i]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: b\n"
+                            "        Sort light\n" +
+                            "          keys: [ts, i]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n"
             );
         });
     }
@@ -7747,10 +7849,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             String query = "select * from t where x < 100 order by ts desc limit -5";
             assertPlan(
                     query,
-                    "Async JIT Filter\n" +
+                    "Async JIT Filter workers: 1\n" +
                             "  limit: 5\n" +
                             "  filter: x<100\n" +
-                            "  workers: 1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -7772,9 +7873,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'",
-                "Async JIT Filter\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -7833,9 +7933,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     private void assertBindVarPlan(String type) throws SqlException {
         assertPlan(
                 "select * from t where x = :v1 ",
-                "Async Filter\n" +
+                "Async Filter workers: 1\n" +
                         "  filter: x=:v1::" + type + "\n" +
-                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: t\n"
@@ -7983,6 +8082,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void testSelectIndexedSymbolWithIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");

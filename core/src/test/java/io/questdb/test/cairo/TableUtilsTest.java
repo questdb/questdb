@@ -228,7 +228,7 @@ public class TableUtilsTest extends AbstractTest {
                     int size = ColumnType.sizeOf(columnType);
                     if (size > 0) {
                         TableUtils.setNull(columnType, mem2, 1);
-                        Unsafe.getUnsafe().putLong(mem1 + 0, TableUtils.getNullLong(columnType, 0));
+                        Unsafe.getUnsafe().putLong(mem1, TableUtils.getNullLong(columnType, 0));
                         Unsafe.getUnsafe().putLong(mem1 + 8, TableUtils.getNullLong(columnType, 1));
                         Unsafe.getUnsafe().putLong(mem1 + 16, TableUtils.getNullLong(columnType, 2));
                         Unsafe.getUnsafe().putLong(mem1 + 24, TableUtils.getNullLong(columnType, 3));

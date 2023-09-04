@@ -52,7 +52,6 @@ import java.util.zip.ZipInputStream;
 public class EngineMigrationTest extends AbstractCairoTest {
 
     public static void replaceDbContent(String path) throws IOException {
-
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         engine.releaseInactive();
@@ -1426,10 +1425,10 @@ public class EngineMigrationTest extends AbstractCairoTest {
         );
 
         ddl("insert into t_day_ooo " +
-                        "select " +
-                        commonColumns() +
-                        ", timestamp_sequence(200000000L, 2000000000000L) ts" +
-                        " from long_sequence(15)"
+                "select " +
+                commonColumns() +
+                ", timestamp_sequence(200000000L, 2000000000000L) ts" +
+                " from long_sequence(15)"
         );
 
         ddl(
@@ -1442,10 +1441,10 @@ public class EngineMigrationTest extends AbstractCairoTest {
         );
 
         ddl("insert into t_month_ooo " +
-                        "select " +
-                        commonColumns() +
-                        ", timestamp_sequence(200000000L, 200000000000L) ts" +
-                        " from long_sequence(15)"
+                "select " +
+                commonColumns() +
+                ", timestamp_sequence(200000000L, 200000000000L) ts" +
+                " from long_sequence(15)"
         );
 
         ddl(
@@ -1458,10 +1457,10 @@ public class EngineMigrationTest extends AbstractCairoTest {
         );
 
         ddl("insert into t_year_ooo " +
-                        "select " +
-                        commonColumns() +
-                        ", timestamp_sequence(200000000L, 20000000000000L) ts" +
-                        " from long_sequence(15)"
+                "select " +
+                commonColumns() +
+                ", timestamp_sequence(200000000L, 20000000000000L) ts" +
+                " from long_sequence(15)"
         );
 
         ddl("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY");
@@ -1511,12 +1510,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         ddl("alter table t_col_top_year add column y long");
         ddl("insert into t_col_top_year " +
-                        "select " +
-                        " x + 15 as x" +
-                        ", rnd_symbol('d', 'e', 'f', null) as m" +
-                        ", timestamp_sequence(200000000L + 15 * 20000000000000L, 20000000000000L) ts" +
-                        ", x + 15 as y" +
-                        " from long_sequence(15)"
+                "select " +
+                " x + 15 as x" +
+                ", rnd_symbol('d', 'e', 'f', null) as m" +
+                ", timestamp_sequence(200000000L + 15 * 20000000000000L, 20000000000000L) ts" +
+                ", x + 15 as y" +
+                " from long_sequence(15)"
         );
 
         ddl(
@@ -1527,8 +1526,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         ddl("alter table t_col_top_none add column y long", sqlExecutionContext);
         ddl("insert into t_col_top_none " +
-                        "select x, m, ts, y from t_col_top_year where x > 15" +
-                        " from long_sequence(15)"
+                "select x, m, ts, y from t_col_top_year where x > 15" +
+                " from long_sequence(15)"
         );
 
         ddl(
@@ -1543,12 +1542,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         ddl("alter table t_col_top_день add column день long");
         ddl("insert into t_col_top_день " +
-                        "select " +
-                        " x + 15 as x" +
-                        ", rnd_symbol('d', 'e', 'f', null) as m" +
-                        ", timestamp_sequence(200000000L + 10 * 20000000000L, 2000000000L) ts" +
-                        ", x + 15 as y" +
-                        " from long_sequence(15)"
+                "select " +
+                " x + 15 as x" +
+                ", rnd_symbol('d', 'e', 'f', null) as m" +
+                ", timestamp_sequence(200000000L + 10 * 20000000000L, 2000000000L) ts" +
+                ", x + 15 as y" +
+                " from long_sequence(15)"
         );
 
         createTableWithColumnTops("create table t_col_top_ooo_day as (" +
