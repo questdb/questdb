@@ -2064,10 +2064,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
                 queryTag = TAG_EXPLAIN;
             case CompiledQuery.SELECT:
+                typesAndSelectIsCached = cq.getRecordCursorFactory().isPgWireSelectCacheable();
                 typesAndSelect = typesAndSelectPool.pop();
                 typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
                 queryTag = TAG_SELECT;
-                LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
+                if (typesAndSelectIsCached) {
+                    LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
+                }
                 break;
             case CompiledQuery.INSERT:
                 queryTag = TAG_INSERT;

@@ -527,7 +527,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             lineData = sb.toString();
             SqlException exception = sendWithAlterStatement(
                     lineData,
-                    "ALTER TABLE plug DROP COLUMN room",
+                    "ALTER TABLE plug DROP COLUMN 'room'",
                     1, 1
             );
             Assert.assertNull(exception);

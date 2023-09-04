@@ -31,6 +31,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Cacheable;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
@@ -57,7 +58,7 @@ import java.io.Closeable;
  * }
  * }
  */
-public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
+public interface RecordCursorFactory extends Cacheable, Closeable, Sinkable, Plannable {
 
     int SCAN_DIRECTION_BACKWARD = 2;
     int SCAN_DIRECTION_FORWARD = 1;
