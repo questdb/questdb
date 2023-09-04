@@ -143,11 +143,6 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public void resetMemory() {
-        nameStore.resetMemory();
-    }
-
-    @Override
     public void unlockTableName(TableToken tableToken) {
         nameTableTokenMap.remove(tableToken.getTableName(), LOCKED_TOKEN);
     }

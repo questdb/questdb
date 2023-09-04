@@ -220,11 +220,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void pushValueTypes(ArrayColumnTypes columnTypes) {
         }
 

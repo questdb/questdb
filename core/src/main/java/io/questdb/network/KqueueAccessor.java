@@ -56,7 +56,7 @@ public class KqueueAccessor {
 
     static native short getSizeofKevent();
 
-    static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents);
+    static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
 
     static native int kqueue();
 

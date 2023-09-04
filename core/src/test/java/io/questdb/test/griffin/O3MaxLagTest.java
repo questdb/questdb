@@ -260,7 +260,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
-                    int maxUncommitted = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(hi);
+                    int maxUncommitted = TestUtils.generateRandom(null).nextInt(hi);
 
                     int initialCountLo = longsPerPage - 1;
                     int additionalCountLo = longsPerPage - 1;
@@ -306,7 +306,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     @Test
     public void testVarColumnPageBoundariesAppendRndPageSize() throws Exception {
-        int rndPagesMultiplier = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(129);
+        int rndPagesMultiplier = TestUtils.generateRandom(null).nextInt(129);
         int multiplier = Numbers.ceilPow2(rndPagesMultiplier);
 
         dataAppendPageSize = (int) Files.PAGE_SIZE * multiplier;
@@ -379,7 +379,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
-                    int maxUncommitted = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(hi);
+                    int maxUncommitted = TestUtils.generateRandom(null).nextInt(hi);
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, maxUncommitted);

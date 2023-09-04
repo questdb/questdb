@@ -67,7 +67,7 @@ public class OrFunctionFactory implements FunctionFactory {
                 }
                 return leftFunc;
             } finally {
-                rightFunc.close();
+                Misc.free(rightFunc);
             }
         }
         return new MyBooleanFunction(leftFunc, rightFunc);
