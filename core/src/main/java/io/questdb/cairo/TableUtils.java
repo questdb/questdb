@@ -975,7 +975,7 @@ public final class TableUtils {
      */
     public static long mapRO(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         assert fd != -1;
-        assert offset % ff.getPageSize() == 0;
+        assert offset % Files.PAGE_SIZE == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
             throw CairoException.critical(ff.errno())
@@ -1008,7 +1008,7 @@ public final class TableUtils {
      */
     public static long mapRW(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         assert fd != -1;
-        assert offset % ff.getPageSize() == 0;
+        assert offset % Files.PAGE_SIZE == 0;
         allocateDiskSpace(ff, fd, size + offset);
         return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
     }
@@ -1082,6 +1082,13 @@ public final class TableUtils {
                     .put(']');
         }
         return page;
+    }
+
+    public static void msync(FilesFacade ff, long addr, long len, boolean async) {
+        // Linux requires the msync address to be page aligned
+        long alignedAddr = Files.floorPageSize(addr);
+        long alignedExtraLen = addr - alignedAddr;
+        ff.msync(alignedAddr, len + alignedExtraLen, async);
     }
 
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
