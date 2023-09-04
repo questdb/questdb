@@ -205,7 +205,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            return rowIndexes.size();
+            return isMapBuilt ? rowIndexes.size() : -1;
         }
 
         @Override
