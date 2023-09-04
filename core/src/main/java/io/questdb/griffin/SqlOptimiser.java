@@ -3458,12 +3458,6 @@ public class SqlOptimiser implements Mutable {
                     limitModel.addBottomUpColumn(nextColumn(nestedColumnNames.getQuick(i)));
                 }
 
-                int timestampKey = model.getColumnNameToAliasMap().keyIndex(nested.getTimestamp().token);
-                if (timestampKey < 0) {
-                    final int timestampIdx = model.getColumnAliasIndex(model.getColumnNameToAliasMap().valueAt(timestampKey));
-                    model.setTimestamp(model.getColumns().get(timestampIdx).getAst());
-                }
-
                 QueryModel order = null;
                 if (limitValue < -1) {
                     order = queryModelPool.next();
