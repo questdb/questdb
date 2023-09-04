@@ -2513,7 +2513,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             if (factory != null) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || Chars.equals(tok, ';')) {
-                    compiledQuery.of(factory);
+                    short type = factory instanceof NotCachedRecordCursorFactory ? CompiledQuery.PSEUDO_SELECT : CompiledQuery.SELECT;
+                    compiledQuery.of(type, factory);
                     return;
                 } else {
                     Misc.free(factory);
