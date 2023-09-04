@@ -582,7 +582,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (securityContext != null) {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
-        LOG.info().$("ADDED column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("]' to ").$(path).$();
     }
 
     @Override
