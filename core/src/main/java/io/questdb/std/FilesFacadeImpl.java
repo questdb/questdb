@@ -300,8 +300,6 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public void msync(long addr, long len, boolean async) {
-        // Linux requires the offset to be page aligned.
-        assert addr % getPageSize() == 0;
         int res = Files.msync(addr, len, async);
         if (res == 0) {
             return;
