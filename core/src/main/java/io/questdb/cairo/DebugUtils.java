@@ -24,12 +24,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
+
+import static io.questdb.cairo.TableWriter.getPrimaryColumnIndex;
+import static io.questdb.cairo.TableWriter.getSecondaryColumnIndex;
 
 @SuppressWarnings("unused")
 public class DebugUtils {
@@ -74,6 +76,57 @@ public class DebugUtils {
                                 $();
                         return false;
                     }
+                }
+            }
+        }
+        return true;
+    }
+
+    //    // Useful debugging method
+    public static boolean reconcileVarLenCol(
+            FilesFacade ff,
+            RecordMetadata metadata,
+            long partitionTimestamp,
+            ColumnVersionReader columnVersionReader,
+            ObjList<MemoryMA> columns,
+            long rowCount
+    ) {
+        if (rowCount == 0) {
+            return true;
+        }
+
+        for (int col = 0; col < metadata.getColumnCount(); col++) {
+            if (metadata.getColumnType(col) == ColumnType.STRING) {
+                // map column files
+                long colTop = columnVersionReader.getColumnTop(partitionTimestamp, col);
+                long colRowCount = rowCount - colTop;
+                if (colRowCount == 0) {
+                    continue;
+                }
+
+                var dCol = columns.get(getPrimaryColumnIndex(col));
+                var iCol = columns.get(getSecondaryColumnIndex(col));
+
+                long iAddrMap = TableUtils.mapAppendColumnBuffer(ff, iCol.getFd(), 0, (colRowCount + 1) * Long.BYTES, false, MemoryTag.MMAP_DEFAULT);
+                long iAddr = Math.abs(iAddrMap);
+
+                long dSize = Unsafe.getUnsafe().getLong(iAddr + colRowCount * Long.BYTES);
+                long dAddrMap = TableUtils.mapAppendColumnBuffer(ff, dCol.getFd(), 0, dSize, false, MemoryTag.MMAP_DEFAULT);
+
+                try {
+                    for (int row = 0; row < colRowCount; row++) {
+                        long offset = Unsafe.getUnsafe().getLong(iAddr + (long) row * Long.BYTES);
+                        long iLen = Unsafe.getUnsafe().getLong(iAddr + (long) (row + 1) * Long.BYTES) - offset;
+                        int dLen = Unsafe.getUnsafe().getInt(Math.abs(dAddrMap) + offset);
+                        int dStorageLen = dLen > 0 ? dLen * 2 + 4 : 4;
+                        if (iLen != dStorageLen) {
+                            // Swiss cheese hole in var col file
+                            return false;
+                        }
+                    }
+                } finally {
+                    TableUtils.mapAppendColumnBufferRelease(ff, dAddrMap, 0, dSize, MemoryTag.MMAP_DEFAULT);
+                    TableUtils.mapAppendColumnBufferRelease(ff, iAddrMap, 0, (colRowCount + 1) * Long.BYTES, MemoryTag.MMAP_DEFAULT);
                 }
             }
         }

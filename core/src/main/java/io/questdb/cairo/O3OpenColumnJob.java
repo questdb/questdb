@@ -2068,7 +2068,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataFixAddr + srcDataFixOffset - srcDataTop * 8
                 );
                 dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen * Long.BYTES);
-                dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
+                if (mergeLen == mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) {
+                    dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
+                } else {
+                    // dedup eliminates some rows, there is no way to know the append offset of var file beforehand
+                    dstVarAppendOffset2 = -2;
+                }
             } else {
                 dstFixAppendOffset2 = dstFixAppendOffset1;
                 dstVarAppendOffset2 = dstVarAppendOffset1;
@@ -2226,7 +2231,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr
     ) {
-        long cursor = tableWriter.getO3CopyPubSeq().next();
+        long cursor = -1;//tableWriter.getO3CopyPubSeq().next();
         if (cursor > -1) {
             publishCopyTaskHarmonized(
                     columnCounter,
@@ -2917,60 +2922,122 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             case O3_BLOCK_MERGE:
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        mergeType,
-                        timestampMergeIndexAddr,
-                        timestampMergeIndexSize,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixOffset,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarOffset,
-                        srcDataVarSize,
-                        mergeDataLo,
-                        mergeDataHi,
-                        srcDataTopOffset,
-                        srcDataMax,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        srcOooMax,
-                        srcOooLo,
-                        srcOooHi,
-                        timestampMin,
-                        partitionTimestamp,
-                        dstFixFd,
-                        dstFixAddr,
-                        dstFixAppendOffset1,
-                        dstFixAppendOffset1,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        dstVarAppendOffset1,
-                        dstVarAppendOffset2,
-                        0,
-                        dstVarSize,
-                        dstKFd,
-                        dstVFd,
-                        0,
-                        dstIndexAdjust,
-                        indexBlockCapacity,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        partitionMutates,
-                        newPartitionSize,
-                        oldPartitionSize,
-                        tableWriter,
-                        indexWriter,
-                        partitionUpdateSinkAddr
-                );
+                if (dstVarAppendOffset2 != -2 || suffixType == O3_BLOCK_NONE) {
+                    publishCopyTask(
+                            columnCounter,
+                            partCounter,
+                            columnType,
+                            mergeType,
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            srcDataFixFd,
+                            srcDataFixAddr,
+                            srcDataFixOffset,
+                            srcDataFixSize,
+                            srcDataVarFd,
+                            srcDataVarAddr,
+                            srcDataVarOffset,
+                            srcDataVarSize,
+                            mergeDataLo,
+                            mergeDataHi,
+                            srcDataTopOffset,
+                            srcDataMax,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            srcOooMax,
+                            srcOooLo,
+                            srcOooHi,
+                            timestampMin,
+                            partitionTimestamp,
+                            dstFixFd,
+                            dstFixAddr,
+                            dstFixAppendOffset1,
+                            dstFixAppendOffset1,
+                            dstFixSize,
+                            dstVarFd,
+                            dstVarAddr,
+                            dstVarAppendOffset1,
+                            dstVarAppendOffset2,
+                            0,
+                            dstVarSize,
+                            dstKFd,
+                            dstVFd,
+                            0,
+                            dstIndexAdjust,
+                            indexBlockCapacity,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            partitionMutates,
+                            newPartitionSize,
+                            oldPartitionSize,
+                            tableWriter,
+                            indexWriter,
+                            partitionUpdateSinkAddr
+                    );
+                } else {
+                    // dstVarAppendOffset2 == -2 means merge of var column with dedup
+                    // in this case merge is done in sync mode to know the suffix offset
+                    publishCopyTaskContended(
+                            -1,
+                            columnCounter,
+                            partCounter,
+                            columnType,
+                            mergeType,
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            srcDataFixFd,
+                            srcDataFixAddr,
+                            srcDataFixOffset,
+                            srcDataFixSize,
+                            srcDataVarFd,
+                            srcDataVarAddr,
+                            srcDataVarOffset,
+                            srcDataVarSize,
+                            mergeDataLo,
+                            mergeDataHi,
+                            srcDataTopOffset,
+                            srcDataMax,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            srcOooMax,
+                            srcOooLo,
+                            srcOooHi,
+                            timestampMin,
+                            partitionTimestamp,
+                            dstFixFd,
+                            dstFixAddr,
+                            dstFixAppendOffset1,
+                            dstFixAppendOffset1,
+                            dstFixSize,
+                            dstVarFd,
+                            dstVarAddr,
+                            dstVarAppendOffset1,
+                            dstVarAppendOffset2,
+                            0,
+                            dstVarSize,
+                            dstKFd,
+                            dstVFd,
+                            0,
+                            dstIndexAdjust,
+                            indexBlockCapacity,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            partitionMutates,
+                            newPartitionSize,
+                            oldPartitionSize,
+                            tableWriter,
+                            indexWriter,
+                            partitionUpdateSinkAddr
+                    );
+                    long mergeLen = timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES;
+                    dstVarAppendOffset2 = Unsafe.getUnsafe().getLong(dstFixAddr + dstFixAppendOffset1 + mergeLen * Long.BYTES);
+                }
                 break;
             default:
                 break;
@@ -2978,6 +3045,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         switch (suffixType) {
             case O3_BLOCK_O3:
+                assert dstVarAppendOffset2 > -1;
                 publishCopyTask(
                         columnCounter,
                         partCounter,
@@ -3034,6 +3102,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             case O3_BLOCK_DATA:
+                assert dstVarAppendOffset2 > -1;
                 publishCopyTask(
                         columnCounter,
                         partCounter,

@@ -636,9 +636,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
-                // multiple threads could be writing to this location as var index segments overlap,
-                // but they will be writing the same value
-                Unsafe.getUnsafe().putLong(dstFixAddr + mergeCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.BINARY:
                 Vect.oooMergeCopyBinColumn(
@@ -652,7 +649,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
-                Unsafe.getUnsafe().putLong(dstFixAddr + mergeCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.INT:
             case ColumnType.IPv4:
@@ -1051,22 +1047,27 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 // we can find out the edge of string column in one of two ways
                 // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
                 // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
-                copyVarSizeCol(
-                        ff,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        srcOooLo,
-                        srcOooHi,
-                        dstFixAddr,
-                        dstFixFd,
-                        dstFixFileOffset,
-                        dstVarAddr,
-                        dstVarFd,
-                        dstVarOffset,
-                        dstVarAdjust,
-                        dstVarSize,
-                        mixedIOFlag
-                );
+                if (dstVarOffset > -1) {
+                    // Copy suffix only when there is no dedup
+                    // suffix offset in case of dedup in not known
+                    // and suffix to be copied after merge done
+                    copyVarSizeCol(
+                            ff,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            dstFixAddr,
+                            dstFixFd,
+                            dstFixFileOffset,
+                            dstVarAddr,
+                            dstVarFd,
+                            dstVarOffset,
+                            dstVarAdjust,
+                            dstVarSize,
+                            mixedIOFlag
+                    );
+                }
                 break;
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
