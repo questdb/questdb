@@ -57,6 +57,20 @@ public class DebugUtils {
         return true;
     }
 
+    public static boolean isSparseVarCol(long colRowCount, long iAddr, long dAddr) {
+        for (int row = 0; row < colRowCount; row++) {
+            long offset = Unsafe.getUnsafe().getLong(iAddr + (long) row * Long.BYTES);
+            long iLen = Unsafe.getUnsafe().getLong(iAddr + (long) (row + 1) * Long.BYTES) - offset;
+            int dLen = Unsafe.getUnsafe().getInt(dAddr + offset);
+            int dStorageLen = dLen > 0 ? dLen * 2 + 4 : 4;
+            if (iLen != dStorageLen) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Useful debugging method
     public static boolean reconcileColumnTops(int partitionsSlotSize, LongList openPartitionInfo, ColumnVersionReader columnVersionReader, TableReader reader) {
         int partitionCount = reader.getPartitionCount();
@@ -104,25 +118,19 @@ public class DebugUtils {
                     continue;
                 }
 
-                var dCol = columns.get(getPrimaryColumnIndex(col));
-                var iCol = columns.get(getSecondaryColumnIndex(col));
+                MemoryMA dCol = columns.get(getPrimaryColumnIndex(col));
+                MemoryMA iCol = columns.get(getSecondaryColumnIndex(col));
 
                 long iAddrMap = TableUtils.mapAppendColumnBuffer(ff, iCol.getFd(), 0, (colRowCount + 1) * Long.BYTES, false, MemoryTag.MMAP_DEFAULT);
                 long iAddr = Math.abs(iAddrMap);
 
                 long dSize = Unsafe.getUnsafe().getLong(iAddr + colRowCount * Long.BYTES);
                 long dAddrMap = TableUtils.mapAppendColumnBuffer(ff, dCol.getFd(), 0, dSize, false, MemoryTag.MMAP_DEFAULT);
+                long dAddr = Math.abs(dAddrMap);
 
                 try {
-                    for (int row = 0; row < colRowCount; row++) {
-                        long offset = Unsafe.getUnsafe().getLong(iAddr + (long) row * Long.BYTES);
-                        long iLen = Unsafe.getUnsafe().getLong(iAddr + (long) (row + 1) * Long.BYTES) - offset;
-                        int dLen = Unsafe.getUnsafe().getInt(Math.abs(dAddrMap) + offset);
-                        int dStorageLen = dLen > 0 ? dLen * 2 + 4 : 4;
-                        if (iLen != dStorageLen) {
-                            // Swiss cheese hole in var col file
-                            return false;
-                        }
+                    if (isSparseVarCol(colRowCount, iAddr, dAddr)) {
+                        return false;
                     }
                 } finally {
                     TableUtils.mapAppendColumnBufferRelease(ff, dAddrMap, 0, dSize, MemoryTag.MMAP_DEFAULT);

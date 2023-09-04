@@ -26,6 +26,7 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -47,7 +48,10 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -170,17 +174,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         sharedWorkerPool.halt();
         super.tearDown();
-    }
-
-    static void assertCounts(String tableNameWal, String timestampColumnName) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.assertEquals(
-                    compiler,
-                    sqlExecutionContext,
-                    "select count() from " + tableNameWal,
-                    "select count() from " + tableNameWal + " where " + timestampColumnName + " > '1970-01-01' or " + timestampColumnName + " < '2100-01-01'"
-            );
-        }
     }
 
     private static void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {
@@ -513,6 +506,17 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         }
     }
 
+    static void assertCounts(String tableNameWal, String timestampColumnName) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.assertEquals(
+                    compiler,
+                    sqlExecutionContext,
+                    "select count() from " + tableNameWal,
+                    "select count() from " + tableNameWal + " where " + timestampColumnName + " > '1970-01-01' or " + timestampColumnName + " < '2100-01-01'"
+            );
+        }
+    }
+
     protected static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
     }
@@ -537,6 +541,29 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                     if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
                             && metadata.isColumnIndexed(columnIndex)) {
                         checkIndexRandomValueScan(tableNameNoWal, tableNameWal, rnd, reader.size(), metadata.getColumnName(columnIndex));
+                    }
+                }
+            }
+        }
+    }
+
+    protected void assertStringColDensity(String tableNameWal) {
+        try (TableReader reader = getReader(tableNameWal)) {
+            TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                if (ColumnType.isString(metadata.getColumnType(i))) {
+                    for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
+                        reader.openPartition(partitionIndex);
+                        int columnBase = reader.getColumnBase(partitionIndex);
+                        MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
+                        MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
+
+                        long colTop = reader.getColumnTop(columnBase, i);
+                        long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
+                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dCol.getPageAddress(0))) {
+                            Assert.fail("var column " + reader.getMetadata().getColumnName(i)
+                                    + " is not dense, .i file record size is different from .d file record size");
+                        }
                     }
                 }
             }
@@ -678,6 +705,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
                 assertCounts(tableNameWal, timestampColumnName);
                 assertCounts(tableNameNoWal, timestampColumnName);
+                assertStringColDensity(tableNameWal);
             } finally {
                 sharedWorkerPool.halt();
             }

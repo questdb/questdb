@@ -2113,7 +2113,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // 'long long value'
                     // Which is longer than oooLen + dataLen
                     // To deal with unpredicatability of the dedup var col size run the dedup merged size calculation
-                    dstVarAppendOffset2 = dstVarAppendOffset1 + Vect.oooMergeCopyColumnLen(
+                    dstVarAppendOffset2 = dstVarAppendOffset1 + Vect.dedupMergeVarColumnLen(
                             timestampMergeIndexAddr,
                             timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
                             srcDataFixAddr + srcDataFixOffset - srcDataTop * 8,
