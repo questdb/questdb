@@ -22,21 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.network;
 
-import io.questdb.cairo.TableToken;
+import io.questdb.log.Log;
 
-public interface WalListener {
-
-    void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn);
-
-    void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp);
-
-    void segmentClosed(final TableToken tableToken, long txn, int walId, int segmentId);
-
-    void tableCreated(TableToken tableToken, long timestamp);
-
-    void tableDropped(TableToken tableToken, long txn, long timestamp);
-
-    void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken);
+@FunctionalInterface
+public interface SocketFactory {
+    Socket newInstance(NetworkFacade nf, Log log);
 }
