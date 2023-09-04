@@ -27,14 +27,22 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.std.MemoryTag;
 import org.junit.Test;
 
-import static io.questdb.cairo.AbstractIntervalDataFrameCursor.binarySearch;
-import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
-import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_DOWN;
+import static io.questdb.cairo.AbstractIntervalDataFrameCursor.*;
 import static org.junit.Assert.assertEquals;
 
 public class AbstractIntervalDataFrameCursorTest extends AbstractCairoTest {
     // see implementation of Vect.binarySearch64Bit 
     static final int THRESHOLD = 65;
+
+    @Test
+    public void testBinarySearchOnArrayWith4Duplicates() throws Exception {
+        testBinarySearchOnArrayWithDuplicates(4);
+    }
+
+    @Test
+    public void testBinarySearchOnArrayWith65Duplicates() throws Exception {
+        testBinarySearchOnArrayWithDuplicates(THRESHOLD + 5);
+    }
 
     @Test
     public void testBinarySearchOnArrayWithSingleValue() throws Exception {
@@ -81,16 +89,6 @@ public class AbstractIntervalDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testtestBinarySearchOnArrayWith4Duplicates() throws Exception {
-        testBinarySearchOnArrayWithDuplicates(4);
-    }
-
-    @Test
-    public void testtestBinarySearchOnArrayWith65Duplicates() throws Exception {
-        testBinarySearchOnArrayWithDuplicates(THRESHOLD + 5);
-    }
-
     private void testBinarySearchOnArrayWithDuplicates(int dupCount) throws Exception {
         assertMemoryLeak(() -> {
             int size = 1024 * 1024;
@@ -115,5 +113,4 @@ public class AbstractIntervalDataFrameCursorTest extends AbstractCairoTest {
             }
         });
     }
-
 }
