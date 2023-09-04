@@ -2823,7 +2823,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             // override column tops for the partition we are attaching
-            columnVersionWriter.copyPartition(partitionTimestamp, attachColumnVersionReader);
+            columnVersionWriter.overrideColumnVersions(partitionTimestamp, attachColumnVersionReader);
 
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 String columnName = metadata.getColumnName(colIdx);
@@ -4683,6 +4683,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final RingQueue<O3CallbackTask> queue = messageBus.getO3CallbackQueue();
 
         o3DoneLatch.reset();
+        o3ErrorCount.set(0);
+
         int queuedCount = 0;
         for (int i = 0; i < columnCount; i++) {
             final int type = metadata.getColumnType(i);
@@ -5234,6 +5236,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
             final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
             o3DoneLatch.reset();
+            o3ErrorCount.set(0);
             int queuedCount = 0;
 
             for (int colIndex = 0; colIndex < columnCount; colIndex++) {
@@ -5310,6 +5313,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
 
         o3DoneLatch.reset();
+        o3ErrorCount.set(0);
         int queuedCount = 0;
         long excludeSymbolsL = excludeSymbols ? 1 : 0;
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
@@ -5356,6 +5360,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
 
         o3DoneLatch.reset();
+        o3ErrorCount.set(0);
         int queuedCount = 0;
         for (int i = 0; i < columnCount; i++) {
             final int type = metadata.getColumnType(i);
@@ -5885,6 +5890,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+                    // original partition timestamp
+                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+
 
                     if (append) {
                         // we are appending last partition, make sure it has been mapped!
@@ -7585,6 +7593,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
             long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
+            final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+            // When partition is split, data partition timestamp and partition timestamp diverge
+            final long dataPartitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress + 6 * Long.BYTES);
+
+            if (o3SplitPartitionSize > 0) {
+                // This is partition split. Copy all the column name txns from the donor partition.
+                columnVersionWriter.copyColumnVersions(dataPartitionTimestamp, partitionTimestamp);
+            }
 
             if (partitionTimestamp > -1) {
                 blockAddress += PARTITION_SINK_SIZE_LONGS * Long.BYTES;
@@ -7596,6 +7612,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Upsert even when colTop value is 0.
                         // TableReader uses the record to determine if the column is supposed to be present for the partition.
                         columnVersionWriter.upsertColumnTop(partitionTimestamp, column, colTop);
+                    } else if (o3SplitPartitionSize > 0) {
+                        // Remove column tops for the new partition part.
+                        columnVersionWriter.removeColumnTop(partitionTimestamp, column);
                     }
                 }
             }
