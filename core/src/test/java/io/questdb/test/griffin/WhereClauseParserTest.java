@@ -161,7 +161,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         reader = Misc.free(reader);
         metadata = null;
         noTimestampReader = Misc.free(noTimestampReader);

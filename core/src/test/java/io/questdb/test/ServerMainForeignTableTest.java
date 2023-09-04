@@ -83,7 +83,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         Assert.assertEquals(0, Files.rmdir(auxPath.of(otherVolume).$()));
         AbstractBootstrapTest.tearDownStatic();
     }

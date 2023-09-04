@@ -118,11 +118,6 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntMinIntMerge(pRostiA, pRostiB, valueOffset);
     }

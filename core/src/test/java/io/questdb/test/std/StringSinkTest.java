@@ -32,7 +32,7 @@ public class StringSinkTest {
     @Test
     public void testUnprintable() {
         StringSink ss = new StringSink();
-        ss.putAsPrintable("\u0101abcd\u1234def\u0012");
+        ss.putAsPrintable("āabcdሴdef\u0012");
 
         TestUtils.assertEquals("āabcdሴdef\\u0012", ss.toString());
     }
@@ -41,7 +41,6 @@ public class StringSinkTest {
     public void testUnprintableNewLine() {
         StringSink ss = new StringSink();
         ss.putAsPrintable("\nasd+-~f\r\0 д");
-
         TestUtils.assertEquals("\\u000aasd+-~f\\u000d\\u0000 д", ss.toString());
     }
 }

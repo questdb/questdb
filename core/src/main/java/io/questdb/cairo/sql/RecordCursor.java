@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.DataUnavailableException;
+
 import java.io.Closeable;
 
 /**
@@ -67,7 +69,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @return true if more records may be accessed, otherwise false
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    boolean hasNext();
+    boolean hasNext() throws DataUnavailableException;
 
     /**
      * Returns true if the cursor is using an index, false otherwise
@@ -101,9 +103,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * Not every record cursor has a size, may return -1, in this case, keep going until hasNext()
      * indicated there are no more records to access.
      *
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      * @return size of records available to the cursor
      */
-    long size();
+    long size() throws DataUnavailableException;
 
     /**
      * Tries to position the record at the given row count to skip in an efficient way.
@@ -116,7 +119,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @return true if a fast skip is supported by the cursor and was executed, false otherwise
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    default boolean skipTo(long rowCount) {
+    default boolean skipTo(long rowCount) throws DataUnavailableException{
         return false;
     }
 

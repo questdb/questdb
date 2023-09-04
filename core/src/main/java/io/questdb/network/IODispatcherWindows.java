@@ -25,9 +25,6 @@
 package io.questdb.network;
 
 import io.questdb.std.LongIntHashMap;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final LongIntHashMap fds = new LongIntHashMap();
@@ -159,7 +156,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
         int count;
         if (readFdSet.getCount() > 0 || writeFdSet.getCount() > 0) {
-            count = sf.select(readFdSet.address, writeFdSet.address, 0);
+            count = sf.select(readFdSet.address(), writeFdSet.address(), 0, 0);
             if (count < 0) {
                 LOG.error().$("select failure [err=").$(nf.errno()).I$();
                 return false;
@@ -183,8 +180,8 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         // re-arm select() fds
         int readFdCount = 0;
         int writeFdCount = 0;
-        readFdSet.reset();
-        writeFdSet.reset();
+        readFdSet.clear();
+        writeFdSet.clear();
         long deadline = timestamp - idleConnectionTimeout;
         final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
         for (int i = 0, n = pending.size(); i < n; ) {
@@ -243,10 +240,11 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         operation = IOOperation.READ;
                     }
 
-                    if (operation == IOOperation.READ) {
+                    if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                         readFdSet.add(fd);
                         readFdCount++;
-                    } else {
+                    }
+                    if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                         writeFdSet.add(fd);
                         writeFdCount++;
                     }
@@ -261,24 +259,60 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         n--;
                         watermark--;
                     } else {
-                        i++; // just skip to the next operation
+                        // the connection is alive, so we need to add it to poll to be able to detect broken connection
+                        readFdSet.add(fd);
+                        readFdCount++;
+
+                        if (context.getSocket().wantsTlsWrite()) {
+                            writeFdSet.add(fd);
+                            writeFdCount++;
+                        }
+                        i++; // now skip to the next operation
                     }
                     continue;
                 }
 
-                // publish event and remove from pending
+                // we got a (potentially requested) event
                 useful = true;
 
-                if ((newOp & SelectAccessor.FD_READ) > 0) {
-                    publishOperation(IOOperation.READ, context);
-                }
-                if ((newOp & SelectAccessor.FD_WRITE) > 0) {
-                    publishOperation(IOOperation.WRITE, context);
-                }
+                final int requestedOp = (int) pending.get(i, OPM_OPERATION);
+                final boolean readyForWrite = (newOp & SelectAccessor.FD_WRITE) > 0;
+                final boolean readyForRead = (newOp & SelectAccessor.FD_READ) > 0;
 
-                pending.deleteRow(i);
-                n--;
-                watermark--;
+                if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
+                    // If the socket is also ready for another operation type, do it.
+                    if (context.getSocket().tlsIO(tlsIOFlags(requestedOp, readyForRead, readyForWrite)) < 0) {
+                        doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                        pending.deleteRow(i);
+                        n--;
+                        watermark--;
+                        continue;
+                    }
+                    // publish event and remove from pending
+                    publishOperation(requestedOp, context);
+                    pending.deleteRow(i);
+                    n--;
+                    watermark--;
+                } else {
+                    // It's something different from the requested operation.
+                    if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
+                        doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                        pending.deleteRow(i);
+                        n--;
+                        watermark--;
+                        continue;
+                    }
+                    // Now we need to re-arm poll.
+                    if (requestedOp == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+                        readFdSet.add(fd);
+                        readFdCount++;
+                    }
+                    if (requestedOp == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
+                        writeFdSet.add(fd);
+                        writeFdCount++;
+                    }
+                    i++; // now skip to the next operation
+                }
             }
         }
 
@@ -298,62 +332,5 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         listenerRegistered = false;
     }
 
-    private static class FDSet {
-        private long _wptr;
-        private long address;
-        private long lim;
-        private int size;
-
-        private FDSet(int size) {
-            int l = SelectAccessor.ARRAY_OFFSET + 8 * size;
-            this.address = Unsafe.malloc(l, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            this.size = size;
-            this._wptr = address + SelectAccessor.ARRAY_OFFSET;
-            this.lim = address + l;
-        }
-
-        private void add(int fd) {
-            if (_wptr == lim) {
-                resize();
-            }
-            long p = _wptr;
-            Unsafe.getUnsafe().putLong(p, fd);
-            _wptr = p + 8;
-        }
-
-        private void close() {
-            if (address != 0) {
-                address = Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            }
-        }
-
-        private long get(int index) {
-            return Unsafe.getUnsafe().getLong(address + SelectAccessor.ARRAY_OFFSET + index * 8L);
-        }
-
-        private int getCount() {
-            return Unsafe.getUnsafe().getInt(address + SelectAccessor.COUNT_OFFSET);
-        }
-
-        private void reset() {
-            _wptr = address + SelectAccessor.ARRAY_OFFSET;
-        }
-
-        private void resize() {
-            int sz = size * 2;
-            int l = SelectAccessor.ARRAY_OFFSET + 8 * sz;
-            long _addr = Unsafe.malloc(l, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            Vect.memcpy(_addr, address, lim - address);
-            Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            lim = _addr + l;
-            size = sz;
-            _wptr = _addr + (_wptr - address);
-            address = _addr;
-        }
-
-        private void setCount(int count) {
-            Unsafe.getUnsafe().putInt(address + SelectAccessor.COUNT_OFFSET, count);
-        }
-    }
 }
 

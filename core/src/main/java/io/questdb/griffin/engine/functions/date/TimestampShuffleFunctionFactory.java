@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
@@ -52,7 +51,7 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         long start = args.getQuick(0).getTimestamp(null);
         long end = args.getQuick(1).getTimestamp(null);
         if (start == Numbers.LONG_NaN || end == Numbers.LONG_NaN) {
@@ -77,10 +76,6 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
-        }
-
-        @Override
         public long getTimestamp(Record rec) {
             return start + rnd.nextPositiveLong() % (end - start);
         }
@@ -88,11 +83,6 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override

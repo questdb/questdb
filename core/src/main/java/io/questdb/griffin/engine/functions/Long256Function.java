@@ -168,8 +168,4 @@ public abstract class Long256Function implements ScalarFunction {
         return ColumnType.LONG256;
     }
 
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
 }

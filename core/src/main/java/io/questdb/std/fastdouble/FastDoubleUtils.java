@@ -83,8 +83,6 @@ final class FastDoubleUtils {
         for (char ch = 'a'; ch <= 'f'; ch++) {
             FastDoubleUtils.CHAR_TO_HEX_MAP[ch] = (byte) (ch - 'a' + 10);
         }
-        for (char ch = '.'; ch <= '.'; ch++) {
-            FastDoubleUtils.CHAR_TO_HEX_MAP[ch] = FastDoubleUtils.DECIMAL_POINT_CLASS;
-        }
+        FastDoubleUtils.CHAR_TO_HEX_MAP['.'] = FastDoubleUtils.DECIMAL_POINT_CLASS;
     }
 }

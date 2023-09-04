@@ -427,7 +427,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic()  {
         forEachNode(QuestDBTestNode::closeCairo);
         circuitBreaker = Misc.free(circuitBreaker);
         nodes.clear();
@@ -496,7 +496,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
-        final Rnd rnd = new Rnd(Os.currentTimeMicros(), System.currentTimeMillis());
+        final Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < numberOfIterations; i++) {
             int symbolColIndex = rnd.nextInt(symbolColumnCount);
             SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);
@@ -721,7 +721,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
+    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
@@ -1837,7 +1837,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return update(updateSql, sqlExecutionContext, null);
     }
 
-    protected long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+    protected long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             while (true) {
                 try {

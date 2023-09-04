@@ -35,7 +35,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
@@ -109,7 +108,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public @NotNull FactoryProvider getFactoryProvider() {
         return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
     }
 
@@ -378,11 +377,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
-    }
-
-    @Override
-    public boolean isWalSupported() {
-        return true;
     }
 
     @Override

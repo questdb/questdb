@@ -68,7 +68,6 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
     }
 
     private static class RndFunction extends IPv4Function implements Function {
-        private final int hi;
         private final int lo;
         private final int nullRate;
         private final int range;
@@ -77,7 +76,6 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
         public RndFunction(int lo, int hi, int nullRate) {
             super();
             this.lo = lo;
-            this.hi = hi;
             this.range = hi - lo + 1;
             this.nullRate = nullRate + 1;
         }
@@ -93,11 +91,6 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override

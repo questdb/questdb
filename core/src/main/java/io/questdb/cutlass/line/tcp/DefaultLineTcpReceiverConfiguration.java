@@ -54,7 +54,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
             return 0;
         }
     };
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
 
     @Override
     public String getAuthDB() {
@@ -117,7 +116,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {
-        return ioDispatcherConfiguration;
+        return DefaultIODispatcherConfiguration.INSTANCE;
     }
 
     @Override
@@ -212,11 +211,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public boolean isSymbolAsFieldSupported() {
-        return false;
-    }
-
-    @Override
-    public boolean readOnlySecurityContext() {
         return false;
     }
 }

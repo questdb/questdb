@@ -1472,7 +1472,8 @@ if __name__ == "__main__":
                 ResultSet rs = stmt.executeQuery();
                 assertEquals(testSize, rs.getFetchSize());
                 sink.clear();
-                assertResultSet("a[IPv4],b[INTEGER],c[IPv4],d[INTEGER]\n" +
+                assertResultSet(
+                        "a[IPv4],b[INTEGER],c[IPv4],d[INTEGER]\n" +
                                 "12.2.65.90,5,65.34.123.99,22\n" +
                                 "12.2.65.90,5,65.34.123.99,22\n" +
                                 "12.2.65.90,5,65.34.123.99,22\n" +
@@ -1630,7 +1631,8 @@ if __name__ == "__main__":
                 ResultSet rs = stmt.executeQuery();
                 assertEquals(testSize, rs.getFetchSize());
                 sink.clear();
-                assertResultSet("a[IPv4]\n" +
+                assertResultSet(
+                        "a[IPv4]\n" +
                                 "null\n" +
                                 "null\n" +
                                 "null\n" +
@@ -2557,9 +2559,11 @@ if __name__ == "__main__":
                 "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
                 ">430000000951535f31005300000004\n" +
                 "<!!";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -2861,26 +2865,30 @@ if __name__ == "__main__":
             //max rows bigger than result set sie (empty result set)
             assertResultNTimes(connection,
                     "select * from tab",
-                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5, 10);
+                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5, 10
+            );
 
             //max rows bigger than result set sie (non-empty result set)
             assertResultNTimes(connection,
                     "select 1 as x",
                     "x[INTEGER]\n" +
-                            "1\n", 5, 10);
+                            "1\n", 5, 10
+            );
 
             //max rows smaller than result set size
             assertResultNTimes(connection,
                     "select x from long_sequence(5)",
                     "x[BIGINT]\n" +
-                            "1\n2\n3\n", 3, 10);
+                            "1\n2\n3\n", 3, 10
+            );
 
             // max rows smaller than cursor size, cursor does not return size
             assertResultNTimes(connection,
                     "show columns from tab",
                     "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
                             "a,INT,false,0,false,0,false,false\n" +
-                            "b,LONG,false,0,false,0,false,false\n", 2, 10);
+                            "b,LONG,false,0,false,0,false,false\n", 2, 10
+            );
 
             // max rows bigger than cursor size, cursor does not return size
             assertResultNTimes(connection,
@@ -2888,7 +2896,8 @@ if __name__ == "__main__":
                     "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
                             "a,INT,false,0,false,0,false,false\n" +
                             "b,LONG,false,0,false,0,false,false\n" +
-                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6, 10);
+                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6, 10
+            );
         });
     }
 
@@ -3882,7 +3891,8 @@ if __name__ == "__main__":
                                         "false,2022-04-19 18:50:28.998\n" +
                                         "false,2022-04-19 18:50:29.998\n",
                                 sink,
-                                resultSet);
+                                resultSet
+                        );
                     }
                 }
             }
@@ -4922,23 +4932,29 @@ nodejs code:
 
             mayDrainWalQueue();
 
-            testExecuteWithDifferentBindVariables(connection,
+            testExecuteWithDifferentBindVariables(
+                    connection,
                     "select h, isym from " +// LatestByValueFilteredRecordCursor
                             "(select h, stat, isym from tab " +
                             "where sym = ? and type = 'X' latest on ts partition by sym " +
-                            ") where stat='Y'");
+                            ") where stat='Y'"
+            );
 
-            testExecuteWithDifferentBindVariables(connection,
+            testExecuteWithDifferentBindVariables(
+                    connection,
                     "select h, isym from " + // LatestByValueRecordCursor 
                             "(select h, stat, isym from tab " +
                             "where sym = ? latest on ts partition by sym " +
-                            ") where stat='Y'");
+                            ") where stat='Y'"
+            );
 
-            testExecuteWithDifferentBindVariables(connection,
+            testExecuteWithDifferentBindVariables(
+                    connection,
                     "select h, isym from " + // LatestByValueIndexedFilteredRecordCursor 
                             "(select h, stat, isym from tab " +
                             "where isym = ? and type = 'X' latest on ts partition by isym" +
-                            ") where stat='Y'");
+                            ") where stat='Y'"
+            );
         });
     }
 
@@ -5350,9 +5366,11 @@ nodejs code:
                 "<310000000432000000044300000008534554005a0000000549\n" +
                 ">500000000800000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
                 "<310000000432000000046e0000000449000000045a0000000549\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -5509,9 +5527,11 @@ nodejs code:
                 "<310000000432000000044300000008534554005a0000000549\n" +
                 ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000200000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
                 "<!!";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     //checks that function parser error doesn't persist and affect later queries issued through the same connection
@@ -5976,7 +5996,6 @@ nodejs code:
                     statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
                     statement.setTimestamp(22, null);
 
-
                     final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR],$22[VARCHAR]\n" +
                             "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
                             "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
@@ -6289,7 +6308,8 @@ nodejs code:
                 "<430000000a424547494e005a0000000554\n" +
                 ">510000001a53454c454354202a2046524f4d207472616465733b00\n" +
                 "<540000006100047473000000000000010000045a0008ffffffff000064617465000000000000020000045a0008ffffffff00006e616d650000000000000300000413ffffffffffff000076616c756500000000000004000000170004ffffffff0000440000005d00040000001a323032312d30312d32362031333a34333a34302e32323030383900000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000130440000005d00040000001a323032312d30312d32362031333a34333a34302e32333130323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000131440000005d00040000001a323032312d30312d32362031333a34333a34302e32333230323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000132440000005d00040000001a323032312d30312d32362031333a34333a34302e32333230323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000133440000005d00040000001a323032312d30312d32362031333a34333a34302e32333330323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000134440000005d00040000001a323032312d30312d32362031333a34333a34302e32333330323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000135440000005d00040000001a323032312d30312d32362031333a34333a34302e32333430323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000136440000005d00040000001a323032312d30312d32362031333a34333a34302e32333430323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000137440000005d00040000001a323032312d30312d32362031333a34333a34302e32333530373800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000138440000005d00040000001a323032312d30312d32362031333a34333a34302e32333530373800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000139430000000e53454c454354203130005a0000000554\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
                 new Port0PGWireConfiguration()
         );
@@ -6337,7 +6357,8 @@ nodejs code:
                 ">510000001a53454c454354202a2046524f4d207472616465733b00\n" +
                 "<540000004a00037473000000000000010000045a0008ffffffff00006e616d650000000000000200000413ffffffffffff000076616c756500000000000003000000170004ffffffff0000440000003500030000001a323032312d30312d32342030353a30313a31312e3833353834390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834313438370000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323130350000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323531340000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323934390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834333337390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834333832370000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834343331380000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834343738330000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834353238330000000670792d61626300000003313233430000000e53454c454354203130005a0000000554\n" +
                 ">5800000004\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
                 new Port0PGWireConfiguration()
         );
@@ -7237,9 +7258,11 @@ nodejs code:
                 ">4300000008537331005300000004\n" +
                 "<33000000045a0000000549\n" +
                 ">5800000004\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                new Port0PGWireConfiguration());
+                new Port0PGWireConfiguration()
+        );
     }
 
     @Test
@@ -7267,7 +7290,8 @@ nodejs code:
                                 "TABLE_CAT[VARCHAR]\n" +
                                         "qdb\n",
                                 sink,
-                                rs);
+                                rs
+                        );
                     }
 
                     sink.clear();
@@ -8942,7 +8966,8 @@ create table tab as (
                 "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
                         "1,2.0,2020-06-01 00:00:02.0\n" +
                         "9,2.6,2020-06-01 00:00:06.0\n" +
-                        "9,3.0,2020-06-01 00:00:12.0\n");
+                        "9,3.0,2020-06-01 00:00:12.0\n"
+        );
     }
 
     //
@@ -8971,7 +8996,8 @@ create table tab as (
                 "a[BIGINT],b[DOUBLE],ts[TIMESTAMP],newCol[INTEGER]\n" +
                         "1,2.0,2020-06-01 00:00:02.0,null\n" +
                         "9,2.6,2020-06-01 00:00:06.0,null\n" +
-                        "9,3.0,2020-06-01 00:00:12.0,null\n");
+                        "9,3.0,2020-06-01 00:00:12.0,null\n"
+        );
     }
 
     //
@@ -9661,7 +9687,8 @@ create table tab as (
                             }
                         };
                     }
-                }) {
+                }
+        ) {
         };
     }
 
@@ -11169,9 +11196,9 @@ create table tab as (
         private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
-        public int send(int fd, long buffer, int bufferLen) {
+        public int sendRaw(int fd, long buffer, int bufferLen) {
             if (!delaying.get()) {
-                return super.send(fd, buffer, bufferLen);
+                return super.sendRaw(fd, buffer, bufferLen);
             }
 
             if (delayedAttemptsCounter.decrementAndGet() < 0) {
@@ -11205,20 +11232,20 @@ create table tab as (
         }
 
         @Override
-        public int recv(int fd, long buffer, int bufferLen) {
+        public int recvRaw(int fd, long buffer, int bufferLen) {
             if (remainingAllowedSendCalls.get() < 0) {
                 remainingAllowedSendCalls.decrementAndGet();
                 return -1;
             }
-            return super.recv(fd, buffer, bufferLen);
+            return super.recvRaw(fd, buffer, bufferLen);
         }
 
         @Override
-        public int send(int fd, long buffer, int bufferLen) {
+        public int sendRaw(int fd, long buffer, int bufferLen) {
             if (remainingAllowedSendCalls.decrementAndGet() < 0) {
                 return -1;
             }
-            return super.send(fd, buffer, bufferLen);
+            return super.sendRaw(fd, buffer, bufferLen);
         }
 
         int getAfterDisconnectInteractions() {

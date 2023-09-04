@@ -543,31 +543,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             private long pRow;
 
             @Override
-            public BinarySequence getBin(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public long getBinLen(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public boolean getBool(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public byte getByte(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public char getChar(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public long getDate(int col) {
                 return getLong(col);
             }
