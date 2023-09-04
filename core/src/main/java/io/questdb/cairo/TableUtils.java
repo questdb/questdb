@@ -1059,6 +1059,13 @@ public final class TableUtils {
         return page;
     }
 
+    public static void msync(FilesFacade ff, long addr, long len, boolean async) {
+        // Linux requires the msync address to be page aligned
+        long alignedAddr = Files.floorPageSize(addr);
+        long alignedExtraLen = addr - alignedAddr;
+        ff.msync(alignedAddr, len + alignedExtraLen, async);
+    }
+
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".o");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {

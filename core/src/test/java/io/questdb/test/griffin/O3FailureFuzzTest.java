@@ -91,14 +91,14 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private final int workerCount;
 
     public O3FailureFuzzTest(ParallelMode mode) {
-        this.workerCount = mode == ParallelMode.Contended ? 0 : 2;
+        this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.Parallel},
-                {ParallelMode.Contended}
+                {ParallelMode.PARALLEL},
+                {ParallelMode.CONTENDED}
         });
     }
 

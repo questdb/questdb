@@ -123,7 +123,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                         Vect.memcpy(dstVarAddress, srcVarAddress, copySize);
 
                         if (commitMode != CommitMode.NOSYNC) {
-                            ff.msync(dstVarAddress, copySize, commitMode == CommitMode.ASYNC);
+                            TableUtils.msync(ff, dstVarAddress, copySize, commitMode == CommitMode.ASYNC);
                         }
                     } finally {
                         if (srcVarAddress != 0) {
@@ -148,7 +148,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     );
 
                     if (commitMode != CommitMode.NOSYNC) {
-                        ff.msync(fixAddr, srcFixMapSize, commitMode == CommitMode.ASYNC);
+                        TableUtils.msync(ff, fixAddr, srcFixMapSize, commitMode == CommitMode.ASYNC);
                     }
                 } finally {
                     TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, srcFixMapSize, MEMORY_TAG);
@@ -178,7 +178,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 Vect.memset(varAddr, appendVarSize, -1);
 
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(varAddr, appendVarSize, commitMode == CommitMode.ASYNC);
+                    TableUtils.msync(ff, varAddr, appendVarSize, commitMode == CommitMode.ASYNC);
                 }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, varAddr, varOffset, appendVarSize, MEMORY_TAG);
@@ -197,7 +197,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 }
 
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(fixAddr, fixedSize, commitMode == CommitMode.ASYNC);
+                    TableUtils.msync(ff, fixAddr, fixedSize, commitMode == CommitMode.ASYNC);
                 }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, fixedSize, MEMORY_TAG);

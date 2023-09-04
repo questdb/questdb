@@ -60,6 +60,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
+    protected static boolean mixedIOEnabled = true;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
 
@@ -87,6 +88,7 @@ public class AbstractO3Test extends AbstractTest {
     @After
     public void tearDown() throws Exception {
         commitMode = CommitMode.NOSYNC;
+        mixedIOEnabled = true;
         dataAppendPageSize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
@@ -343,6 +345,11 @@ public class AbstractO3Test extends AbstractTest {
                     public long getPartitionO3SplitMinSize() {
                         return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
                     }
+
+                    @Override
+                    public boolean isWriterMixedIOEnabled() {
+                        return mixedIOEnabled;
+                    }
                 };
 
                 TestUtils.execute(pool, runnable, configuration, LOG);
@@ -408,6 +415,11 @@ public class AbstractO3Test extends AbstractTest {
                     public long getPartitionO3SplitMinSize() {
                         return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
                     }
+
+                    @Override
+                    public boolean isWriterMixedIOEnabled() {
+                        return mixedIOEnabled;
+                    }
                 };
                 TestUtils.execute(null, runnable, configuration, LOG);
             }
@@ -454,6 +466,6 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     protected enum ParallelMode {
-        Contended, Parallel
+        CONTENDED, PARALLEL
     }
 }

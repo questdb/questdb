@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,15 +53,23 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Rule
     public TestName name = new TestName();
 
-    public O3SplitPartitionTest(ParallelMode mode) {
-        this.workerCount = mode == ParallelMode.Contended ? 0 : 2;
+    public O3SplitPartitionTest(ParallelMode mode, int commitMode, boolean mixedIOEnabled) {
+        this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
+        AbstractO3Test.commitMode = commitMode;
+        AbstractO3Test.mixedIOEnabled = mixedIOEnabled;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0},{1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.Parallel},
-                {ParallelMode.Contended}
+                {ParallelMode.PARALLEL, CommitMode.NOSYNC, true},
+                {ParallelMode.PARALLEL, CommitMode.NOSYNC, false},
+                {ParallelMode.PARALLEL, CommitMode.SYNC, true},
+                {ParallelMode.PARALLEL, CommitMode.SYNC, false},
+                {ParallelMode.CONTENDED, CommitMode.NOSYNC, true},
+                {ParallelMode.CONTENDED, CommitMode.NOSYNC, false},
+                {ParallelMode.CONTENDED, CommitMode.SYNC, true},
+                {ParallelMode.CONTENDED, CommitMode.SYNC, false}
         });
     }
 
@@ -183,7 +192,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
                     sqlExecutionContext);
 
-            engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)                    ;
+            engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext);
 
             engine.insert("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
                             "('2022-06-08T02:50:00.000000Z', '5', '3')," +
