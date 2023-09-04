@@ -52,8 +52,13 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         TableReader reader = executionContext.getReader(tableToken, tableVersion);
-        cursor.of(reader);
-        return cursor;
+        try {
+            cursor.of(reader);
+            return cursor;
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
+        }
     }
 
     @Override
@@ -126,10 +131,10 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         public void of(TableReader reader) {
-            this.reader = reader;
             this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
             this.numberOfSymbols = symbolMapReader.getSymbolCount() + (symbolMapReader.containsNullValue() ? 1 : 0);
             this.recordA.reset();
+            this.reader = reader;
         }
 
         @Override

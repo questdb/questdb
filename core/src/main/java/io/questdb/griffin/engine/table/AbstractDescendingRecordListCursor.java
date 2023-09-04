@@ -85,7 +85,7 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
 
     @Override
     public long size() {
-        return rows.size();
+        return isTreeMapBuilt ? rows.size() : -1;
     }
 
     @Override
