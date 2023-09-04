@@ -35,54 +35,14 @@ import org.jetbrains.annotations.NotNull;
 public class MapFactory {
 
     /**
-     * Creates a Map pre-allocated to a large capacity to be used in JOIN queries.
-     */
-    public static Map createMap(
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes
-    ) {
-        return createMap(false, configuration, keyTypes, valueTypes);
-    }
-
-    /**
-     * Creates a Map pre-allocated to a large capacity to be used in JOIN queries.
+     * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
      */
     public static Map createMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes
     ) {
-        return createMap(false, configuration, keyTypes);
-    }
-
-    /**
-     * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
-     */
-    public static Map createSmallMap(
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes
-    ) {
-        return createMap(true, configuration, keyTypes);
-    }
-
-    /**
-     * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
-     */
-    public static Map createSmallMap(
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes
-    ) {
-        return createMap(true, configuration, keyTypes, valueTypes);
-    }
-
-    private static Map createMap(
-            boolean smallMap,
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes
-    ) {
-        final int keyCapacity = smallMap ? configuration.getSqlSmallMapKeyCapacity() : configuration.getSqlMapKeyCapacity();
-        final int pageSize = smallMap ? configuration.getSqlSmallMapPageSize() : configuration.getSqlMapPageSize();
+        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
+        final int pageSize = configuration.getSqlSmallMapPageSize();
         CharSequence mapType = configuration.getDefaultMapType();
         if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
             return new FastMap(
@@ -108,14 +68,16 @@ public class MapFactory {
         throw CairoException.critical(0).put("unknown map type: ").put(mapType);
     }
 
-    private static Map createMap(
-            boolean smallMap,
+    /**
+     * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
+     */
+    public static Map createMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @NotNull ColumnTypes valueTypes
     ) {
-        final int keyCapacity = smallMap ? configuration.getSqlSmallMapKeyCapacity() : configuration.getSqlMapKeyCapacity();
-        final int pageSize = smallMap ? configuration.getSqlSmallMapPageSize() : configuration.getSqlMapPageSize();
+        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
+        final int pageSize = configuration.getSqlSmallMapPageSize();
         final CharSequence mapType = configuration.getDefaultMapType();
         if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
             return new FastMap(

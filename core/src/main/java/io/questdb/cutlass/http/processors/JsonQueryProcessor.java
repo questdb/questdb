@@ -291,10 +291,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpConnectionContext context,
             SqlExecutionContext sqlExecutionContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
-        if (state.noCursor()) {
-            return;
-        }
-
         LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
@@ -412,7 +408,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void compileQuery(
             JsonQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         boolean recompileStale = true;
         for (int retries = 0; recompileStale; retries++) {
             try {
@@ -672,7 +668,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void retryQueryExecution(
             JsonQueryProcessorState state,
             OperationFuture fut
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException, QueryPausedException, SqlException {
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
         final int waitResult;
         try {
             waitResult = fut.await(0);
@@ -740,6 +736,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 JsonQueryProcessorState state,
                 CompiledQuery cc,
                 CharSequence keepAliveHeader
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, SqlException;
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException;
     }
 }

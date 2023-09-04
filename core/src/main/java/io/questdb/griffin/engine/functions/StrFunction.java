@@ -177,8 +177,4 @@ public abstract class StrFunction implements ScalarFunction {
         return ColumnType.STRING;
     }
 
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
 }

@@ -666,6 +666,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         valueTypes.clear();
         valueTypes.add(ColumnType.LONG);
         valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.LONG); // record count for the key
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
             if (joinType == JOIN_INNER) {
@@ -3045,7 +3046,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         } else {
-            entity = false;
+            final int tsIndex = metadata.getTimestampIndex();
+            entity = timestamp != null && tsIndex != -1 && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex));
         }
 
         if (entity) {
@@ -3798,9 +3800,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, metadata);
             }
         } else {
-            try (TableReader reader = executionContext.getReader(
-                    tableToken,
-                    model.getMetadataVersion())) {
+            try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
         }
