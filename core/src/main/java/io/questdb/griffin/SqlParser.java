@@ -47,6 +47,9 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
+    private final IntList accumulatedColumnPositions = new IntList();
+    private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
+    private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final CharacterStore characterStore;
     private final CharSequence column;
@@ -1665,171 +1668,173 @@ public class SqlParser {
             lexer.unparseLast();
         }
 
-        final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
-        final IntList accumulatedColumnPositions = new IntList();
-        final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>();
+        try {
+            boolean hasFrom = false;
 
-        boolean hasFrom = false;
+            while (true) {
 
-        while (true) {
+                tok = tok(lexer, "column");
+                if (Chars.equals(tok, '*')) {
+                    expr = nextLiteral(GenericLexer.immutableOf(tok), lexer.lastTokenPosition());
+                } else {
+                    // cut off some obvious errors
+                    if (isFromKeyword(tok)) {
+                        hasFrom = true;
+                        lexer.unparseLast();
+                        break;
+                    }
 
-            tok = tok(lexer, "column");
-            if (Chars.equals(tok, '*')) {
-                expr = nextLiteral(GenericLexer.immutableOf(tok), lexer.lastTokenPosition());
-            } else {
-                // cut off some obvious errors
+                    if (isSelectKeyword(tok)) {
+                        throw SqlException.$(lexer.getPosition(), "reserved name");
+                    }
+
+                    lexer.unparseLast();
+                    expr = expr(lexer, model);
+
+                    if (expr == null) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "missing expression");
+                    }
+
+                    if (Chars.endsWith(expr.token, '.') && expr.type == ExpressionNode.LITERAL) {
+                        throw SqlException.$(expr.position + expr.token.length(), "'*' or column name expected");
+                    }
+                }
+
+                final CharSequence alias;
+
+                tok = optTok(lexer);
+
+                QueryColumn col;
+                final int colPosition = lexer.lastTokenPosition();
+
+                if (tok != null && isOverKeyword(tok)) {
+                    // analytic
+                    expectTok(lexer, '(');
+
+                    col = analyticColumnPool.next().of(null, expr);
+                    tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
+
+                    if (isPartitionKeyword(tok)) {
+                        expectTok(lexer, "by");
+
+                        ObjList<ExpressionNode> partitionBy = ((AnalyticColumn) col).getPartitionBy();
+
+                        do {
+                            partitionBy.add(expectExpr(lexer));
+                            tok = tok(lexer, "'order' or ')'");
+                        } while (Chars.equals(tok, ','));
+                    }
+                    if (isOrderKeyword(tok)) {
+                        expectTok(lexer, "by");
+
+                        do {
+                            final ExpressionNode orderByExpr = expectExpr(lexer);
+
+                            tok = tokIncludingLocalBrace(lexer, "'asc' or 'desc'");
+
+                            if (isDescKeyword(tok)) {
+                                ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
+                                tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+                            } else {
+                                ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
+                                if (isAscKeyword(tok)) {
+                                    tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+                                }
+                            }
+                        } while (Chars.equals(tok, ','));
+                    }
+                    expectTok(tok, lexer.lastTokenPosition(), ')');
+                    tok = optTok(lexer);
+
+                } else {
+                    if (expr.type == ExpressionNode.QUERY) {
+                        throw SqlException.$(expr.position, "query is not expected, did you mean column?");
+                    }
+                    col = queryColumnPool.next().of(null, expr);
+                }
+
+                if (tok != null && columnAliasStop.excludes(tok)) {
+                    assertNotDot(lexer, tok);
+
+                    // verify that * wildcard is not aliased
+
+                    if (isAsKeyword(tok)) {
+                        CharSequence aliasTok = GenericLexer.immutableOf(tok(lexer, "alias"));
+                        validateIdentifier(lexer, aliasTok);
+                        alias = GenericLexer.unquote(aliasTok);
+                    } else {
+                        validateIdentifier(lexer, tok);
+                        alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                    }
+
+                    if (col.getAst().isWildcard()) {
+                        throw err(lexer, null, "wildcard cannot have alias");
+                    }
+
+                    tok = optTok(lexer);
+                    aliasMap.put(alias, col);
+                } else {
+                    alias = null;
+                }
+
+                // correlated sub-queries do not have expr.token values (they are null)
+                if (expr.type == ExpressionNode.QUERY) {
+                    expr.token = alias;
+                }
+
+                if (alias != null) {
+                    if (alias.length() == 0) {
+                        throw err(lexer, null, "column alias cannot be a blank string");
+                    }
+                    col.setAlias(alias);
+                }
+
+                accumulatedColumns.add(col);
+                accumulatedColumnPositions.add(colPosition);
+
+                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as
+                    lexer.unparseLast();
+                    break;
+                }
+
                 if (isFromKeyword(tok)) {
                     hasFrom = true;
                     lexer.unparseLast();
                     break;
                 }
 
-                if (isSelectKeyword(tok)) {
-                    throw SqlException.$(lexer.getPosition(), "reserved name");
+                if (setOperations.contains(tok)) {
+                    lexer.unparseLast();
+                    break;
                 }
 
-                lexer.unparseLast();
-                expr = expr(lexer, model);
-
-                if (expr == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "missing expression");
-                }
-
-                if (Chars.endsWith(expr.token, '.') && expr.type == ExpressionNode.LITERAL) {
-                    throw SqlException.$(expr.position + expr.token.length(), "'*' or column name expected");
+                if (!Chars.equals(tok, ',')) {
+                    throw err(lexer, tok, "',', 'from' or 'over' expected");
                 }
             }
 
-            final CharSequence alias;
-
-            tok = optTok(lexer);
-
-            QueryColumn col;
-            final int colPosition = lexer.lastTokenPosition();
-
-            if (tok != null && isOverKeyword(tok)) {
-                // analytic
-                expectTok(lexer, '(');
-
-                col = analyticColumnPool.next().of(null, expr);
-                tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
-
-                if (isPartitionKeyword(tok)) {
-                    expectTok(lexer, "by");
-
-                    ObjList<ExpressionNode> partitionBy = ((AnalyticColumn) col).getPartitionBy();
-
-                    do {
-                        partitionBy.add(expectExpr(lexer));
-                        tok = tok(lexer, "'order' or ')'");
-                    } while (Chars.equals(tok, ','));
+            for (int i = 0, n = accumulatedColumns.size(); i < n; i++) {
+                QueryColumn qc = accumulatedColumns.getQuick(i);
+                if (qc.getAlias() == null) {
+                    CharSequence token = qc.getAst().token;
+                    if (qc.getAst().isWildcard() && !hasFrom) {
+                        throw err(lexer, null, "'from' expected");
+                    }
+                    CharSequence alias;
+                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(token, '.') != -1) {
+                        alias = createConstColumnAlias(aliasMap);
+                    } else {
+                        alias = createColumnAlias(qc.getAst(), aliasMap);
+                    }
+                    qc.setAlias(alias);
+                    aliasMap.put(alias, qc);
                 }
-                if (isOrderKeyword(tok)) {
-                    expectTok(lexer, "by");
-
-                    do {
-                        final ExpressionNode orderByExpr = expectExpr(lexer);
-
-                        tok = tokIncludingLocalBrace(lexer, "'asc' or 'desc'");
-
-                        if (isDescKeyword(tok)) {
-                            ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
-                            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
-                        } else {
-                            ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
-                            if (isAscKeyword(tok)) {
-                                tok = tokIncludingLocalBrace(lexer, "',' or ')'");
-                            }
-                        }
-                    } while (Chars.equals(tok, ','));
-                }
-                expectTok(tok, lexer.lastTokenPosition(), ')');
-                tok = optTok(lexer);
-
-            } else {
-                if (expr.type == ExpressionNode.QUERY) {
-                    throw SqlException.$(expr.position, "query is not expected, did you mean column?");
-                }
-                col = queryColumnPool.next().of(null, expr);
+                model.addBottomUpColumn(accumulatedColumnPositions.getQuick(i), qc, false);
             }
-
-            if (tok != null && columnAliasStop.excludes(tok)) {
-                assertNotDot(lexer, tok);
-
-                // verify that * wildcard is not aliased
-
-                if (isAsKeyword(tok)) {
-                    CharSequence aliasTok = GenericLexer.immutableOf(tok(lexer, "alias"));
-                    validateIdentifier(lexer, aliasTok);
-                    alias = GenericLexer.unquote(aliasTok);
-                } else {
-                    validateIdentifier(lexer, tok);
-                    alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
-                }
-
-                if (col.getAst().isWildcard()) {
-                    throw err(lexer, null, "wildcard cannot have alias");
-                }
-
-                tok = optTok(lexer);
-                aliasMap.put(alias, col);
-            } else {
-                alias = null;
-            }
-
-            // correlated sub-queries do not have expr.token values (they are null)
-            if (expr.type == ExpressionNode.QUERY) {
-                expr.token = alias;
-            }
-
-            if (alias != null) {
-                if (alias.length() == 0) {
-                    throw err(lexer, null, "column alias cannot be a blank string");
-                }
-                col.setAlias(alias);
-            }
-
-            accumulatedColumns.add(col);
-            accumulatedColumnPositions.add(colPosition);
-
-            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as
-                lexer.unparseLast();
-                break;
-            }
-
-            if (isFromKeyword(tok)) {
-                hasFrom = true;
-                lexer.unparseLast();
-                break;
-            }
-
-            if (setOperations.contains(tok)) {
-                lexer.unparseLast();
-                break;
-            }
-
-            if (!Chars.equals(tok, ',')) {
-                throw err(lexer, tok, "',', 'from' or 'over' expected");
-            }
-        }
-
-        for (int i = 0, n = accumulatedColumns.size(); i < n; i++) {
-            QueryColumn qc = accumulatedColumns.getQuick(i);
-            if (qc.getAlias() == null) {
-                CharSequence token = qc.getAst().token;
-                if (qc.getAst().isWildcard() && !hasFrom) {
-                    throw err(lexer, null, "'from' expected");
-                }
-                CharSequence alias;
-                if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(token, '.') != -1) {
-                    alias = createConstColumnAlias(aliasMap);
-                } else {
-                    alias = createColumnAlias(qc.getAst(), aliasMap);
-                }
-                qc.setAlias(alias);
-                aliasMap.put(alias, qc);
-            }
-            model.addBottomUpColumn(accumulatedColumnPositions.getQuick(i), qc, false);
+        } finally {
+            accumulatedColumns.clear();
+            accumulatedColumnPositions.clear();
+            aliasMap.clear();
         }
     }
 
