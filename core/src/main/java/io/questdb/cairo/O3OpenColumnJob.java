@@ -2984,7 +2984,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         switch (suffixType) {
             case O3_BLOCK_O3:
-                assert dstVarAppendOffset2 > -1;
                 publishCopyTask(
                         columnCounter,
                         partCounter,
@@ -3040,7 +3039,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             case O3_BLOCK_DATA:
-                assert dstVarAppendOffset2 > -1;
                 publishCopyTask(
                         columnCounter,
                         partCounter,

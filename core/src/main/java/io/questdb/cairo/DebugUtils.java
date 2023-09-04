@@ -82,7 +82,7 @@ public class DebugUtils {
         return true;
     }
 
-    //    // Useful debugging method
+    // Useful debugging method
     public static boolean reconcileVarLenCol(
             FilesFacade ff,
             RecordMetadata metadata,
