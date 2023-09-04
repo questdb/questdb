@@ -56,7 +56,7 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
     protected boolean runSerially() {
         boolean ran = false;
         int count;
-        while ((count = nf.recv(fd, buf, bufLen)) > 0) {
+        while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
             lexer.parse(buf, buf + count);
             lexer.parseLast();
 

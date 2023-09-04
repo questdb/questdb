@@ -31,9 +31,9 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class DirectLongList implements Mutable, Closeable, Reopenable {
+public class DirectIntList implements Mutable, Closeable, Reopenable {
 
-    private static final Log LOG = LogFactory.getLog(DirectLongList.class);
+    private static final Log LOG = LogFactory.getLog(DirectIntList.class);
     private final long initialCapacity;
     private final int memoryTag;
     private long address;
@@ -41,23 +41,23 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long limit;
     private long pos;
 
-    public DirectLongList(long capacity, int memoryTag) {
+    public DirectIntList(long capacity, int memoryTag) {
         this.memoryTag = memoryTag;
-        this.capacity = (capacity * Long.BYTES);
+        this.capacity = (capacity * Integer.BYTES);
         this.address = Unsafe.malloc(this.capacity, memoryTag);
         this.pos = address;
         this.limit = pos + this.capacity;
         this.initialCapacity = this.capacity;
     }
 
-    public void add(long x) {
+    public void add(int x) {
         ensureCapacity();
         assert pos < limit;
-        Unsafe.getUnsafe().putLong(pos, x);
-        pos += Long.BYTES;
+        Unsafe.getUnsafe().putInt(pos, x);
+        pos += Integer.BYTES;
     }
 
-    public final void addAll(DirectLongList that) {
+    public final void addAll(DirectIntList that) {
         long thatSize = that.pos - that.address;
         if (limit - pos < thatSize) {
             setCapacityBytes(this.capacity + thatSize - (limit - pos));
@@ -66,20 +66,12 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         this.pos += thatSize;
     }
 
-    public long binarySearch(long value, int scanDir) {
-        final long high = (pos - address) / 8;
-        if (high > 0) {
-            return Vect.binarySearch64Bit(address, value, 0, high - 1, scanDir);
-        }
-        return -1;
-    }
-
     // clear without "zeroing" memory
     public void clear() {
         pos = address;
     }
 
-    public void clear(long b) {
+    public void clear(int b) {
         zero(b);
         pos = address;
     }
@@ -95,8 +87,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         }
     }
 
-    public long get(long p) {
-        return Unsafe.getUnsafe().getLong(address + (p << 3));
+    public int get(long p) {
+        return Unsafe.getUnsafe().getInt(address + (p << 2));
     }
 
     // base address of native memory
@@ -104,9 +96,9 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         return address;
     }
 
-    // capacity in LONGs
+    // capacity in INTs
     public long getCapacity() {
-        return capacity / Long.BYTES;
+        return capacity / Integer.BYTES;
     }
 
     @Override
@@ -120,48 +112,31 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         setCapacityBytes(initialCapacity);
     }
 
-    public long scanSearch(long v, long low, long high) {
-        for (long i = low; i < high; i++) {
-            long f = get(i);
-            if (f == v) {
-                return i;
-            }
-            if (f > v) {
-                return -(i + 1);
-            }
-        }
-        return -(high + 1);
+    public void set(long p, int v) {
+        assert p >= 0 && p <= (limit - address) >> 2;
+        Unsafe.getUnsafe().putInt(address + (p << 2), v);
     }
 
-    public void set(long p, long v) {
-        assert p >= 0 && p <= (limit - address) >> 3;
-        Unsafe.getUnsafe().putLong(address + (p << 3), v);
-    }
-
-    // desired capacity in LONGs (not count of bytes)
+    // desired capacity in INTs (not count of bytes)
     public void setCapacity(long capacity) {
         assert capacity > 0;
-        setCapacityBytes(capacity * Long.BYTES);
+        setCapacityBytes(capacity * Integer.BYTES);
     }
 
     public void setPos(long p) {
-        assert p * Long.BYTES <= capacity;
-        pos = address + p * Long.BYTES;
+        assert p * Integer.BYTES <= capacity;
+        pos = address + p * Integer.BYTES;
     }
 
     public void shrink(long newCapacity) {
         // deallocates memory but keeps reusable
         if (newCapacity < capacity) {
-            setCapacityBytes(newCapacity << 3);
+            setCapacityBytes(newCapacity << 2);
         }
     }
 
     public long size() {
-        return (int) ((pos - address) / Long.BYTES);
-    }
-
-    public void sortAsUnsigned() {
-        Vect.sortULongAscInPlace(address, size());
+        return (int) ((pos - address) / Integer.BYTES);
     }
 
     @Override
@@ -182,11 +157,11 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         return sb.toString();
     }
 
-    public void zero(long v) {
-        Vect.memset(address, pos - address, (int) v);
+    public void zero(int v) {
+        Vect.memset(address, pos - address, v);
     }
 
-    // desired capacity in bytes (not count of LONG values)
+    // desired capacity in bytes (not count of INT values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {
             final long oldCapacity = this.capacity;
@@ -201,9 +176,9 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     void ensureCapacity() {
-        if (this.pos < limit) {
+        if (pos < limit) {
             return;
         }
-        setCapacityBytes(this.capacity * 2);
+        setCapacityBytes(capacity * 2);
     }
 }

@@ -80,7 +80,6 @@ public class PGJobContext implements Closeable {
             int operation
     ) throws PeerIsSlowToWriteException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
         context.handleClientOperation(
-                engine,
                 typesAndSelectCache,
                 typesAndSelectPool,
                 typesAndUpdateCache,

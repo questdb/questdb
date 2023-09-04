@@ -243,10 +243,11 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         operation = IOOperation.READ;
                     }
 
-                    if (operation == IOOperation.READ) {
+                    if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                         readFdSet.add(fd);
                         readFdCount++;
-                    } else {
+                    }
+                    if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                         writeFdSet.add(fd);
                         writeFdCount++;
                     }
@@ -261,24 +262,60 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         n--;
                         watermark--;
                     } else {
-                        i++; // just skip to the next operation
+                        // the connection is alive, so we need to add it to poll to be able to detect broken connection
+                        readFdSet.add(fd);
+                        readFdCount++;
+
+                        if (context.getSocket().wantsTlsWrite()) {
+                            writeFdSet.add(fd);
+                            writeFdCount++;
+                        }
+                        i++; // now skip to the next operation
                     }
                     continue;
                 }
 
-                // publish event and remove from pending
+                // we got a (potentially requested) event
                 useful = true;
 
-                if ((newOp & SelectAccessor.FD_READ) > 0) {
-                    publishOperation(IOOperation.READ, context);
-                }
-                if ((newOp & SelectAccessor.FD_WRITE) > 0) {
-                    publishOperation(IOOperation.WRITE, context);
-                }
+                final int requestedOp = (int) pending.get(i, OPM_OPERATION);
+                final boolean readyForWrite = (newOp & SelectAccessor.FD_WRITE) > 0;
+                final boolean readyForRead = (newOp & SelectAccessor.FD_READ) > 0;
 
-                pending.deleteRow(i);
-                n--;
-                watermark--;
+                if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
+                    // If the socket is also ready for another operation type, do it.
+                    if (context.getSocket().tlsIO(tlsIOFlags(requestedOp, readyForRead, readyForWrite)) < 0) {
+                        doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                        pending.deleteRow(i);
+                        n--;
+                        watermark--;
+                        continue;
+                    }
+                    // publish event and remove from pending
+                    publishOperation(requestedOp, context);
+                    pending.deleteRow(i);
+                    n--;
+                    watermark--;
+                } else {
+                    // It's something different from the requested operation.
+                    if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
+                        doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
+                        pending.deleteRow(i);
+                        n--;
+                        watermark--;
+                        continue;
+                    }
+                    // Now we need to re-arm poll.
+                    if (requestedOp == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+                        readFdSet.add(fd);
+                        readFdCount++;
+                    }
+                    if (requestedOp == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
+                        writeFdSet.add(fd);
+                        writeFdCount++;
+                    }
+                    i++; // now skip to the next operation
+                }
             }
         }
 

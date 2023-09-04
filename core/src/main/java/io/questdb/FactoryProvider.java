@@ -28,18 +28,33 @@ import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 
 public interface FactoryProvider extends QuietCloseable {
     @Override
     default void close() {
     }
 
+    @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
+    @NotNull
+    SocketFactory getHttpSocketFactory();
+
+    @NotNull
     LineAuthenticatorFactory getLineAuthenticatorFactory();
 
+    @NotNull
+    SocketFactory getLineSocketFactory();
+
+    @NotNull
+    SocketFactory getPGWireSocketFactory();
+
+    @NotNull
     PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
 
+    @NotNull
     SecurityContextFactory getSecurityContextFactory();
 }

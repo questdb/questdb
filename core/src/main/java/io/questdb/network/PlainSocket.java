@@ -24,79 +24,79 @@
 
 package io.questdb.network;
 
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.log.Log;
 
-public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
+public class PlainSocket implements Socket {
+    private final Log log;
+    private final NetworkFacade nf;
+    private int fd = -1;
+
+    public PlainSocket(NetworkFacade nf, Log log) {
+        this.nf = nf;
+        this.log = log;
+    }
 
     @Override
-    public int getBindIPv4Address() {
+    public void close() {
+        if (fd != -1) {
+            nf.close(fd, log);
+            fd = -1;
+        }
+    }
+
+    @Override
+    public int getFd() {
+        return fd;
+    }
+
+    @Override
+    public boolean isTlsSessionStarted() {
+        return false;
+    }
+
+    @Override
+    public void of(int fd) {
+        assert this.fd == -1;
+        this.fd = fd;
+    }
+
+    @Override
+    public int recv(long bufferPtr, int bufferLen) {
+        return nf.recvRaw(fd, bufferPtr, bufferLen);
+    }
+
+    @Override
+    public int send(long bufferPtr, int bufferLen) {
+        return nf.sendRaw(fd, bufferPtr, bufferLen);
+    }
+
+    @Override
+    public int shutdown(int how) {
+        return nf.shutdown(fd, how);
+    }
+
+    @Override
+    public int startTlsSession() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean supportsTls() {
+        return false;
+    }
+
+    @Override
+    public int tlsIO(int readinessFlags) {
         return 0;
     }
 
     @Override
-    public int getBindPort() {
-        return 9001;
+    public boolean wantsTlsRead() {
+        return false;
     }
 
     @Override
-    public MillisecondClock getClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public EpollFacade getEpollFacade() {
-        return EpollFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public long getHeartbeatInterval() {
-        // don't send heartbeat messages by default
-        return -1L;
-    }
-
-    @Override
-    public KqueueFacade getKqueueFacade() {
-        return KqueueFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getLimit() {
-        return 64;
-    }
-
-    @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public long getQueueTimeout() {
-        return 300_000;
-    }
-
-    @Override
-    public int getRcvBufSize() {
-        return -1; // use system default
-    }
-
-    @Override
-    public SelectFacade getSelectFacade() {
-        return SelectFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getSndBufSize() {
-        return -1; // use system default
-    }
-
-    @Override
-    public int getTestConnectionBufferSize() {
-        return 64;
-    }
-
-    @Override
-    public long getTimeout() {
-        return 5 * 60 * 1000L;
+    public boolean wantsTlsWrite() {
+        return false;
     }
 }

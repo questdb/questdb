@@ -27,9 +27,7 @@ package io.questdb.test.cutlass.http;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
@@ -128,19 +126,11 @@ public class MimeTypesCacheTest extends AbstractTest {
 
     @Test
     public void testSimple() throws Exception {
-        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
-            @Override
-            public void run() {
-                try (Path path = new Path()) {
-                    String filePath;
-                    if (Os.isWindows()) {
-                        filePath = Files.getResourcePath(getClass().getResource("/mime.types")).substring(1);
-                    } else {
-                        filePath = Files.getResourcePath(getClass().getResource("/mime.types"));
-                    }
-                    path.of(filePath).$();
-                    assertMimeTypes(new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path));
-                }
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                String filePath = TestUtils.getTestResourcePath("/mime.types");
+                path.of(filePath).$();
+                assertMimeTypes(new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path));
             }
         });
     }
