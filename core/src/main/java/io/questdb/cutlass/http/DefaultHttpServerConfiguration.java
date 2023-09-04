@@ -105,6 +105,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public HttpContextConfiguration getHttpContextConfiguration() {
         return httpContextConfiguration;
     }

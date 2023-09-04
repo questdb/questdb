@@ -76,7 +76,6 @@ public class PGJobContext implements Closeable {
             int operation
     ) throws Exception {
         context.handleClientOperation(
-                engine,
                 typesAndSelectCache,
                 typesAndSelectPool,
                 typesAndUpdateCache,

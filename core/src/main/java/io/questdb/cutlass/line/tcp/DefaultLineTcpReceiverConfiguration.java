@@ -213,9 +213,4 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public boolean isSymbolAsFieldSupported() {
         return false;
     }
-
-    @Override
-    public boolean readOnlySecurityContext() {
-        return false;
-    }
 }

@@ -148,7 +148,6 @@ public class IODispatcherTest extends AbstractTest {
         LOG.info().$("started testBiasWrite").$();
 
         assertMemoryLeak(() -> {
-
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
 
@@ -2154,10 +2153,10 @@ public class IODispatcherTest extends AbstractTest {
                         "--------------------------27d997ca93d2689d--",
                 new NetworkFacadeImpl() {
                     @Override
-                    public int send(int fd, long buffer, int bufferLen) {
+                    public int sendRaw(int fd, long buffer, int bufferLen) {
                         // ensure we do not send more than one byte at a time
                         if (bufferLen > 0) {
-                            return super.send(fd, buffer, 1);
+                            return super.sendRaw(fd, buffer, 1);
                         }
                         return 0;
                     }
@@ -2261,9 +2260,9 @@ public class IODispatcherTest extends AbstractTest {
                     int totalSent = 0;
 
                     @Override
-                    public int send(int fd, long buffer, int bufferLen) {
+                    public int sendRaw(int fd, long buffer, int bufferLen) {
                         if (bufferLen > 0) {
-                            int result = super.send(fd, buffer, 1);
+                            int result = super.sendRaw(fd, buffer, 1);
                             totalSent += result;
 
                             // start delaying after 800 bytes
@@ -3399,7 +3398,7 @@ public class IODispatcherTest extends AbstractTest {
                                 int reqLen = request.length();
                                 Chars.asciiStrCpy(request, reqLen, ptr);
                                 while (sent < reqLen) {
-                                    int n = NetworkFacadeImpl.INSTANCE.send(fd, ptr + sent, reqLen - sent);
+                                    int n = NetworkFacadeImpl.INSTANCE.sendRaw(fd, ptr + sent, reqLen - sent);
                                     Assert.assertTrue(n > -1);
                                     sent += n;
                                 }
@@ -3409,7 +3408,7 @@ public class IODispatcherTest extends AbstractTest {
                                 nf.configureNonBlocking(fd);
                                 long t = System.currentTimeMillis();
                                 boolean disconnected = true;
-                                while (nf.recv(fd, ptr, 1) > -1) {
+                                while (nf.recvRaw(fd, ptr, 1) > -1) {
                                     if (t + 20000 < System.currentTimeMillis()) {
                                         disconnected = false;
                                         break;
@@ -5563,7 +5562,7 @@ public class IODispatcherTest extends AbstractTest {
                         Chars.asciiStrCpy(request, reqLen, ptr);
                         boolean disconnected = false;
                         while (sent < reqLen) {
-                            int n = nf.send(fd, ptr + sent, reqLen - sent);
+                            int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
                             if (n < 0) {
                                 disconnected = true;
                                 break;
@@ -5574,7 +5573,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                         if (!disconnected) {
                             while (true) {
-                                int n = nf.recv(fd, ptr, len);
+                                int n = nf.recvRaw(fd, ptr, len);
                                 if (n < 0) {
                                     break;
                                 }
@@ -7679,7 +7678,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                     requestsReceived.incrementAndGet();
 
-                                    nf.send(context.getFd(), responseBuf, 1);
+                                    nf.sendRaw(context.getFd(), responseBuf, 1);
                                 }
                             };
 
@@ -7975,7 +7974,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
-        TableToken tableToken = new TableToken(tableName, dirName, 1, false);
+        TableToken tableToken = new TableToken(tableName, dirName, 1, false, false);
         try (TableReader reader = new TableReader(configuration, tableToken)) {
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
@@ -7991,7 +7990,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false);
         try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
             final StringSink sink = new StringSink();
             sink.clear();
@@ -8545,17 +8544,19 @@ public class IODispatcherTest extends AbstractTest {
             final long queuedConnectionTimeoutInMs = 250;
 
             class TestIOContext extends IOContext<TestIOContext> {
-                private final int fd;
                 private final IntHashSet serverConnectedFds;
                 private long heartbeatId;
 
                 public TestIOContext(int fd, IntHashSet serverConnectedFds) {
-                    this.fd = fd;
+                    super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
+                    socket.of(fd);
                     this.serverConnectedFds = serverConnectedFds;
                 }
 
                 @Override
                 public void close() {
+                    final int fd = getFd();
+                    super.close();
                     LOG.info().$(fd).$(" disconnected").$();
                     serverConnectedFds.remove(fd);
                 }
@@ -8566,13 +8567,8 @@ public class IODispatcherTest extends AbstractTest {
                 }
 
                 @Override
-                public int getFd() {
-                    return fd;
-                }
-
-                @Override
                 public boolean invalid() {
-                    return !serverConnectedFds.contains(fd);
+                    return !serverConnectedFds.contains(getFd());
                 }
 
                 @Override
@@ -8810,7 +8806,8 @@ public class IODispatcherTest extends AbstractTest {
         private final SOCountDownLatch closeLatch;
 
         public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
-            this.fd = fd;
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
+            socket.of(fd);
             this.closeLatch = closeLatch;
             this.dispatcher = dispatcher;
         }
@@ -8819,6 +8816,7 @@ public class IODispatcherTest extends AbstractTest {
         public void close() {
             Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
             closeLatch.countDown();
+            super.close();
         }
 
         @Override

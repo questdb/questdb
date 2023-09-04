@@ -31,30 +31,22 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.test.cutlass.line.tcp.StringChannel;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.line.tcp.StringChannel;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.net.URL;
 
 public class TestInterop {
 
     @Test
     public void testInterop() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        URL testCasesUrl = TestInterop.class.getResource("/io/questdb/test/cutlass/line/interop/ilp-client-interop-test.json");
-        Assert.assertNotNull("interop test cases missing", testCasesUrl);
-        String pp = testCasesUrl.getFile();
-        if (Os.isWindows()) {
-            // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
-            // with OS file open methods.
-            pp = pp.substring(1);
-        }
+        String pp = TestUtils.getTestResourcePath("/io/questdb/test/cutlass/line/interop/ilp-client-interop-test.json");
 
         StringChannel channel = new StringChannel();
         try (JsonLexer lexer = new JsonLexer(1024, 1024);
