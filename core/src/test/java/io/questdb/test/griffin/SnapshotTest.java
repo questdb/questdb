@@ -939,7 +939,7 @@ public class SnapshotTest extends AbstractCairoTest {
                                     cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());
-                                    TestUtils.assertEquals(cvReader0.getCachedList(), cvReader1.getCachedList());
+                                    TestUtils.assertEquals(cvReader0.getCachedColumnVersionList(), cvReader1.getCachedColumnVersionList());
                                 }
                             }
                         }

@@ -2816,7 +2816,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             // override column tops for the partition we are attaching
-            columnVersionWriter.copyPartition(partitionTimestamp, attachColumnVersionReader);
+            columnVersionWriter.overrideColumnVersions(partitionTimestamp, attachColumnVersionReader);
 
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 String columnName = metadata.getColumnName(colIdx);
@@ -5883,7 +5883,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, partitionTimestamp); // original partition timestamp in case it is split
+                    // original partition timestamp
+                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+
 
                     if (append) {
                         // we are appending last partition, make sure it has been mapped!
@@ -7584,12 +7586,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
             long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
-            long oldPartitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress + Long.BYTES);
             final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+            // When partition is split, data partition timestamp and partition timestamp diverge
+            final long dataPartitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress + 6 * Long.BYTES);
 
             if (o3SplitPartitionSize > 0) {
                 // This is partition split. Copy all the column name txns from the donor partition.
-                columnVersionWriter.copyPartition(oldPartitionTimestamp, partitionTimestamp);
+                columnVersionWriter.copyColumnVersions(dataPartitionTimestamp, partitionTimestamp);
             }
 
             if (partitionTimestamp > -1) {
