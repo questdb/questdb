@@ -25,22 +25,19 @@
 package io.questdb.cutlass.auth;
 
 import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
-import io.questdb.network.NetworkFacade;
 import io.questdb.std.ObjectFactory;
 
 public class EllipticCurveAuthenticatorFactory implements LineAuthenticatorFactory {
     private final ObjectFactory<? extends ChallengeResponseMatcher> matcherFactory;
-    private final NetworkFacade networkFacade;
 
-    public EllipticCurveAuthenticatorFactory(NetworkFacade networkFacade, ObjectFactory<? extends ChallengeResponseMatcher> matcherFactory) {
-        this.networkFacade = networkFacade;
+    public EllipticCurveAuthenticatorFactory(ObjectFactory<? extends ChallengeResponseMatcher> matcherFactory) {
         this.matcherFactory = matcherFactory;
     }
 
     @Override
     public Authenticator getLineTCPAuthenticator() {
         return new EllipticCurveAuthenticator(
-                networkFacade,
-                matcherFactory.newInstance());
+                matcherFactory.newInstance()
+        );
     }
 }

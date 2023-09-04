@@ -26,17 +26,14 @@ package io.questdb.test.client;
 
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Files;
 import io.questdb.test.cutlass.line.tcp.AbstractLineTcpReceiverTest;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.ClassRule;
 import org.junit.Test;
 
-import java.net.URL;
-
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
 
 public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
@@ -184,7 +181,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         nf = new NetworkFacadeImpl() {
             @Override
-            public int recv(int fd, long buffer, int bufferLen) {
+            public int recvRaw(int fd, long buffer, int bufferLen) {
                 // force server to fail to receive userId and this disconnect
                 // mid-authentication
                 return -1;
@@ -310,9 +307,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testConnectTls_TruststoreFile() throws Exception {
-        URL trustStoreResource = LineSenderBuilderTest.class.getResource(TRUSTSTORE_PATH);
-        assertNotNull("Someone accidentally deleted trust store?", trustStoreResource);
-        String truststore = trustStoreResource.getFile();
+        String truststore = TestUtils.getTestResourcePath(TRUSTSTORE_PATH);
         runInContext(r -> {
             try (Sender sender = Sender.builder()
                     .address(LOCALHOST)

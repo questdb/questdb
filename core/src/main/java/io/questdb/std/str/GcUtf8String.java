@@ -48,7 +48,8 @@ public class GcUtf8String implements DirectUtf8Sequence {
         // ***** NOTE *****
         // This class causes garbage collection.
         // It should be used with care.
-        // It is currently intended to be used exclusively for the `dirName` and `tableName` fields of `TableToken`.
+        // It is currently intended to be used for the `dirName` and `tableName` fields
+        // of `TableToken` and similar things.
         this.original = original;
         final byte[] bytes = original.getBytes(StandardCharsets.UTF_8);
         this.buffer = ByteBuffer.allocateDirect(bytes.length);

@@ -51,8 +51,6 @@ import org.junit.Rule;
 import org.junit.rules.Timeout;
 
 import java.io.File;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test extends AbstractTest {
@@ -245,11 +243,9 @@ public class AbstractO3Test extends AbstractTest {
             SqlExecutionContext sqlExecutionContext,
             String sql,
             String resourceName
-    ) throws URISyntaxException, SqlException {
+    ) throws SqlException {
         AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, sql);
-        URL url = O3Test.class.getResource(resourceName);
-        Assert.assertNotNull(url);
-        TestUtils.assertEquals(new File(url.toURI()), sink);
+        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
