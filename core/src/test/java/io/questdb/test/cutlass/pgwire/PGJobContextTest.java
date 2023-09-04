@@ -2947,10 +2947,9 @@ if __name__ == "__main__":
                     try (ResultSet rs = statement.getResultSet()) {
                         assertResultSet(
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Async Filter\n" +
+                                        "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
                                         "  filter: ($0::long<x and x<$1::double)\n" +
-                                        "  workers: 2\n" +
                                         "    DataFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n",
@@ -2994,9 +2993,8 @@ if __name__ == "__main__":
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Sort light lo: 10\n" +
                                     "  keys: [str, x]\n" +
-                                    "    Async Filter\n" +
+                                    "    Async Filter workers: 2\n" +
                                     "      filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
-                                    "      workers: 2\n" +
                                     "        DataFrame\n" +
                                     "            Row forward scan\n" +
                                     "            Frame forward scan on: xx\n",
@@ -7630,9 +7628,8 @@ create table tab as (
                     sink.clear();
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
-                                    "Async Filter\n" +
+                                    "Async Filter workers: 2\n" +
                                     "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::string,$1::string])\n" +
-                                    "  workers: 2\n" +
                                     "    DataFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: tab\n",
