@@ -26,6 +26,8 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.Os;
 
 public class HttpClientFactory {
@@ -34,16 +36,20 @@ public class HttpClientFactory {
     }
 
     public static HttpClient newInstance(HttpClientConfiguration configuration) {
+        return newInstance(configuration, PlainSocketFactory.INSTANCE);
+    }
+
+    public static HttpClient newInstance(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
-                return new HttpClientLinux(configuration);
+                return new HttpClientLinux(configuration, socketFactory);
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
             case Os.FREEBSD:
-                return new HttpClientOsx(configuration);
+                return new HttpClientOsx(configuration, socketFactory);
             case Os.WINDOWS:
-                return new HttpClientWindows(configuration);
+                return new HttpClientWindows(configuration, socketFactory);
             default:
                 throw new UnsupportedOperationException();
         }

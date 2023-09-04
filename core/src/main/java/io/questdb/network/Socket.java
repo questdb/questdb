@@ -120,4 +120,6 @@ public interface Socket extends QuietCloseable {
      * the socket becomes writable.
      */
     boolean wantsTlsWrite();
+
+    boolean isClosed();
 }

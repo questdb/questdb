@@ -26,8 +26,12 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.Socket;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -35,18 +39,20 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
 public abstract class HttpClient implements QuietCloseable {
+    private static final Log LOG = LogFactory.getLog(HttpClient.class);
     protected final NetworkFacade nf;
+    protected final Socket socket;
     private final int bufferSize;
     private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
     private final int defaultTimeout;
     private final Request request = new Request();
-    protected int fd = -1;
     private long bufLo;
     private long ptr = bufLo;
     private ResponseHeaders responseHeaders;
 
-    public HttpClient(HttpClientConfiguration configuration) {
+    public HttpClient(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         this.nf = configuration.getNetworkFacade();
+        this.socket = socketFactory.newInstance(configuration.getNetworkFacade(), LOG);
         this.defaultTimeout = configuration.getTimeout();
         this.bufferSize = configuration.getBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
@@ -64,10 +70,7 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     public void disconnect() {
-        if (fd != -1) {
-            nf.close(fd);
-            fd = -1;
-        }
+        socket.close();
     }
 
     public Request newRequest() {
@@ -89,12 +92,12 @@ public abstract class HttpClient implements QuietCloseable {
 
     private int recvOrDie(long lo, int len, int timeout) {
         ioWait(timeout, IOOperation.READ);
-        return die(nf.recv(fd, lo, len));
+        return die(socket.recv(lo, len));
     }
 
     private int sendOrDie(long lo, int len, int timeout) {
         ioWait(timeout, IOOperation.WRITE);
-        return die(nf.send(fd, lo, len));
+        return die(socket.send(lo, len));
     }
 
     protected void dieWaiting(int n) {
@@ -113,7 +116,7 @@ public abstract class HttpClient implements QuietCloseable {
 
     protected abstract void setupIoWait();
 
-    private static class BinarySequenceAdaptor implements BinarySequence, Mutable {
+    private static class BinarySequenceAdapter implements BinarySequence, Mutable {
         private final StringSink asciiSink = new StringSink();
 
         @Override
@@ -131,12 +134,12 @@ public abstract class HttpClient implements QuietCloseable {
             return asciiSink.length();
         }
 
-        BinarySequenceAdaptor colon() {
+        BinarySequenceAdapter colon() {
             asciiSink.put(':');
             return this;
         }
 
-        BinarySequenceAdaptor put(CharSequence value) {
+        BinarySequenceAdapter put(CharSequence value) {
             asciiSink.put(value);
             return this;
         }
@@ -159,7 +162,7 @@ public abstract class HttpClient implements QuietCloseable {
         private static final int STATE_REQUEST = 0;
         private static final int STATE_URL = 1;
         private static final int STATE_URL_DONE = 2;
-        private BinarySequenceAdaptor binarySequenceAdaptor;
+        private BinarySequenceAdapter binarySequenceAdapter;
         private int state;
         private boolean urlEncode = false;
 
@@ -172,12 +175,12 @@ public abstract class HttpClient implements QuietCloseable {
         public Request authBasic(CharSequence username, CharSequence password) {
             beforeHeader();
             put("Authorization").put(": ").put("Basic ");
-            if (binarySequenceAdaptor == null) {
-                binarySequenceAdaptor = new BinarySequenceAdaptor();
+            if (binarySequenceAdapter == null) {
+                binarySequenceAdapter = new BinarySequenceAdapter();
             }
-            binarySequenceAdaptor.clear();
-            binarySequenceAdaptor.put(username).colon().put(password);
-            Chars.base64Encode(binarySequenceAdaptor, (int) binarySequenceAdaptor.length(), this);
+            binarySequenceAdapter.clear();
+            binarySequenceAdapter.put(username).colon().put(password);
+            Chars.base64Encode(binarySequenceAdapter, (int) binarySequenceAdapter.length(), this);
             return eol();
         }
 
@@ -234,7 +237,7 @@ public abstract class HttpClient implements QuietCloseable {
 
         public ResponseHeaders send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER;
-            if (fd == -1) {
+            if (socket.isClosed()) {
                 connect(host, port);
             }
 
@@ -272,7 +275,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         private void connect(CharSequence host, int port) {
-            fd = nf.socketTcp(true);
+            int fd = nf.socketTcp(true);
             if (fd < 0) {
                 throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
             }
@@ -288,6 +291,7 @@ public abstract class HttpClient implements QuietCloseable {
                 throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
             }
             nf.freeAddrInfo(addrInfo);
+            socket.of(fd);
         }
 
         private void doSend(int timeout) {

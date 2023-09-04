@@ -27,13 +27,14 @@ package io.questdb.cutlass.http.client;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Kqueue;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.Misc;
 
 public class HttpClientOsx extends HttpClient {
     private Kqueue kqueue;
 
-    public HttpClientOsx(HttpClientConfiguration configuration) {
-        super(configuration);
+    public HttpClientOsx(HttpClientConfiguration configuration, SocketFactory socketFactory) {
+        super(configuration, socketFactory);
         this.kqueue = new Kqueue(
                 configuration.getKQueueFacade(),
                 configuration.getWaitQueueCapacity()
@@ -50,9 +51,9 @@ public class HttpClientOsx extends HttpClient {
     protected void ioWait(int timeout, int op) {
         kqueue.setWriteOffset(0);
         if (op == IOOperation.READ) {
-            kqueue.readFD(fd, 0);
+            kqueue.readFD(socket.getFd(), 0);
         } else {
-            kqueue.writeFD(fd, 0);
+            kqueue.writeFD(socket.getFd(), 0);
         }
 
         // 1 = always one FD, we are a single threaded network client

@@ -28,13 +28,14 @@ import io.questdb.HttpClientConfiguration;
 import io.questdb.network.Epoll;
 import io.questdb.network.EpollAccessor;
 import io.questdb.network.IOOperation;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.Misc;
 
 public class HttpClientLinux extends HttpClient {
     private Epoll epoll;
 
-    public HttpClientLinux(HttpClientConfiguration configuration) {
-        super(configuration);
+    public HttpClientLinux(HttpClientConfiguration configuration, SocketFactory socketFactory) {
+        super(configuration, socketFactory);
         epoll = new Epoll(
                 configuration.getEpollFacade(),
                 configuration.getWaitQueueCapacity()
@@ -49,7 +50,7 @@ public class HttpClientLinux extends HttpClient {
 
     protected void ioWait(int timeout, int op) {
         final int event = op == IOOperation.WRITE ? EpollAccessor.EPOLLOUT : EpollAccessor.EPOLLIN;
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, event) < 0) {
+        if (epoll.control(socket.getFd(), 0, EpollAccessor.EPOLL_CTL_MOD, event) < 0) {
             throw new HttpClientException("internal error: epoll_ctl failure [op=").put(op)
                     .put(", errno=").put(nf.errno())
                     .put(']');
@@ -58,7 +59,7 @@ public class HttpClientLinux extends HttpClient {
     }
 
     protected void setupIoWait() {
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
+        if (epoll.control(socket.getFd(), 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLOUT) < 0) {
             throw new HttpClientException("internal error: epoll_ctl failure [cmd=add, errno=").put(nf.errno()).put(']');
         }
     }

@@ -28,14 +28,15 @@ import io.questdb.HttpClientConfiguration;
 import io.questdb.network.FDSet;
 import io.questdb.network.IOOperation;
 import io.questdb.network.SelectFacade;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.Misc;
 
 public class HttpClientWindows extends HttpClient {
     private final SelectFacade sf;
     private FDSet fdSet;
 
-    public HttpClientWindows(HttpClientConfiguration configuration) {
-        super(configuration);
+    public HttpClientWindows(HttpClientConfiguration configuration, SocketFactory socketFactory) {
+        super(configuration, socketFactory);
         this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
         this.sf = configuration.getSelectFacade();
     }
@@ -51,7 +52,7 @@ public class HttpClientWindows extends HttpClient {
         final long readAddr;
         final long writeAddr;
         fdSet.clear();
-        fdSet.add(fd);
+        fdSet.add(socket.getFd());
         fdSet.setCount(1);
         if (op == IOOperation.READ) {
             readAddr = fdSet.address();
