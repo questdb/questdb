@@ -58,6 +58,8 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
+    protected static boolean mixedIOEnabled;
+    protected static boolean mixedIOEnabledFFDefault;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
 
@@ -80,11 +82,14 @@ public class AbstractO3Test extends AbstractTest {
         Path.PATH.get();
         Path.PATH2.get();
         super.setUp();
+        mixedIOEnabledFFDefault = TestFilesFacadeImpl.INSTANCE.allowMixedIO(root);
+        mixedIOEnabled = mixedIOEnabledFFDefault;
     }
 
     @After
     public void tearDown() throws Exception {
         commitMode = CommitMode.NOSYNC;
+        mixedIOEnabled = mixedIOEnabledFFDefault;
         dataAppendPageSize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
@@ -339,6 +344,12 @@ public class AbstractO3Test extends AbstractTest {
                     public long getPartitionO3SplitMinSize() {
                         return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
                     }
+
+                    @Override
+                    public boolean isWriterMixedIOEnabled() {
+                        // Allow enabling mixed I/O only if the ff allows it.
+                        return mixedIOEnabledFFDefault && mixedIOEnabled;
+                    }
                 };
 
                 TestUtils.execute(pool, runnable, configuration, LOG);
@@ -404,6 +415,12 @@ public class AbstractO3Test extends AbstractTest {
                     public long getPartitionO3SplitMinSize() {
                         return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
                     }
+
+                    @Override
+                    public boolean isWriterMixedIOEnabled() {
+                        // Allow enabling mixed I/O only if the ff allows it.
+                        return mixedIOEnabledFFDefault && mixedIOEnabled;
+                    }
                 };
                 TestUtils.execute(null, runnable, configuration, LOG);
             }
@@ -450,6 +467,6 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     protected enum ParallelMode {
-        Contended, Parallel
+        CONTENDED, PARALLEL
     }
 }

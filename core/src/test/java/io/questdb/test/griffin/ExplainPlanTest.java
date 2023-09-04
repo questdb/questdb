@@ -529,6 +529,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedAnalyticRecordCursorFactoryWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as ( " +
+                    "  select " +
+                    "    cast(x as int) i, " +
+                    "    rnd_symbol('a','b','c') sym, " +
+                    "    timestamp_sequence(0, 100000000) ts " +
+                    "   from long_sequence(100)" +
+                    ") timestamp(ts) partition by hour");
+
+            String sql = "select i, row_number() over (partition by sym) from x limit 3";
+            assertPlan(
+                    sql,
+                    "Limit lo: 3\n" +
+                            "    CachedAnalytic\n" +
+                            "      functions: [row_number()]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+
+            assertSql("i\trow_number\n" +
+                    "1\t1\n" +
+                    "2\t2\n" +
+                    "3\t1\n", sql);
+        });
+    }
+
+    @Test
     public void testCastFloatToDouble() throws Exception {
         assertPlan(
                 "select rnd_float()::double ",
@@ -2768,6 +2797,83 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
+        });
+    }
+
+    @Test
+    public void testLatestByAllSymbolsFilteredFactoryWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table maps\n" +
+                    "(\n" +
+                    "  timestamp timestamp, \n" +
+                    "  cluster symbol, \n" +
+                    "  alias symbol, \n" +
+                    "  octets int, \n" +
+                    "  packets int\n" +
+                    ") timestamp(timestamp);");
+
+            insert("insert into maps values ('2023-09-01T09:41:00.000Z', 'cluster10', 'a', 1, 1), " +
+                    "('2023-09-01T09:42:00.000Z', 'cluster10', 'a', 2, 2)");
+
+            String sql = "select timestamp, cluster, alias, timestamp - timestamp1 interval, (octets-octets1)*8 bits, packets-packets1 packets from (\n" +
+                    "  (select timestamp, cluster, alias, octets, packets\n" +
+                    "  from maps\n" +
+                    "  where cluster in ('cluster10') and timestamp BETWEEN '2023-09-01T09:40:27.286Z' AND '2023-09-01T10:40:27.286Z'\n" +
+                    "  latest on timestamp partition by cluster,alias)\n" +
+                    "  lt join maps on (cluster,alias)\n" +
+                    "  ) order by bits desc\n" +
+                    "limit 10";
+            assertPlan(
+                    sql,
+                    "Limit lo: 10\n" +
+                            "    Sort\n" +
+                            "      keys: [bits desc]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [timestamp,cluster,alias,timestamp-timestamp1,octets-octets1*8,packets-packets1]\n" +
+                            "            SelectedRecord\n" +
+                            "                Lt Join Light\n" +
+                            "                  condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias\n" +
+                            "                    LatestByAllSymbolsFiltered\n" +
+                            "                      filter: cluster in [cluster10]\n" +
+                            "                        Row backward scan\n" +
+                            "                          expectedSymbolsCount: 2147483647\n" +
+                            "                        Interval backward scan on: maps\n" +
+                            "                          intervals: [(\"2023-09-01T09:40:27.286000Z\",\"2023-09-01T10:40:27.286000Z\")]\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: maps\n"
+            );
+
+            assertSql("timestamp\tcluster\talias\tinterval\tbits\tpackets\n" +
+                    "2023-09-01T09:42:00.000000Z\tcluster10\ta\t60000000\t8\t1\n", sql);
+        });
+    }
+
+    @Test
+    public void testLatestByRecordCursorFactoryWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab as ( " +
+                    "  select " +
+                    "    rnd_str('a','b','c') s, " +
+                    "    timestamp_sequence(0, 100000000) ts " +
+                    "   from long_sequence(100)" +
+                    ") timestamp(ts) partition by hour");
+
+            String sql = "with yy as (select ts, max(s) s from tab sample by 1h) " +
+                    "select * from yy latest on ts partition by s limit 10";
+            assertPlan(
+                    sql,
+                    "Limit lo: 10\n" +
+                            "    LatestBy\n" +
+                            "        SampleBy\n" +
+                            "          values: [max(s)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+
+            assertSql("ts\ts\n" +
+                    "1970-01-01T02:00:00.000000Z\tc\n", sql);
         });
     }
 
@@ -6044,7 +6150,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Limit lo: 8\n" +
                         "        DataFrame\n" +
                         "            Row backward scan\n" +
-                        "            Frame backward scan on: a\n");
+                        "            Frame backward scan on: a\n"
+        );
     }
 
     @Test

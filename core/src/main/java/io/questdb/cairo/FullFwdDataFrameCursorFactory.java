@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
@@ -38,16 +39,22 @@ public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     @Override
     public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
-        if (order == ORDER_ASC || order == ORDER_ANY) {
-            return cursor.of(getReader(executionContext));
-        }
+        final TableReader reader = getReader(executionContext);
+        try {
+            if (order == ORDER_ASC || order == ORDER_ANY) {
+                return cursor.of(reader);
+            }
 
-        // Create backward scanning cursor when needed. Factory requesting backward cursor must
-        // still return records in ascending timestamp order.
-        if (bwdCursor == null) {
-            bwdCursor = new FullBwdDataFrameCursor();
+            // Create backward scanning cursor when needed. Factory requesting backward cursor must
+            // still return records in ascending timestamp order.
+            if (bwdCursor == null) {
+                bwdCursor = new FullBwdDataFrameCursor();
+            }
+            return bwdCursor.of(reader);
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
         }
-        return bwdCursor.of(getReader(executionContext));
     }
 
     @Override

@@ -378,6 +378,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             RescheduleContext rescheduleContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         if (newRequest) {
+            if (!headerParser.hasBoundary()) {
+                return rejectRequest("Bad request. Form data in multipart POST expected.");
+            }
             processor.onHeadersReady(this);
             multipartContentParser.of(headerParser.getBoundary());
         }

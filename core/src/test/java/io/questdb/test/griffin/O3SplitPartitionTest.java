@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,15 +53,23 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Rule
     public TestName name = new TestName();
 
-    public O3SplitPartitionTest(ParallelMode mode) {
-        this.workerCount = mode == ParallelMode.Contended ? 0 : 2;
+    public O3SplitPartitionTest(ParallelMode mode, CommitModeParam commitMode, MixedIOParam mixedIO) {
+        this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
+        AbstractO3Test.commitMode = commitMode == CommitModeParam.SYNC ? CommitMode.SYNC : CommitMode.NOSYNC;
+        AbstractO3Test.mixedIOEnabled = mixedIO == MixedIOParam.MIXED_IO_ALLOWED;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0},{1},{2}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.Parallel},
-                {ParallelMode.Contended}
+                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED},
+                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO},
+                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED},
+                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO},
+                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED},
+                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO},
+                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED},
+                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO}
         });
     }
 
@@ -183,7 +192,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
                     sqlExecutionContext);
 
-            engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)                    ;
+            engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext);
 
             engine.insert("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
                             "('2022-06-08T02:50:00.000000Z', '5', '3')," +
@@ -674,5 +683,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                 "select * from " + "x" + " where " + filter,
                 LOG
         );
+    }
+
+    private enum CommitModeParam {
+        NO_SYNC, SYNC
+    }
+
+    private enum MixedIOParam {
+        MIXED_IO_ALLOWED, NO_MIXED_IO
     }
 }
