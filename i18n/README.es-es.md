@@ -33,7 +33,7 @@ instrucciones SIMD y varias técnicas de baja latencia, que incluyen un compilad
 creado desde cero en Java y C++, sin dependencias, y es 100% libre de GC (recolección de basura).
 
 <div align="center">
-  <a href="https://demo.questdb.io">
+  <a href="https://demo.questdb.io/">
     <img alt="Consola web de QuestDB que muestra varias declaraciones SQL y visualiza una consulta como un gráfico" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
@@ -92,18 +92,18 @@ Puedes conectarte con QuestDB utilizando las siguientes interfaces:
 
 Estos son los clientes oficiales para varios lenguajes de programación:
 
-- [.NET](https://github.com/questdb/net-questdb-client)
-- [C/C++](https://github.com/questdb/c-questdb-client)
-- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
+- [.NET](https://github.com/questdb/net-questdb-client/)
+- [C/C++](https://github.com/questdb/c-questdb-client/)
+- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client/)
 - [Java](https://questdb.io/docs/reference/clients/java_ilp/)
-- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
+- [NodeJS](https://questdb.github.io/nodejs-questdb-client/)
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
-- [Rust](https://docs.rs/crate/questdb-rs/latest)
+- [Rust](https://docs.rs/crate/questdb-rs/latest/)
 
 ### Tutorial completo de punto a punto
 
 ¿Quieres probarlo todo? ¿Desde ingestión en tiempo real hasta visualización de gráficos integrando QuestDB y Grafana?
-Prueba nuestro tutorial en [el repositorio quickstart](https://github.com/questdb/questdb-quickstart).
+Prueba nuestro tutorial en [el repositorio quickstart](https://github.com/questdb/questdb-quickstart/).
 
 ## Cómo se compara QuestDB con otras bases de datos de series temporales de código abierto
 
@@ -138,7 +138,7 @@ servidor `c5.metal` usando 16 de los 96 hilos disponibles:
 - [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende cómo instalar, configurar y correr
   QuestDB.
 - [Tutoriales:](https://questdb.io/tutorial/) aprende paso a paso todo lo que puedes hacer con QuestDB.
-- [Product roadmap:](https://github.com/questdb/questdb/projects) echa un vistazo a nuestro plan para las versiones que
+- [Product roadmap:](https://github.com/questdb/questdb/projects/) echa un vistazo a nuestro plan para las versiones que
   vienen.
 
 ### ❓ Ayuda!
@@ -150,11 +150,11 @@ servidor `c5.metal` usando 16 de los 96 hilos disponibles:
 
 ### 🚢 Despliega QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Plataforma en la nube de Google](https://questdb.io/docs/guides/google-cloud-platform)
-- [Imagen oficial de Docker](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
+- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami/)
+- [Plataforma en la nube de Google](https://questdb.io/docs/guides/google-cloud-platform/)
+- [Imagen oficial de Docker](https://questdb.io/docs/get-started/docker/)
+- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean/)
+- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes/)
 
 ## Contribuye
 
@@ -162,7 +162,7 @@ Siempre estamos encantados de aceptar contribuciones al proyecto, ya sea código
 solicitudes de nueva funcionalidad, o comentarios. Para empezar a contribuir:
 
 - Echa un vistazo a GitHub, en particular a los elementos etiquetados
-  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+  "[Good first issue]"(https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22).
 - Lee la [guía de contribución](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
 - Para obtener detalles sobre la compilación, empaquetado e instalación de QuestDB, consulta
   [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
@@ -170,7 +170,7 @@ solicitudes de nueva funcionalidad, o comentarios. Para empezar a contribuir:
   de QuestDB y envía un pull request con los cambios propuestos.
 
 ✨ Como muestra de nuestra gratitud, te enviaremos **Swag de QuestDB**
-. [Reclama tu swag aquí.](https://questdb.io/community)
+. [Reclama tu swag aquí.](https://questdb.io/community/)
 
 Un gran agradecimiento a las siguientes personas maravillosas que han contribuido a
 QuestDB: ([clave emoji](https://allcontributors.org/docs/en/emoji-key)):
