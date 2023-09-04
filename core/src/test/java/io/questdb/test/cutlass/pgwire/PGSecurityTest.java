@@ -33,6 +33,7 @@ import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
@@ -51,7 +52,7 @@ public class PGSecurityTest extends BasePGTest {
     private static final SecurityContextFactory READ_ONLY_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
     private static final FactoryProvider READ_ONLY_FACTORY_PROVIDER = new DefaultFactoryProvider() {
         @Override
-        public SecurityContextFactory getSecurityContextFactory() {
+        public @NotNull SecurityContextFactory getSecurityContextFactory() {
             return READ_ONLY_SECURITY_CONTEXT_FACTORY;
         }
     };
@@ -64,7 +65,7 @@ public class PGSecurityTest extends BasePGTest {
     private static final SecurityContextFactory READ_ONLY_USER_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(false, "user", false);
     private static final FactoryProvider READ_ONLY_USER_FACTORY_PROVIDER = new DefaultFactoryProvider() {
         @Override
-        public SecurityContextFactory getSecurityContextFactory() {
+        public @NotNull SecurityContextFactory getSecurityContextFactory() {
             return READ_ONLY_USER_SECURITY_CONTEXT_FACTORY;
         }
     };

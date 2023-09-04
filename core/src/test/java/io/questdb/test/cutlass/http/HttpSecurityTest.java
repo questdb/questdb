@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractTest;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -627,7 +628,7 @@ public class HttpSecurityTest extends AbstractTest {
     ) throws Exception {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
-            public HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
+            public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
                 return factory;
             }
         };
