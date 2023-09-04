@@ -34,6 +34,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
+
     String getAuthDB();
 
     boolean getAutoCreateNewColumns();
@@ -101,6 +102,4 @@ public interface LineTcpReceiverConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isSymbolAsFieldSupported();
-
-    boolean readOnlySecurityContext();
 }
