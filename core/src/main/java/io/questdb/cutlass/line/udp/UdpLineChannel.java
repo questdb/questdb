@@ -81,7 +81,7 @@ public final class UdpLineChannel implements LineChannel {
 
     @Override
     public void send(long ptr, int len) {
-        if (nf.sendTo(fd, ptr, len, sockaddr) != len) {
+        if (nf.sendToRaw(fd, ptr, len, sockaddr) != len) {
             throw new LineSenderException("send error").errno(nf.errno());
         }
     }

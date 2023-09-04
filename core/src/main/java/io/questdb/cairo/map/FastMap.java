@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * FastMap is a general purpose off-heap hash table used to store intermediate data of join,
@@ -137,7 +136,6 @@ public class FastMap implements Map, Reopenable {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
     }
 
-    @TestOnly
     FastMap(
             int pageSize,
             @NotNull @Transient ColumnTypes keyTypes,
@@ -380,7 +378,7 @@ public class FastMap implements Map, Reopenable {
         }
         offsets.close();
         offsets = newOffsets;
-        free += (capacity - keyCapacity) * loadFactor;
+        free += (int) ((capacity - keyCapacity) * loadFactor);
         keyCapacity = capacity;
     }
 
@@ -624,16 +622,6 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putStr(CharSequence value, int lo, int hi) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putStrLowerCase(CharSequence value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putStrLowerCase(CharSequence value, int lo, int hi) {
             throw new UnsupportedOperationException();
         }
 

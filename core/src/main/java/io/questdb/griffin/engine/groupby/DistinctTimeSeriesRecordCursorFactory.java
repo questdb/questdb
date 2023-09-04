@@ -55,7 +55,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         columnFilter.of(metadata.getColumnCount());
         RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
         Map dataMap = new FastMap(
-                configuration.getSqlMapPageSize(),
+                configuration.getSqlSmallMapPageSize(),
                 metadata,
                 configuration.getSqlDistinctTimestampKeyCapacity(),
                 configuration.getSqlDistinctTimestampLoadFactor(),

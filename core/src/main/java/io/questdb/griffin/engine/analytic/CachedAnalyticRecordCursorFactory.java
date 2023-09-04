@@ -220,7 +220,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public long size() {
-            return recordChain.size();
+            return isRecordChainBuilt ? recordChain.size() : -1;// in case recordChain starts returning actual size 
         }
 
         @Override

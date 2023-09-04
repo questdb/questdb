@@ -44,9 +44,9 @@ public class SecurityContextTest {
     private static final LongList permissions = new LongList();
     private final static String tableName = "tab";
     private static final Object[] THREE_PARAM_ARGS = {permissions, tableName, columns};
-    private static final TableToken tableToken = new TableToken(tableName, tableName, 0, false);
-    private static final Object[] ONE_PARAM_ARGS = {tableToken};
-    private static final Object[] TWO_PARAM_ARGS = {tableToken, columns};
+    private static final TableToken userTableToken = new TableToken(tableName, tableName, 0, false, false);
+    private static final Object[] ONE_PARAM_ARGS = {userTableToken};
+    private static final Object[] TWO_PARAM_ARGS = {userTableToken, columns};
 
     @Test
     public void testAllowAllSecurityContext() throws InvocationTargetException, IllegalAccessException {

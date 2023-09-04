@@ -58,7 +58,7 @@ public class UdpLineChannelTest {
     private static final Log LOG = LogFactory.getLog(UdpLineChannelTest.class);
 
     @BeforeClass
-    public static void setUpStatic() throws Exception {
+    public static void setUpStatic() {
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be

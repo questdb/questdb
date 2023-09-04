@@ -395,6 +395,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.aliasToColumnNameMap.clear();
         this.bottomUpColumnNames.clear();
         this.aliasToColumnMap.clear();
+        this.bottomUpColumns.clear();
     }
 
     public void clearOrderBy() {
@@ -924,6 +925,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isNestedModelIsSubQuery() {
         return nestedModelIsSubQuery;
+    }
+
+    public boolean isOrderByTimestamp(CharSequence orderByToken) {
+        if (Chars.equalsIgnoreCase(orderByToken, timestamp.token)) {
+            return true;
+        }
+
+        try {
+            int columnIndex = Numbers.parseInt(orderByToken);
+            if (columnIndex < 1 && columnIndex > bottomUpColumns.size()) {
+                return false;
+            }
+            return Chars.equalsIgnoreCase(bottomUpColumnNames.getQuick(columnIndex - 1), timestamp.token);
+        } catch (NumericException e) {
+            return false;
+        }
     }
 
     public boolean isSelectTranslation() {

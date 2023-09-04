@@ -65,7 +65,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
     }
@@ -4398,8 +4398,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinReorder() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+            ddl("create table tab ( created timestamp, value long ) timestamp(created) ");
+            insert("insert into tab values (0, 0), (1, 1), (2,2)");
 
             String query1 = "SELECT T1.created FROM " +
                     "( SELECT * " +
@@ -5322,7 +5322,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "APPL\tAPPL\tAPPL_APPL\n" +
                     "APPL\tAPPL\tAPPL_APPL\n" +
                     "APPL\tAPPL\tAPPL_APPL\n";
-            assertQuery(expected, "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b", null, false, false);
+            assertQuery(expected, "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b", null, false, true);
         });
     }
 

@@ -658,7 +658,7 @@ public class GeoHashesTest {
             StringSink sink = Misc.getThreadLocalBuilder();
             converter.convert(hash, size, sink);
             Assert.assertEquals(message, sink.toString());
-        } catch (IllegalArgumentException | NumericException err) {
+        } catch (IllegalArgumentException err) {
             Assert.fail();
         }
     }
@@ -701,6 +701,6 @@ public class GeoHashesTest {
 
     @FunctionalInterface
     private interface StringConverter {
-        void convert(long hash, int size, CharSink sink) throws NumericException;
+        void convert(long hash, int size, CharSink sink);
     }
 }

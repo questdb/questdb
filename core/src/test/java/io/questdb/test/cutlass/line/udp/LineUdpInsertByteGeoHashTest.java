@@ -54,7 +54,7 @@ public class LineUdpInsertByteGeoHashTest extends LineUdpInsertGeoHashTest {
     }
 
     @Override
-    public void testGeoHashesNotEnoughPrecision() throws Exception {
+    public void testGeoHashesNotEnoughPrecision() {
         // TODO: there is no binary representation allowing to represent less than 5 bits
     }
 

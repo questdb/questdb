@@ -84,7 +84,7 @@ public class TableReaderReloadBenchmark {
 
     @Setup(Level.Iteration)
     public void setup() throws NumericException {
-        TableToken tableToken = new TableToken("test", "test", 0, false);
+        TableToken tableToken = new TableToken("test", "test", 0, false, false);
         writer = new TableWriter(configuration, tableToken, Metrics.disabled());
         writer.truncate();
         // create 10 partitions
@@ -110,7 +110,7 @@ public class TableReaderReloadBenchmark {
     }
 
     @TearDown(Level.Iteration)
-    public void tearDown() throws NumericException {
+    public void tearDown() {
         System.out.println("writer size = " + Math.max(writer.size(), writer.size()));
         writer.close();
         reader.close();

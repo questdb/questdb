@@ -217,7 +217,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             for (int i = 0; i < threadCount; i++) {
                 threads.add(new Thread(() -> {
                     try {
-                        try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration)) {
+                        try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration, CairoEngine.EMPTY_RESOLVER)) {
                             startBarrier.await();
                             while (!done.get()) {
                                 ro.reloadTableNameCache();
@@ -245,7 +245,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 // Add / remove tables
                 engine.closeNameRegistry();
                 Rnd rnd = TestUtils.generateRandom(LOG);
-                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration)) {
+                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration, CairoEngine.EMPTY_RESOLVER)) {
                     rw.reloadTableNameCache();
                     startBarrier.await();
                     int iteration = 0;
@@ -529,7 +529,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 engine.releaseInactive();
             }
 
-            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
 
             if (!releaseInactiveBeforeConversion) {
                 engine.releaseInactive();

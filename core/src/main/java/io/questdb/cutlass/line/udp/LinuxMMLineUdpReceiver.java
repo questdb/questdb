@@ -56,7 +56,7 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
     protected boolean runSerially() {
         boolean ran = false;
         int count;
-        while ((count = nf.recvmmsg(fd, msgVec, msgCount)) > 0) {
+        while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {
             long p = msgVec;
             for (int i = 0; i < count; i++) {
                 long buf = nf.getMMsgBuf(p);

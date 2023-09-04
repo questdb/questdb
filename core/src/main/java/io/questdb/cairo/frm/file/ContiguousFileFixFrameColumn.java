@@ -99,7 +99,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                         Vect.memcpy(dstAddress, srcAddress, length);
 
                         if (commitMode != CommitMode.NOSYNC) {
-                            ff.msync(dstAddress, length, commitMode == CommitMode.ASYNC);
+                            TableUtils.msync(ff, dstAddress, length, commitMode == CommitMode.ASYNC);
                         }
                     } finally {
                         if (srcAddress != 0) {
@@ -128,7 +128,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             try {
                 TableUtils.setNull(columnType, mappedAddress, count);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(mappedAddress, count << shl, commitMode == CommitMode.ASYNC);
+                    TableUtils.msync(ff, mappedAddress, count << shl, commitMode == CommitMode.ASYNC);
                 }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset << shl, count << shl, MEMORY_TAG);

@@ -26,17 +26,13 @@ public class Utf8sTest {
         Assert.assertFalse(Utf8s.equals(str2, str3));
 
         final Utf8Sequence nullSequence = null;
-        final Utf8Sequence seq1a = str1a;
-        final Utf8Sequence seq1b = str1b;
-        final Utf8Sequence seq2 = str2;
-        final Utf8Sequence seq3 = str3;
 
         Assert.assertTrue(Utf8s.equals(nullSequence, nullSequence));
-        Assert.assertFalse(Utf8s.equals(nullSequence, seq1a));
-        Assert.assertFalse(Utf8s.equals(seq1a, nullSequence));
-        Assert.assertTrue(Utf8s.equals(seq1a, seq1a));
-        Assert.assertTrue(Utf8s.equals(seq1a, seq1b));
-        Assert.assertFalse(Utf8s.equals(seq1a, seq2));
-        Assert.assertFalse(Utf8s.equals(seq2, seq3));
+        Assert.assertFalse(Utf8s.equals(nullSequence, str1a));
+        Assert.assertFalse(Utf8s.equals(str1a, nullSequence));
+        Assert.assertTrue(Utf8s.equals(str1a, (Utf8Sequence) str1a));
+        Assert.assertTrue(Utf8s.equals(str1a, (Utf8Sequence) str1b));
+        Assert.assertFalse(Utf8s.equals(str1a, (Utf8Sequence) str2));
+        Assert.assertFalse(Utf8s.equals(str2, (Utf8Sequence) str3));
     }
 }
