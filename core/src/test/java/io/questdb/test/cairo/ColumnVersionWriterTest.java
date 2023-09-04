@@ -109,7 +109,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
                 }
 
-                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
             }
         });
     }
@@ -209,17 +209,17 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
                 }
 
-                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
 
                 r.ofRO(ff, path);
                 r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
 
                 MemoryCMR mem = Vm.getCMRInstance();
                 mem.of(ff, path, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
                 r.ofRO(mem);
                 r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
                 mem.close();
             }
         });
@@ -247,11 +247,11 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
                     w.commit();
                     r.readSafe(configuration.getMillisecondClock(), 1);
-                    Assert.assertTrue(w.getCachedList().size() > 0);
-                    TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                    Assert.assertTrue(w.getCachedColumnVersionList().size() > 0);
+                    TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
                     // assert list is ordered by (timestamp,column_index)
 
-                    LongList list = r.getCachedList();
+                    LongList list = r.getCachedColumnVersionList();
                     long prevTimestamp = -1;
                     long prevColumnIndex = -1;
                     for (int j = 0, n = list.size(); j < n; j += ColumnVersionWriter.BLOCK_SIZE) {
@@ -321,9 +321,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         "       2      15      -1      10\n" +
                         "       3       0      -1      10\n";
 
-                TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedList()));
+                TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedColumnVersionList()));
                 r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(expected, CVStringTable.asTable(r.getCachedList()));
+                TestUtils.assertEquals(expected, CVStringTable.asTable(r.getCachedColumnVersionList()));
             }
         });
     }
@@ -432,12 +432,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 CVStringTable.setupColumnVersionWriter(w1, srcExpected);
                 CVStringTable.setupColumnVersionWriter(w2, dstExpected);
                 for (long p : partitionTimestamp) {
-                    w2.copyPartition(p, w1);
+                    w2.overrideColumnVersions(p, w1);
                 }
-                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedList()));
+                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedColumnVersionList()));
                 w2.commit();
                 r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(r.getCachedList()));
+                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(r.getCachedColumnVersionList()));
             }
         });
     }
@@ -463,7 +463,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                             for (int j = 0; j < increment; j++) {
                                 w.upsert(rnd.nextLong(20), rnd.nextInt(10), txn, -1);
                             }
-                            LongList list = w.getCachedList();
+                            LongList list = w.getCachedColumnVersionList();
                             for (int j = 0, n = list.size(); j < n; j += ColumnVersionWriter.BLOCK_SIZE) {
                                 long timestamp = list.getQuick(j);
                                 int index = (int) list.getQuick(j + 1);
@@ -491,7 +491,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                                 throw ex;
                             }
                             long txn = -1;
-                            LongList list = r.getCachedList();
+                            LongList list = r.getCachedColumnVersionList();
                             long prevTimestamp = -1;
                             long prevColumnIndex = -1;
 
@@ -577,7 +577,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         values[i + ColumnVersionWriter.COLUMN_NAME_TXN_OFFSET],
                         values[i + ColumnVersionWriter.COLUMN_TOP_OFFSET]);
             }
-            TestUtils.assertEquals(expectedTable, asTable(w.getCachedList()));
+            TestUtils.assertEquals(expectedTable, asTable(w.getCachedColumnVersionList()));
         }
 
         private static final class SinkFormatterAdapter extends StringSink implements Appendable {
