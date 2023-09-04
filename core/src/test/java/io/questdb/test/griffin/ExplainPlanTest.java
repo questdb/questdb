@@ -389,12 +389,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        SelectedRecord\n" +
-                            "            Sort light\n" +
-                            "              keys: [ts, i]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: b\n");
+                            "        Sort light\n" +
+                            "          keys: [ts, i]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n");
         });
     }
 
@@ -3529,12 +3528,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        SelectedRecord\n" +
-                            "            Sort light\n" +
-                            "              keys: [ts, i]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: b\n");
+                            "        Sort light\n" +
+                            "          keys: [ts, i]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n");
         });
     }
 
@@ -3707,18 +3705,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                 String expectedPlan = "SelectedRecord\n" +
                         "    " + joinType + " Join\n" +
-                        "        SelectedRecord\n" +
-                        "            Sort light\n" +
-                        "              keys: [timestamp, galon_price desc]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: gas_prices\n" +
-                        "        SelectedRecord\n" +
-                        "            Sort light\n" +
-                        "              keys: [timestamp, galon_price desc]\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: gas_prices\n";
+                        "        Sort light\n" +
+                        "          keys: [timestamp, galon_price desc]\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: gas_prices\n" +
+                        "        Sort light\n" +
+                        "          keys: [timestamp, galon_price desc]\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: gas_prices\n";
 
                 assertPlan(query, expectedPlan);
             }
@@ -3742,18 +3738,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  keys: [timestamp]\n" +
                     "    SelectedRecord\n" +
                     "        Splice Join\n" +
-                    "            SelectedRecord\n" +
-                    "                Sort light\n" +
-                    "                  keys: [timestamp, galon_price desc]\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: gas_prices\n" +
-                    "            SelectedRecord\n" +
-                    "                Sort light\n" +
-                    "                  keys: [timestamp, galon_price desc]\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: gas_prices\n";
+                    "            Sort light\n" +
+                    "              keys: [timestamp, galon_price desc]\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: gas_prices\n" +
+                    "            Sort light\n" +
+                    "              keys: [timestamp, galon_price desc]\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: gas_prices\n";
 
             assertPlan(query, expectedPlan);
         });
@@ -5320,6 +5314,33 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectNoOrderByWithNegativeLimitArithmetic() throws Exception {
+        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        compile("insert into a select x,x::timestamp from long_sequence(10)");
+
+        assertPlan(
+                "select * from a limit -10+2",
+                "Sort light\n" +
+                        "  keys: [ts]\n" +
+                        "    Limit lo: 8\n" +
+                        "        DataFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectOrderByTsAsIndexDescNegativeLimit() throws Exception {
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
+                "select * from a order by 2 desc limit -10",
+                "Sort light\n" +
+                        "  keys: [ts desc]\n" +
+                        "    Limit lo: 10\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+    }
+
+    @Test
     public void testSelectOrderByTsAsc() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts asc",
@@ -6781,12 +6802,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        SelectedRecord\n" +
-                            "            Sort light\n" +
-                            "              keys: [ts, i]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: b\n");
+                            "        Sort light\n" +
+                            "          keys: [ts, i]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n");
         });
     }
 
@@ -7068,6 +7088,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void testSelectIndexedSymbolWithIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             compile("drop table if exists a");

@@ -68,7 +68,7 @@ public class TableWriterBenchmark {
     }
 
     @Setup(Level.Iteration)
-    public void setup() throws Exception {
+    public void setup() {
         final CairoConfiguration configuration = getConfiguration();
 
         executeDdl("create table if not exists test1(f long)", configuration);

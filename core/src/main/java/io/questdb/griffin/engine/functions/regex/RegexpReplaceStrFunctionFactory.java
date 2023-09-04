@@ -162,11 +162,6 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public boolean isRuntimeConstant() {
             return false;
         }

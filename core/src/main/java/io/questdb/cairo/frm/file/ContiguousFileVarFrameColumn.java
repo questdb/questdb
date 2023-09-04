@@ -304,10 +304,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         if (varAppendOffset != offset) {
             varLength = readVarOffset(fixedFd, offset);
             varAppendOffset = offset;
-            return varLength;
-        } else {
-            return varLength;
         }
+        return varLength;
     }
 
     private long readVarOffset(int fixedFd, long offset) {

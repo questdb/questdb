@@ -390,7 +390,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         final long timestamp = clock.getTicks();
         processDisconnects(timestamp);
         alreadyHandledFds.clear();
-        final int n = kqueue.poll();
+        final int n = kqueue.poll(0);
         int watermark = pending.size();
         int offset = 0;
         if (n > 0) {

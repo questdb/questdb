@@ -664,7 +664,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
     }
 
-    public WalInitializer getWalInitializer() {
+    public @NotNull WalInitializer getWalInitializer() {
         return walInitializer;
     }
 

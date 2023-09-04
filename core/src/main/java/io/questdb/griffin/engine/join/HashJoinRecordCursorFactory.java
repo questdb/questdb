@@ -118,6 +118,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
+        private long size = -1;
         private boolean useSlaveCursor;
 
         public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
@@ -145,10 +146,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         @Override
         public boolean hasNext() {
-            if (!isMapBuilt) {
-                buildMapOfSlaveRecords();
-                isMapBuilt = true;
-            }
+            buildMapOfSlaveRecords();
 
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
@@ -172,7 +170,11 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         @Override
         public long size() {
-            return -1;
+            if (size != -1) {
+                return size;
+            }
+            buildMapOfSlaveRecords();
+            return size = TableUtils.computeCursorSizeFromMap(masterCursor, joinKeyMap, masterSink);
         }
 
         @Override
@@ -187,20 +189,9 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         }
 
         private void buildMapOfSlaveRecords() {
-            final Record record = slaveCursor.getRecord();
-            while (slaveCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-
-                MapKey key = joinKeyMap.withKey();
-                key.put(record, slaveKeySink);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    long offset = slaveChain.put(record, -1);
-                    value.putLong(0, offset);
-                    value.putLong(1, offset);
-                } else {
-                    value.putLong(1, slaveChain.put(record, value.getLong(1)));
-                }
+            if (!isMapBuilt) {
+                TableUtils.populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                isMapBuilt = true;
             }
         }
 
@@ -218,6 +209,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             recordA.of(masterRecord, slaveRecord);
             slaveChain.setSymbolTableResolver(slaveCursor);
             useSlaveCursor = false;
+            size = -1;
             isMapBuilt = false;
         }
     }

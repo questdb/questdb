@@ -385,7 +385,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "                                Row forward scan\n" +
                     "                                Frame forward scan on: tab\n");
 
-            assertQuery("month\tts1\tuid\n" +
+            assertQuery(
+                    "month\tts1\tuid\n" +
                     "1970-01-01T00:05:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
                     "1970-01-01T00:05:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
                     "1970-01-01T00:05:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n" +
@@ -394,7 +395,12 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "1970-01-01T00:04:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n" +
                     "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
                     "1970-01-01T00:03:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
-                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n", query, null, true, false);
+                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -480,9 +486,15 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: t2\n");
 
-            assertQuery("vendor_id\n" +
+            assertQuery(
+                    "vendor_id\n" +
                     "A2\n" +
-                    "A1\n", query, null, true, false);
+                    "A1\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 

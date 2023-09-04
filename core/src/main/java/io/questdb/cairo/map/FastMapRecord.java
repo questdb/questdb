@@ -62,7 +62,7 @@ final class FastMapRecord implements MapRecord {
     private long valueAddress;
 
     FastMapRecord(
-            @Nullable int[] valueOffsets,
+            int[] valueOffsets,
             int keyOffset,
             FastMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,

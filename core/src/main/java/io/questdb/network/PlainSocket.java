@@ -50,6 +50,11 @@ public class PlainSocket implements Socket {
     }
 
     @Override
+    public boolean isClosed() {
+        return fd == -1;
+    }
+
+    @Override
     public boolean isTlsSessionStarted() {
         return false;
     }

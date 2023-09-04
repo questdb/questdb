@@ -1567,6 +1567,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return row;
     }
 
+    @Override
+    public Row newRowDeferTimestamp() {
+        throw new UnsupportedOperationException();
+    }
+
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
     }

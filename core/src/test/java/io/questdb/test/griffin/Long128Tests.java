@@ -62,7 +62,7 @@ public class Long128Tests extends AbstractCairoTest {
                     "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
                     null,
                     false,
-                    false,
+                    true,
                     true
             );
         });
@@ -156,7 +156,8 @@ public class Long128Tests extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                false
+                false,
+                true
         );
     }
 
@@ -191,7 +192,8 @@ public class Long128Tests extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                false
+                false,
+                true
         );
     }
 
@@ -229,7 +231,8 @@ public class Long128Tests extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ")",
                 null,
-                false
+                false,
+                true
         );
     }
 

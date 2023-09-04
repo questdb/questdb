@@ -35,15 +35,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
@@ -271,20 +268,12 @@ public class LatestByParallelTest extends AbstractTest {
                 WorkerPool pool = new WorkerPool(() -> workerCount);
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public @NotNull FilesFacade getFilesFacade() {
-                        return TestFilesFacadeImpl.INSTANCE;
-                    }
                 };
 
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public @NotNull FilesFacade getFilesFacade() {
-                        return TestFilesFacadeImpl.INSTANCE;
-                    }
 
                     @Override
                     public int getLatestByQueueCapacity() {
