@@ -406,10 +406,10 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     static class TestRecordCursor implements RecordCursor {
-        Record left = new TestRecord();
+        final Record left = new TestRecord();
         int position = -1;
-        Record right = new TestRecord();
-        LongList values = new LongList();
+        final Record right = new TestRecord();
+        final LongList values = new LongList();
 
         TestRecordCursor(long... newValues) {
             for (int i = 0; i < newValues.length; i++) {

@@ -587,7 +587,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
 
                     dumpBuffer(recvBuffer, read);
-                    headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
+                    headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true, false);
                 }
             }
 

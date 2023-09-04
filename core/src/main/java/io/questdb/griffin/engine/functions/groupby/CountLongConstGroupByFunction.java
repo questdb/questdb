@@ -52,11 +52,6 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);

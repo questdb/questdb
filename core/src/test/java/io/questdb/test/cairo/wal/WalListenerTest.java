@@ -58,7 +58,7 @@ public class WalListenerTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic()  {
         engine.setWalListener(DefaultWalListener.INSTANCE);
         if (!listener.events.isEmpty()) {
             System.err.println("Unexpected or unasserted WalListener events:");

@@ -82,11 +82,6 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_short(").val(lo).val(',').val(range + lo - 1).val(')');
         }

@@ -60,7 +60,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         otherPath = Misc.free(otherPath);
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();

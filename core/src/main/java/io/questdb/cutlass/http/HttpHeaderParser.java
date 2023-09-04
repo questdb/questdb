@@ -50,12 +50,20 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private long headerPtr;
     private boolean incomplete;
     private boolean isMethod = true;
+    private boolean isProtocol = true;
     private boolean isQueryParams = false;
+    private boolean isStatusCode = true;
+    private boolean isStatusText = true;
     private boolean isUrl = true;
     private DirectByteCharSequence method;
     private DirectByteCharSequence methodLine;
     private boolean needMethod;
+    private boolean needProtocol = true;
+    private DirectByteCharSequence protocol;
+    private DirectByteCharSequence protocolLine;
     private long statementTimeout = -1L;
+    private DirectByteCharSequence statusCode;
+    private DirectByteCharSequence statusText;
     private DirectByteCharSequence url;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectByteCharSequence> pool) {
@@ -68,7 +76,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     }
 
     @Override
-    public final void clear() {
+    public void clear() {
         this.needMethod = true;
         this._wptr = this._lo = this.headerPtr;
         this.incomplete = true;
@@ -86,6 +94,13 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.isUrl = true;
         this.isQueryParams = false;
         this.statementTimeout = -1L;
+        this.protocol = null;
+        this.statusCode = null;
+        this.statusText = null;
+        this.isProtocol = true;
+        this.isStatusCode = true;
+        this.isStatusText = true;
+        this.needProtocol = true;
         // do not clear the pool
         // this.pool.clear();
     }
@@ -148,9 +163,21 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         return methodLine;
     }
 
+    public DirectByteCharSequence getProtocolLine() {
+        return protocolLine;
+    }
+
     @Override
     public long getStatementTimeout() {
         return statementTimeout;
+    }
+
+    public DirectByteCharSequence getStatusCode() {
+        return statusCode;
+    }
+
+    public DirectByteCharSequence getStatusText() {
+        return statusText;
     }
 
     @Override
@@ -167,10 +194,13 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         return incomplete;
     }
 
-    public long parse(long ptr, long hi, boolean _method) {
+    public long parse(long ptr, long hi, boolean _method, boolean _protocol) {
         long p;
         if (_method && needMethod) {
             int l = parseMethod(ptr, hi);
+            p = ptr + l;
+        } else if (_protocol && needProtocol) {
+            int l = parseProtocol(ptr, hi);
             p = ptr + l;
         } else {
             p = ptr;
@@ -406,6 +436,51 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
                     }
                     methodLine = pool.next().of(method.getLo(), _wptr);
                     needMethod = false;
+                    this._lo = _wptr;
+                    return (int) (p - lo);
+                default:
+                    break;
+            }
+            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
+        }
+        return (int) (p - lo);
+    }
+
+    private int parseProtocol(long lo, long hi) {
+        long p = lo;
+        while (p < hi) {
+            if (_wptr == this.hi) {
+                throw HttpException.instance("protocol line is too long");
+            }
+
+            char b = (char) Unsafe.getUnsafe().getByte(p++);
+
+            if (b == '\r') {
+                continue;
+            }
+
+            switch (b) {
+                case ' ':
+                    if (isProtocol) {
+                        protocol = pool.next().of(_lo, _wptr);
+                        _lo = _wptr + 1;
+                        isProtocol = false;
+                    } else if (isStatusCode) {
+                        statusCode = pool.next().of(_lo, _wptr);
+                        isStatusCode = false;
+                        _lo = _wptr + 1;
+                    }
+                    break;
+                case '\n':
+                    if (isStatusText) {
+                        statusText = pool.next().of(_lo, _wptr);
+                        isStatusText = false;
+                    }
+                    if (protocol == null) {
+                        throw HttpException.instance("bad protocol");
+                    }
+                    protocolLine = pool.next().of(protocol.getLo(), _wptr);
+                    needProtocol = false;
                     this._lo = _wptr;
                     return (int) (p - lo);
                 default:

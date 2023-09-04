@@ -196,11 +196,6 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.val("cursor ").child(factory);
     }

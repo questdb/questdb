@@ -393,6 +393,18 @@ public final class Chars {
         return h;
     }
 
+    public static int hashCode(char @NotNull [] value, int lo, int hi) {
+        if (hi == lo) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = lo; p < hi; p++) {
+            h = 31 * h + value[p];
+        }
+        return h;
+    }
+
     public static int hashCode(@NotNull CharSequence value) {
         if (value instanceof String) {
             return value.hashCode();

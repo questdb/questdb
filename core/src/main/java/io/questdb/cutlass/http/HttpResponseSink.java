@@ -699,7 +699,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         public void sendStatusWithHeader(int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
             buffer.clearAndPrepareToWriteToBuffer();
             final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
-            headerImpl.put(header);
+            headerImpl.put(header).put(Misc.EOL);
             prepareHeaderSink();
             flushSingle();
             buffer.clearAndPrepareToWriteToBuffer();
