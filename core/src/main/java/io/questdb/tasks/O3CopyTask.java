@@ -46,7 +46,6 @@ public class O3CopyTask {
     private long dstVarAdjust;
     private int dstVarFd;
     private long dstVarOffset;
-    private long dstVarOffsetEnd;
     private long dstVarSize;
     private int indexBlockCapacity;
     private BitmapIndexWriter indexWriter;
@@ -145,10 +144,6 @@ public class O3CopyTask {
 
     public long getDstVarOffset() {
         return dstVarOffset;
-    }
-
-    public long getDstVarOffsetEnd() {
-        return dstVarOffsetEnd;
     }
 
     public long getDstVarSize() {
@@ -327,7 +322,6 @@ public class O3CopyTask {
             int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             int dstKFd,
@@ -380,7 +374,6 @@ public class O3CopyTask {
         this.dstVarFd = dstVarFd;
         this.dstVarAddr = dstVarAddr;
         this.dstVarOffset = dstVarOffset;
-        this.dstVarOffsetEnd = dstVarOffsetEnd;
         this.dstVarAdjust = dstVarAdjust;
         this.dstVarSize = dstVarSize;
         this.dstKFd = dstKFd;

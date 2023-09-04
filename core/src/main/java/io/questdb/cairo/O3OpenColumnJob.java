@@ -616,7 +616,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 0,
-                0,
                 dstKFd,
                 dstVFd,
                 dstIndexOffset,
@@ -943,7 +942,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarAddr,
                 0,
                 0,
-                0,
                 dstVarSize,
                 dstKFd,
                 dstVFd,
@@ -1054,7 +1052,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixOffset,
                 dstFixFileOffset,
                 dstFixSize,
-                0,
                 0,
                 0,
                 0,
@@ -1198,7 +1195,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 activeVarFd,
                 dstVarAddr,
                 dstVarOffset,
-                0,
                 dstVarAdjust,
                 dstVarSize,
                 0,
@@ -2057,22 +2053,40 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             // offset 2
             if (mergeDataLo > -1 && mergeOOOLo > -1) {
-                long oooLen = O3Utils.getVarColumnLength(
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        srcOooFixAddr
-                );
-                long dataLen = O3Utils.getVarColumnLength(
-                        mergeDataLo,
-                        mergeDataHi,
-                        srcDataFixAddr + srcDataFixOffset - srcDataTop * 8
-                );
                 dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen * Long.BYTES);
                 if (mergeLen == mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) {
+                    long oooLen = O3Utils.getVarColumnLength(
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            srcOooFixAddr
+                    );
+                    long dataLen = O3Utils.getVarColumnLength(
+                            mergeDataLo,
+                            mergeDataHi,
+                            srcDataFixAddr + srcDataFixOffset - srcDataTop * 8
+                    );
                     dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
                 } else {
-                    // dedup eliminates some rows, there is no way to know the append offset of var file beforehand
-                    dstVarAppendOffset2 = -2;
+                    // Dedup eliminates some rows, there is no way to know the append offset of var file beforehand.
+                    // Dedup usually reduces the size of the var column, but in some cases it can increase it.
+                    // For example if var col in src has 3 rows of data
+                    // '1'
+                    // '1'
+                    // '1'
+                    // and all rows match single row in o3 with value
+                    // 'long long value'
+                    // the result will be 3 rows with new new value
+                    // 'long long value'
+                    // 'long long value'
+                    // 'long long value'
+                    // Which is longer than oooLen + dataLen
+                    // To deal with unpredicatability of the dedup var col size run the dedup merged size calculation
+                    dstVarAppendOffset2 = dstVarAppendOffset1 + Vect.oooMergeCopyColumnLen(
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
+                            srcDataFixAddr + srcDataFixOffset - srcDataTop * 8,
+                            srcOooFixAddr
+                    );
                 }
             } else {
                 dstFixAppendOffset2 = dstFixAppendOffset1;
@@ -2213,7 +2227,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             int dstKFd,
@@ -2231,7 +2244,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr
     ) {
-        long cursor = -1;//tableWriter.getO3CopyPubSeq().next();
+        long cursor = tableWriter.getO3CopyPubSeq().next();
         if (cursor > -1) {
             publishCopyTaskHarmonized(
                     columnCounter,
@@ -2269,7 +2282,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarFd,
                     dstVarAddr,
                     dstVarOffset,
-                    dstVarOffsetEnd,
                     dstVarAdjust,
                     dstVarSize,
                     dstKFd,
@@ -2326,7 +2338,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarFd,
                     dstVarAddr,
                     dstVarOffset,
-                    dstVarOffsetEnd,
                     dstVarAdjust,
                     dstVarSize,
                     dstKFd,
@@ -2384,7 +2395,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             int dstKFd,
@@ -2443,7 +2453,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarFd,
                     dstVarAddr,
                     dstVarOffset,
-                    dstVarOffsetEnd,
                     dstVarAdjust,
                     dstVarSize,
                     dstKFd,
@@ -2498,7 +2507,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarFd,
                     dstVarAddr,
                     dstVarOffset,
-                    dstVarOffsetEnd,
                     dstVarAdjust,
                     dstVarSize,
                     dstKFd,
@@ -2556,7 +2564,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             int dstKFd,
@@ -2612,7 +2619,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarFd,
                 dstVarAddr,
                 dstVarOffset,
-                dstVarOffsetEnd,
                 dstVarAdjust,
                 dstVarSize,
                 dstKFd,
@@ -2730,7 +2736,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarAddr,
                         0,
                         0,
-                        0,
                         dstVarSize,
                         dstKFd,
                         dstVFd,
@@ -2784,7 +2789,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixSize,
                         dstVarFd,
                         dstVarAddr,
-                        0,
                         0,
                         0,
                         dstVarSize,
@@ -2846,7 +2850,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset1,
-                        dstVarAppendOffset2,
                         0,
                         dstVarSize,
                         dstKFd,
@@ -2902,7 +2905,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset1,
-                        dstVarAppendOffset2,
                         0,
                         dstVarSize,
                         dstKFd,
@@ -2922,122 +2924,59 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             case O3_BLOCK_MERGE:
-                if (dstVarAppendOffset2 != -2 || suffixType == O3_BLOCK_NONE) {
-                    publishCopyTask(
-                            columnCounter,
-                            partCounter,
-                            columnType,
-                            mergeType,
-                            timestampMergeIndexAddr,
-                            timestampMergeIndexSize,
-                            srcDataFixFd,
-                            srcDataFixAddr,
-                            srcDataFixOffset,
-                            srcDataFixSize,
-                            srcDataVarFd,
-                            srcDataVarAddr,
-                            srcDataVarOffset,
-                            srcDataVarSize,
-                            mergeDataLo,
-                            mergeDataHi,
-                            srcDataTopOffset,
-                            srcDataMax,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            mergeOOOLo,
-                            mergeOOOHi,
-                            srcOooMax,
-                            srcOooLo,
-                            srcOooHi,
-                            timestampMin,
-                            partitionTimestamp,
-                            dstFixFd,
-                            dstFixAddr,
-                            dstFixAppendOffset1,
-                            dstFixAppendOffset1,
-                            dstFixSize,
-                            dstVarFd,
-                            dstVarAddr,
-                            dstVarAppendOffset1,
-                            dstVarAppendOffset2,
-                            0,
-                            dstVarSize,
-                            dstKFd,
-                            dstVFd,
-                            0,
-                            dstIndexAdjust,
-                            indexBlockCapacity,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            partitionMutates,
-                            newPartitionSize,
-                            oldPartitionSize,
-                            tableWriter,
-                            indexWriter,
-                            partitionUpdateSinkAddr
-                    );
-                } else {
-                    // dstVarAppendOffset2 == -2 means merge of var column with dedup
-                    // in this case merge is done in sync mode to know the suffix offset
-                    publishCopyTaskContended(
-                            -1,
-                            columnCounter,
-                            partCounter,
-                            columnType,
-                            mergeType,
-                            timestampMergeIndexAddr,
-                            timestampMergeIndexSize,
-                            srcDataFixFd,
-                            srcDataFixAddr,
-                            srcDataFixOffset,
-                            srcDataFixSize,
-                            srcDataVarFd,
-                            srcDataVarAddr,
-                            srcDataVarOffset,
-                            srcDataVarSize,
-                            mergeDataLo,
-                            mergeDataHi,
-                            srcDataTopOffset,
-                            srcDataMax,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            mergeOOOLo,
-                            mergeOOOHi,
-                            srcOooMax,
-                            srcOooLo,
-                            srcOooHi,
-                            timestampMin,
-                            partitionTimestamp,
-                            dstFixFd,
-                            dstFixAddr,
-                            dstFixAppendOffset1,
-                            dstFixAppendOffset1,
-                            dstFixSize,
-                            dstVarFd,
-                            dstVarAddr,
-                            dstVarAppendOffset1,
-                            dstVarAppendOffset2,
-                            0,
-                            dstVarSize,
-                            dstKFd,
-                            dstVFd,
-                            0,
-                            dstIndexAdjust,
-                            indexBlockCapacity,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            partitionMutates,
-                            newPartitionSize,
-                            oldPartitionSize,
-                            tableWriter,
-                            indexWriter,
-                            partitionUpdateSinkAddr
-                    );
-                    long mergeLen = timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES;
-                    dstVarAppendOffset2 = Unsafe.getUnsafe().getLong(dstFixAddr + dstFixAppendOffset1 + mergeLen * Long.BYTES);
-                }
+                publishCopyTask(
+                        columnCounter,
+                        partCounter,
+                        columnType,
+                        mergeType,
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixOffset,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarOffset,
+                        srcDataVarSize,
+                        mergeDataLo,
+                        mergeDataHi,
+                        srcDataTopOffset,
+                        srcDataMax,
+                        srcOooFixAddr,
+                        srcOooVarAddr,
+                        mergeOOOLo,
+                        mergeOOOHi,
+                        srcOooMax,
+                        srcOooLo,
+                        srcOooHi,
+                        timestampMin,
+                        partitionTimestamp,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixAppendOffset1,
+                        dstFixAppendOffset1,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarAppendOffset1,
+                        0,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        0,
+                        dstIndexAdjust,
+                        indexBlockCapacity,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
+                        tableWriter,
+                        indexWriter,
+                        partitionUpdateSinkAddr
+                );
                 break;
             default:
                 break;
@@ -3082,7 +3021,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset2,
-                        0,
                         0,
                         dstVarSize,
                         dstKFd,
@@ -3139,7 +3077,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset2,
-                        0,
                         0,
                         dstVarSize,
                         dstKFd,

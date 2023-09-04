@@ -80,7 +80,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             int dstKFd,
@@ -135,8 +134,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             srcOooVarAddr,
                             dstFixAddr + dstFixOffset,
                             dstVarAddr,
-                            dstVarOffset,
-                            dstVarOffsetEnd
+                            dstVarOffset
                     );
                     break;
                 case O3_BLOCK_O3:
@@ -273,7 +271,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final int dstVarFd = task.getDstVarFd();
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
-        final long dstVarOffsetEnd = task.getDstVarOffsetEnd();
         final long dstVarAdjust = task.getDstVarAdjust();
         final long dstVarSize = task.getDstVarSize();
         final int dstKFd = task.getDstKFd();
@@ -329,7 +326,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 dstVarFd,
                 dstVarAddr,
                 dstVarOffset,
-                dstVarOffsetEnd,
                 dstVarAdjust,
                 dstVarSize,
                 dstKFd,
@@ -610,8 +606,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooVarAddr,
             long dstFixAddr,
             long dstVarAddr,
-            long dstVarOffset,
-            long dstVarOffsetEnd
+            long dstVarOffset
     ) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
@@ -1047,27 +1042,22 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 // we can find out the edge of string column in one of two ways
                 // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
                 // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
-                if (dstVarOffset > -1) {
-                    // Copy suffix only when there is no dedup
-                    // suffix offset in case of dedup in not known
-                    // and suffix to be copied after merge done
-                    copyVarSizeCol(
-                            ff,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            srcOooLo,
-                            srcOooHi,
-                            dstFixAddr,
-                            dstFixFd,
-                            dstFixFileOffset,
-                            dstVarAddr,
-                            dstVarFd,
-                            dstVarOffset,
-                            dstVarAdjust,
-                            dstVarSize,
-                            mixedIOFlag
-                    );
-                }
+                copyVarSizeCol(
+                        ff,
+                        srcOooFixAddr,
+                        srcOooVarAddr,
+                        srcOooLo,
+                        srcOooHi,
+                        dstFixAddr,
+                        dstFixFd,
+                        dstFixFileOffset,
+                        dstVarAddr,
+                        dstVarFd,
+                        dstVarOffset,
+                        dstVarAdjust,
+                        dstVarSize,
+                        mixedIOFlag
+                );
                 break;
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:

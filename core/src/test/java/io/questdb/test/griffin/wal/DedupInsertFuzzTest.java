@@ -425,8 +425,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomDedupRepeat() throws Exception {
-        Rnd rnd = generateRandom(LOG, 554849283978041L, 1693587410517L);
-//        Rnd rnd = generateRandom(LOG, 536691123874083L, 1693567463164L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),

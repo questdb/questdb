@@ -242,6 +242,8 @@ public final class Vect {
             long dstVarOffset
     );
 
+    public static native long oooMergeCopyColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr);
+
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
     public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);

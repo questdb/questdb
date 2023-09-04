@@ -624,6 +624,30 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
     });
 }
 
+DECLARE_DISPATCHER(merge_copy_var_column_len) ;
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyColumnLen(JNIEnv *env, jclass cl,
+                                               jlong merge_index_addr,
+                                               jlong merge_index_size,
+                                               jlong src_data_fix_addr,
+                                               jlong src_ooo_fix_addr) {
+    auto merge_index = reinterpret_cast<index_t *>(merge_index_addr);
+    auto src_ooo_fix = reinterpret_cast<int64_t *>(src_ooo_fix_addr);
+    auto src_data_fix = reinterpret_cast<int64_t *>(src_data_fix_addr);
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    int64_t dst_var_offset = 0;
+
+    for (int64_t l = 0; l < merge_index_size; l++) {
+        MM_PREFETCH_T0(merge_index + l + 64);
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        const int64_t len = src_fix[bit][rr + 1] - src_fix[bit][rr];
+        dst_var_offset += len;
+    }
+    return dst_var_offset;
+}
+
 // 1 oooMergeCopyStrColumnWithTop removed and now executed as Merge Copy without Top
 // 2 oooMergeCopyBinColumnWithTop removed and now executed as Merge Copy without Top
 

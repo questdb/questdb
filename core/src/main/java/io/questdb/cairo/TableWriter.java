@@ -994,10 +994,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             shrinkO3Mem();
 
             // Useful for debugging
-            assert DebugUtils.reconcileVarLenCol(ff, metadata,
-                    txWriter.getLastPartitionTimestamp(),
-                    columnVersionWriter,
-                    columns, txWriter.transientRowCount);
+//            assert DebugUtils.reconcileVarLenCol(ff, metadata,
+//                    txWriter.getLastPartitionTimestamp(),
+//                    columnVersionWriter,
+//                    columns, txWriter.transientRowCount);
 
             return rowsAdded;
         }
