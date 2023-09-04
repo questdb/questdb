@@ -80,12 +80,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
-    // partitionUpdateSink (offset, description):
+    // Oversized partitionUpdateSink (offset, description):
     // 0, partitionTimestamp
     // 1, timestampMin
     // 2, newPartitionSize
     // 3, oldPartitionSize
     // 4, flags (partitionMutates INT, isLastWrittenPartition INT)
+    // 5. o3SplitPartitionSize size of "split" partition, new partition that branches out of the old one
     // ... column top for every column
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
@@ -4411,24 +4412,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (partitionTimestamp < lastPartitionTimestamp) {
                     // increment fixedRowCount by number of rows old partition incremented
                     this.txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
-                } else if (partitionTimestamp == lastPartitionTimestamp) {
-                    // this is existing "last" partition
-                    // was this partition split?
+                } else {
+                    if (partitionTimestamp != lastPartitionTimestamp) {
+                        this.txWriter.fixedRowCount += commitTransientRowCount;
+                    }
                     if (o3SplitPartitionSize > 0) {
                         // yep, it was
                         // the "current" active becomes fixed
-                        this.txWriter.fixedRowCount += srcDataNewPartitionSize;
-                        commitTransientRowCount = o3SplitPartitionSize;
-                    } else {
-                        commitTransientRowCount = srcDataNewPartitionSize;
-                    }
-                } else {
-                    // this is potentially a new last partition
-                    this.txWriter.fixedRowCount += commitTransientRowCount;
-                    // was this "new" partition split?
-                    if (o3SplitPartitionSize > 0) {
-                        // yep, it was
-                        // the "current" partition instantly becomes fixed
                         this.txWriter.fixedRowCount += srcDataNewPartitionSize;
                         commitTransientRowCount = o3SplitPartitionSize;
                     } else {

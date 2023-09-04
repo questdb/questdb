@@ -1201,7 +1201,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
 
-        LOG.info()
+        LOG.debug()
                 .$("sending partition update [partitionTimestamp=").$ts(partitionTimestamp)
                 .$(", partitionTimestamp=").$ts(timestampMin)
                 .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
