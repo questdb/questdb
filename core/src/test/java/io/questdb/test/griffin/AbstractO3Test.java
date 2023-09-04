@@ -60,7 +60,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
-    protected static boolean mixedIOEnabled = true;
+    protected static boolean mixedIOEnabled;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
 
@@ -83,12 +83,13 @@ public class AbstractO3Test extends AbstractTest {
         Path.PATH.get();
         Path.PATH2.get();
         super.setUp();
+        mixedIOEnabled = TestFilesFacadeImpl.INSTANCE.allowMixedIO(root);
     }
 
     @After
     public void tearDown() throws Exception {
         commitMode = CommitMode.NOSYNC;
-        mixedIOEnabled = true;
+        mixedIOEnabled = TestFilesFacadeImpl.INSTANCE.allowMixedIO(root);
         dataAppendPageSize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
