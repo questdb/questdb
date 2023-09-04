@@ -255,6 +255,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return metadata;
     }
 
+    public long getMetadataVersion() {
+        return txFile.getMetadataVersion();
+    }
+
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
     }
@@ -324,10 +328,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
-    }
-
-    public long getMetadataVersion() {
-        return txFile.getMetadataVersion();
     }
 
     public void goActive() {
