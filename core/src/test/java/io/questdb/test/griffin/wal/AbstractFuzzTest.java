@@ -551,7 +551,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         try (TableReader reader = getReader(tableNameWal)) {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
-                if (ColumnType.isString(metadata.getColumnType(i))) {
+                int columnType = metadata.getColumnType(i);
+                if (ColumnType.isVariableLength(columnType)) {
                     for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
                         reader.openPartition(partitionIndex);
                         int columnBase = reader.getColumnBase(partitionIndex);
@@ -560,7 +561,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
                         long colTop = reader.getColumnTop(columnBase, i);
                         long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
-                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dCol.getPageAddress(0))) {
+                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dCol.getPageAddress(0), columnType)) {
                             Assert.fail("var column " + reader.getMetadata().getColumnName(i)
                                     + " is not dense, .i file record size is different from .d file record size");
                         }

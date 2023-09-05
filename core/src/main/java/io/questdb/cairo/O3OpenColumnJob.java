@@ -2087,6 +2087,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (mergeDataLo > -1 && mergeOOOLo > -1) {
                 dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen * Long.BYTES);
                 if (mergeLen == mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) {
+                    // No deduplication, all rows from O3 and column data will be written.
+                    // In this case var col length is calculated as o3 var col len + data var col len
                     long oooLen = O3Utils.getVarColumnLength(
                             mergeOOOLo,
                             mergeOOOHi,
@@ -2099,6 +2101,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     );
                     dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
                 } else {
+                    // Deduplication happens, some rows are eliminated.
                     // Dedup eliminates some rows, there is no way to know the append offset of var file beforehand.
                     // Dedup usually reduces the size of the var column, but in some cases it can increase it.
                     // For example if var col in src has 3 rows of data

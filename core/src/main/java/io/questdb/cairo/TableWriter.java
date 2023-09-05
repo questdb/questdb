@@ -993,13 +993,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
             shrinkO3Mem();
-
-            // Useful for debugging
-//            assert DebugUtils.reconcileVarLenCol(ff, metadata,
-//                    txWriter.getLastPartitionTimestamp(),
-//                    columnVersionWriter,
-//                    columns, txWriter.transientRowCount);
-
             return rowsAdded;
         }
 

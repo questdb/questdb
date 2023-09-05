@@ -24,14 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-
-import static io.questdb.cairo.TableWriter.getPrimaryColumnIndex;
-import static io.questdb.cairo.TableWriter.getSecondaryColumnIndex;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 
 @SuppressWarnings("unused")
 public class DebugUtils {
@@ -57,12 +55,14 @@ public class DebugUtils {
         return true;
     }
 
-    public static boolean isSparseVarCol(long colRowCount, long iAddr, long dAddr) {
+    public static boolean isSparseVarCol(long colRowCount, long iAddr, long dAddr, int colType) {
         for (int row = 0; row < colRowCount; row++) {
             long offset = Unsafe.getUnsafe().getLong(iAddr + (long) row * Long.BYTES);
             long iLen = Unsafe.getUnsafe().getLong(iAddr + (long) (row + 1) * Long.BYTES) - offset;
-            int dLen = Unsafe.getUnsafe().getInt(dAddr + offset);
-            int dStorageLen = dLen > 0 ? dLen * 2 + 4 : 4;
+            long dLen = ColumnType.isString(colType) ? Unsafe.getUnsafe().getInt(dAddr + offset) : Unsafe.getUnsafe().getLong(dAddr + offset);
+            int lenLen = ColumnType.isString(colType) ? 4 : 8;
+            long dataLen = ColumnType.isString(colType) ? dLen * 2 : dLen;
+            long dStorageLen = dLen > 0 ? dataLen + lenLen : lenLen;
             if (iLen != dStorageLen) {
                 // Swiss cheese hole in var col file
                 return true;
@@ -90,51 +90,6 @@ public class DebugUtils {
                                 $();
                         return false;
                     }
-                }
-            }
-        }
-        return true;
-    }
-
-    // Useful debugging method
-    public static boolean reconcileVarLenCol(
-            FilesFacade ff,
-            RecordMetadata metadata,
-            long partitionTimestamp,
-            ColumnVersionReader columnVersionReader,
-            ObjList<MemoryMA> columns,
-            long rowCount
-    ) {
-        if (rowCount == 0) {
-            return true;
-        }
-
-        for (int col = 0; col < metadata.getColumnCount(); col++) {
-            if (metadata.getColumnType(col) == ColumnType.STRING) {
-                // map column files
-                long colTop = columnVersionReader.getColumnTop(partitionTimestamp, col);
-                long colRowCount = rowCount - colTop;
-                if (colRowCount == 0) {
-                    continue;
-                }
-
-                MemoryMA dCol = columns.get(getPrimaryColumnIndex(col));
-                MemoryMA iCol = columns.get(getSecondaryColumnIndex(col));
-
-                long iAddrMap = TableUtils.mapAppendColumnBuffer(ff, iCol.getFd(), 0, (colRowCount + 1) * Long.BYTES, false, MemoryTag.MMAP_DEFAULT);
-                long iAddr = Math.abs(iAddrMap);
-
-                long dSize = Unsafe.getUnsafe().getLong(iAddr + colRowCount * Long.BYTES);
-                long dAddrMap = TableUtils.mapAppendColumnBuffer(ff, dCol.getFd(), 0, dSize, false, MemoryTag.MMAP_DEFAULT);
-                long dAddr = Math.abs(dAddrMap);
-
-                try {
-                    if (isSparseVarCol(colRowCount, iAddr, dAddr)) {
-                        return false;
-                    }
-                } finally {
-                    TableUtils.mapAppendColumnBufferRelease(ff, dAddrMap, 0, dSize, MemoryTag.MMAP_DEFAULT);
-                    TableUtils.mapAppendColumnBufferRelease(ff, iAddrMap, 0, (colRowCount + 1) * Long.BYTES, MemoryTag.MMAP_DEFAULT);
                 }
             }
         }
