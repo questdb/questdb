@@ -641,9 +641,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions;
             IntList upsertKeyIndexes = new IntList();
             String comaSeparatedUpsertCols;
+            String timestampColumnName;
             try (TableReader reader = getReader(tableNameWalNoDedup)) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 chooseUpsertKeys(metadata, dedupKeys, rnd, upsertKeyIndexes);
+                timestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
                 long end = start + 2 * Timestamps.SECOND_MICROS;
@@ -677,6 +679,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         upsertKeyNames,
                         tableNameWal
                 );
+
+                assertCounts(tableNameWal, timestampColumnName);
+                assertStringColDensity(tableNameWal);
             } finally {
                 sharedWorkerPool.halt();
             }
@@ -718,6 +723,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 // assert table count() values
                 assertCounts(tableNameWal, timestampColumnName);
                 assertCounts(tableNameNoWal, timestampColumnName);
+                assertStringColDensity(tableNameWal);
             } finally {
                 sharedWorkerPool.halt();
             }
