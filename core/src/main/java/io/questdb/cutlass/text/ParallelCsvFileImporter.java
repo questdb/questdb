@@ -811,6 +811,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         remapIndex.ensureCapacity(types.size());
         for (int i = 0, n = types.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
+            // this assumes that fields with 'normalized' names are located at the same index in the csv file as they are in the table
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
             remapIndex.set(i, idx);
 

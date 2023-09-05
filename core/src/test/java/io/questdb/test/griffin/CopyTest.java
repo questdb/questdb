@@ -27,6 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SqlWalMode;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
@@ -34,12 +36,15 @@ import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -823,6 +828,38 @@ public class CopyTest extends AbstractCairoTest {
         };
 
         testCopy(stmt, test);
+    }
+
+    @Test
+    public void testSerialCopyIntoExistingTableNormalisedColumnName() throws Exception {
+        final ObjList<CharSequence> actualColumnNames = new ObjList<>();
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(new AllowAllSecurityContext() {
+            @Override
+            public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+                actualColumnNames.addAll(columnNames);
+            }
+        }, bindVariableService, null);
+
+        CopyRunnable stmt = () -> {
+            ddl("create table x ( ts timestamp, line symbol, \"d number\" double, description symbol ) timestamp(ts);");
+            runAndFetchCopyID("copy x from 'test-quotes-big-normalised-column-name.csv' with header true delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
+        };
+
+        CopyRunnable test = () -> {
+            String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
+            assertSql("phase\tstatus\trows_handled\trows_imported\terrors\n" +
+                    "\tstarted\tNaN\tNaN\t0\n" +
+                    "\tfinished\t3\t3\t0\n", query);
+        };
+
+        testCopy(stmt, test);
+
+        final String[] expectedColumnNames = {"line", "ts", "d number", "description"};
+        assertEquals(expectedColumnNames.length, actualColumnNames.size());
+        for (int i = 0, n = actualColumnNames.size(); i < n; i++) {
+            assertEquals(expectedColumnNames[i], actualColumnNames.get(i));
+        }
     }
 
     @Test

@@ -35,7 +35,7 @@ import org.jetbrains.annotations.NotNull;
 public class AllowAllSecurityContext implements SecurityContext {
     public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
 
-    private AllowAllSecurityContext() {
+    protected AllowAllSecurityContext() {
     }
 
     @Override

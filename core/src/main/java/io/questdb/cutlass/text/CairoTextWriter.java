@@ -26,7 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
@@ -380,7 +379,17 @@ public class CairoTextWriter implements Closeable, Mutable {
                     }
                     partitionBy = tablePartitionBy;
                     tableStructureAdapter.of(names, detectedTypes);
-                    securityContext.authorizeInsert(tableToken, names);
+
+                    // need proper column names for permission check
+                    final ObjList<CharSequence> columnNames = new ObjList<>();
+                    columnNames.ensureCapacity(types.size());
+                    for (int i = 0, n = types.size(); i < n; i++) {
+                        final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
+                        // this assumes that fields with 'normalized' names are located at the same index in the csv file as they are in the table
+                        final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
+                        columnNames.add(metadata.getColumnName(idx));
+                    }
+                    securityContext.authorizeInsert(tableToken, columnNames);
                 }
                 break;
             default:
