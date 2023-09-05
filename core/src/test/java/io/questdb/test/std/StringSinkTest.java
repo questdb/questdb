@@ -26,9 +26,45 @@ package io.questdb.test.std;
 
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class StringSinkTest {
+
+    @Test
+    public void testIndexOf() {
+        StringSink ss = new StringSink();
+        StringBuilder sb = new StringBuilder();
+
+        Assert.assertEquals(sb.indexOf("abc"), ss.indexOf("abc"));
+
+        String str = "foo bar baz foo";
+        ss.put(str);
+        sb.append(str);
+
+        Assert.assertEquals(sb.indexOf("foo"), ss.indexOf("foo"));
+        Assert.assertEquals(sb.indexOf("bar"), ss.indexOf("bar"));
+        Assert.assertEquals(sb.indexOf("baz"), ss.indexOf("baz"));
+        Assert.assertEquals(sb.indexOf("abc"), ss.indexOf("abc"));
+
+        Assert.assertEquals(sb.lastIndexOf("foo"), ss.lastIndexOf("foo"));
+        Assert.assertEquals(sb.lastIndexOf("bar"), ss.lastIndexOf("bar"));
+        Assert.assertEquals(sb.lastIndexOf("baz"), ss.lastIndexOf("baz"));
+        Assert.assertEquals(sb.lastIndexOf("abc"), ss.lastIndexOf("abc"));
+
+        for (int i = 0; i < sb.length(); i++) {
+            Assert.assertEquals("index: " + i, sb.indexOf("foo", i), ss.indexOf("foo", i));
+            Assert.assertEquals("index: " + i, sb.indexOf("bar", i), ss.indexOf("bar", i));
+            Assert.assertEquals("index: " + i, sb.indexOf("baz", i), ss.indexOf("baz", i));
+            Assert.assertEquals("index: " + i, sb.indexOf("abc", i), ss.indexOf("abc", i));
+
+            Assert.assertEquals("index: " + i, sb.lastIndexOf("foo", i), ss.lastIndexOf("foo", i));
+            Assert.assertEquals("index: " + i, sb.lastIndexOf("bar", i), ss.lastIndexOf("bar", i));
+            Assert.assertEquals("index: " + i, sb.lastIndexOf("baz", i), ss.lastIndexOf("baz", i));
+            Assert.assertEquals("index: " + i, sb.lastIndexOf("abc", i), ss.lastIndexOf("abc", i));
+        }
+    }
+
     @Test
     public void testUnprintable() {
         StringSink ss = new StringSink();
