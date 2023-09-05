@@ -952,7 +952,7 @@ public final class WhereClauseParser implements Mutable {
             boolean latestByMultiColumn,
             TableReader reader
     ) throws SqlException {
-        if (nodesEqual(a, b) && !a.hasLeafs() && !b.hasLeafs()) {
+        if (nodesEqual(a, b) && a.noLeafs() && b.noLeafs()) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return true;
         }
