@@ -454,34 +454,34 @@ public class NumbersTest {
     }
 
     @Test
-    public void testGetBroadcastAddress() throws Exception {
+    public void testGetBroadcastAddress() {
         Assert.assertEquals("12.2.255.255", TestUtils.ipv4ToString(Numbers.getBroadcastAddress("12.2/16")));
     }
 
     @Test
-    public void testGetBroadcastAddress2() throws Exception {
+    public void testGetBroadcastAddress2() {
         Assert.assertEquals("12.2.255.255", TestUtils.ipv4ToString(Numbers.getBroadcastAddress("12.2.10/16")));
     }
 
     @Test
-    public void testGetBroadcastAddress3() throws Exception {
+    public void testGetBroadcastAddress3() {
         Assert.assertEquals(-2, Numbers.getBroadcastAddress("12.2.10.5"));
     }
 
     @Test
-    public void testGetBroadcastAddress4() throws Exception {
+    public void testGetBroadcastAddress4() {
         Assert.assertEquals(-2, Numbers.getBroadcastAddress("12.2.10/a"));
     }
 
     @Test
-    public void testGetIPv4Netmask() throws Exception {
+    public void testGetIPv4Netmask() {
         Assert.assertEquals("11111111111111111111111100000000", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/24")));
         Assert.assertEquals("10000000000000000000000000000000", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/1")));
         Assert.assertEquals("11111111111111111111111111111111", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/32")));
     }
 
     @Test
-    public void testGetIPv4Subnet() throws Exception {
+    public void testGetIPv4Subnet() {
         Assert.assertEquals("1100000000100000011000000000", Integer.toBinaryString(Numbers.getIPv4Subnet("12.2.6.8/24")));
         Assert.assertEquals("12.2.0.0", TestUtils.ipv4ToString(Numbers.getIPv4Subnet("12.2.6.8/16")));
     }
@@ -522,7 +522,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testLong256() throws NumericException {
+    public void testLong256() {
         CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         Long256Impl long256 = new Long256Impl();
         Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256);
@@ -905,7 +905,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testParseIPv4Quiet() throws Exception {
+    public void testParseIPv4Quiet() {
         Assert.assertEquals(0, Numbers.parseIPv4Quiet(null));
         Assert.assertEquals(0, Numbers.parseIPv4Quiet("NaN"));
     }
@@ -1239,12 +1239,12 @@ public class NumbersTest {
     }
 
     @Test
-    public void testParseSUbnet() throws Exception {
+    public void testParseSUbnet() {
         Assert.assertEquals("12.2.10.0", TestUtils.ipv4ToString(Numbers.parseSubnet("12.2.10/24")));
     }
 
     @Test
-    public void testParseSubnet() throws Exception {
+    public void testParseSubnet() {
         Assert.assertEquals("2.4.8.0", TestUtils.ipv4ToString(Numbers.parseSubnet("2.4.8/24")));
         Assert.assertEquals(-2, Numbers.parseSubnet("2.4.6"));
         Assert.assertEquals(-2, Numbers.parseSubnet("apple"));
@@ -1312,7 +1312,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testParseSubnet1() throws Exception {
+    public void testParseSubnet1() {
         Assert.assertEquals("12.2.0.0", TestUtils.ipv4ToString(Numbers.parseSubnet("12.2.10/16")));
     }
 

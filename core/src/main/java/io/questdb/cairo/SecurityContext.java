@@ -109,13 +109,15 @@ public interface SecurityContext {
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    void authorizeShowUser(CharSequence userName);
-
-    void authorizeShowUsers();
+    default void authorizeSelectOnAnyColumn(TableToken tableToken) {
+        //TODO: make non-default 
+    }
 
     void authorizeShowGroups();
 
     void authorizeShowGroups(CharSequence userName);
+
+    void authorizeShowPermissions(CharSequence entityName);
 
     void authorizeShowServiceAccount(CharSequence serviceAccountName);
 
@@ -123,7 +125,9 @@ public interface SecurityContext {
 
     void authorizeShowServiceAccounts(CharSequence userOrGroupName);
 
-    void authorizeShowPermissions(CharSequence entityName);
+    void authorizeShowUser(CharSequence userName);
+
+    void authorizeShowUsers();
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 

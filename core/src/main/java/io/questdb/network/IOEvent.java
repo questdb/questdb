@@ -24,7 +24,7 @@
 
 package io.questdb.network;
 
-public class IOEvent<C extends IOContext> {
+public class IOEvent<C extends IOContext<?>> {
     public C context;
     public int operation;
 }

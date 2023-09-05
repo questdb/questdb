@@ -258,11 +258,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val("Timestamp");
         }

@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.text.types;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -39,11 +38,6 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
 
     public long getTimestamp(DirectByteCharSequence value) throws Exception {
         return compatibleAdapter.getTimestamp(value);
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.TIMESTAMP;
     }
 
     public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter) {

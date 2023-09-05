@@ -163,6 +163,37 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableWithDoubleQuotes() throws Exception {
+        String tableName = testName.getMethodName() + " a 欢迎回来 to you";
+        assertMemoryLeak(ff, () -> {
+            ddl(
+                    "CREATE TABLE '" + tableName + "' (\n" +
+                            "  Status SYMBOL capacity 16 CACHE,\n" +
+                            "  \"Reported time\" TIMESTAMP\n" +
+                            "  ) timestamp (\"Reported time\") PARTITION BY DAY WAL  DEDUP UPSERT KEYS(\"Reported time\");"
+            );
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertTrue(writer.getMetadata().isDedupKey(1));
+            }
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "Status\tSYMBOL\tfalse\t256\ttrue\t16\tfalse\tfalse\n" +
+                            "Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n",
+                    "SHOW COLUMNS FROM '" + tableName + '\''
+            );
+            ddl("alter table '" + tableName + "' DEDUP DISABLE;");
+            ddl("alter table '" + tableName + "' DEDUP ENABLE UPSERT KEYS(\"Reported time\");");
+            drainWalQueue();
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "Status\tSYMBOL\tfalse\t256\ttrue\t16\tfalse\tfalse\n" +
+                            "Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n",
+                    "SHOW COLUMNS FROM '" + tableName + '\''
+            );
+        });
+    }
+
+    @Test
     public void testDedupEnabledTimestampOnly() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {

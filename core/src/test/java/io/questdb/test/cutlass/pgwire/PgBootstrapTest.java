@@ -28,16 +28,34 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testClientWithEnabledTlsGetsRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (ServerMain serverMain = startWithEnvVariables()) {
+                int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
+
+                try (Connection conn = getTlsConnection("admin", "quest", port)) {
+                    conn.createStatement().execute("select 1;");
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "does not support SSL");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDefaultUserEnabledReadOnlyUserDisabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = startWithEnvVariables(
                     "QDB_PG_USER", "", // disables the default user
                     "QDB_PG_READONLY_USER_ENABLED", "true",
                     "QDB_PG_READONLY_USER", "roUser",
-                    "QDB_PG_READONLY_PASSWORD", "roPassword")
+                    "QDB_PG_READONLY_PASSWORD", "roPassword"
+            )
             ) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
-                assertQueryFails("roUser",
+                assertQueryFails(
+                        "roUser",
                         "roPassword",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
@@ -45,7 +63,8 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                         "read only user should not be able to create a new table"
                 );
 
-                assertQueryFails("admin",
+                assertQueryFails(
+                        "admin",
                         "quest",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
@@ -62,10 +81,12 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
             try (ServerMain serverMain = startWithEnvVariables("QDB_PG_USER", "", // disables the default user
                     "QDB_PG_READONLY_USER_ENABLED", "false", // disables read-only user
                     "QDB_PG_READONLY_USER", "roUser",
-                    "QDB_PG_READONLY_PASSWORD", "roPassword")
+                    "QDB_PG_READONLY_PASSWORD", "roPassword"
+            )
             ) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
-                assertQueryFails("roUser",
+                assertQueryFails(
+                        "roUser",
                         "roPassword",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
@@ -73,7 +94,8 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                         "read only user is disabled and should not be able to connect"
                 );
 
-                assertQueryFails("admin",
+                assertQueryFails(
+                        "admin",
                         "quest",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
@@ -89,7 +111,8 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = startWithEnvVariables("QDB_PG_SECURITY_READONLY", "true")) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
-                assertQueryFails("admin",
+                assertQueryFails(
+                        "admin",
                         "quest",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
@@ -106,10 +129,12 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
             try (ServerMain serverMain = startWithEnvVariables(
                     "QDB_PG_READONLY_USER_ENABLED", "true",
                     "QDB_PG_READONLY_USER", "roUser",
-                    "QDB_PG_READONLY_PASSWORD", "roPassword")
+                    "QDB_PG_READONLY_PASSWORD", "roPassword"
+            )
             ) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
-                assertQueryFails("roUser",
+                assertQueryFails(
+                        "roUser",
                         "roPassword",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
@@ -117,11 +142,13 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                         "read only user should not be able to create a new table"
                 );
 
-                assertQuerySucceeds("admin",
+                assertQuerySucceeds(
+                        "admin",
                         "quest",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
-                        "admin should be able to create a new table");
+                        "admin should be able to create a new table"
+                );
             }
         });
     }
@@ -133,10 +160,12 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                     "QDB_PG_READONLY_USER_ENABLED", "true",
                     "QDB_PG_READONLY_USER", "roUser",
                     "QDB_PG_READONLY_PASSWORD", "roPassword",
-                    "QDB_PG_SECURITY_READONLY", "true")
+                    "QDB_PG_SECURITY_READONLY", "true"
+            )
             ) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
-                assertQueryFails("roUser",
+                assertQueryFails(
+                        "roUser",
                         "roPassword",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
@@ -144,7 +173,8 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                         "read only user should not be able to create a new table"
                 );
 
-                assertQueryFails("admin",
+                assertQueryFails(
+                        "admin",
                         "quest",
                         port,
                         "create table x as (select * from long_sequence(1000000))",
@@ -155,12 +185,14 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void assertQueryFails(String username,
-                                         String password,
-                                         int port,
-                                         String queryText,
-                                         String exceptionMessageMustContain,
-                                         String assertionFailureMessage) throws SQLException {
+    private static void assertQueryFails(
+            String username,
+            String password,
+            int port,
+            String queryText,
+            String exceptionMessageMustContain,
+            String assertionFailureMessage
+    ) throws SQLException {
         try (Connection conn = getConnection(username, password, port)) {
             conn.createStatement().execute(queryText);
             Assert.fail(assertionFailureMessage);
@@ -169,11 +201,13 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         }
     }
 
-    private static void assertQuerySucceeds(String username,
-                                            String password,
-                                            int port,
-                                            String queryText,
-                                            String assertionFailureMessage) throws SQLException {
+    private static void assertQuerySucceeds(
+            String username,
+            String password,
+            int port,
+            String queryText,
+            String assertionFailureMessage
+    ) throws SQLException {
         try (Connection conn = getConnection(username, password, port)) {
             conn.createStatement().execute(queryText);
         } catch (PSQLException e) {
@@ -185,6 +219,15 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         Properties properties = new Properties();
         properties.setProperty("user", username);
         properties.setProperty("password", password);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    private static Connection getTlsConnection(String username, String password, int port) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", username);
+        properties.setProperty("password", password);
+        properties.setProperty("sslmode", "require");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
     }

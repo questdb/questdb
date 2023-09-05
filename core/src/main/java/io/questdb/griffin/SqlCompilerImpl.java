@@ -257,7 +257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             @NotNull CharSequence query,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
+    ) throws Exception {
         clear();
         lexer.of(query);
         isSingleQueryMode = false;
@@ -914,9 +914,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             int columnListPos = lexer.lastTokenPosition();
 
             while (tok != null && !Chars.equals(tok, ')')) {
-                final CharSequence columnName = tok;
-
                 validateLiteral(lexer.lastTokenPosition(), tok);
+                final CharSequence columnName = GenericLexer.unquote(tok);
+
                 int colIndex = tableMetadata.getColumnIndexQuiet(columnName);
                 if (colIndex < 0) {
                     throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
