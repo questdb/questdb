@@ -155,7 +155,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCachedRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler compiler = new SqlCompilerImpl(engine) {
+                @Override
+                protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) {
+
+                    return new DummyRCF(Chars.toString(tok));
+                }
+            }) {
                 CompiledQuery compiledQuery = compiler.compile("SHOW BANANAS", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.SELECT, compiledQuery.getType());
                 CompiledQuery compiledQuery2 = compiler.compile("SHOW APPLES", sqlExecutionContext);
@@ -4611,7 +4617,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testNotCachedRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler compiler = new SqlCompilerImpl(engine) {
+                @Override
+                protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) {
+                    return new DummyNotCachedRCF(Chars.toString(tok));
+                }
+            }) {
                 CompiledQuery compiledQuery = compiler.compile("SHOW BANANAS", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.PSEUDO_SELECT, compiledQuery.getType());
                 CompiledQuery compiledQuery2 = compiler.compile("SHOW APPLES", sqlExecutionContext);
@@ -4642,7 +4653,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by \"\"");
         });
     }
-
 
     @Test
     public void testOrderByFloat() throws Exception {
@@ -5425,7 +5435,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
     }
 
-
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws SqlException {
         ddl(ddl);
         try (TableReader reader = getReader("y")) {
@@ -5745,6 +5754,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean isHappy();
 
         void run(CairoEngine engine);
+    }
+
+    private static class DummyNotCachedRCF extends DummyRCF {
+        public DummyNotCachedRCF(String name) {
+            super(name);
+        }
+
+        @Override
+        public boolean isSelectCacheable() {
+            return false;
+        }
+    }
+
+    private static class DummyRCF extends AbstractRecordCursorFactory {
+        private final String name;
+
+        public DummyRCF(String name) {
+            super(null);
+            this.name = name;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return name != null;
+        }
     }
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
