@@ -80,7 +80,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             int dstKFd,
@@ -139,8 +138,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             srcOooVarAddr,
                             dstFixAddr + dstFixOffset,
                             dstVarAddr,
-                            dstVarOffset,
-                            dstVarOffsetEnd
+                            dstVarOffset
                     );
                     break;
                 case O3_BLOCK_O3:
@@ -276,7 +274,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final int dstVarFd = task.getDstVarFd();
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
-        final long dstVarOffsetEnd = task.getDstVarOffsetEnd();
         final long dstVarAdjust = task.getDstVarAdjust();
         final long dstVarSize = task.getDstVarSize();
         final int dstKFd = task.getDstKFd();
@@ -333,7 +330,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 dstVarFd,
                 dstVarAddr,
                 dstVarOffset,
-                dstVarOffsetEnd,
                 dstVarAdjust,
                 dstVarSize,
                 dstKFd,
@@ -613,8 +609,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooVarAddr,
             long dstFixAddr,
             long dstVarAddr,
-            long dstVarOffset,
-            long dstVarOffsetEnd
+            long dstVarOffset
     ) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
@@ -639,9 +634,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
-                // multiple threads could be writing to this location as var index segments overlap,
-                // but they will be writing the same value
-                Unsafe.getUnsafe().putLong(dstFixAddr + mergeCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.BINARY:
                 Vect.oooMergeCopyBinColumn(
@@ -655,7 +647,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
-                Unsafe.getUnsafe().putLong(dstFixAddr + mergeCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.INT:
             case ColumnType.IPv4:
