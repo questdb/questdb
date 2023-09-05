@@ -82,12 +82,20 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
         return Chars.hashCode(buffer, 0, pos);
     }
 
-    public int indexOf(String s) {
+    public int indexOf(@NotNull String s) {
         return Chars.indexOf(this, 0, pos, s);
     }
 
-    public int indexOf(String s, int fromIndex) {
-        return Chars.indexOf(this, fromIndex, pos, s);
+    public int indexOf(@NotNull String s, int fromIndex) {
+        return Chars.indexOf(this, Math.min(fromIndex, pos), pos, s);
+    }
+
+    public int lastIndexOf(@NotNull String s) {
+        return Chars.lastIndexOf(this, 0, pos, s);
+    }
+
+    public int lastIndexOf(@NotNull String s, int fromIndex) {
+        return Chars.lastIndexOf(this, 0, Math.min(fromIndex + s.length(), pos), s);
     }
 
     @Override
