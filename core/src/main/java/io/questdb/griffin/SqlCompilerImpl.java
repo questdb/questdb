@@ -1260,7 +1260,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private RecordCursorFactory compileCopy(SecurityContext securityContext, CopyModel model) throws SqlException {
         assert !model.isCancel();
 
-        securityContext.authorizeCopy();
+        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final TableToken tt = engine.getTableTokenIfExists(tableName);
+        if (tt != null) {
+            // for existing table user have to have COPY permission
+            // if the table is to be created we will check for CREATE TABLE permission
+            securityContext.authorizeCopy(tt);
+        }
 
         if (model.getTimestampColumnName() == null &&
                 ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
@@ -1270,7 +1276,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             model.setDelimiter((byte) ',');
         }
 
-        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
         final ExpressionNode fileNameNode = model.getFileName();
         final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
         assert fileName != null;
@@ -1291,7 +1296,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTarget().token));
         try {
             cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
-
         } catch (NumericException e) {
             throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
         }
@@ -1462,10 +1466,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private void copy(SqlExecutionContext executionContext, CopyModel copyModel) throws SqlException {
         if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
             // no-op implementation
-            executionContext.getSecurityContext().authorizeCopy();
+            final CharSequence tableName = GenericLexer.unquote(copyModel.getTarget().token);
+            final TableToken tt = engine.getTableTokenIfExists(tableName);
+            if (tt != null) {
+                // for existing table user have to have COPY permission
+                // if the table is to be created we will check for CREATE TABLE permission
+                // if user creates a table it gets all table level permissions, including COPY
+                executionContext.getSecurityContext().authorizeCopy(tt);
+            }
+
             compiledQuery.ofCopyRemote();
         } else {
-
             final RecordCursorFactory copyFactory;
             if (copyModel.isCancel()) {
                 copyFactory = compileCopyCancel(executionContext, copyModel);

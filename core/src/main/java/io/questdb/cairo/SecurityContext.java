@@ -63,7 +63,7 @@ public interface SecurityContext {
 
     void authorizeAssignServiceAccount();
 
-    void authorizeCopy();
+    void authorizeCopy(TableToken tableToken);
 
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 

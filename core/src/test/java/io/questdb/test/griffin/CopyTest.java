@@ -39,12 +39,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.ObjList;
+import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -832,11 +832,11 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testSerialCopyIntoExistingTableNormalisedColumnName() throws Exception {
-        final ObjList<CharSequence> actualColumnNames = new ObjList<>();
+        final StringSink actualTableName = new StringSink();
         ((SqlExecutionContextImpl) sqlExecutionContext).with(new AllowAllSecurityContext() {
             @Override
-            public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-                actualColumnNames.addAll(columnNames);
+            public void authorizeCopy(TableToken tableToken) {
+                actualTableName.put(tableToken.getTableName());
             }
         }, bindVariableService, null);
 
@@ -855,11 +855,7 @@ public class CopyTest extends AbstractCairoTest {
 
         testCopy(stmt, test);
 
-        final String[] expectedColumnNames = {"line", "ts", "d number", "description"};
-        assertEquals(expectedColumnNames.length, actualColumnNames.size());
-        for (int i = 0, n = actualColumnNames.size(); i < n; i++) {
-            assertEquals(expectedColumnNames[i], actualColumnNames.get(i));
-        }
+        assertTrue(Chars.equals("x", actualTableName));
     }
 
     @Test

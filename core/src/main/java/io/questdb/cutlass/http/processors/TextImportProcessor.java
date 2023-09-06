@@ -92,6 +92,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (hi > lo) {
             try {
+                // TODO: create an IMPORT permission, or rather rename COPY to IMPORT
+                final TableToken tt = engine.getTableTokenIfExists(transientState.textLoader.getTableName());
+                if (tt != null) {
+                    transientContext.getSecurityContext().authorizeCopy(tt);
+                }
+
                 transientState.lo = lo;
                 transientState.hi = hi;
                 transientState.textLoader.parse(lo, hi, transientContext.getSecurityContext());
