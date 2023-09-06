@@ -159,6 +159,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeLineProtocol() {
+    }
+
+    @Override
     public void authorizeLineAlterTableAddColumn(TableToken tableToken) {
     }
 

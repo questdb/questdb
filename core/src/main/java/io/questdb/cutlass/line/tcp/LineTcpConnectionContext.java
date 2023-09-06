@@ -212,6 +212,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, SecurityContextFactory.ILP);
+            securityContext.authorizeLineProtocol();
         }
         return this;
     }
@@ -252,6 +253,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), SecurityContextFactory.ILP);
+                    securityContext.authorizeLineProtocol();
                     recvBufPos = authenticator.getRecvBufPos();
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);
@@ -265,7 +267,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     LOG.error().$("unexpected authenticator result [result=").$(result).I$();
                     return IOContextResult.NEEDS_DISCONNECT;
             }
-        } catch (AuthenticatorException e) {
+        } catch (AuthenticatorException | CairoException e) {
             return IOContextResult.NEEDS_DISCONNECT;
         }
     }

@@ -94,6 +94,8 @@ public interface SecurityContext {
     // columnNames.size() = 0 means all columns
     void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    void authorizeLineProtocol();
+
     // Add column over ILP/TCP.
     void authorizeLineAlterTableAddColumn(TableToken tableToken);
 
