@@ -46,6 +46,7 @@ import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
+import static org.junit.Assert.fail;
 
 public class PGSecurityTest extends BasePGTest {
 
@@ -104,6 +105,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowCopy() throws Exception {
+        ddl("create table testDisallowCopySerial (bo boolean, by byte)");
         assertMemoryLeak(() -> assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true"));
     }
 
@@ -120,7 +122,7 @@ public class PGSecurityTest extends BasePGTest {
             ddl("create table src (ts TIMESTAMP)");
             try {
                 executeWithPg("delete from src");
-                assertException("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
+                fail("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
             } catch (PSQLException e) {
                 // the parser does not support DELETE
                 assertContains(e.getMessage(), "unexpected token: from");
@@ -289,7 +291,7 @@ public class PGSecurityTest extends BasePGTest {
                     String query = "drop table src";
                     try (final Statement statement = roUserConnection.createStatement()) {
                         statement.execute(query);
-                        assertException("Query '" + query + "' must fail for the read-only user!");
+                        fail("Query '" + query + "' must fail for the read-only user!");
                     } catch (PSQLException e) {
                         assertContains(e.getMessage(), "Write permission denied");
                     }
@@ -304,7 +306,7 @@ public class PGSecurityTest extends BasePGTest {
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
-            assertException("Query '" + query + "' must fail in the read-only mode!");
+            fail("Query '" + query + "' must fail in the read-only mode!");
         } catch (PSQLException e) {
             assertContains(e.getMessage(), "Write permission denied");
         }
