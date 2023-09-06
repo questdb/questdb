@@ -93,10 +93,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         if (hi > lo) {
             try {
                 // TODO: create an IMPORT permission, or rather rename COPY to IMPORT
-                final TableToken tt = engine.getTableTokenIfExists(transientState.textLoader.getTableName());
-                if (tt != null) {
-                    transientContext.getSecurityContext().authorizeCopy(tt);
+                final CharSequence tableName = transientState.textLoader.getTableName();
+                if (tableName != null) {
+                    final TableToken tt = engine.getTableTokenIfExists(tableName);
+                    if (tt != null) {
+                        transientContext.getSecurityContext().authorizeCopy(tt);
+                    }
                 }
+                // if tableName is null, we are creating a new table
+                // will check CREATE TABLE permission instead
 
                 transientState.lo = lo;
                 transientState.hi = hi;
