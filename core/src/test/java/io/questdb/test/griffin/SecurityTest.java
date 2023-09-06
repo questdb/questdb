@@ -357,6 +357,7 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testCopyDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
+            ddl("create table testDisallowCopySerial(bo boolean, by byte)");
             try {
                 assertException("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
             } catch (CairoException ex) {
