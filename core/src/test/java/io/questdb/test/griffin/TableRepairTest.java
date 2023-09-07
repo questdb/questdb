@@ -50,7 +50,7 @@ public class TableRepairTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tst");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-12").$();
-                    Assert.assertEquals(0, Files.rmdir(path, true));
+                    Assert.assertTrue(Files.rmdir(path, true));
                 }
 
                 Assert.assertEquals(100000, reader.size());
@@ -89,7 +89,7 @@ public class TableRepairTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tst");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-09").$();
-                    Assert.assertEquals(0, Files.rmdir(path, true));
+                    Assert.assertTrue(Files.rmdir(path, true));
                 }
 
                 Assert.assertEquals(100000, reader.size());

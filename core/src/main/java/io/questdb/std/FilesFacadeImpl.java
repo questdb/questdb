@@ -373,12 +373,12 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean rmdir(Path name) {
-        return Files.rmdir(name, true) == 0;
+        return Files.rmdir(name, true);
     }
 
     @Override
     public boolean rmdir(Path name, boolean lazy) {
-        return Files.rmdir(name, lazy) == 0;
+        return Files.rmdir(name, lazy);
     }
 
     @Override

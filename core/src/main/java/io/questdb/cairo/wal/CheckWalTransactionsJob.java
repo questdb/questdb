@@ -53,9 +53,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final ObjHashSet<TableToken> tablesToCheck = new ObjHashSet<>();
     private final TxReader txReader;
     private long lastProcessedCount = 0;
-    private RenameTrackingMetadataService renameTrackingMetadataService = new RenameTrackingMetadataService();
+    private final RenameTrackingMetadataService renameTrackingMetadataService = new RenameTrackingMetadataService();
     private Path threadLocalPath;
-
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;

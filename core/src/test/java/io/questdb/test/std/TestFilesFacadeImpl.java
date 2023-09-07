@@ -26,14 +26,13 @@ package io.questdb.test.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 
 import java.util.HashMap;
 import java.util.Map;
-
-import static io.questdb.std.Files.DT_DIR;
 
 public class TestFilesFacadeImpl extends FilesFacadeImpl {
     public static final TestFilesFacadeImpl INSTANCE = new TestFilesFacadeImpl();
@@ -106,44 +105,6 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
             LOG.info().$("cannot remove file: ").utf8(name).$(", errno:").$(errno()).$();
         }
         return ok;
-    }
-
-    @Override
-    public boolean rmdir(Path path) {
-        long p = Files.findFirst(path);
-        int len = path.length();
-        // it is an error to remove path that does not exist
-        // if caller wishes to treat this event as a success they must check that
-        // errno() is CairoException.ERRNO_FILE_DOES_NOT_EXIST
-        boolean res = false;
-        if (p > 0) {
-            res = true;
-            try {
-                do {
-                    long lpszName = findName(p);
-                    path.trimTo(len).concat(lpszName).$();
-                    if (findType(p) == DT_DIR) {
-                        if (Files.strcmp(lpszName, "..") || Files.strcmp(lpszName, ".")) {
-                            continue;
-                        }
-                        if (rmdir(path)) {
-                            continue;
-                        }
-                        res = false;
-                    } else {
-                        if (remove(path)) {
-                            continue;
-                        }
-                        res = false;
-                    }
-                    return res;
-                } while (findNext(p) > 0);
-            } finally {
-                findClose(p);
-            }
-            return Files.rmdir(path.trimTo(len).$(), true) == 0;
-        }
-        return res;
     }
 
     private static synchronized boolean checkRemove(LPSZ name) {

@@ -125,7 +125,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractCairoTest {
 
             TableToken tableToken = engine.verifyTableName("tab");
             try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(partition).$()) {
-                Assert.assertEquals(0, Files.rmdir(path, true));
+                Assert.assertTrue(Files.rmdir(path, true));
             }
 
             try {
