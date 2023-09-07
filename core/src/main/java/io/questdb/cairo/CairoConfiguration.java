@@ -38,7 +38,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.lang.ThreadLocal;
 import java.util.function.LongSupplier;
@@ -146,7 +145,7 @@ public interface CairoConfiguration {
 
     int getExplainPoolCapacity();
 
-    @Nullable
+    @NotNull
     FactoryProvider getFactoryProvider();
 
     int getFileOperationRetryCount();
@@ -398,13 +397,9 @@ public interface CairoConfiguration {
 
     int getSqlLexerPoolCapacity();
 
-    int getSqlMapKeyCapacity();
-
     int getSqlMapMaxPages();
 
     int getSqlMapMaxResizes();
-
-    int getSqlMapPageSize();
 
     int getSqlMaxNegativeLimit();
 

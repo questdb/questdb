@@ -65,16 +65,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         });
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractFuzzTest.setUpStatic();
-    }
-
-    @AfterClass
-    public static void tearDownStatic() throws Exception {
-        AbstractFuzzTest.tearDownStatic();
-    }
-
     @Before
     public void setUp() {
         super.setUp();

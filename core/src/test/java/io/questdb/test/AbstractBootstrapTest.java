@@ -79,7 +79,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         dbPath = Misc.free(dbPath);
         auxPath = Misc.free(auxPath);
         AbstractTest.tearDownStatic();

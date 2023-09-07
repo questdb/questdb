@@ -480,7 +480,7 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
             String tableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);
+            TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false, false);
 
             final int columnCount = metadata.getColumnCount();
             try (
@@ -862,7 +862,7 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) engine.getTableIdGenerator().getNextId(), false);
+            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) engine.getTableIdGenerator().getNextId(), false, false);
             createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0, AllowAllSecurityContext.INSTANCE);
 
             try (
@@ -1099,8 +1099,8 @@ public class CopyTask {
                             long nextOffset = nextLengthAndOffset & MASK;
 
                             // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
-                            long diff = nextOffset - offset - bytesToRead;
-                            long nextBytesToRead = diff + nextLineLength;
+                            int diff = ((int) (nextOffset - offset)) - bytesToRead;
+                            int nextBytesToRead = diff + nextLineLength;
                             if (diff > -1 && diff < 2 && addr + bytesToRead + nextBytesToRead <= lim) {
                                 bytesToRead += nextBytesToRead;
                                 additionalLines++;
@@ -1184,8 +1184,8 @@ public class CopyTask {
                         long nextOffset = nextLengthAndOffset & MASK;
 
                         // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
-                        long diff = nextOffset - offset - bytesToRead;
-                        long nextBytesToRead = diff + nextLineLength;
+                        int diff = ((int) (nextOffset - offset)) - bytesToRead;
+                        int nextBytesToRead = diff + nextLineLength;
                         if (diff > -1 && diff < 2 && bytesToRead + nextBytesToRead <= fileBufSize) {
                             bytesToRead += diff + nextLineLength;
                             additionalLines++;

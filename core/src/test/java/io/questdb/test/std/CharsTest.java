@@ -397,6 +397,24 @@ public class CharsTest {
     }
 
     @Test
+    public void testStartsWithIgnoreCase() {
+        Assert.assertTrue(Chars.startsWithIgnoreCase("", ""));
+        String[] positive = {"", "a", "ab", "abc"};
+        for (String s : positive) {
+            Assert.assertTrue(Chars.startsWithIgnoreCase("abc", s));
+            Assert.assertTrue(Chars.startsWithIgnoreCase("ABC", s));
+            Assert.assertTrue(Chars.startsWithIgnoreCase("abc", s.toUpperCase()));
+            Assert.assertTrue(Chars.startsWithIgnoreCase("ABC", s.toUpperCase()));
+        }
+
+        Assert.assertFalse(Chars.startsWithIgnoreCase("", "abcd"));
+        Assert.assertFalse(Chars.startsWithIgnoreCase("abc", "abcd"));
+        Assert.assertFalse(Chars.startsWithIgnoreCase("abc", "ABCD"));
+        Assert.assertFalse(Chars.startsWithIgnoreCase("ABC", "abcd"));
+        Assert.assertFalse(Chars.startsWithIgnoreCase("ABC", "ABCD"));
+    }
+
+    @Test
     public void testUtf8CharDecode() {
         long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         try {

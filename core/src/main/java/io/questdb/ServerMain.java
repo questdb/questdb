@@ -210,10 +210,7 @@ public class ServerMain implements Closeable {
             final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
             final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
             CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
-            authenticatorFactory = new EllipticCurveAuthenticatorFactory(
-                    configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    () -> new StaticChallengeResponseMatcher(authDb)
-            );
+            authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
         } else {
             authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
         }

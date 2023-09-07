@@ -39,7 +39,7 @@ public class WeakMutableObjectPool<T extends Mutable> extends WeakObjectPoolBase
 
     @Override
     public void close() {
-        while (cache.size() > 0) {
+        while (!cache.isEmpty()) {
             Misc.freeIfCloseable(cache.pop());
         }
     }

@@ -710,7 +710,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testColumnsOfSimpleSelectWithSemicolon() throws SqlException {
         assertColumnNames("select 1;", "1");
         assertColumnNames("select 1, 1, 1;", "1", "column", "column1");
-
     }
 
     @Test
@@ -7371,15 +7370,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectMissingExpression2() throws Exception {
-        assertSyntaxError(
-                "select a, from tab",
-                15,
-                "column name expected"
-        );
-    }
-
-    @Test
     public void testSelectNoFromUnion() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) sum from (select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual [333 333, 1 1] 333 333, 1 1 from (long_sequence(1))) x",
@@ -7410,6 +7400,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectTrailingComma() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, d from (select [a, b, c, d] from tab)",
+                "select " +
+                        "a," +
+                        "b," +
+                        "c," +
+                        "d," +
+                        "from tab",
+                modelOf("tab")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.SYMBOL)
+                        .col("c", ColumnType.SYMBOL)
+                        .col("d", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
     public void testSelectPlainColumns() throws Exception {
         assertQuery(
                 "select-choose a, b, c from (select [a, b, c] from t)",
@@ -7433,6 +7441,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual a + b * c x from (select [a, c, b] from t)",
                 "select a+b*c x from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectSingleTimestampColumn() throws SqlException {
+        assertQuery(
+                "select-choose t3 from (select-choose [t3] t, tt, t3 from (select [t3] from x timestamp (t3)) order by t3 desc limit 1)",
+                "select t3 from x limit -1",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP).timestamp("t3")
         );
     }
 
@@ -7486,6 +7503,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectWildcardAlias() throws Exception {
+        assertSyntaxError(
+                "select tab2.* x, b.* from tab1 a join tab2 on (x)",
+                14,
+                "wildcard cannot have alias",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testSelectWildcardAndExpr() throws SqlException {
         assertQuery(
                 "select-virtual x, y, x1, z, x + y column from (select-choose [tab1.x x, tab1.y y, tab2.x x1, tab2.z z] tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x, z] from tab2 on tab2.x = tab1.x))",
@@ -7522,6 +7550,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "',', 'from' or 'over' expected",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardInterpretation() throws Exception {
+        // multiplication * must not be confused with wildcard
+        assertQuery(
+                "select-virtual 2 * 1 x, x1, y from (select-choose [x x1, y] x x1, y from (select [x, y] from tab1 b) b) b",
+                "select 2*1 x, b.* from tab1 b",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
     }
 
@@ -7583,7 +7621,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select * tab",
                 "create table tab (seq long)",
                 9,
-                "'from' expected"
+                "wildcard cannot have alias"
         );
     }
 
@@ -7898,7 +7936,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false);
+            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false, false);
             CharSequence lockedReason = engine.lock(tableToken, "testing");
             Assert.assertNull(lockedReason);
             try {

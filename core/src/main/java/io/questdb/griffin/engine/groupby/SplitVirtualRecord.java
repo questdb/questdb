@@ -146,11 +146,6 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public long getRowId() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public short getShort(int col) {
         return getFunction(col).getShort(base);
     }

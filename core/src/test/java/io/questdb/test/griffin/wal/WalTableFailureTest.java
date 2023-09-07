@@ -684,7 +684,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testNonWalTableTransactionNotificationIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            TableToken ignored = new TableToken(tableName, tableName, 123, false);
+            TableToken ignored = new TableToken(tableName, tableName, 123, false, false);
             createStandardWalTable(tableName);
 
             drainWalQueue();
@@ -925,9 +925,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 compile("alter table " + tableToken.getTableName() + " add column jjj int, column2 long");
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(),
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
                         "statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                " are currently not supported for WAL tables");
+                                " are currently not supported for WAL tables"
+                );
             }
 
             insert("insert into " + tableToken.getTableName() +
@@ -1041,8 +1043,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             engine.getTableSequencerAPI().suspendTable(tableToken);
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
-                    "table does not exist [table=" + tableToken.getTableName() + "ererer]");
+            assertAlterTableTypeFail(
+                    "alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
+                    "table does not exist [table=" + tableToken.getTableName() + "ererer]"
+            );
         });
     }
 

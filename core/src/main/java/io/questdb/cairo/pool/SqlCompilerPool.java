@@ -6,9 +6,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.std.Rnd;
 
 public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
@@ -20,9 +17,9 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     // note: we should not use too many colours otherwise the pool might create more compiler instances
     // then with no pooling at all. This is because we have to have a separate compiler for each colour.
     private static final TableToken[] TOKENS = {
-            new TableToken("blue", "/compilers/blue/", 0, false),
-            new TableToken("red", "/compilers/red/", 0, false),
-            new TableToken("green", "/compilers/green/", 0, false)
+            new TableToken("blue", "/compilers/blue/", 0, false, false),
+            new TableToken("red", "/compilers/red/", 0, false, false),
+            new TableToken("green", "/compilers/green/", 0, false, false)
     };
     private final CairoEngine engine;
     private final Rnd rnd = new Rnd();
@@ -102,7 +99,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public void compileBatch(CharSequence queryText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
+        public void compileBatch(CharSequence queryText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception {
             delegate.compileBatch(queryText, sqlExecutionContext, batchCallback);
         }
 

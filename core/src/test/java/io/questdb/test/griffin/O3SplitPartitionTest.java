@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,24 +25,28 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Vect;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.iFile;
 
 @RunWith(Parameterized.class)
 public class O3SplitPartitionTest extends AbstractO3Test {
@@ -52,15 +56,23 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Rule
     public TestName name = new TestName();
 
-    public O3SplitPartitionTest(ParallelMode mode) {
-        this.workerCount = mode == ParallelMode.Contended ? 0 : 2;
+    public O3SplitPartitionTest(ParallelMode mode, CommitModeParam commitMode, MixedIOParam mixedIO) {
+        this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
+        AbstractO3Test.commitMode = commitMode == CommitModeParam.SYNC ? CommitMode.SYNC : CommitMode.NOSYNC;
+        AbstractO3Test.mixedIOEnabled = mixedIO == MixedIOParam.MIXED_IO_ALLOWED;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0},{1},{2}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.Parallel},
-                {ParallelMode.Contended}
+                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED},
+                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO},
+                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED},
+                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO},
+                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED},
+                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO},
+                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED},
+                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO}
         });
     }
 
@@ -183,7 +195,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
                     sqlExecutionContext);
 
-            engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)                    ;
+            engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext);
 
             engine.insert("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
                             "('2022-06-08T02:50:00.000000Z', '5', '3')," +
@@ -406,6 +418,65 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     ") timestamp (ts) partition by DAY",
                             executionContext
                     );
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " from long_sequence(50))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table y as (select * from x union all select * from z)",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    TestUtils.assertEquals(
+                            compiler,
+                            executionContext,
+                            "y order by ts",
+                            "x"
+                    );
+                });
+    }
+
+    @Test
+    public void testSplitMidPartitionAfterUpdate() throws Exception {
+        executeWithPool(workerCount,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext executionContext
+                ) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+
+                    compiler.compile("update x set str = str where ts >= '2020-02-04'", executionContext).execute(null).await();
+
+                    LPSZ colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
+                    LOG.info().$("deleting ").$(colVer).$();
+                    Assert.assertTrue(Os.isWindows() || Files.remove(colVer));
+
+                    colVer = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
+                    LOG.info().$("deleting ").$(colVer).$();
+                    Assert.assertTrue(Os.isWindows() || Files.remove(colVer));
+
+                    engine.releaseInactive();
 
                     compiler.compile(
                             "create table z as (" +
@@ -674,5 +745,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                 "select * from " + "x" + " where " + filter,
                 LOG
         );
+    }
+
+    private enum CommitModeParam {
+        NO_SYNC, SYNC
+    }
+
+    private enum MixedIOParam {
+        MIXED_IO_ALLOWED, NO_MIXED_IO
     }
 }

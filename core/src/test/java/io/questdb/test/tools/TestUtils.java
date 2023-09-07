@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
+import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -34,7 +35,10 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
@@ -60,6 +64,7 @@ import org.junit.Assert;
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Paths;
 import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.Map;
@@ -69,6 +74,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.std.Numbers.IPv4_NULL;
+import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
 
@@ -1065,13 +1071,7 @@ public final class TestUtils {
     }
 
     public static String getCsvRoot() {
-        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
-        try {
-            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
-            return new File(rootSource.toURI()).getParent();
-        } catch (URISyntaxException e) {
-            throw new AssertionError("missing test-import.csv", e);
-        }
+        return getTestResourcePath("/csv");
     }
 
     public static int getJavaVersion() {
@@ -1087,15 +1087,26 @@ public final class TestUtils {
         return Integer.parseInt(version);
     }
 
+    public static String getResourcePath(String resourceName) {
+        URL resource = ServerMain.class.getResource(resourceName);
+        assertNotNull("Someone accidentally deleted resource " + resourceName + "?", resource);
+        try {
+            // normalize the path to use '/' on all OSes
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath().replace('\\', '/');
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Could not determine resource path", e);
+        }
+    }
+
     @NotNull
     public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
         return new NetworkFacadeImpl() {
             final AtomicInteger totalSent = new AtomicInteger();
 
             @Override
-            public int send(int fd, long buffer, int bufferLen) {
+            public int sendRaw(int fd, long buffer, int bufferLen) {
                 if (startDelayDelayAfter == 0) {
-                    return super.send(fd, buffer, bufferLen);
+                    return super.sendRaw(fd, buffer, bufferLen);
                 }
 
                 int sentNow = totalSent.get();
@@ -1105,7 +1116,7 @@ public final class TestUtils {
                         return 0;
                     }
 
-                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
+                    int result = super.sendRaw(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
                     totalSent.addAndGet(result);
                     return result;
                 }
@@ -1120,6 +1131,17 @@ public final class TestUtils {
                 Chars.toString(root),
                 Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
         };
+    }
+
+    public static String getTestResourcePath(String resourceName) {
+        URL resource = TestUtils.class.getResource(resourceName);
+        assertNotNull("Someone accidentally deleted test resource " + resourceName + "?", resource);
+        try {
+            // normalize the path to use '/' on all OSes
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath().replace('\\', '/');
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Could not determine resource path", e);
+        }
     }
 
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {

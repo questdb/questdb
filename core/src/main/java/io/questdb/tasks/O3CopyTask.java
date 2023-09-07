@@ -46,12 +46,10 @@ public class O3CopyTask {
     private long dstVarAdjust;
     private int dstVarFd;
     private long dstVarOffset;
-    private long dstVarOffsetEnd;
     private long dstVarSize;
     private int indexBlockCapacity;
     private BitmapIndexWriter indexWriter;
-    private long newPartitionSize;
-    private long oldPartitionSize;
+    private long o3SplitPartitionSize;
     private AtomicInteger partCounter;
     private boolean partitionMutates;
     private long partitionTimestamp;
@@ -63,6 +61,8 @@ public class O3CopyTask {
     private long srcDataHi;
     private long srcDataLo;
     private long srcDataMax;
+    private long srcDataNewPartitionSize;
+    private long srcDataOldPartitionSize;
     private long srcDataTop;
     private long srcDataVarAddr;
     private int srcDataVarFd;
@@ -147,10 +147,6 @@ public class O3CopyTask {
         return dstVarOffset;
     }
 
-    public long getDstVarOffsetEnd() {
-        return dstVarOffsetEnd;
-    }
-
     public long getDstVarSize() {
         return dstVarSize;
     }
@@ -163,12 +159,8 @@ public class O3CopyTask {
         return indexWriter;
     }
 
-    public long getNewPartitionSize() {
-        return newPartitionSize;
-    }
-
-    public long getOldPartitionSize() {
-        return oldPartitionSize;
+    public long getO3SplitPartitionSize() {
+        return o3SplitPartitionSize;
     }
 
     public AtomicInteger getPartCounter() {
@@ -209,6 +201,14 @@ public class O3CopyTask {
 
     public long getSrcDataMax() {
         return srcDataMax;
+    }
+
+    public long getSrcDataNewPartitionSize() {
+        return srcDataNewPartitionSize;
+    }
+
+    public long getSrcDataOldPartitionSize() {
+        return srcDataOldPartitionSize;
     }
 
     public long getSrcDataTop() {
@@ -327,7 +327,6 @@ public class O3CopyTask {
             int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             int dstKFd,
@@ -339,8 +338,9 @@ public class O3CopyTask {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3NewPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr
@@ -380,7 +380,6 @@ public class O3CopyTask {
         this.dstVarFd = dstVarFd;
         this.dstVarAddr = dstVarAddr;
         this.dstVarOffset = dstVarOffset;
-        this.dstVarOffsetEnd = dstVarOffsetEnd;
         this.dstVarAdjust = dstVarAdjust;
         this.dstVarSize = dstVarSize;
         this.dstKFd = dstKFd;
@@ -392,8 +391,9 @@ public class O3CopyTask {
         this.srcTimestampAddr = srcTimestampAddr;
         this.srcTimestampSize = srcTimestampSize;
         this.partitionMutates = partitionMutates;
-        this.newPartitionSize = newPartitionSize;
-        this.oldPartitionSize = oldPartitionSize;
+        this.srcDataNewPartitionSize = srcDataNewPartitionSize;
+        this.srcDataOldPartitionSize = srcDataOldPartitionSize;
+        this.o3SplitPartitionSize = o3NewPartitionSize;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
