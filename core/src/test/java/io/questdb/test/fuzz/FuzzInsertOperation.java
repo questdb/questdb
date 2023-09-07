@@ -24,6 +24,7 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
@@ -87,7 +88,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
         rnd.reset(this.s1, this.s0);
         rnd.nextLong();
         rnd.nextLong();

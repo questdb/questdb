@@ -376,7 +376,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                0.5
+                0.5,
+                0.0
         );
 
         setFuzzCounts(
@@ -406,7 +407,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                0.5
+                0.5,
+                0.0
         );
 
         setFuzzCounts(
@@ -436,6 +438,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
+                0.0,
                 0.0
         );
 
@@ -641,9 +644,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions;
             IntList upsertKeyIndexes = new IntList();
             String comaSeparatedUpsertCols;
+            String timestampColumnName;
+
             try (TableReader reader = getReader(tableNameWalNoDedup)) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 chooseUpsertKeys(metadata, dedupKeys, rnd, upsertKeyIndexes);
+                timestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
                 long end = start + 2 * Timestamps.SECOND_MICROS;
@@ -677,6 +683,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         upsertKeyNames,
                         tableNameDedup
                 );
+
+                fuzzer.assertCounts(tableNameDedup, timestampColumnName);
+                fuzzer.assertStringColDensity(tableNameDedup);
             } finally {
                 sharedWorkerPool.halt();
             }
@@ -689,8 +698,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameNoWal = tableNameBase + "_nonwal";
 
-            fuzzer.createInitialTable(tableNameDedup, true);
+            TableToken dedupTt = fuzzer.createInitialTable(tableNameDedup, true);
             fuzzer.createInitialTable(tableNameNoWal, false);
+
+            String timestampColumnName;
+            try (TableMetadata meta = engine.getMetadata(dedupTt)) {
+                timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
+            }
 
             long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
             long end = start + fuzzer.partitionCount * Timestamps.DAY_MICROS;
@@ -710,6 +724,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 String limit = "";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNoWal + limit, tableNameDedup + limit, LOG);
                 fuzzer.assertRandomIndexes(tableNameNoWal, tableNameDedup, rnd);
+                // assert table count() values
+                fuzzer.assertCounts(tableNameDedup, timestampColumnName);
+                fuzzer.assertCounts(tableNameNoWal, timestampColumnName);
+                fuzzer.assertStringColDensity(tableNameDedup);
             } finally {
                 sharedWorkerPool.halt();
             }

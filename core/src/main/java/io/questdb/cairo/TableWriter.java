@@ -198,7 +198,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long lastOpenPartitionTs = Long.MIN_VALUE;
     private long lastPartitionTimestamp;
     private LifecycleManager lifecycleManager;
-    private int lockFd = -1;
+    private int lockFd = -2;
     private long masterRef = 0L;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
@@ -2249,7 +2249,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void transferLock(int lockFd) {
-        assert lockFd != -1;
+        assert lockFd > -1;
         this.lockFd = lockFd;
     }
 
