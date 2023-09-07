@@ -667,15 +667,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
-    public void apply(AbstractOperation operation, long seqTxn) {
+    public long apply(AbstractOperation operation, long seqTxn) {
         try {
             setSeqTxn(seqTxn);
             long txnBefore = getTxn();
-            operation.apply(this, true);
+            long rowsAffected = operation.apply(this, true);
             if (txnBefore == getTxn()) {
                 // Commit to update seqTxn
                 txWriter.commit(denseSymbolMapWriters);
             }
+            return rowsAffected;
         } catch (CairoException ex) {
             // This is non-critical error, we can mark seqTxn as processed
             if (ex.isWALTolerable()) {
