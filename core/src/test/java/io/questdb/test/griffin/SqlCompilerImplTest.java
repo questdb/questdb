@@ -2518,7 +2518,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             File table = new File(target);
             Assert.assertTrue(table.exists());
             Assert.assertTrue(table.isDirectory());
-            Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
+            Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
             Assert.assertTrue(volume.delete());
         }
     }
