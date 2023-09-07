@@ -5731,20 +5731,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         void run(CairoEngine engine);
     }
 
-    private static class DummyRCF extends AbstractRecordCursorFactory {
-        private final String name;
-
-        public DummyRCF(String name) {
-            super(null);
-            this.name = name;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return name != null;
-        }
-    }
-
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
