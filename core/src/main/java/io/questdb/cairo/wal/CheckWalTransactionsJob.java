@@ -102,9 +102,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
                 if (ff.exists(threadLocalPath)) {
                     threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                    try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
-                        TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                        if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader2.getSeqTxn(), seqTxn)) {
+                    try (TxReader txReader = this.txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
+                        TableUtils.safeReadTxn(this.txReader, millisecondClock, spinLockTimeout);
+                        if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader.getSeqTxn(), seqTxn)) {
                             engine.notifyWalTxnCommitted(tableToken);
                         }
                     }
