@@ -451,12 +451,23 @@ public final class Files {
         return rename(oldName.address(), newName.address());
     }
 
-    public static int rmdir(Path path) {
+    /**
+     * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.
+     * The function can operate in two modes, eager and lazy. In lazy mode function fails fast, providing precise
+     * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
+     * directory, should some files remain. Thus, not providing correct diagnostics.
+     *
+     * @param path   path to the directory, must include trailing slash (/)
+     * @param lazy delete all files that can be deleted failing eventually if some files remain. Then false,
+     *               function will stop on first failure potentially leaving files that can still be deleted on disk.
+     * @return 0 on success, -1 on failure.
+     */
+    public static int rmdir(Path path, boolean lazy) {
         long pathUtf8Ptr = path.address();
         long pFind = findFirst(pathUtf8Ptr);
         if (pFind > 0L) {
             int len = path.length();
-            int errno;
+            int res;
             int type;
             long nameUtf8Ptr;
             try {
@@ -465,13 +476,13 @@ public final class Files {
                     path.trimTo(len).concat(nameUtf8Ptr).$();
                     type = findType(pFind);
                     if (type == Files.DT_FILE) {
-                        if (!remove(pathUtf8Ptr)) {
-                            return Os.errno();
+                        if (!remove(pathUtf8Ptr) && lazy) {
+                            return -1;
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        errno = type == Files.DT_LNK ? unlink(pathUtf8Ptr) : rmdir(path);
-                        if (errno != 0) {
-                            return errno;
+                        res = type == Files.DT_LNK ? unlink(pathUtf8Ptr) : rmdir(path, lazy);
+                        if (res != 0 && lazy) {
+                            return res;
                         }
                     }
                 }

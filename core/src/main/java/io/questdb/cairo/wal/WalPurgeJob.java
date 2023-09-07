@@ -188,9 +188,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             symLinkTarget = null;
                         }
                     }
-                    ff.rmdir(pathToDelete);
+                    ff.rmdir(pathToDelete, false);
                     if (symLinkTarget != null) {
-                        ff.rmdir(symLinkTarget);
+                        ff.rmdir(symLinkTarget, false);
                     }
                     TableUtils.lockName(pathToDelete);
                     ff.remove(pathToDelete);
@@ -344,10 +344,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void recursiveDelete(Path path) {
-        final int errno = ff.rmdir(path);
-        if (errno > 0 && !CairoException.errnoRemovePathDoesNotExist(errno)) {
-            LOG.error().$("could not delete directory [path=").utf8(path)
-                    .$(", errno=").$(errno).$(']').$();
+        if (!ff.rmdir(path, false) && !CairoException.errnoRemovePathDoesNotExist(ff.errno())) {
+            LOG.debug()
+                    .$("could not delete directory [path=").utf8(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
         }
     }
 

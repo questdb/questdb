@@ -109,11 +109,15 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public int rmdir(Path path) {
+    public boolean rmdir(Path path) {
         long p = Files.findFirst(path);
         int len = path.length();
-        int errno = -1;
+        // it is an error to remove path that does not exist
+        // if caller wishes to treat this event as a success they must check that
+        // errno() is CairoException.ERRNO_FILE_DOES_NOT_EXIST
+        boolean res = false;
         if (p > 0) {
+            res = true;
             try {
                 do {
                     long lpszName = findName(p);
@@ -122,26 +126,24 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
                         if (Files.strcmp(lpszName, "..") || Files.strcmp(lpszName, ".")) {
                             continue;
                         }
-                        if ((errno = rmdir(path)) == 0) {
+                        if (rmdir(path)) {
                             continue;
                         }
+                        res = false;
                     } else {
                         if (remove(path)) {
                             continue;
                         }
-                        errno = errno() > 0 ? errno() : 5;
+                        res = false;
                     }
-                    return errno;
+                    return res;
                 } while (findNext(p) > 0);
             } finally {
                 findClose(p);
             }
-            if (Files.rmdir(path.trimTo(len).$()) == 0) {
-                return 0;
-            }
-            return Os.errno();
+            return Files.rmdir(path.trimTo(len).$(), true) == 0;
         }
-        return errno;
+        return res;
     }
 
     private static synchronized boolean checkRemove(LPSZ name) {

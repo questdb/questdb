@@ -384,9 +384,8 @@ public class CairoEngine implements Closeable, WriterSource {
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getRoot()).concat(tableToken).$();
-                    int errno;
-                    if ((errno = configuration.getFilesFacade().unlinkOrRemove(path, LOG)) != 0) {
-                        throw CairoException.critical(errno).put("could not remove table [name=").put(tableToken)
+                    if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
+                        throw CairoException.critical(configuration.getFilesFacade().errno()).put("could not remove table [name=").put(tableToken)
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }
                 } finally {
@@ -778,6 +777,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @Nullable
+    // todo: is this used?
     public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
         String tableNameStr = Chars.toString(tableName);
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);

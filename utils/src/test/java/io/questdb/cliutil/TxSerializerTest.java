@@ -58,7 +58,7 @@ public class TxSerializerTest {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Assert.assertEquals(0, Files.rmdir(path.slash$()));
+        Assert.assertEquals(0, Files.rmdir(path.slash$(), true));
     }
 
     public static void setCairoStatic() {

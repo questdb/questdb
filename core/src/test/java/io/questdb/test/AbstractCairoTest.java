@@ -469,7 +469,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         if (inputWorkRoot != null) {
             try (Path path = new Path().of(inputWorkRoot).$()) {
                 if (Files.exists(path)) {
-                    Files.rmdir(path);
+                    Files.rmdir(path, true);
                 }
             }
         }
@@ -1472,14 +1472,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(wal).$();
         final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(wal).$();
         if (ff.exists(dstWal)) {
-            Assert.assertEquals(0, ff.rmdir(dstWal));
+            Assert.assertTrue(ff.rmdir(dstWal));
         }
         Assert.assertEquals(0, ff.mkdir(dstWal, mkdirMode));
         Assert.assertEquals(0, ff.copyRecursive(srcWal, dstWal, mkdirMode));
 
         final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(WalUtils.SEQ_DIR).$();
         final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(WalUtils.SEQ_DIR).$();
-        Assert.assertEquals(0, ff.rmdir(dstTxnLog));
+        Assert.assertTrue(ff.rmdir(dstTxnLog));
         Assert.assertEquals(0, ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode));
 
         dstNode.getEngine().getTableSequencerAPI().openSequencer(srcTableToken);

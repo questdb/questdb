@@ -278,7 +278,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                             // Remove table directory
                             rmPath.trimTo(len).$();
-                            for (int i = 0; i < 1000 && ff.rmdir(rmPath) != 0; i++) {
+                            for (int i = 0; i < 1000 && !ff.rmdir(rmPath); i++) {
                                 Os.sleep(50L);
                             }
                         }
@@ -411,7 +411,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.releaseInactive();
             FilesFacade ff = configuration.getFilesFacade();
-            Assert.assertEquals(0, ff.rmdir(Path.getThreadLocal2(root).concat(tt1).$()));
+            Assert.assertTrue(ff.rmdir(Path.getThreadLocal2(root).concat(tt1).$()));
 
             engine.reloadTableNames();
 
