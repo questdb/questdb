@@ -357,6 +357,9 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 if (!sequencer.isSuspended()) {
+                    // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
+                    // as a way to resume table which is not moving even if it's marked as not suspended.
+                    sequencer.resumeTable();
                     return;
                 }
                 final long nextTxn = sequencer.lastTxn() + 1;
