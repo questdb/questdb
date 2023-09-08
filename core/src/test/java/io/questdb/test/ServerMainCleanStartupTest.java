@@ -26,8 +26,12 @@ package io.questdb.test;
 
 import io.questdb.ServerMain;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -50,8 +54,24 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 serverMain.start();
                 serverMain.getEngine().compile("create table x (a int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
                 serverMain.getEngine().compile("create table y (b int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
+
                 serverMain.getEngine().compile("insert into y values(100, 1)", sqlExecutionContext);
                 serverMain.getEngine().compile("insert into y values(200, 2)", sqlExecutionContext);
+
+                // wait for the row count
+                try (RecordCursorFactory rfc = serverMain.getEngine().select("select count() from y", sqlExecutionContext)) {
+                    while (true) {
+                        try (RecordCursor cursor = rfc.getCursor(sqlExecutionContext)){
+                            Record rec = cursor.getRecord();
+                            if (cursor.hasNext()) {
+                                if (rec.getLong(0) == 2) {
+                                    break;
+                                }
+                            }
+                            Os.pause();
+                        }
+                    }
+                }
 
                 // ensure transactions
                 TestUtils.assertSql(
@@ -61,7 +81,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                         sink,
                         "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
                                 "x\tfalse\t0\t0\t0\n" +
-                                "y\tfalse\t0\t0\t2\n"
+                                "y\tfalse\t2\t0\t2\n"
                 );
 
 
