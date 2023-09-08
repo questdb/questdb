@@ -45,7 +45,7 @@ public class SeqTxnTracker {
             seqTxn = this.seqTxn;
         }
         long writerTxn = this.writerTxn;
-        while ((writerTxn == -1 || writerTxn < this.writerTxn) && !Unsafe.cas(this, WRITER_TXN_OFFSET, writerTxn, newWriterTxn)) {
+        while (newWriterTxn > writerTxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, writerTxn, newWriterTxn)) {
             writerTxn = this.writerTxn;
         }
         return this.suspendedState > 0 && this.seqTxn > 0 && this.seqTxn > this.writerTxn;
