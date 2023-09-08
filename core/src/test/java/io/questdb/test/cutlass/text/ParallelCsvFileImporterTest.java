@@ -822,7 +822,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 PartitionBy.MONTH,
                 "ts",
                 null,
-                "import failed [phase=partition_import, msg=`[3] could not overwrite [tableName=" + tab34_0 + "]`]"
+                "could not overwrite [tableName=" + tab34_0 + "]`]"
         );
     }
 
@@ -958,7 +958,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 PartitionBy.MONTH,
                 "ts",
                 null,
-                "import failed [phase=partition_import, msg=`[3] could not overwrite [tableName=" + mangledPartDir + "]`]"
+                "could not overwrite [tableName=" + mangledPartDir + "]`]"
         );
     }
 
