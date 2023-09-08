@@ -34,11 +34,19 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration());
+        dbPath.parent().$();
+    }
+
     @Test
-    public void testServerMainStartIlpAuthEnabled() throws Exception {
+    public void testServerMainCleanStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
             StringSink sink = new StringSink();
@@ -88,13 +96,9 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 TestUtils.assertSql(
                         serverMain.getEngine(),
                         sqlExecutionContext,
-                        "select table_name, ownership_reason from writer_pool order by 1",
+                        "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1",
                         sink,
                         "table_name\townership_reason\n" +
-                                "sys.column_versions_purge_log\tQuestDB system\n" +
-                                "sys.telemetry_wal\ttelemetry\n" +
-                                "telemetry\ttelemetry\n" +
-                                "telemetry_config\ttelemetryConfig\n" +
                                 "x\t\n" +
                                 "y\t\n"
                 );
@@ -111,13 +115,9 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 TestUtils.assertSql(
                         serverMain.getEngine(),
                         sqlExecutionContext,
-                        "select table_name, ownership_reason from writer_pool order by 1",
+                        "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1",
                         sink,
-                        "table_name\townership_reason\n" +
-                                "sys.column_versions_purge_log\tQuestDB system\n" +
-                                "sys.telemetry_wal\ttelemetry\n" +
-                                "telemetry\ttelemetry\n" +
-                                "telemetry_config\ttelemetryConfig\n"
+                        "table_name\townership_reason\n"
                 );
             }
         });

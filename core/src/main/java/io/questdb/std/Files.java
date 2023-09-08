@@ -453,18 +453,19 @@ public final class Files {
 
     /**
      * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.
-     * The function can operate in two modes, eager and lazy. In lazy mode function fails fast, providing precise
+     * The function can operate in two modes, eager and haltOnFail. In haltOnFail mode function fails fast, providing precise
      * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
      * directory, should some files remain. Thus, not providing correct diagnostics.
      *
      * rmdir() will fail if directory does not exist
      *
      * @param path   path to the directory, must include trailing slash (/)
-     * @param lazy delete all files that can be deleted failing eventually if some files remain. Then false,
-     *               function will stop on first failure potentially leaving files that can still be deleted on disk.
+     * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
+     *                   false, the function will remove as many files and subdirectories as possible. That might be useful
+     *                   when the intent is too free up as much disk space as possible.
      * @return true on success
      */
-    public static boolean rmdir(Path path, boolean lazy) {
+    public static boolean rmdir(Path path, boolean haltOnFail) {
         long pathUtf8Ptr = path.address();
         long pFind = findFirst(pathUtf8Ptr);
         if (pFind > 0L) {
@@ -478,12 +479,12 @@ public final class Files {
                     path.trimTo(len).concat(nameUtf8Ptr).$();
                     type = findType(pFind);
                     if (type == Files.DT_FILE) {
-                        if (!remove(pathUtf8Ptr) && lazy) {
+                        if (!remove(pathUtf8Ptr) && haltOnFail) {
                             return false;
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        res = type == Files.DT_LNK ? unlink(pathUtf8Ptr) == 0 : rmdir(path, lazy);
-                        if (!res  && lazy) {
+                        res = type == Files.DT_LNK ? unlink(pathUtf8Ptr) == 0 : rmdir(path, haltOnFail);
+                        if (!res  && haltOnFail) {
                             return res;
                         }
                     }

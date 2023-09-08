@@ -781,7 +781,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @Nullable
-    // todo: is this used?
     public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
         String tableNameStr = Chars.toString(tableName);
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
