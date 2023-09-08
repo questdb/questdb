@@ -710,6 +710,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.TablePartitionsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory,
             io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory,
+            io.questdb.griffin.engine.functions.table.WriterPoolFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory,
             io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory,
 

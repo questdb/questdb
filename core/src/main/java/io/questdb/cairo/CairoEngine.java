@@ -555,6 +555,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.entries();
     }
 
+    public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
+        return writerPool.entries();
+    }
+
     public TableReader getReaderWithRepair(TableToken tableToken) {
         // todo: untested verification
         verifyTableToken(tableToken);
