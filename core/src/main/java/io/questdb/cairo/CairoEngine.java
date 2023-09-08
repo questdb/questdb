@@ -768,7 +768,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken lockTableName(CharSequence tableName, boolean isWal) {
-        validNameOrThrow(tableName);
         int tableId = (int) getTableIdGenerator().getNextId();
         return lockTableName(tableName, tableId, isWal);
     }
@@ -777,11 +776,12 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal) {
         String tableNameStr = Chars.toString(tableName);
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
-        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
+        return lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
     @Nullable
     public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
+        validNameOrThrow(tableName);
         String tableNameStr = Chars.toString(tableName);
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }

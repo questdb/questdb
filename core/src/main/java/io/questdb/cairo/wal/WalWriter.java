@@ -1674,7 +1674,7 @@ public class WalWriter implements TableWriterAPI {
                     if (securityContext != null) {
                         ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
                     }
-                    LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
+                    LOG.info().$("added column to WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");

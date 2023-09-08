@@ -27,7 +27,6 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
@@ -85,7 +84,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
 
     @Override
     public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
-        assert Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName());
         metadata.renameTable(toTableName);
         this.tableToken = metadata.getTableToken();
     }
