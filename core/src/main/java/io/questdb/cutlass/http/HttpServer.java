@@ -102,9 +102,7 @@ public class HttpServer implements Closeable {
 
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            pool.assignThreadLocalCleaner(i, () -> {
-                httpContextFactory.freeThreadLocal();
-            });
+            pool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
 
             pool.freeOnExit(() -> {
                 messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
