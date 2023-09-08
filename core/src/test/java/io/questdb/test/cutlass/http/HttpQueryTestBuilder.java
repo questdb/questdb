@@ -282,8 +282,6 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-                QueryCache.configure(httpConfiguration, metrics);
-
                 workerPool.start(LOG);
 
                 try {

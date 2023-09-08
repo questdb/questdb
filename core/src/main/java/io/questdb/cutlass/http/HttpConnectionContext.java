@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ex.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -61,6 +62,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
         throw RetryOperationException.INSTANCE;
     };
+    private final AssociativeCache<RecordCursorFactory> selectCache;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -70,22 +72,44 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
 
-    public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
-        super(configuration.getFactoryProvider().getHttpSocketFactory(), configuration.getNetworkFacade(), LOG);
-        this.configuration = configuration;
-        this.nf = configuration.getNetworkFacade();
-        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
-        this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
-        this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
+    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics) {
+        super(
+                configuration.getHttpContextConfiguration().getFactoryProvider().getHttpSocketFactory(),
+                configuration.getHttpContextConfiguration().getNetworkFacade(),
+                LOG
+        );
+        final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
+        this.configuration = contextConfiguration;
+        this.nf = contextConfiguration.getNetworkFacade();
+        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
+        this.headerParser = new HttpHeaderParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
+        this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
-        this.responseSink = new HttpResponseSink(configuration);
-        this.recvBufferSize = configuration.getRecvBufferSize();
-        this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        // this is default behaviour until the security context is overridden with correct principal
+        this.responseSink = new HttpResponseSink(contextConfiguration);
+        this.recvBufferSize = contextConfiguration.getRecvBufferSize();
+        this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
+        this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
+        // This is default behaviour until the security context is overridden with correct principal.
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
-        this.authenticator = configuration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
+        this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
+
+        if (configuration instanceof HttpServerConfiguration) {
+            final HttpServerConfiguration serverConfiguration = (HttpServerConfiguration) configuration;
+            final boolean enableQueryCache = serverConfiguration.isQueryCacheEnabled();
+            final int blockCount = enableQueryCache ? serverConfiguration.getQueryCacheBlockCount() : 1;
+            final int rowCount = enableQueryCache ? serverConfiguration.getQueryCacheRowCount() : 1;
+            this.selectCache = new AssociativeCache<>(
+                    blockCount,
+                    rowCount,
+                    metrics.jsonQuery().cachedQueriesGauge(),
+                    metrics.jsonQuery().cacheHitCounter(),
+                    metrics.jsonQuery().cacheMissCounter()
+            );
+        } else {
+            // Min server doesn't need select cache, so we use no-op settings.
+            this.selectCache = new AssociativeCache<>(1, 1);
+        }
     }
 
     @Override
@@ -126,6 +150,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.close();
+        Misc.free(selectCache);
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
 
@@ -176,6 +201,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public SecurityContext getSecurityContext() {
         return securityContext;
+    }
+
+    public AssociativeCache<RecordCursorFactory> getSelectCache() {
+        return selectCache;
     }
 
     @Override

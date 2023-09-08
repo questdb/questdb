@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.NullCounter;
 import io.questdb.metrics.NullLongGauge;
 
 import java.io.Closeable;
@@ -38,16 +40,18 @@ public class AssociativeCache<V> implements Closeable, Mutable {
     private final int bmask;
     private final int bshift;
     private final LongGauge cachedGauge;
+    private final Counter hitCounter;
     private final CharSequence[] keys;
+    private final Counter missCounter;
     private final int rmask;
     private final V[] values;
 
     public AssociativeCache(int blocks, int rows) {
-        this(blocks, rows, NullLongGauge.INSTANCE);
+        this(blocks, rows, NullLongGauge.INSTANCE, NullCounter.INSTANCE, NullCounter.INSTANCE);
     }
 
     @SuppressWarnings("unchecked")
-    public AssociativeCache(int blocks, int rows, LongGauge cachedGauge) {
+    public AssociativeCache(int blocks, int rows, LongGauge cachedGauge, Counter hitCounter, Counter missCounter) {
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
         rows = Math.max(MIN_ROWS, Numbers.ceilPow2(rows));
 
@@ -61,6 +65,8 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         this.bmask = this.blocks - 1;
         this.bshift = Numbers.msb(this.blocks);
         this.cachedGauge = cachedGauge;
+        this.hitCounter = hitCounter;
+        this.missCounter = missCounter;
     }
 
     @Override
@@ -94,13 +100,17 @@ public class AssociativeCache<V> implements Closeable, Mutable {
     public V poll(CharSequence key) {
         int index = getIndex(key);
         if (index == NOT_FOUND) {
+            missCounter.inc();
             return null;
         }
         V value = values[index];
         values[index] = null;
         if (value != null) {
-            // The value is present, so we're removing.
+            // The value is present, so we're decrementing the gauge.
             cachedGauge.dec();
+            hitCounter.inc();
+        } else {
+            missCounter.inc();
         }
         // We do not null the key reference to avoid creating another immutable key.
         return value;

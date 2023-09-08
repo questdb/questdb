@@ -27,7 +27,10 @@ package io.questdb.cutlass.http;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -62,7 +65,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration.getHttpContextConfiguration(), metrics);
+        this.httpContextFactory = new HttpContextFactory(configuration, metrics);
         this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
@@ -86,10 +89,7 @@ public class HttpServer implements Closeable {
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.
                         LOG.info().$("flushing HTTP server query cache [worker=").$(workerId).$(']').$();
-                        QueryCache queryCache = QueryCache.getWeakThreadLocalInstance();
-                        if (queryCache != null) {
-                            queryCache.clear();
-                        }
+                        // TODO
                         queryCacheEventSubSeq.done(seq);
                     }
 
@@ -104,7 +104,6 @@ public class HttpServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             pool.assignThreadLocalCleaner(i, () -> {
                 httpContextFactory.freeThreadLocal();
-                Misc.free(QueryCache.getWeakThreadLocalInstance());
             });
 
             pool.freeOnExit(() -> {
@@ -223,8 +222,8 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
-        public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
-            super(() -> new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity());
+        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics) {
+            super(() -> new HttpConnectionContext(configuration, metrics), configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity());
         }
     }
 

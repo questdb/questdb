@@ -131,7 +131,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         record = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
-                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
+                httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
             } else {
                 recordCursorFactory.close();
             }
