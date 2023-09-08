@@ -50,6 +50,10 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         this(blocks, rows, NullLongGauge.INSTANCE, NullCounter.INSTANCE, NullCounter.INSTANCE);
     }
 
+    public AssociativeCache(int blocks, int rows, LongGauge cachedGauge) {
+        this(blocks, rows, cachedGauge, NullCounter.INSTANCE, NullCounter.INSTANCE);
+    }
+
     @SuppressWarnings("unchecked")
     public AssociativeCache(int blocks, int rows, LongGauge cachedGauge, Counter hitCounter, Counter missCounter) {
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));

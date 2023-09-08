@@ -249,9 +249,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.typesAndUpdateCache = new AssociativeCache<>(
                 updateBlockCount,
                 updateRowCount,
-                metrics.pgWire().cachedUpdatesGauge(),
-                metrics.pgWire().updateCacheHitCounter(),
-                metrics.pgWire().updateCacheMissCounter()
+                metrics.pgWire().cachedUpdatesGauge()
         );
         this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
 
