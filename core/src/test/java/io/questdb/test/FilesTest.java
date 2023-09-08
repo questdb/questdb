@@ -239,11 +239,11 @@ public class FilesTest {
                 Assert.assertEquals(0, Files.softLink(targetPath, linkPath));
                 Assert.assertTrue(Files.isSoftLink(linkPath));
 
-                Assert.assertEquals(0, Files.rmdir(linkPath, true));
+                Assert.assertTrue(Files.rmdir(linkPath, true));
                 Assert.assertFalse(new File(linkPath.toString()).exists());
                 Assert.assertTrue(r.exists());
                 Assert.assertEquals(0L, Files.getDirSize(targetPath));
-                Assert.assertEquals(0, Files.rmdir(targetPath.slash().$(), true));
+                Assert.assertTrue(Files.rmdir(targetPath.slash().$(), true));
                 Assert.assertFalse(r.exists());
             }
         });
