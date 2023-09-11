@@ -691,6 +691,9 @@ io.questdb.griffin.engine.functions.groupby.StdDevDoubleGroupByFunctionFactory
 # stddev_samp()
 io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFactory
 
+# stddev_pop()
+io.questdb.griffin.engine.functions.groupby.StdDevPopDoubleGroupByFunctionFactory
+
 # strpos()
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
