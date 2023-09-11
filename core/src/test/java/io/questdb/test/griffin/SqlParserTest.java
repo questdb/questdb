@@ -7915,7 +7915,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         TableModel tableModel = tableModels[i];
                         TableToken tableToken = engine.verifyTableName(tableModel.getName());
                         Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
+                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
                 }

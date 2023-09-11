@@ -123,7 +123,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 TableModel tableModel = tableModels[i];
                 TableToken tableToken = engine.verifyTableName(tableModel.getName());
                 Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                Assert.assertEquals(0, filesFacade.rmdir(path));
+                Assert.assertTrue(filesFacade.rmdir(path));
                 tableModel.close();
             }
             engine.reloadTableNames();

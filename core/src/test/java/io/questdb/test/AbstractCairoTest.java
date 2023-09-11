@@ -469,7 +469,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         if (inputWorkRoot != null) {
             try (Path path = new Path().of(inputWorkRoot).$()) {
                 if (Files.exists(path)) {
-                    Files.rmdir(path);
+                    Files.rmdir(path, true);
                 }
             }
         }
@@ -893,8 +893,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
-        assertException(sql, errorPos, contains, false);
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos) throws Exception {
+        assertException(sql, errorPos, "inconvertible types: TIMESTAMP -> INT", false);
     }
 
     protected static void assertFactoryMemoryUsage() {
@@ -1211,8 +1211,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuota(walApplyTableTimeQuota);
     }
 
-    protected static void configOverrideWalMaxLagTxnCount(int walMaxLagTxnCount) {
-        node1.getConfigurationOverrides().setWalMaxLagTxnCount(walMaxLagTxnCount);
+    protected static void configOverrideWalMaxLagTxnCount() {
+        node1.getConfigurationOverrides().setWalMaxLagTxnCount(1);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -1472,14 +1472,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(wal).$();
         final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(wal).$();
         if (ff.exists(dstWal)) {
-            Assert.assertEquals(0, ff.rmdir(dstWal));
+            Assert.assertTrue(ff.rmdir(dstWal));
         }
         Assert.assertEquals(0, ff.mkdir(dstWal, mkdirMode));
         Assert.assertEquals(0, ff.copyRecursive(srcWal, dstWal, mkdirMode));
 
         final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(WalUtils.SEQ_DIR).$();
         final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(WalUtils.SEQ_DIR).$();
-        Assert.assertEquals(0, ff.rmdir(dstTxnLog));
+        Assert.assertTrue(ff.rmdir(dstTxnLog));
         Assert.assertEquals(0, ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode));
 
         dstNode.getEngine().getTableSequencerAPI().openSequencer(srcTableToken);

@@ -1563,8 +1563,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int rmdir(Path path) {
-                    return 5;
+                public boolean rmdir(Path path) {
+                    return false;
                 }
             };
 

@@ -3233,9 +3233,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
-                int errno;
-                if ((errno = ff.rmdir(auxPath)) != 0) {
-                    LOG.error().$("could not delete directory [path=").utf8(auxPath).$(", errno=").$(errno).I$();
+                if (!ff.rmdir(auxPath)) {
+                    LOG.error().$("could not delete directory [path=").utf8(auxPath).$(", errno=").$(ff.errno()).I$();
                 }
                 throw e;
             }
