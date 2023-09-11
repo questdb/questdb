@@ -1560,8 +1560,10 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-4);
                         break;
                     case ColumnType.INT:
-                    case ColumnType.IPv4:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
+                        break;
+                    case ColumnType.IPv4:
+                        Assert.assertEquals(rr.getIPv4(i), lr.getIPv4(i));
                         break;
                     case ColumnType.GEOINT:
                         Assert.assertEquals(rr.getGeoInt(i), lr.getGeoInt(i));
