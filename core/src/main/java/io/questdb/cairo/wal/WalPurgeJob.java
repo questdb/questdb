@@ -188,9 +188,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             symLinkTarget = null;
                         }
                     }
-                    ff.rmdir(pathToDelete);
+                    ff.rmdir(pathToDelete, false);
                     if (symLinkTarget != null) {
-                        ff.rmdir(symLinkTarget);
+                        ff.rmdir(symLinkTarget, false);
                     }
                     TableUtils.lockName(pathToDelete);
                     ff.remove(pathToDelete);
@@ -256,7 +256,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                             }
                                             final Path segmentPath = path.trimTo(walPathLen).slash().put(segmentId);
                                             TableUtils.lockName(segmentPath);
-                                            final boolean locked = !unlocked(segmentPath.$());
+                                            final boolean locked = isLocked(segmentPath.$());
                                             final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
                                             if (pendingTasks) {
                                                 walHasPendingTasks = true;
@@ -344,10 +344,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void recursiveDelete(Path path) {
-        final int errno = ff.rmdir(path);
-        if (errno > 0 && !CairoException.errnoRemovePathDoesNotExist(errno)) {
-            LOG.error().$("could not delete directory [path=").utf8(path)
-                    .$(", errno=").$(errno).$(']').$();
+        if (!ff.rmdir(path, false) && !CairoException.errnoRemovePathDoesNotExist(ff.errno())) {
+            LOG.debug()
+                    .$("could not delete directory [path=").utf8(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
         }
     }
 
@@ -404,17 +405,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).$();
     }
 
-    private boolean unlocked(Path path) {
+    private boolean isLocked(Path path) {
         final int lockFd = TableUtils.lock(ff, path, false);
         if (lockFd != -1) {
             ff.close(lockFd);
-            return true; // Could lock/unlock.
+            return false; // Could lock/unlock.
         }
-        return false; // Could not obtain lock.
+        return true; // Could not obtain lock.
     }
 
     private boolean walIsInUse(TableToken tableName, int walId) {
-        return !unlocked(setWalLockPath(tableName, walId));
+        return isLocked(setWalLockPath(tableName, walId));
     }
 
     @Override
@@ -616,7 +617,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private class FsDeleter implements Deleter {
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId) {
-            LOG.info().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
+            LOG.debug().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId)
                     .$(", segmentId=").$(segmentId).$(']').$();
             if (deleteFile(setSegmentLockPath(tableToken, walId, segmentId))) {
@@ -626,7 +627,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteWalDirectory(int walId) {
-            LOG.info().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
+            LOG.debug().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId).$(']').$();
             if (deleteFile(setWalLockPath(tableToken, walId))) {
                 recursiveDelete(setWalPath(tableToken, walId));

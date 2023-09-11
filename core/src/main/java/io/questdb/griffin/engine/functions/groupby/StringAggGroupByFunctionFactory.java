@@ -112,11 +112,6 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
         public void pushValueTypes(ArrayColumnTypes columnTypes) {
             columnTypes.add(ColumnType.STRING);
         }

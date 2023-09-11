@@ -93,7 +93,7 @@ public final class PlainTcpLineChannel implements LineChannel {
 
     @Override
     public int receive(long ptr, int len) {
-        return nf.recv(fd, ptr, len);
+        return nf.recvRaw(fd, ptr, len);
     }
 
     @Override
@@ -101,7 +101,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (len > 0) {
             long o = 0;
             while (len > 0) {
-                int n = nf.send(fd, ptr + o, len);
+                int n = nf.sendRaw(fd, ptr + o, len);
                 if (n > 0) {
                     len -= n;
                     o += n;

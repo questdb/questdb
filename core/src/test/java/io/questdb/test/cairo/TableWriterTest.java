@@ -805,8 +805,8 @@ public class TableWriterTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             class X extends FilesFacadeImpl {
                 @Override
-                public int rmdir(Path name) {
-                    return -1;
+                public boolean rmdir(Path name) {
+                    return false;
                 }
             }
 
@@ -929,10 +929,10 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name) {
                 if (this.fd != -1) {
                     // Access denied, file is open
-                    return 5;
+                    return false;
                 }
                 return super.rmdir(name);
             }
@@ -1182,9 +1182,9 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
-                public int rmdir(Path name) {
+                public boolean rmdir(Path name) {
                     if (fail) {
-                        return -1;
+                        return false;
                     }
                     return super.rmdir(name);
                 }
@@ -2669,10 +2669,10 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public int rmdir(Path from) {
+            public boolean rmdir(Path from) {
                 if (Chars.endsWith(from, "2013-03-12.0")) {
                     removeAttempted = true;
-                    return 1;
+                    return false;
                 }
                 return super.rmdir(from);
             }
@@ -2720,10 +2720,10 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public int rmdir(Path path) {
+            public boolean rmdir(Path path) {
                 if (Chars.endsWith(path, "2013-03-12.0")) {
                     removeAttempted = true;
-                    return 1;
+                    return false;
                 }
                 return super.rmdir(path);
             }

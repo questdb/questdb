@@ -327,7 +327,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
          */
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
-        TableToken tableToken = new TableToken("test", "test~1", 42, true);
+        TableToken tableToken = new TableToken("test", "test~1", 42, true, false);
         logic.reset(tableToken);
         logic.trackDiscoveredSegment(1, 1, false, false);
         logic.trackDiscoveredSegment(1, 2, false, false);
@@ -378,7 +378,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
          */
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
-        TableToken tableToken = new TableToken("test", "test~1", 42, true);
+        TableToken tableToken = new TableToken("test", "test~1", 42, true, false);
         logic.reset(tableToken);
         logic.trackDiscoveredSegment(1, 1, false, false);
         logic.trackDiscoveredSegment(1, 2, false, true);
@@ -610,9 +610,9 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         AtomicBoolean canDelete = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int rmdir(Path path) {
+            public boolean rmdir(Path path, boolean lazy) {
                 if (Chars.endsWith(path, Files.SEPARATOR + WalUtils.WAL_NAME_BASE + "1") && !canDelete.get()) {
-                    return 5;  // Access denied.
+                    return false;
                 } else {
                     return super.rmdir(path);
                 }

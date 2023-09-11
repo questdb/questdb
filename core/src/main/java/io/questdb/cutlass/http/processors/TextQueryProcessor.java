@@ -104,7 +104,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
             circuitBreaker.resetTimer();
-            state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
+            state.recordCursorFactory = context.getSelectCache().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getSecurityContext(),
@@ -287,7 +287,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         TextQueryProcessorState state = LV.get(context);
-        if (state == null || state.cursor == null) {
+        if (state == null) {
             return;
         }
 
@@ -375,6 +375,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         socket.bookmark();
                         break;
                     case JsonQueryProcessorState.QUERY_SUFFIX:
+                        // close cursor before returning complete response
+                        // this will guarantee that by the time client reads the response fully the table will be released
+                        state.cursor = Misc.free(state.cursor);
                         sendDone(socket, state);
                         break OUT;
                     default:
@@ -529,6 +532,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
+        long l;
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
                 socket.put(rec.getBool(col));
@@ -555,7 +559,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 }
                 break;
             case ColumnType.LONG:
-                long l = rec.getLong(col);
+                l = rec.getLong(col);
                 if (l > Long.MIN_VALUE) {
                     socket.put(l);
                 }

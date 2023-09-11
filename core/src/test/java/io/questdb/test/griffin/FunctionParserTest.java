@@ -1540,19 +1540,13 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testVarArgFunctionNoArg() throws SqlException {
+    public void testVarArgFunctionNoArg() {
         functions.add(new InStrFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
 
         FunctionParser functionParser = createFunctionParser();
-        Record record = new Record() {
-            @Override
-            public CharSequence getStr(int col) {
-                return "Y";
-            }
-        };
 
         try {
             parseFunction("a in ()", metadata, functionParser);

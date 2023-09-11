@@ -29,11 +29,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.SuspendEventFactory;
 import io.questdb.std.IntList;
@@ -55,7 +53,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);
         return new CursorFunction(new DataUnavailableRecordCursorFactory(totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
@@ -67,8 +65,6 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
     }
 
     private static class DataUnavailableRecordCursor implements NoRandomAccessRecordCursor {
-
-        private static final IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration();
 
         private final long backoffCount;
         private final SqlExecutionCircuitBreaker circuitBreaker;
@@ -99,11 +95,11 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
                 return false;
             }
             if (attempts++ < backoffCount) {
-                SuspendEvent event = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                SuspendEvent event = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
                 if (eventCallback != null) {
                     eventCallback.onSuspendEvent(event);
                 }
-                throw DataUnavailableException.instance(new TableToken("foo", "foo", 1, false), "2022-01-01", event);
+                throw DataUnavailableException.instance(new TableToken("foo", "foo", 1, false, false), "2022-01-01", event);
             }
             rows++;
             record.of(rows);
@@ -138,7 +134,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.reset();
             return cursor;
         }

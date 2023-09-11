@@ -27,7 +27,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>utils</artifactId>
-    <version>7.3.2-SNAPSHOT</version>
+    <version>7.3.3-SNAPSHOT</version>
 
     <name>Command line utils for QuestDB</name>
 
@@ -77,9 +77,6 @@
                         </goals>
                     </execution>
                 </executions>
-                <configuration>
-                    <minimizeJar>true</minimizeJar>
-                </configuration>
             </plugin>
         </plugins>
         <pluginManagement>

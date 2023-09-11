@@ -257,7 +257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             @NotNull CharSequence query,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
+    ) throws Exception {
         clear();
         lexer.of(query);
         isSingleQueryMode = false;
@@ -914,9 +914,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             int columnListPos = lexer.lastTokenPosition();
 
             while (tok != null && !Chars.equals(tok, ')')) {
-                final CharSequence columnName = tok;
-
                 validateLiteral(lexer.lastTokenPosition(), tok);
+                final CharSequence columnName = GenericLexer.unquote(tok);
+
                 int colIndex = tableMetadata.getColumnIndexQuiet(columnName);
                 if (colIndex < 0) {
                     throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
@@ -3233,9 +3233,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
-                int errno;
-                if ((errno = ff.rmdir(auxPath)) != 0) {
-                    LOG.error().$("could not delete directory [path=").utf8(auxPath).$(", errno=").$(errno).I$();
+                if (!ff.rmdir(auxPath)) {
+                    LOG.error().$("could not delete directory [path=").utf8(auxPath).$(", errno=").$(ff.errno()).I$();
                 }
                 throw e;
             }

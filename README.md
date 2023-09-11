@@ -15,24 +15,21 @@
   </a>
 </p>
 
-English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md) | [Українська](./i18n/README.ua-ua.md) | [Español](./i18n/README.es-es.md) | [Português](./i18n/README.pt.md) | [日本語](./i18n/README.ja-ja.md)
+English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md) | [Українська](./i18n/README.ua-ua.md) | [Español](./i18n/README.es-es.md) | [Português](./i18n/README.pt.md) | [日本語](./i18n/README.ja-ja.md) | [Türkçe](./i18n/README.tr-tr.md)
 
 # QuestDB
 
-QuestDB is an open-source [time-series database](https://questdb.io/glossary/time-series-database/) for high throughput ingestion and
-fast SQL queries with operational simplicity. It supports schema-agnostic
-ingestion using the InfluxDB line protocol, PostgreSQL wire protocol, and a REST
-API for bulk imports and exports.
+QuestDB is an open-source [time-series database](https://questdb.io/glossary/time-series-database/) for high throughput
+ingestion and fast SQL queries with operational simplicity. It supports schema-agnostic ingestion using the InfluxDB
+line protocol, PostgreSQL wire protocol, and a REST API for bulk imports and exports.
 
-QuestDB is well suited for financial market data, application metrics, sensor
-data, real-time analytics, dashboards, and infrastructure monitoring.
+QuestDB is well suited for financial market data, application metrics, sensor data, real-time analytics, dashboards, and
+infrastructure monitoring.
 
-QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL
-extensions make it simple to correlate data from multiple sources using
-relational and time-series joins. We achieve high performance by adopting a
-column-oriented storage model, parallelized vector execution, SIMD instructions,
-and low-latency techniques. The entire codebase is built from the ground up in
-Java and C++, with no dependencies and zero garbage collection.
+QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to correlate
+data from multiple sources using relational and time-series joins. We achieve high performance by adopting a
+column-oriented storage model, parallelized vector execution, SIMD instructions, and low-latency techniques. The entire
+codebase is built from the ground up in Java and C++, with no dependencies and zero garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -42,8 +39,7 @@ Java and C++, with no dependencies and zero garbage collection.
 
 ## Try QuestDB
 
-We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
-QuestDB release and sample datasets:
+We provide a [live demo](https://demo.questdb.io/) provisioned with the latest QuestDB release and sample datasets:
 
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
 - Trades: live crypto market data with 30M+ rows per month
@@ -79,26 +75,21 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct
-downloads for binaries and has details for other installation and deployment
-methods.
+The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct downloads for binaries and has details for
+other installation and deployment methods.
 
 ### Connect to QuestDB
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) for interactive
-  SQL editor on port `9000`
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for
-  high-throughput ingestion on port `9009`
+- [Web Console](https://questdb.io/docs/develop/web-console/) for an interactive SQL editor on port `9000`
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for high-throughput ingestion on port `9009`
 - [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on
-  port `8812`
+- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on port `8812`
 
 ### Insert data
 
-Below are our official questdb clients for popular programming
-languages:
+Below are our official questdb clients for popular programming languages:
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -108,11 +99,15 @@ languages:
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
+### End-to-end quickstart
+
+Want to walk through everything, from streaming ingestion to visualization with Grafana? Check out
+our multi-path [quickstart repository](https://github.com/questdb/questdb-quickstart).
+
 ## How QuestDB compares to other open source TSDBs
 
 [This article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-compares QuestDB to other open source time series databases spanning
-functionality, maturity and performance.
+compares QuestDB to other open source time series databases spanning functionality, maturity and performance.
 
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
@@ -127,21 +122,15 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 
 ### 📚 Read the docs
 
-- [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how
-  to run and configure QuestDB.
-- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB
-  step by step.
-- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our
-  plan for upcoming releases.
+- [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how to run and configure QuestDB.
+- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB step by step.
+- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our plan for upcoming releases.
 
 ### ❓ Get support
 
-- [Community Slack:](https://slack.questdb.io) join technical discussions, ask
-  questions, and meet other users!
-- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or
-  issues with QuestDB.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for
-  common troubleshooting solutions.
+- [Community Slack:](https://slack.questdb.io) join technical discussions, ask questions, and meet other users!
+- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or issues with QuestDB.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for common troubleshooting solutions.
 
 ### 🚢 Deploy QuestDB
 
@@ -153,9 +142,8 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 
 ## Contribute
 
-We are always happy to have contributions to the project whether it is source
-code, documentation, bug reports, feature requests or feedback. To get started
-with contributing:
+We are always happy to have contributions to the project whether it is source code, documentation, bug reports, feature
+requests or feedback. To get started with contributing:
 
 - Have a look through GitHub issues labeled
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
@@ -314,6 +302,8 @@ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
     </tr>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/allegraharris"><img src="https://avatars.githubusercontent.com/u/89586969?v=4" width="100px;" alt=""/><br /><sub><b>allegraharris</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=allegraharris" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/oliver-daniel"><img src="https://avatars.githubusercontent.com/u/17235417?v=4" width="100px;" alt=""/><br /><sub><b>oliver-daniel</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=oliver-daniel" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kerimsenturk5734"><img src="https://avatars.githubusercontent.com/u/72925170?v=4" width="100px;" alt=""/><br /><sub><b>kerimsenturk5734</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=kerimsenturk5734" title="Documentation">📖</a></td>
     </tr>
   </tbody>
 </table>

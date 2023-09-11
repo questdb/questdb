@@ -37,7 +37,7 @@ public class SuspendEventTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            SuspendEvent event = SuspendEventFactory.newInstance(new DefaultIODispatcherConfiguration());
+            SuspendEvent event = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
             Assert.assertFalse(event.checkTriggered());
             event.trigger();
             Assert.assertTrue(event.checkTriggered());

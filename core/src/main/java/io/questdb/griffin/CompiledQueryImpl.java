@@ -155,6 +155,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return of(type, null, null);
     }
 
+    public CompiledQuery of(short type, RecordCursorFactory recordCursorFactory) {
+        return of(type, recordCursorFactory, null);
+    }
+
     public CompiledQuery of(RecordCursorFactory recordCursorFactory) {
         return of(SELECT, recordCursorFactory, null);
     }

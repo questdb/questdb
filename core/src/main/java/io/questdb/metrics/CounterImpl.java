@@ -29,11 +29,11 @@ import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
-class CounterImpl implements Counter {
+public class CounterImpl implements Counter {
     private final LongAdder counter;
     private final CharSequence name;
 
-    CounterImpl(CharSequence name) {
+    public CounterImpl(CharSequence name) {
         this.name = name;
         this.counter = new LongAdder();
     }

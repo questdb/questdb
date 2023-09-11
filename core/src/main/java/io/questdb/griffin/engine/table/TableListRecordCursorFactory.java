@@ -58,10 +58,6 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("all_tables");
     }
 
-    @Override
-    protected void _close() {
-    }
-
     private static class TableListRecordCursor implements RecordCursor {
         private final TableListRecord record = new TableListRecord();
         private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();

@@ -83,18 +83,19 @@ public class NoopGroupByTest extends AbstractCairoTest {
                 "from x " +
                 "where sym1 in ('AA', 'BB' ) " +
                 "group by sym1, sym2";
-        assertPlan(query,
+        assertPlan(
+                query,
                 "VirtualRecord\n" +
                         "  functions: [sym1,avgBid]\n" +
                         "    GroupBy vectorized: false\n" +
                         "      keys: [sym1,sym2]\n" +
                         "      values: [avg(bid)]\n" +
-                        "        Async Filter\n" +
+                        "        Async Filter workers: 1\n" +
                         "          filter: sym1 in [AA,BB]\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
-                        "                Frame forward scan on: x\n");
+                        "                Frame forward scan on: x\n"
+        );
         assertQuery("sym1\tavgBid\n", query, null, true, false);
     }
 
@@ -425,7 +426,8 @@ public class NoopGroupByTest extends AbstractCairoTest {
                         "    bid double,\n" +
                         "    ask double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY", 80, "Invalid column: a.ccy");
+                        ") timestamp(ts) partition by DAY", 80, "Invalid column: a.ccy"
+        );
     }
 
     @Test

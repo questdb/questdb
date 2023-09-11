@@ -549,7 +549,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testLong256() throws NumericException {
+    public void testLong256() {
         CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         Long256Impl long256 = new Long256Impl();
         Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256);
