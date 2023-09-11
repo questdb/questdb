@@ -279,7 +279,7 @@ public class IODispatcherTest extends AbstractTest {
                             return nf;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics, false).of(fd, dispatcher1)
             )) {
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
@@ -351,7 +351,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -5404,7 +5404,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
                                 @Override
                                 public void close() {
                                     closeCount.incrementAndGet();
@@ -6376,7 +6376,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -6546,7 +6546,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -6709,7 +6709,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -7658,7 +7658,7 @@ public class IODispatcherTest extends AbstractTest {
                             return true;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false).of(fd, dispatcher1)
             )) {
 
                 // server will publish status of each request to this queue

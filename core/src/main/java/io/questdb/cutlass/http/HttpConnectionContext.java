@@ -70,8 +70,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
 
-    public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
-        super(configuration.getFactoryProvider().getHttpSocketFactory(), configuration.getNetworkFacade(), LOG);
+    public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics, boolean forcePlainText) {
+        super(forcePlainText ? PlainSocketFactory.INSTANCE : configuration.getFactoryProvider().getHttpSocketFactory(), configuration.getNetworkFacade(), LOG);
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());

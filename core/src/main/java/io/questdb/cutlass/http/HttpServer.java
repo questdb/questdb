@@ -62,7 +62,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration.getHttpContextConfiguration(), metrics);
+        this.httpContextFactory = new HttpContextFactory(configuration.getHttpContextConfiguration(), metrics, configuration.isHealthCheckForcePlainText());
         this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
@@ -223,8 +223,8 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
-        public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
-            super(() -> new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity());
+        public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics, boolean forcePlainText) {
+            super(() -> new HttpConnectionContext(configuration, metrics, forcePlainText), configuration.getConnectionPoolInitialCapacity());
         }
     }
 

@@ -180,6 +180,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public boolean isHealthCheckForcePlainText() {
+        return false;
+    }
+
+    @Override
     public boolean isPessimisticHealthCheckEnabled() {
         return false;
     }
