@@ -32,7 +32,6 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
-import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
@@ -75,8 +74,6 @@ public class HttpMinTestBuilder {
                         return new PrometheusMetricsProcessor(scrapable, httpConfiguration);
                     }
                 });
-
-                QueryCache.configure(httpConfiguration, Metrics.disabled());
 
                 workerPool.start(LOG);
 

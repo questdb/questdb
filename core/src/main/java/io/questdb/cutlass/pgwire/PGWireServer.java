@@ -72,8 +72,6 @@ public class PGWireServer implements Closeable {
         workerPool.assign(dispatcher);
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            final PGJobContext jobContext = new PGJobContext(configuration, engine);
-
             final SCSequence queryCacheEventSubSeq = new SCSequence();
             final FanOut queryCacheEventFanOut = engine.getMessageBus().getQueryCacheEventFanOut();
             queryCacheEventFanOut.and(queryCacheEventSubSeq);
@@ -85,7 +83,7 @@ public class PGWireServer implements Closeable {
                             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
                             return false;
                         }
-                        jobContext.handleClientOperation(context, operation);
+                        context.handleClientOperation(operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
                         return true;
                     } catch (PeerIsSlowToWriteException e) {
@@ -119,7 +117,8 @@ public class PGWireServer implements Closeable {
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.
                         LOG.info().$("flushing PG Wire query cache [worker=").$(workerId).$(']').$();
-                        jobContext.flushQueryCache();
+                        // TODO
+                        //jobContext.flushQueryCache();
                         queryCacheEventSubSeq.done(seq);
                     }
                     return dispatcher.processIOQueue(processor);
@@ -130,7 +129,6 @@ public class PGWireServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             workerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
             workerPool.freeOnExit((QuietCloseable) () -> {
-                Misc.free(jobContext);
                 engine.getMessageBus().getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
                 queryCacheEventSubSeq.clear();
             });

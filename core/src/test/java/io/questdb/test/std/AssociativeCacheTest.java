@@ -24,6 +24,8 @@
 
 package io.questdb.test.std;
 
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.CounterImpl;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.LongGaugeImpl;
 import io.questdb.std.*;
@@ -78,8 +80,14 @@ public class AssociativeCacheTest {
     @Test
     public void testGaugeUpdates() {
         LongGauge gauge = new LongGaugeImpl("foobar");
-        AssociativeCache<String> cache = new AssociativeCache<>(8, 64, gauge);
+        Counter hitCounter = new CounterImpl("hits");
+        Counter missCounter = new CounterImpl("misses");
+        AssociativeCache<String> cache = new AssociativeCache<>(8, 64, gauge, hitCounter, missCounter);
+
         Assert.assertEquals(0, gauge.getValue());
+        Assert.assertEquals(0, hitCounter.getValue());
+        Assert.assertEquals(0, missCounter.getValue());
+
         for (int i = 0; i < 10; i++) {
             cache.put(Integer.toString(i), Integer.toString(i));
             Assert.assertEquals(i + 1, gauge.getValue());
@@ -87,15 +95,23 @@ public class AssociativeCacheTest {
 
         cache.poll("0");
         Assert.assertEquals(9, gauge.getValue());
+        Assert.assertEquals(1, hitCounter.getValue());
+        Assert.assertEquals(0, missCounter.getValue());
         // Second poll() on the same key should be ignored.
-        cache.poll("0");
+        Assert.assertNull(cache.poll("0"));
         Assert.assertEquals(9, gauge.getValue());
+        Assert.assertEquals(1, hitCounter.getValue());
+        Assert.assertEquals(1, missCounter.getValue());
         // put() should insert value for key-value pair cleared by poll().
         cache.put("0", "42");
         Assert.assertEquals(10, gauge.getValue());
+        Assert.assertEquals(1, hitCounter.getValue());
+        Assert.assertEquals(1, missCounter.getValue());
 
         cache.clear();
         Assert.assertEquals(0, gauge.getValue());
+        Assert.assertEquals(1, hitCounter.getValue());
+        Assert.assertEquals(1, missCounter.getValue());
     }
 
     @Test

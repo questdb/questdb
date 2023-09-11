@@ -111,11 +111,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public int getInsertPoolCapacity() {
-        return 16;
-    }
-
-    @Override
     public int getMaxBlobSizeOnQuery() {
         // BLOBs must fit inside send buffer together with other column values
         return 512 * 1024;
