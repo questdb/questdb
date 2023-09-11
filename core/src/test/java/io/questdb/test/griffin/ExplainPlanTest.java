@@ -2415,7 +2415,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan("select * from a left join b on i where b.i is not null",
                     "SelectedRecord\n" +
-                            "    Filter filter: b.i!=NaN\n" +
+                            "    Filter filter: b.i!=null\n" +
                             "        Hash Outer Join Light\n" +
                             "          condition: b.i=a.i\n" +
                             "            DataFrame\n" +

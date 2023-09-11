@@ -1210,6 +1210,14 @@ public final class TestUtils {
         return sink.toString();
     }
 
+    public static String ipv4ToString2(long ipAndBroadcast) {
+        StringSink sink = new StringSink();
+        Numbers.intToIPv4Sink(sink, (int) (ipAndBroadcast >> 32));
+        sink.put('/');
+        Numbers.intToIPv4Sink(sink, (int) (ipAndBroadcast));
+        return sink.toString();
+    }
+
     public static int maxDayOfMonth(int month) {
         switch (month) {
             case 1:

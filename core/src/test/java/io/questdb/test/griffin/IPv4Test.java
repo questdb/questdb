@@ -85,6 +85,18 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testBitAndStr() throws Exception {
+        assertSql("column\n" +
+                "2.0.0.0\n", "select ipv4 '2.1.1.1' & '2.2.2.2'");
+    }
+
+    @Test
+    public void testBitAndStr2() throws Exception {
+        assertSql("column\n" +
+                "2.0.0.0\n", "select '2.2.2.2' & ipv4 '2.1.1.1'");
+    }
+
+    @Test
     public void testBroadcastAddrUseCase() throws Exception {
         assertSql(
                 "column\n" +
@@ -837,6 +849,24 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4BitOr() throws Exception {
+        assertSql(
+                "column\n" +
+                        "255.1.1.1\n",
+                "select ipv4 '1.1.1.1' | '255.0.0.0'"
+        );
+    }
+
+    @Test
+    public void testIPv4BitOr2() throws Exception {
+        assertSql(
+                "column\n" +
+                        "255.1.1.1\n",
+                "select '1.1.1.1' | ipv4 '255.0.0.0'"
+        );
+    }
+
+    @Test
     public void testIPv4BitwiseAndConst() throws Exception {
         assertSql(
                 "column\n" +
@@ -1223,78 +1253,6 @@ public class IPv4Test extends AbstractCairoTest {
                 "column\n" +
                         "254.254.254.254\n",
                 "select ~ ipv4 '1.1.1.1'"
-        );
-    }
-
-    @Test
-    public void testIPv4BitOr() throws Exception {
-        assertSql(
-                "column\n" +
-                        "255.1.1.1\n",
-                "select ipv4 '1.1.1.1' | '255.0.0.0'"
-        );
-    }
-
-    @Test
-    public void testIPv4StrPlusInt() throws Exception {
-        assertSql(
-                "column\n" +
-                        "1.1.1.6\n",
-                "select '1.1.1.1' + 5"
-        );
-    }
-
-    @Test
-    public void testIPv4StrMinusInt() throws Exception {
-        assertSql(
-                "column\n" +
-                        "1.1.0.252\n",
-                "select '1.1.1.1' - 5"
-        );
-    }
-
-    @Test
-    public void testIPv4StrMinusIPv4Str() throws Exception {
-        assertSql(
-                "column\n" +
-                        "16843008\n",
-                "select '1.1.1.1' - '0.0.0.1'"
-        );
-    }
-
-    @Test
-    public void testIPv4StrMinusIPv4() throws Exception {
-        assertSql(
-                "column\n" +
-                        "16843008\n",
-                "select '1.1.1.1' - ipv4 '0.0.0.1'"
-        );
-    }
-
-    @Test
-    public void testIPv4MinusIPv4Str() throws Exception {
-        assertSql(
-                "column\n" +
-                        "16843008\n",
-                "select ipv4 '1.1.1.1' - '0.0.0.1'"
-        );
-    }
-
-    @Test
-    public void testIntPlusIPv4Str() throws Exception {
-        assertSql(
-                "column\n" +
-                        "1.1.1.6\n",
-                "select 5 + '1.1.1.1'"
-        );
-    }
-
-    @Test
-    public void testIPv4BitOr2() throws Exception {
-        assertSql(
-                "column\n" +
-                        "255.1.1.1\n",
-                "select '1.1.1.1' | ipv4 '255.0.0.0'"
         );
     }
 
@@ -1688,6 +1646,7 @@ public class IPv4Test extends AbstractCairoTest {
         insert("insert into test values('1.6.2.0')");
         insert("insert into test values('255.255.255.255')");
         insert("insert into test values('0.0.0.0')");
+
         TestUtils.assertSql(engine, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/20'", sink, "col\n");
         TestUtils.assertSql(engine, sqlExecutionContext, "select * from test where col <<= '12.67.50.2/1'", sink, "col\n" +
                 "12.67.45.3\n" +
@@ -1757,7 +1716,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 0.0.0.1/hello"
         );
     }
@@ -1774,7 +1733,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 0.0.0/hello"
         );
     }
@@ -1791,7 +1750,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 0.0.0.0/65"
         );
     }
@@ -1808,7 +1767,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 0.0.0/65"
         );
     }
@@ -1825,7 +1784,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 0.0.0.0/-1"
         );
     }
@@ -1842,7 +1801,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 0.0.0/-1"
         );
     }
@@ -1859,7 +1818,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: apple"
         );
     }
@@ -1876,7 +1835,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 85.7.36/74"
         );
     }
@@ -1893,7 +1852,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 8573674"
         );
     }
@@ -1910,7 +1869,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 256.256.256.256"
         );
     }
@@ -1927,7 +1886,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
                         ") timestamp(k)",
-                18,
+                32,
                 "invalid argument: 0.0.0/32"
         );
     }
@@ -2367,6 +2326,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4MinusIPv4Str() throws Exception {
+        assertSql(
+                "column\n" +
+                        "16843008\n",
+                "select ipv4 '1.1.1.1' - '0.0.0.1'"
+        );
+    }
+
+    @Test
     public void testIPv4MinusIPv4Var() throws Exception {
         assertQuery(
                 "column\n" +
@@ -2763,7 +2731,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.1/hello");
+                ") timestamp(k)", 25, "invalid argument: 0.0.0.1/hello");
     }
 
     @Test
@@ -2775,7 +2743,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/hello");
+                ") timestamp(k)", 25, "invalid argument: 0.0.0/hello");
     }
 
     @Test
@@ -2787,7 +2755,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/65");
+                ") timestamp(k)", 25, "invalid argument: 0.0.0.0/65");
     }
 
     @Test
@@ -2799,7 +2767,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/65");
+                ") timestamp(k)", 25, "invalid argument: 0.0.0/65");
     }
 
     @Test
@@ -2811,7 +2779,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0.0/-1");
+                ") timestamp(k)", 25, "invalid argument: 0.0.0.0/-1");
     }
 
     @Test
@@ -2823,7 +2791,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/-1");
+                ") timestamp(k)", 25, "invalid argument: 0.0.0/-1");
     }
 
     @Test
@@ -2835,7 +2803,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: apple");
+                ") timestamp(k)", 25, "invalid argument: apple");
     }
 
     @Test
@@ -2847,7 +2815,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 85.7.36/74");
+                ") timestamp(k)", 25, "invalid argument: 85.7.36/74");
     }
 
     @Test
@@ -2859,7 +2827,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 8573674");
+                ") timestamp(k)", 25, "invalid argument: 8573674");
     }
 
     @Test
@@ -2871,7 +2839,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 256.256.256.256");
+                ") timestamp(k)", 25, "invalid argument: 256.256.256.256");
     }
 
     @Test
@@ -2883,7 +2851,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "    rnd_int(0,1000,0) bytes," +
                 "    timestamp_sequence(0,100000000) k" +
                 "  from long_sequence(100)" +
-                ") timestamp(k)", 18, "invalid argument: 0.0.0/32");
+                ") timestamp(k)", 25, "invalid argument: 0.0.0/32");
     }
 
     @Test
@@ -3723,6 +3691,33 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4StrMinusIPv4() throws Exception {
+        assertSql(
+                "column\n" +
+                        "16843008\n",
+                "select '1.1.1.1' - ipv4 '0.0.0.1'"
+        );
+    }
+
+    @Test
+    public void testIPv4StrMinusIPv4Str() throws Exception {
+        assertSql(
+                "column\n" +
+                        "16843008\n",
+                "select '1.1.1.1' - '0.0.0.1'"
+        );
+    }
+
+    @Test
+    public void testIPv4StrMinusInt() throws Exception {
+        assertSql(
+                "column\n" +
+                        "1.1.0.252\n",
+                "select '1.1.1.1' - 5"
+        );
+    }
+
+    @Test
     public void testIPv4StrNetmask() throws Exception {
         assertSql(
                 "netmask\n" +
@@ -3737,6 +3732,15 @@ public class IPv4Test extends AbstractCairoTest {
                 "netmask\n" +
                         "\n",
                 "select netmask('68.11.22.1/33')"
+        );
+    }
+
+    @Test
+    public void testIPv4StrPlusInt() throws Exception {
+        assertSql(
+                "column\n" +
+                        "1.1.1.6\n",
+                "select '1.1.1.1' + 5"
         );
     }
 
@@ -4120,18 +4124,6 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testBitAndStr() throws Exception {
-        assertSql("column\n" +
-                "2.0.0.0\n", "select ipv4 '2.1.1.1' & '2.2.2.2'");
-    }
-
-    @Test
-    public void testBitAndStr2() throws Exception {
-        assertSql("column\n" +
-                "2.0.0.0\n", "select '2.2.2.2' & ipv4 '2.1.1.1'");
-    }
-
-    @Test
     public void testImplicitCastStrIPv4BadStr() throws Exception {
         assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 0, "invalid ipv4 format: dhukdsvhiu");
     }
@@ -4400,6 +4392,15 @@ public class IPv4Test extends AbstractCairoTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testIntPlusIPv4Str() throws Exception {
+        assertSql(
+                "column\n" +
+                        "1.1.1.6\n",
+                "select 5 + '1.1.1.1'"
         );
     }
 
@@ -4726,6 +4727,32 @@ public class IPv4Test extends AbstractCairoTest {
                         "4.98.173.21\n",
                 "select min(ip) from test"
         );
+    }
+
+    @Test
+    public void testNetmask() throws SqlException {
+        ddl("create table tipv4 ( ip ipv4)");
+        insert("insert into tipv4 values ('255.255.255.254')");
+        assertSql("ip\n" +
+                "255.255.255.254\n", "select * from tipv4 where '255.255.255.255/31' >>= ip");
+        assertSql("ip\n", "select * from tipv4 where '255.255.255.255/32' >>= ip");
+        assertSql("ip\n" +
+                "255.255.255.254\n", "select * from tipv4 where '255.255.255.255/30' >>= ip");
+        assertSql("ip\n" +
+                "255.255.255.254\n", "select * from tipv4 where '255.255.255.0/24' >>= ip");
+
+        assertSql("column\n" +
+                "true\n", "select '255.255.255.255'::ipv4 <<= '255.255.255.255'");
+        assertSql("column\n" +
+                "false\n", "select '255.255.255.255'::ipv4 <<= '255.255.255.254'");
+        assertSql("column\n" +
+                "true\n", "select '255.255.255.255'::ipv4 <<= '255.255.255.254/31'");
+
+        assertSql("netmask\n\n", "select netmask('1.1.1.1/0');");
+        assertSql("netmask\n255.255.255.252\n", "select netmask('1.1.1.1/30');");
+        assertSql("netmask\n255.255.255.254\n", "select netmask('1.1.1.1/31');");
+        assertSql("netmask\n255.255.255.255\n", "select netmask('1.1.1.1/32');");
+        assertSql("netmask\n\n", "select netmask('1.1.1.1/33');");
     }
 
     @Test

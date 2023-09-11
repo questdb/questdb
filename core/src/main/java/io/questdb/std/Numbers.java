@@ -41,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 
 public final class Numbers {
+    public static final int BAD_NETMASK = 1;
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
@@ -620,96 +621,65 @@ public final class Numbers {
         }
         return false;
     }
-
-    public static int getBroadcastAddress(CharSequence sequence) {
-        int allBits = 0xffffffff;
-        int delim = Chars.indexOf(sequence, 0, '/');
-        int subnet, netmask, broadcast;
-
-        // no netmask provided
-        if(delim == -1) {
-            return -2;
-        }
-
-        try {
-            netmask = parseInt0(sequence, delim + 1, sequence.length());
-            subnet = getIPv4Subnet(sequence);
-        } catch (NumericException e) {
-            return -2;
-        }
-
+    
+    //returns lo | hi network address in a single long 
+    public static long getBroadcastAddress(CharSequence sequence) throws NumericException {
+        long subnetAndNetmask = Numbers.getIPv4Subnet(sequence);
+        int subnet = (int) (subnetAndNetmask >> 32);
+        int netmask = (int) (subnetAndNetmask);
         //sets all remaining bits to the right of the subnet
-        broadcast = ~(allBits << (32 - netmask));
-        broadcast = (broadcast | subnet);
-
-        return broadcast;
+        int broadcastAddress = subnet | ~(0xffffffff << (32 - getNetmaskLength(netmask)));
+        
+        return pack(subnet & netmask, broadcastAddress);
     }
-
+    
+    //returns network mask, e.g. 255.0.0.0 == /8 or Numbers.BAD_NETMASK on error 
     public static int getIPv4Netmask(CharSequence sequence) {
-        int netmask = 0xffffffff;
         int mid = Chars.indexOf(sequence, 0, '/') + 1;
-        int bits;
 
         //if no netmask provided, default to netmask of 255.255.255.255 (0xffffffff)
         if(mid == 0) {
-            if(parseIPv4Quiet(sequence) == IPv4_NULL) {
-                return -2;
-            }
-            return netmask;
+            return 0xffffffff;
         }
 
         try{
-            bits = parseInt0(sequence, mid, sequence.length());
+            int bits = parseInt0(sequence, mid, sequence.length());
+            return toNetMask(bits);
+        } catch (NumericException e) {
+            return BAD_NETMASK;
+        }
+    }
+    
+    // returns net addr + netmask in a single long value 
+    // throws NumericException on error 
+    public static long getIPv4Subnet(CharSequence sequence) throws NumericException  {
+        int netmask = getIPv4Netmask(sequence);
+        if(netmask == BAD_NETMASK) {
+            throw NumericException.INSTANCE;
+        }
 
-            //if netmask 0 provided, return 0 (calling func will evaluate to true)
-            if(bits == 0) {
-                return 0;
+        int mid = Chars.indexOf(sequence, 0, '/');
+        
+        try{
+            if(mid == -1) {// no netmask
+                return  pack(parseIPv4(sequence), netmask);
             }
-
-            if(bits < 0 || bits > 32) {
+            
+            int ipv4 = parseIPv4_0(sequence, 0, mid);
+            return pack(ipv4, netmask);
+        } catch (NumericException e) {
+            if(mid == -1) {
                 throw NumericException.INSTANCE;
             }
-
-            bits = 32 - bits;
-            netmask = (netmask << bits);
-
-        } catch (NumericException e) {
-            //catch triggered by invalid netmask - calling func will throw sql exception (-2 used as sentinel because -1 is valid (0xffffffff))
-            return -2;
+            
+            return pack(parseSubnet0(sequence, 0, mid, getNetmaskLength(netmask)), netmask);
         }
-
-        return netmask;
     }
-
-    public static int getIPv4Subnet(CharSequence sequence)  {
-        int mid = Chars.indexOf(sequence, 0, '/');
-        int subnet;
-        int ipv4, netmask;
-
-        try{
-            netmask = getIPv4Netmask(sequence);
-
-            // invalid netmask - calling func will throw sql exception (-2 used as sentinel because -1 is valid (0xffffffff))
-            if(netmask == -2) {
-                return netmask;
-            }
-
-            // true if no netmask provided (i.e. no '/' found in CharSequence) - subnet is therefore same as the parsed argument
-            if(mid == -1) {
-                return parseIPv4(sequence);
-            }
-
-            ipv4 = parseIPv4_0(sequence, 0, mid);
-            subnet = ipv4 & netmask;
-
-        } catch (NumericException e) {
-            //catch triggered by invalid ipv4 - try parsing it as subnet, if invalid subnet, -2 will be returned + exception will be thrown by calling func
-            return parseSubnet(sequence);
-        }
-
-        return subnet;
+    
+    public static int getNetmaskLength(int netmask){
+        return 32 - Integer.numberOfTrailingZeros(netmask);
     }
-
+    
     public static int hexToDecimal(int c) throws NumericException {
         if (c > 127) {
             throw NumericException.INSTANCE;
@@ -720,7 +690,7 @@ public final class Numbers {
         }
         return r;
     }
-
+    
     public static double intToDouble(int value) {
         if (value != Numbers.INT_NaN) {
             return value;
@@ -1375,32 +1345,26 @@ public final class Numbers {
         return parseShort0(sequence, p, lim);
     }
 
-    public static int parseSubnet(CharSequence sequence) {
+    public static long parseSubnet(CharSequence sequence) throws NumericException {
         int delim = Chars.indexOf(sequence, 0, '/');
-        int subnet, netmask;
-
-        if(delim == -1) { //if just the subnet is passed, netmask must be included - if delim == -1 then no netmask has been included + the argument is therefore invalid
-            return -2; //catch triggered by invalid arg - calling func will throw sql exception (-2 used as sentinel because 0xffffffff (which is valid) is -1)
+        if(delim == -1) { 
+            throw NumericException.INSTANCE;
         }
-
-        try {
-            netmask = parseInt0(sequence, delim + 1, sequence.length()); //get netmask to test pass to parseSubnet0 - used to test whether the subnet matches the netmask (according to postgres rules)
-            subnet = parseSubnet0(sequence, 0, delim, netmask); //if sequence is not a valid subnet OR the subnet doesn't match the netmask, throws NumericException
-        } catch (NumericException e) {
-            return -2; //catch triggered by invalid arg - calling func will throw sql exception (-2 used as sentinel because 0xffffffff (which is valid) is -1)
-        }
-
-        return subnet;
+        
+        int netmaskBits = parseInt0(sequence, delim + 1, sequence.length());
+        return pack(parseSubnet0(sequence, 0, delim, netmaskBits), toNetMask(netmaskBits)) ;
     }
 
-    public static int parseSubnet0(CharSequence sequence, final int p, int lim, int netmask) throws NumericException {
+    // test whether the subnet matches the netmaskLength (according to postgres rules)
+    // throws NumericException if sequence is not a valid subnet OR the subnet doesn't match the netmaskLength 
+    public static int parseSubnet0(CharSequence sequence, final int p, int lim, int netmaskLength) throws NumericException {
         int hi;
         int lo = p;
         int num;
         int ipv4 = 0;
         int count = 0;
         int checker = 0xffffffff;
-        int bits = 32 - netmask;
+        int bits = 32 - netmaskLength;
         int i = 1;
 
         if(lim == 0) {
@@ -1436,25 +1400,25 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        //if netmask is full byte longer than subnet
+        //if netmaskLength is full byte longer than subnet
         if(count == 0) {
-            if(netmask >= 16) {
+            if(netmaskLength >= 16) {
                 throw NumericException.INSTANCE;
             }
             checker = (checker << bits);
             num = (num << 24) & checker;
             return num;
         }
-        //if netmask is a full byte longer than subnet
-        else if(count == 1 && netmask >= 24) {
+        //if netmaskLength is a full byte longer than subnet
+        else if(count == 1 && netmaskLength >= 24) {
             throw NumericException.INSTANCE;
         }
-        //if netmask is a full byte longer than subnet
-        else if(count == 2 && netmask >= 32) {
+        //if netmaskLength is a full byte longer than subnet
+        else if(count == 2 && netmaskLength >= 32) {
             throw NumericException.INSTANCE;
         }
-        //if netmask is a full byte longer than subnet
-        else if(count == 3 && netmask > 32) {
+        //if netmaskLength is a full byte longer than subnet
+        else if(count == 3 && netmaskLength > 32) {
             throw NumericException.INSTANCE;
         }
 
@@ -1596,6 +1560,16 @@ public final class Numbers {
         StringSink sink = new StringSink();
         appendHexPadded(sink, value, Long.BYTES);
         return sink.toString();
+    }
+
+    public static int toNetMask(final int length)throws NumericException{
+        if(length == 0) {
+            return 0;
+        }
+        if(length < 0 || length > 32) {
+            throw NumericException.INSTANCE;
+        }
+        return (0xffffffff << (32 - length));
     }
 
     private static void appendDouble0(
@@ -2485,6 +2459,10 @@ public final class Numbers {
 
     private static int insignificantDigitsForPow2(int p2) {
         return p2 > 1 && p2 < insignificantDigitsNumber.length ? insignificantDigitsNumber[p2] : 0;
+    }
+
+    private static long pack(int a, int b){
+        return (((long)a)<<32) | (b & 0xffffffffL);
     }
 
     private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
