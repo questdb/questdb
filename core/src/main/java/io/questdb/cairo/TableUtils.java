@@ -30,7 +30,6 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.AnyRecordMetadata;
@@ -451,7 +450,7 @@ public final class TableUtils {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
             }
             if (ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
-                if (ff.rmdir(path.slash$()) != 0) {
+                if (!ff.rmdir(path.slash$())) {
                     LOG.error().$("cannot remove table directory in volume [errno=").$(ff.errno()).$(", path=").utf8(path.trimTo(rootLen).$()).I$();
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');

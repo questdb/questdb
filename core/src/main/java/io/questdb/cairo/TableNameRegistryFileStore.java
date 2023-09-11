@@ -361,6 +361,9 @@ public class TableNameRegistryFileStore implements Closeable {
                     } else {
                         reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                     }
+                } else {
+                    reverseTableNameTokenMap.remove(dirName);
+                    tableToCompact++;
                 }
             } else {
                 if (tableIds.contains(tableId)) {

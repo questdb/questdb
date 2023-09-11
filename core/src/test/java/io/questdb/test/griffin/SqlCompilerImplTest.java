@@ -2481,9 +2481,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name) {
                 Assert.assertEquals(target + Files.SEPARATOR, name.toString());
-                return -1;
+                return false;
             }
 
             @Override
@@ -2518,7 +2518,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             File table = new File(target);
             Assert.assertTrue(table.exists());
             Assert.assertTrue(table.isDirectory());
-            Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
+            Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
             Assert.assertTrue(volume.delete());
         }
     }
