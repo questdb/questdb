@@ -60,11 +60,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
                 return -1;
             }
         }
-        tcp_keepalive keepaliveParams;
+        struct tcp_keepalive keepaliveParams;
         DWORD ret = 0;
         keepaliveParams.onoff = 1;
         keepaliveParams.keepaliveinterval = keepaliveParams.keepalivetime = 30000;
-        WSAIoctl(sockfd, SIO_KEEPALIVE_VALS, &keepaliveParams, sizeof(keepaliveParams), NULL, 0, &ret, NULL, NULL);
+        WSAIoctl(s, SIO_KEEPALIVE_VALS, &keepaliveParams, sizeof(keepaliveParams), NULL, 0, &ret, NULL, NULL);
     } else {
         SaveLastError();
     }
