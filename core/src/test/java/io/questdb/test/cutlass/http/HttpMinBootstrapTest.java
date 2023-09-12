@@ -58,7 +58,6 @@ public class HttpMinBootstrapTest extends BootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
-
                 new SendAndReceiveRequestBuilder().withPort(HTTP_MIN_PORT).execute("GET / HTTP/1.1\r\n\r\n", HEALTHY_RESPONSE);
             }
         });
