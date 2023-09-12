@@ -28,7 +28,10 @@ import io.questdb.cutlass.http.client.Chunk;
 import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -37,6 +40,7 @@ import org.jetbrains.annotations.Nullable;
 public class TestHttpClient implements QuietCloseable {
     private final HttpClient httpClient = HttpClientFactory.newInstance();
     private final StringSink sink = new StringSink();
+    private boolean keepConnection;
 
     public void assertGet(CharSequence expectedResponse, CharSequence sql) {
         assertGet(expectedResponse, sql, null, null);
@@ -96,7 +100,9 @@ public class TestHttpClient implements QuietCloseable {
 
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
-            httpClient.disconnect();
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
         }
     }
 
@@ -112,7 +118,9 @@ public class TestHttpClient implements QuietCloseable {
             toSink0(url, sql, sink, username, password);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
-            httpClient.disconnect();
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
         }
     }
 
@@ -121,11 +129,17 @@ public class TestHttpClient implements QuietCloseable {
         Misc.free(httpClient);
     }
 
+    public void setKeepConnection(boolean keepConnection) {
+        this.keepConnection = keepConnection;
+    }
+
     public void toSink(CharSequence url, CharSequence sql, CharSink sink) {
         try {
             toSink0(url, sql, sink, null, null);
         } finally {
-            httpClient.disconnect();
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
         }
     }
 

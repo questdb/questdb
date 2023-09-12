@@ -292,10 +292,10 @@ public abstract class HttpClient implements QuietCloseable {
             }
             nf.freeAddrInfo(addrInfo);
             socket.of(fd);
+            setupIoWait();
         }
 
         private void doSend(int timeout) {
-            setupIoWait();
             int len = (int) (ptr - bufLo);
             if (len > 0) {
                 long p = bufLo;
