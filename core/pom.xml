@@ -36,10 +36,10 @@
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>0.2.6</web.console.version>
+        <web.console.version>0.2.7</web.console.version>
     </properties>
 
-    <version>7.3.2-SNAPSHOT</version>
+    <version>7.3.3-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -340,6 +340,7 @@
                                     <outputFileName>web-console.tgz</outputFileName>
                                     <outputDirectory>${project.build.directory}/site/</outputDirectory>
                                     <unpack>true</unpack>
+                                    <skipCache>true</skipCache>
                                 </configuration>
                             </execution>
                         </executions>

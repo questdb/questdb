@@ -170,10 +170,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    default boolean isSelectCacheable() {
-        return true;
-    }
-
     boolean recordCursorSupportsRandomAccess();
 
     default void revertFromSampleByIndexDataFrameCursorFactory() {

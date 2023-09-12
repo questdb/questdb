@@ -1188,7 +1188,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
             TableToken tableToken = engine.verifyTableName(dstTableName);
-            Files.rmdir(path.of(root).concat(tableToken).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$());
+            Files.rmdir(path.of(root).concat(tableToken).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$(), true);
         }
     }
 

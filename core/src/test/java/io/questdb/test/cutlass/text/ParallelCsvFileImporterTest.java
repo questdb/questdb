@@ -807,9 +807,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name) {
                 if (Chars.endsWith(name, tab34_0)) {
-                    return -1;
+                    return false;
                 }
                 return super.rmdir(name);
             }
@@ -822,7 +822,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 PartitionBy.MONTH,
                 "ts",
                 null,
-                "import failed [phase=partition_import, msg=`[-1] could not overwrite [tableName=" + tab34_0 + "]`]"
+                "could not overwrite [tableName=" + tab34_0 + "]`]"
         );
     }
 
@@ -909,9 +909,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name) {
                 if (Chars.equals(name, tempDir)) {
-                    return -1;
+                    return false;
                 }
                 return super.rmdir(name);
             }
@@ -942,9 +942,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name) {
                 if (Chars.endsWith(name, mangledPartDir)) {
-                    return -1;
+                    return false;
                 }
                 return super.rmdir(name);
             }
@@ -958,7 +958,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 PartitionBy.MONTH,
                 "ts",
                 null,
-                "import failed [phase=partition_import, msg=`[-1] could not overwrite [tableName=" + mangledPartDir + "]`]"
+                "could not overwrite [tableName=" + mangledPartDir + "]`]"
         );
     }
 

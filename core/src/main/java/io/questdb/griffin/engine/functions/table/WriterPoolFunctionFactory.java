@@ -22,37 +22,25 @@
  *
  ******************************************************************************/
 
+package io.questdb.griffin.engine.functions.table;
 
-package io.questdb.metrics;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.table.WriterPoolRecordCursorFactory;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-import io.questdb.std.str.CharSink;
-
-import java.util.concurrent.atomic.LongAdder;
-
-public class CounterImpl implements Counter {
-    private final LongAdder counter;
-    private final CharSequence name;
-
-    public CounterImpl(CharSequence name) {
-        this.name = name;
-        this.counter = new LongAdder();
+public class WriterPoolFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "writer_pool()";
     }
 
     @Override
-    public void add(long value) {
-        counter.add(value);
-    }
-
-    @Override
-    public long getValue() {
-        return counter.sum();
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
-        PrometheusFormatUtils.appendCounterType(name, sink);
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
-        PrometheusFormatUtils.appendNewLine(sink);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CursorFunction(new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine()));
     }
 }

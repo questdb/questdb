@@ -1586,7 +1586,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         // Remove first partition
         to.of(configuration.getRoot()).concat(copyTableWithMissingPartitions);
-        if (ff.rmdir(to.concat("1970-01-01").put(Files.SEPARATOR).$()) != 0) {
+        if (!ff.rmdir(to.concat("1970-01-01").put(Files.SEPARATOR).$())) {
             throw CairoException.critical(ff.errno()).put("cannot remove ").put(to);
         }
 

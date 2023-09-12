@@ -98,7 +98,7 @@ public class TableConverter {
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
 
-                                    // Reset structure versoin in _meta and _txn files
+                                    // Reset structure version in _meta and _txn files
                                     metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
                                     path.trimTo(rootLen).concat(dirName);
                                     txWriter.resetStructureVersionUnsafe();
@@ -154,7 +154,7 @@ public class TableConverter {
 
     private static void removeWalPersistence(Path path, int rootLen, FilesFacade ff, String dirName) {
         path.trimTo(rootLen).concat(dirName).concat(WalUtils.SEQ_DIR).$();
-        if (ff.rmdir(path) != 0) {
+        if (!ff.rmdir(path)) {
             LOG.error()
                     .$("Could not remove sequencer dir [errno=").$(ff.errno())
                     .$(", path=").$(path)
@@ -179,7 +179,7 @@ public class TableConverter {
                                         .I$();
                             }
                         } else {
-                            if (ff.rmdir(path) != 0) {
+                            if (!ff.rmdir(path)) {
                                 LOG.error()
                                         .$("Could not remove wal dir [errno=").$(ff.errno())
                                         .$(", path=").$(path)

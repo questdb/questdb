@@ -70,7 +70,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         cursor = Misc.free(cursor);
         if (null != recordCursorFactory) {
             if (queryCacheable) {
-                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
+                httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
             } else {
                 recordCursorFactory.close();
             }
