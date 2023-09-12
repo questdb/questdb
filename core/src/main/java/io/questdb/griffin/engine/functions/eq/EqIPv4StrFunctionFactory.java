@@ -51,17 +51,8 @@ public class EqIPv4StrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
-
-
-        if (!a.isConstant() && b.isConstant()) {
-            return EqIPv4FunctionFactory.createHalfConstantFunc(b, a);
-        } else if (a.isConstant() && !b.isConstant()) {
-            return EqIPv4FunctionFactory.createHalfConstantFunc(a, b);
-        }
-
-        return new EqIPv4FunctionFactory.Func(a, b);
+        return EqIPv4FunctionFactory.createHalfConstantFunc(b, a);
     }
 }

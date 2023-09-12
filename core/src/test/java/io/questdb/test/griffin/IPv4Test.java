@@ -520,6 +520,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testContainsIPv4FunctionFactoryError() throws Exception {
+        ddl("create table t (ip ipv4)");
+        assertException("select * from t where ip << '1.1.1.1/35'", 28, "invalid argument: 1.1.1.1/35");
+        assertException("select * from t where ip << '1.1.1.1/-1'", 28, "invalid argument: 1.1.1.1/-1");
+        assertException("select * from t where ip << '1.1.1.1/A'", 28, "invalid argument: 1.1.1.1/A");
+        assertException("select * from t where ip << '1.1/26'", 28, "invalid argument: 1.1/26");
+    }
+
+    @Test
     public void testCountIPv4() throws Exception {
         assertQuery(
                 "count\tbytes\n" +
@@ -4109,6 +4118,10 @@ public class IPv4Test extends AbstractCairoTest {
                 true,
                 false
         );
+
+        assertSql("ip\tbytes\tts\n" +
+                        "187.139.150.80\t580\t1970-01-01T00:00:00.000000Z\n",
+                "select * from test where '187.139.150.80' = ip");
     }
 
     @Test
@@ -4730,6 +4743,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegContainsIPv4FunctionFactoryError() throws Exception {
+        ddl("create table t (ip ipv4)");
+        assertException("select * from t where '1.1.1.1/35' >> ip", 22, "invalid argument: 1.1.1.1/35");
+        assertException("select * from t where '1.1.1.1/-1' >> ip", 22, "invalid argument: 1.1.1.1/-1");
+        assertException("select * from t where '1.1.1.1/A' >> ip ", 22, "invalid argument: 1.1.1.1/A");
+        assertException("select * from t where '1.1/26' >> ip ", 22, "invalid argument: 1.1/26");
+    }
+
+    @Test
     public void testNetmask() throws SqlException {
         ddl("create table tipv4 ( ip ipv4)");
         insert("insert into tipv4 values ('255.255.255.254')");
@@ -4900,6 +4922,14 @@ public class IPv4Test extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testRandomIPv4Error() throws Exception {
+        assertException("select rnd_ipv4('1.1.1.1/35', 1)", 16, "invalid argument: 1.1.1.1/35");
+        assertException("select rnd_ipv4('1.1.1.1/-1', 1)", 16, "invalid argument: 1.1.1.1/-1");
+        assertException("select rnd_ipv4('1.1.1.1/A', 1)", 16, "invalid argument: 1.1.1.1/A");
+        assertException("select rnd_ipv4('1.1/26', 1)", 16, "invalid argument: 1.1/26");
     }
 
     @Test
