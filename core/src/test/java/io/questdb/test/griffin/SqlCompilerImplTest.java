@@ -3050,9 +3050,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testFailOnEmptyColumnName() throws Exception {
         ddl("create table tab ( ts timestamp)");
 
-        assertFailure(28, "Invalid column: ",
-                "SELECT * FROM tab WHERE SUM(\"\", \"\")"
-        );
+        assertFailure(32, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"\")");
+        assertFailure(28, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"ts\")");
     }
 
     @Test

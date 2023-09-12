@@ -153,6 +153,10 @@ public class ExpressionParser {
         if (argStackDepth < node.paramCount) {
             throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put("' [found=").put(argStackDepth).put(",expected=").put(node.paramCount).put(']');
         }
+        if (node.type == ExpressionNode.LITERAL) {
+            SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(node.token, node.position);
+            node.token = GenericLexer.unquote(node.token);
+        }
         listener.onNode(node);
         return argStackDepth - node.paramCount + 1;
     }
@@ -245,7 +249,9 @@ public class ExpressionParser {
                             }
 
                             if (Chars.isQuote(c)) {
+                                // todo: check a.table reference (table is the keyword)
                                 ExpressionNode en = opStack.pop();
+                                // table prefix cannot be unquoted keywords
                                 CharacterStoreEntry cse = characterStore.newEntry();
                                 cse.put(GenericLexer.unquote(en.token)).put('.');
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
@@ -702,7 +708,7 @@ public class ExpressionParser {
                         break;
                     case 's':
                     case 'S':
-                        if (SqlKeywords.isSelectKeyword(tok)) {
+                        if (prevBranch != BRANCH_LITERAL && SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
                             if (betweenCount > 0) {
                                 throw SqlException.$(lastPos, "constant expected");
@@ -754,9 +760,12 @@ public class ExpressionParser {
                                             ((GenericLexer.FloatingSequence) en.token).setHi(lexer.getTokenHi());
                                         } else {
                                             opStack.pop();
+                                            // todo: need to understand why we unquote here
                                             CharacterStoreEntry cse = characterStore.newEntry();
                                             cse.put(en.token).put(GenericLexer.unquote(tok));
-                                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
+                                            final CharSequence lit = cse.toImmutable();
+                                            SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(lit, en.position);
+                                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, lit, Integer.MIN_VALUE, en.position));
                                         }
                                         break;
                                     }
@@ -927,6 +936,7 @@ public class ExpressionParser {
                                     } else {
                                         // "foo".* or 'foo'.*
                                         // foo was unquoted, and we cannot simply move hi to include the *
+                                        // todo: foo should not be unquoted
                                         opStack.pop();
                                         CharacterStoreEntry cse = characterStore.newEntry();
                                         cse.put(en.token).put('*');
@@ -1161,6 +1171,7 @@ public class ExpressionParser {
                                 opStack.pop();
                                 // this was more analogous to 'a."b"'
                                 CharacterStoreEntry cse = characterStore.newEntry();
+                                SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, en.position);
                                 cse.put(en.token).put(GenericLexer.unquote(tok));
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                             } else {
@@ -1170,13 +1181,13 @@ public class ExpressionParser {
                             }
                         } else if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                             // If the token is a function token, then push it onto the stack.
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(tok), Integer.MIN_VALUE, lastPos));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
                         } else {
                             argStackDepth++;
                             final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", DOT_PRECEDENCE, lastPos);
                             dotDereference.paramCount = 2;
                             opStack.push(dotDereference);
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.unquote(tok), Integer.MIN_VALUE, lastPos));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
                         }
                     } else {
                         ExpressionNode last = this.opStack.peek();
@@ -1212,6 +1223,7 @@ public class ExpressionParser {
                                         if (Chars.equals(opStack.peek(1).token, '(')) {
                                             if (SqlKeywords.isExtractKeyword(opStack.peek(2).token)) {
                                                 // validate part
+                                                // todo: validate that token is quoted when it is a keyword
                                                 if (SqlKeywords.validateExtractPart(GenericLexer.unquote(member.token))) {
                                                     // in this case "from" keyword acts as ',' in function call
                                                     member.type = ExpressionNode.MEMBER_ACCESS;

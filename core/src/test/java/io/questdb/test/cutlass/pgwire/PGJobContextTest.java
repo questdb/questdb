@@ -2812,7 +2812,7 @@ if __name__ == "__main__":
                 {"drop doesnt", "ERROR: 'table' or 'all tables' expected"},
                 {"drop", "ERROR: 'table' or 'all tables' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
-                {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
+                {"drop table exists doesnt", "ERROR: table name is a keyword, use double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
                 {"drop all table if exists;", "ERROR: 'tables' expected"},
@@ -6493,19 +6493,19 @@ nodejs code:
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
             ddl(
-                    "create table table (" +
+                    "create table \"table\" (" +
                             "id symbol, " +
                             "timestamp timestamp) " +
                             "timestamp(timestamp) partition by day"
             );
             insert(
-                    "insert into table " +
+                    "insert into \"table\" " +
                             " select rnd_symbol(16, 10,10,0), dateadd('s', x::int, '2023-03-23T00:00:00.000000Z') " +
                             " from long_sequence(10000)"
             );
 
             conn.setAutoCommit(false);
-            String queryBase = "select * from table "
+            String queryBase = "select * from \"table\" "
                     + " WHERE timestamp >= '2023-03-23T00:00:00.000000Z'"
                     + " ORDER BY timestamp ";
 
@@ -9433,7 +9433,7 @@ create table tab as (
 
     private static int getCountStar(Connection conn) throws Exception {
         int count = -1;
-        try (PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM table")) {
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM \"table\"")) {
             try (ResultSet result = stmt.executeQuery()) {
                 if (result.next()) {
                     count = result.getInt(1);

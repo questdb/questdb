@@ -491,9 +491,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' $ ");
         assertIdentifierError("select 'a' 0 ");
         assertIdentifierError("select 'a' 12 ");
-        assertIdentifierError("select 'a' \"\"\" ");
         assertIdentifierError("select 'a' \"\" ");
-        assertIdentifierError("select 'a' \" ");
         assertIdentifierError("select 'a' ''' ");
         assertIdentifierError("select 'a' '' ");
         assertIdentifierError("select 'a' ' ");
@@ -1365,6 +1363,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableIfNotExistsTableNameIsQuotedKeyword() throws SqlException {
+        assertModel("create table from (a INT)", "create table if not exists \"from\" (a int)", ExecutionModel.CREATE_TABLE);
+    }
+
+    @Test
     public void testCreateTableIfNotTable() throws Exception {
         assertSyntaxError("create table if not x", 20, "'if not exists' expected");
     }
@@ -2229,6 +2232,29 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "partition by YEAR",
                 80,
                 "min symbol capacity is"
+        );
+    }
+
+    @Test
+    public void testCreateTableTableNameIsQuotedKeyword() throws SqlException {
+        assertModel("create table from (a INT)", "create table \"from\" (a int)", ExecutionModel.CREATE_TABLE);
+    }
+
+    @Test
+    public void testCreateTableTableNameIsUnquotedKeyword() throws Exception {
+        assertException(
+                "create table from (a int)",
+                13,
+                "table name is a keyword, use double quotes, such as \"from\""
+        );
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsTableNameIsUnquotedKeyword() throws Exception {
+        assertException(
+                "create table if not exists from (a int)",
+                27,
+                "table name is a keyword, use double quotes, such as \"from\""
         );
     }
 
@@ -3110,7 +3136,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 21, "unexpected token: *",
+        assertSyntaxError("explain (xyz) select * from x", 14, "table name is a keyword, use double quotes, such as \"select\"",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
