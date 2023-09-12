@@ -153,7 +153,7 @@ public class DatabaseSnapshotAgent implements QuietCloseable {
             // Delete all contents of the snapshot/db dir.
             if (ff.exists(path.slash$())) {
                 path.trimTo(snapshotLen).$();
-                if (ff.rmdir(path) != 0) {
+                if (!ff.rmdir(path)) {
                     throw CairoException.critical(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
                 }
             }
@@ -440,7 +440,7 @@ public class DatabaseSnapshotAgent implements QuietCloseable {
             // Delete snapshot directory to avoid recovery on next restart.
             srcPath.trimTo(snapshotRootLen).$();
             memFile.close();
-            if (ff.rmdir(srcPath) != 0) {
+            if (!ff.rmdir(srcPath)) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove snapshot dir [dir=").put(srcPath)
                         .put(", errno=").put(ff.errno())

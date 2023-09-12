@@ -34,7 +34,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -252,7 +255,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testCannotSetNonBlocking() throws Exception {
         assertMemoryLeak(() -> {
-            final HttpContextConfiguration httpContextConfiguration = new DefaultHttpContextConfiguration();
+            final HttpServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration();
             final NetworkFacade nf = new NetworkFacadeImpl() {
                 int theFd;
 
@@ -279,7 +282,7 @@ public class IODispatcherTest extends AbstractTest {
                             return nf;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics, false).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(serverConfiguration, metrics, false).of(fd, dispatcher1)
             )) {
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
@@ -351,7 +354,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
+                            return new HttpConnectionContext(httpServerConfiguration, metrics, false) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -367,7 +370,6 @@ public class IODispatcherTest extends AbstractTest {
                     }
             )) {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
-
                     @Override
                     public void close() {
                     }
@@ -5118,7 +5120,6 @@ public class IODispatcherTest extends AbstractTest {
                     .withServerKeepAlive(true)
                     .withHttpProtocolVersion("HTTP/1.1 ")
                     .build();
-            QueryCache.configure(httpConfiguration, metrics);
 
             WorkerPool workerPool = new TestWorkerPool(1);
 
@@ -5181,7 +5182,8 @@ public class IODispatcherTest extends AbstractTest {
                             "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
                             "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
                             "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
 
                     int fd = nf.socketTcp(true);
                     try {
@@ -5404,7 +5406,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
+                            return new HttpConnectionContext(httpServerConfiguration, metrics, false) {
                                 @Override
                                 public void close() {
                                     closeCount.incrementAndGet();
@@ -5414,22 +5416,21 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     }
             )) {
-                HttpRequestProcessorSelector selector =
-                        new HttpRequestProcessorSelector() {
-                            @Override
-                            public void close() {
-                            }
+                HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                    @Override
+                    public void close() {
+                    }
 
-                            @Override
-                            public HttpRequestProcessor getDefaultProcessor() {
-                                return new HealthCheckProcessor(httpServerConfiguration);
-                            }
+                    @Override
+                    public HttpRequestProcessor getDefaultProcessor() {
+                        return new HealthCheckProcessor(httpServerConfiguration);
+                    }
 
-                            @Override
-                            public HttpRequestProcessor select(CharSequence url) {
-                                return null;
-                            }
-                        };
+                    @Override
+                    public HttpRequestProcessor select(CharSequence url) {
+                        return null;
+                    }
+                };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
@@ -6376,7 +6377,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
+                            return new HttpConnectionContext(httpServerConfiguration, metrics, false) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -6393,38 +6394,36 @@ public class IODispatcherTest extends AbstractTest {
             )) {
                 StringSink sink = new StringSink();
 
-                final HttpRequestProcessorSelector selector =
+                final HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                    @Override
+                    public void close() {
+                    }
 
-                        new HttpRequestProcessorSelector() {
-                            @Override
-                            public void close() {
-                            }
+                    @Override
+                    public HttpRequestProcessor getDefaultProcessor() {
+                        return null;
+                    }
 
+                    @Override
+                    public HttpRequestProcessor select(CharSequence url) {
+                        return new HttpRequestProcessor() {
                             @Override
-                            public HttpRequestProcessor getDefaultProcessor() {
-                                return null;
-                            }
-
-                            @Override
-                            public HttpRequestProcessor select(CharSequence url) {
-                                return new HttpRequestProcessor() {
-                                    @Override
-                                    public void onHeadersReady(HttpConnectionContext context) {
-                                        HttpRequestHeader headers = context.getRequestHeader();
-                                        sink.put(headers.getMethodLine());
-                                        sink.put("\r\n");
-                                        ObjList<CharSequence> headerNames = headers.getHeaderNames();
-                                        for (int i = 0, n = headerNames.size(); i < n; i++) {
-                                            sink.put(headerNames.getQuick(i)).put(':');
-                                            sink.put(headers.getHeader(headerNames.getQuick(i)));
-                                            sink.put("\r\n");
-                                        }
-                                        sink.put("\r\n");
-                                        requestReceivedLatch.countDown();
-                                    }
-                                };
+                            public void onHeadersReady(HttpConnectionContext context) {
+                                HttpRequestHeader headers = context.getRequestHeader();
+                                sink.put(headers.getMethodLine());
+                                sink.put("\r\n");
+                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                for (int i = 0, n = headerNames.size(); i < n; i++) {
+                                    sink.put(headerNames.getQuick(i)).put(':');
+                                    sink.put(headers.getHeader(headerNames.getQuick(i)));
+                                    sink.put("\r\n");
+                                }
+                                sink.put("\r\n");
+                                requestReceivedLatch.countDown();
                             }
                         };
+                    }
+                };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
@@ -6488,7 +6487,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testSendHttpGetAndSimpleResponse() throws Exception {
-
         LOG.info().$("started testSendHttpGetAndSimpleResponse").$();
 
         final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
@@ -6546,7 +6544,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
+                            return new HttpConnectionContext(httpServerConfiguration, metrics, false) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -6563,43 +6561,40 @@ public class IODispatcherTest extends AbstractTest {
             )) {
                 StringSink sink = new StringSink();
 
-                final HttpRequestProcessorSelector selector =
+                final HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                    @Override
+                    public void close() {
+                    }
 
-                        new HttpRequestProcessorSelector() {
-
+                    @Override
+                    public HttpRequestProcessor getDefaultProcessor() {
+                        return new HttpRequestProcessor() {
                             @Override
-                            public void close() {
+                            public void onHeadersReady(HttpConnectionContext context) {
+                                HttpRequestHeader headers = context.getRequestHeader();
+                                sink.put(headers.getMethodLine());
+                                sink.put("\r\n");
+                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                for (int i = 0, n = headerNames.size(); i < n; i++) {
+                                    sink.put(headerNames.getQuick(i)).put(':');
+                                    sink.put(headers.getHeader(headerNames.getQuick(i)));
+                                    sink.put("\r\n");
+                                }
+                                sink.put("\r\n");
                             }
 
                             @Override
-                            public HttpRequestProcessor getDefaultProcessor() {
-                                return new HttpRequestProcessor() {
-                                    @Override
-                                    public void onHeadersReady(HttpConnectionContext context) {
-                                        HttpRequestHeader headers = context.getRequestHeader();
-                                        sink.put(headers.getMethodLine());
-                                        sink.put("\r\n");
-                                        ObjList<CharSequence> headerNames = headers.getHeaderNames();
-                                        for (int i = 0, n = headerNames.size(); i < n; i++) {
-                                            sink.put(headerNames.getQuick(i)).put(':');
-                                            sink.put(headers.getHeader(headerNames.getQuick(i)));
-                                            sink.put("\r\n");
-                                        }
-                                        sink.put("\r\n");
-                                    }
-
-                                    @Override
-                                    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-                                        context.simpleResponse().sendStatusWithDefaultMessage(200);
-                                    }
-                                };
-                            }
-
-                            @Override
-                            public HttpRequestProcessor select(CharSequence url) {
-                                return null;
+                            public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+                                context.simpleResponse().sendStatusWithDefaultMessage(200);
                             }
                         };
+                    }
+
+                    @Override
+                    public HttpRequestProcessor select(CharSequence url) {
+                        return null;
+                    }
+                };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
@@ -6709,7 +6704,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false) {
+                            return new HttpConnectionContext(httpServerConfiguration, metrics, false) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -6727,7 +6722,6 @@ public class IODispatcherTest extends AbstractTest {
                 StringSink sink = new StringSink();
 
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
-
                     @Override
                     public void close() {
                     }
@@ -7658,7 +7652,7 @@ public class IODispatcherTest extends AbstractTest {
                             return true;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics, false).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, false).of(fd, dispatcher1)
             )) {
 
                 // server will publish status of each request to this queue
@@ -7717,7 +7711,6 @@ public class IODispatcherTest extends AbstractTest {
                             };
 
                             HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
-
                                 @Override
                                 public void close() {
                                 }
@@ -8080,7 +8073,7 @@ public class IODispatcherTest extends AbstractTest {
             boolean serverKeepAlive,
             String httpProtocolVersion
     ) {
-        DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+        return new HttpServerConfigurationBuilder()
                 .withNetwork(nf)
                 .withBaseDir(baseDir)
                 .withSendBufferSize(sendBufferSize)
@@ -8089,8 +8082,6 @@ public class IODispatcherTest extends AbstractTest {
                 .withServerKeepAlive(serverKeepAlive)
                 .withHttpProtocolVersion(httpProtocolVersion)
                 .build();
-        QueryCache.configure(httpConfiguration, metrics);
-        return httpConfiguration;
     }
 
     private HttpQueryTestBuilder getSimpleTester() {

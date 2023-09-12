@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
@@ -138,6 +139,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // insert 'statements' are cached only for the duration of user session
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
+    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
+    private final WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
+    private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
+    private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private final DirectCharSink utf8Sink;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
@@ -187,20 +192,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // cache, which is "typesAndSelectCache". We typically do this after query results are
     // served to client or query errored out due to network issues
     private TypesAndSelect typesAndSelect = null;
-    private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private boolean typesAndSelectIsCached = true;
-    private WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
     private TypesAndUpdate typesAndUpdate = null;
-    private AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private boolean typesAndUpdateIsCached = false;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
     private final PGResumeProcessor resumeComputeCursorSizeQueryRef = this::resumeComputeCursorSizeQuery;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor setResumeComputeCursorSizeExecuteRef = this::setResumeComputeCursorSizeExecute;
-    private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private NamedStatementWrapper wrapper;
 
-    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, NetworkSqlExecutionCircuitBreaker circuitBreaker) {
+    public PGConnectionContext(
+            CairoEngine engine,
+            PGWireConfiguration configuration,
+            SqlExecutionContextImpl sqlExecutionContext,
+            NetworkSqlExecutionCircuitBreaker circuitBreaker
+    ) {
         super(configuration.getFactoryProvider().getPGWireSocketFactory(), configuration.getNetworkFacade(), LOG);
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
@@ -223,11 +229,36 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
-        this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 64
+
+        final Metrics metrics = engine.getMetrics();
+        final boolean enableSelectCache = configuration.isSelectCacheEnabled();
+        final int selectBlockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
+        final int selectRowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
+        this.typesAndSelectCache = new AssociativeCache<>(
+                selectBlockCount,
+                selectRowCount,
+                metrics.pgWire().cachedSelectsGauge(),
+                metrics.pgWire().selectCacheHitCounter(),
+                metrics.pgWire().selectCacheMissCounter()
+        );
+        this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, selectBlockCount * selectRowCount);
+
+        final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
+        final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
+        final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
+        this.typesAndUpdateCache = new AssociativeCache<>(
+                updateBlockCount,
+                updateRowCount,
+                metrics.pgWire().cachedUpdatesGauge()
+        );
+        this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
+
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
-        final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
-        final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
+        final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
+        final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
         this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
+        this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
+
         this.batchCallback = new PGConnectionBatchCallback();
         this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
@@ -342,6 +373,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Misc.free(path);
         Misc.free(utf8Sink);
         Misc.free(authenticator);
+        Misc.free(typesAndSelectCache);
+        Misc.free(typesAndUpdateCache);
+        Misc.free(typesAndInsertCache);
     }
 
     @Override
@@ -363,19 +397,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
     }
 
-    public void handleClientOperation(
-            @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakSelfReturningObjectPool<TypesAndSelect> selectAndTypesPool,
-            @Transient AssociativeCache<TypesAndUpdate> typesAndUpdateCache,
-            @Transient WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool,
-            int operation
-    ) throws Exception {
+    public void handleClientOperation(int operation) throws Exception {
         assert authenticator != null;
-
-        this.typesAndSelectCache = selectAndTypesCache;
-        this.typesAndSelectPool = selectAndTypesPool;
-        this.typesAndUpdateCache = typesAndUpdateCache;
-        this.typesAndUpdatePool = typesAndUpdatePool;
 
         handleTlsRequest();
         if (tlsSessionStarting) {
