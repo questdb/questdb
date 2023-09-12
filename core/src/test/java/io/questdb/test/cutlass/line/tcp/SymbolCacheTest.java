@@ -846,6 +846,11 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
 
         @Override
+        public TableWriter.Row newRowDeferTimestamp() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void rollback() {
         }
 

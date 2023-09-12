@@ -198,7 +198,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int rmdir(Path name) {
+                public boolean rmdir(Path name) {
                     if (Chars.contains(name, "2020-01-01")) {
                         throw CairoException.critical(11).put("could not remove [path=").put(name).put(']');
                     }

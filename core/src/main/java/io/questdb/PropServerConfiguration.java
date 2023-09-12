@@ -247,10 +247,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinMetadataPageSize;
     private final long sqlLatestByRowCount;
     private final int sqlLexerPoolCapacity;
-    private final int sqlMapKeyCapacity;
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
-    private final int sqlMapPageSize;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
@@ -415,7 +413,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgInsertCacheBlockCount;
     private boolean pgInsertCacheEnabled;
     private int pgInsertCacheRowCount;
-    private int pgInsertPoolCapacity;
     private int pgMaxBlobSizeOnQuery;
     private int pgNamedStatementCacheCapacity;
     private int pgNamesStatementPoolCapacity;
@@ -765,12 +762,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgWorkerSleepThreshold = getLong(properties, env, PropertyKey.PG_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.pgDaemonPool = getBoolean(properties, env, PropertyKey.PG_DAEMON_POOL, true);
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
-                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 8);
-                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 8);
+                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 4);
+                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 4);
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
-                this.pgInsertPoolCapacity = getInt(properties, env, PropertyKey.PG_INSERT_POOL_CAPACITY, 16);
                 this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
                 this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
                 this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
@@ -819,10 +815,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, 0.7);
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
-            this.sqlMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY, 2048 * 1024);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 1024);
             this.sqlSmallMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
-            this.sqlMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_PAGE_SIZE, 4 * Numbers.SIZE_1MB);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
@@ -1163,6 +1157,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     @Override
     public FactoryProvider getFactoryProvider() {
+        if (factoryProvider == null) {
+            throw new IllegalStateException("configuration.init() has not been invoked");
+        }
         return factoryProvider;
     }
 
@@ -1569,6 +1566,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(
                     PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY
             );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_MAP_PAGE_SIZE,
+                    PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY,
+                    PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY
+            );
+            registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -1647,19 +1653,21 @@ public class PropServerConfiguration implements ServerConfiguration {
                 KeyT old,
                 ConfigProperty... replacements
         ) {
-            StringBuilder sb = new StringBuilder("Replaced by ");
-            for (int index = 0; index < replacements.length; ++index) {
-                if (index > 0) {
-                    sb.append(index < (replacements.length - 1)
-                            ? ", "
-                            : " and ");
+            if (replacements.length > 0) {
+                final StringBuilder sb = new StringBuilder("Replaced by ");
+                for (int index = 0; index < replacements.length; index++) {
+                    if (index > 0) {
+                        sb.append(index < (replacements.length - 1) ? ", " : " and ");
+                    }
+                    String replacement = replacements[index].getPropertyPath();
+                    sb.append('`');
+                    sb.append(replacement);
+                    sb.append('`');
                 }
-                String replacement = replacements[index].getPropertyPath();
-                sb.append('`');
-                sb.append(replacement);
-                sb.append('`');
+                map.put(old, sb.toString());
+            } else {
+                map.put(old, "No longer used");
             }
-            map.put(old, sb.toString());
         }
 
         protected Optional<ConfigProperty> lookupConfigProperty(String propName) {
@@ -1891,7 +1899,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @Nullable FactoryProvider getFactoryProvider() {
+        public @NotNull FactoryProvider getFactoryProvider() {
             return factoryProvider;
         }
 
@@ -2331,11 +2339,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlMapKeyCapacity() {
-            return sqlMapKeyCapacity;
-        }
-
-        @Override
         public int getSqlMapMaxPages() {
             return sqlMapMaxPages;
         }
@@ -2343,11 +2346,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlMapMaxResizes() {
             return sqlMapMaxResizes;
-        }
-
-        @Override
-        public int getSqlMapPageSize() {
-            return sqlMapPageSize;
         }
 
         @Override
@@ -2734,11 +2732,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInitialBias() {
-            return IOOperation.READ;
-        }
-
-        @Override
         public KqueueFacade getKqueueFacade() {
             return KqueueFacadeImpl.INSTANCE;
         }
@@ -2821,11 +2814,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInitialBias() {
-            return IOOperation.READ;
-        }
-
-        @Override
         public KqueueFacade getKqueueFacade() {
             return KqueueFacadeImpl.INSTANCE;
         }
@@ -2876,6 +2864,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return httpMinIODispatcherConfiguration;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
@@ -2944,6 +2937,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return httpIODispatcherConfiguration;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
@@ -3265,11 +3263,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
         }
-
-        @Override
-        public boolean readOnlySecurityContext() {
-            return httpReadOnlySecurityContext || isReadOnlyInstance;
-        }
     }
 
     private class PropLineTcpReceiverIODispatcherConfiguration implements IODispatcherConfiguration {
@@ -3307,11 +3300,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getHint() {
             return lineTcpNetConnectionHint;
-        }
-
-        @Override
-        public int getInitialBias() {
-            return BIAS_READ;
         }
 
         @Override
@@ -3565,11 +3553,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInsertPoolCapacity() {
-            return pgInsertPoolCapacity;
-        }
-
-        @Override
         public int getMaxBlobSizeOnQuery() {
             return pgMaxBlobSizeOnQuery;
         }
@@ -3740,11 +3723,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getHint() {
             return pgNetConnectionHint;
-        }
-
-        @Override
-        public int getInitialBias() {
-            return BIAS_READ;
         }
 
         @Override

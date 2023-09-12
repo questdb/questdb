@@ -427,7 +427,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic()  {
         forEachNode(QuestDBTestNode::closeCairo);
         circuitBreaker = Misc.free(circuitBreaker);
         nodes.clear();
@@ -469,7 +469,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         if (inputWorkRoot != null) {
             try (Path path = new Path().of(inputWorkRoot).$()) {
                 if (Files.exists(path)) {
-                    Files.rmdir(path);
+                    Files.rmdir(path, true);
                 }
             }
         }
@@ -496,7 +496,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
-        final Rnd rnd = new Rnd(Os.currentTimeMicros(), System.currentTimeMillis());
+        final Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < numberOfIterations; i++) {
             int symbolColIndex = rnd.nextInt(symbolColumnCount);
             SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);
@@ -721,7 +721,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
+    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
@@ -893,8 +893,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
-        assertException(sql, errorPos, contains, false);
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos) throws Exception {
+        assertException(sql, errorPos, "inconvertible types: TIMESTAMP -> INT", false);
     }
 
     protected static void assertFactoryMemoryUsage() {
@@ -1211,8 +1211,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuota(walApplyTableTimeQuota);
     }
 
-    protected static void configOverrideWalMaxLagTxnCount(int walMaxLagTxnCount) {
-        node1.getConfigurationOverrides().setWalMaxLagTxnCount(walMaxLagTxnCount);
+    protected static void configOverrideWalMaxLagTxnCount() {
+        node1.getConfigurationOverrides().setWalMaxLagTxnCount(1);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -1472,14 +1472,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(wal).$();
         final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(wal).$();
         if (ff.exists(dstWal)) {
-            Assert.assertEquals(0, ff.rmdir(dstWal));
+            Assert.assertTrue(ff.rmdir(dstWal));
         }
         Assert.assertEquals(0, ff.mkdir(dstWal, mkdirMode));
         Assert.assertEquals(0, ff.copyRecursive(srcWal, dstWal, mkdirMode));
 
         final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(WalUtils.SEQ_DIR).$();
         final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(WalUtils.SEQ_DIR).$();
-        Assert.assertEquals(0, ff.rmdir(dstTxnLog));
+        Assert.assertTrue(ff.rmdir(dstTxnLog));
         Assert.assertEquals(0, ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode));
 
         dstNode.getEngine().getTableSequencerAPI().openSequencer(srcTableToken);
@@ -1837,7 +1837,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return update(updateSql, sqlExecutionContext, null);
     }
 
-    protected long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+    protected long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             while (true) {
                 try {

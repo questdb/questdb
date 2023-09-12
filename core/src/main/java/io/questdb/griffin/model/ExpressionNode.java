@@ -167,13 +167,17 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && Objects.equals(rhs, that.rhs);
     }
 
-    public boolean hasLeafs() {
-        return lhs != null && rhs != null;
+    public boolean noLeafs() {
+        return lhs == null || rhs == null;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate);
+    }
+
+    public boolean isWildcard() {
+        return type == LITERAL && Chars.endsWith(token, '*');
     }
 
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {

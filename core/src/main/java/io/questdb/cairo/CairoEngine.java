@@ -55,12 +55,14 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Predicate;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
     public static final String BUSY_READER = "busyReader";
+    public static final Predicate<CharSequence> EMPTY_RESOLVER = (tableName) -> false;
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final CairoConfiguration configuration;
@@ -70,6 +72,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MessageBusImpl messageBus;
     private final MetadataPool metadataPool;
     private final Metrics metrics;
+    private final Predicate<CharSequence> protectedTableResolver;
     private final ReaderPool readerPool;
     private final DatabaseSnapshotAgent snapshotAgent;
     private final SqlCompilerPool sqlCompilerPool;
@@ -97,6 +100,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 configuration,
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
+        this.protectedTableResolver = newProtectedTableResolver(configuration);
         this.configuration = configuration;
         this.copyContext = new CopyContext(configuration);
         this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
@@ -135,7 +139,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         try {
             tableNameRegistry = configuration.isReadOnlyInstance() ?
-                    new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
+                    new TableNameRegistryRO(configuration, protectedTableResolver) : new TableNameRegistryRW(configuration, protectedTableResolver);
             tableNameRegistry.reloadTableNameCache();
         } catch (Throwable e) {
             close();
@@ -380,9 +384,8 @@ public class CairoEngine implements Closeable, WriterSource {
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getRoot()).concat(tableToken).$();
-                    int errno;
-                    if ((errno = configuration.getFilesFacade().unlinkOrRemove(path, LOG)) != 0) {
-                        throw CairoException.critical(errno).put("could not remove table [name=").put(tableToken)
+                    if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
+                        throw CairoException.critical(configuration.getFilesFacade().errno()).put("could not remove table [name=").put(tableToken)
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }
                 } finally {
@@ -516,6 +519,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return this.writerPool.getPoolListener();
     }
 
+    public Predicate<CharSequence> getProtectedTableResolver() {
+        return protectedTableResolver;
+    }
+
     public TableReader getReader(CharSequence tableName) {
         return getReader(verifyTableNameForRead(tableName));
     }
@@ -546,6 +553,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
+    }
+
+    public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
+        return writerPool.entries();
     }
 
     public TableReader getReaderWithRepair(TableToken tableToken) {
@@ -656,7 +667,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
     }
 
-    public WalInitializer getWalInitializer() {
+    public @NotNull WalInitializer getWalInitializer() {
         return walInitializer;
     }
 
@@ -723,7 +734,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void load() {
         // Convert tables to WAL/non-WAL, if necessary.
-        final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
+        final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI, protectedTableResolver);
         tableNameRegistry.reloadTableNameCache(convertedTables);
     }
 
@@ -1183,6 +1194,10 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected Predicate<CharSequence> newProtectedTableResolver(CairoConfiguration configuration) {
+        return EMPTY_RESOLVER;
     }
 
     private class EngineMaintenanceJob extends SynchronizedJob {

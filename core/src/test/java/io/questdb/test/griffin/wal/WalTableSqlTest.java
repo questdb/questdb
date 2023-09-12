@@ -100,9 +100,9 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql(
                     "x\tsym\tts\tsym2\n" +
-                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
-                    "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\n" +
-                    "102\tbbb\t2022-02-24T02:00:00.000000Z\tccc\n",
+                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
+                            "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\n" +
+                            "102\tbbb\t2022-02-24T02:00:00.000000Z\tccc\n",
                     tableName
             );
         });
@@ -114,12 +114,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             ddl(
                     "create table " + tableName + " (" +
-                    "x long," +
-                    "sym symbol," +
-                    "str string," +
-                    "ts timestamp," +
-                    "sym2 symbol" +
-                    ") timestamp(ts) partition by DAY WAL"
+                            "x long," +
+                            "sym symbol," +
+                            "str string," +
+                            "ts timestamp," +
+                            "sym2 symbol" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -319,7 +319,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         ddl("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+        ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
         engine.reloadTableNames(convertedTables);
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
@@ -340,7 +340,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
         engine.reloadTableNames(convertedTables2);
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
@@ -368,7 +368,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             ddl("alter table " + tableName + " add col1 int");
             ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
             engine.releaseInactive();
-            ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
             engine.reloadTableNames(convertedTables);
 
             ddl("alter table " + tableName + " add col2 int");
@@ -384,17 +384,18 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             ddl("alter table " + tableName + " set type bypass wal");
             engine.releaseInactive();
-            convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
             engine.reloadTableNames(convertedTables);
 
             ddl("alter table " + tableName + " drop column col2");
             ddl("alter table " + tableName + " add col3 int");
             insert("insert into " + tableName + "(ts, col1, col3) values('2022-02-24T01', 3, 4)");
 
-            assertSql("ts\tcol1\tcol3\n" +
-                    "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
-                    "2022-02-24T01:00:00.000000Z\t1\tNaN\n" +
-                    "2022-02-24T01:00:00.000000Z\t3\t4\n",
+            assertSql(
+                    "ts\tcol1\tcol3\n" +
+                            "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
+                            "2022-02-24T01:00:00.000000Z\t1\tNaN\n" +
+                            "2022-02-24T01:00:00.000000Z\t3\t4\n",
                     "select ts, col1, col3 from " + tableName
             );
         });
@@ -920,10 +921,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public int rmdir(Path path) {
+            public boolean rmdir(Path path) {
                 if (Chars.equals(path, pretendNotExist.get()) && count++ == 0) {
                     super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR).$());
-                    return -1;
+                    return false;
                 }
                 return super.rmdir(path);
             }
@@ -990,7 +991,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDroppedTableHappendIntheMiddleOfWalApplication() throws Exception {
+    public void testDroppedTableHappendInTheMiddleOfWalApplication() throws Exception {
         String tableName = testName.getMethodName();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override

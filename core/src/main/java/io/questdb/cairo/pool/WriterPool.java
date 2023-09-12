@@ -41,6 +41,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
+import java.util.Map;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of
@@ -105,6 +106,10 @@ public class WriterPool extends AbstractPool {
             }
         }
         return count;
+    }
+
+    public Map<CharSequence, Entry> entries() {
+        return entries;
     }
 
     /**
@@ -619,7 +624,7 @@ public class WriterPool extends AbstractPool {
         return removed;
     }
 
-    private class Entry implements LifecycleManager {
+    public class Entry implements LifecycleManager {
         private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
@@ -645,6 +650,23 @@ public class WriterPool extends AbstractPool {
                 writer = null;
             }
             return w;
+        }
+
+        public long getLastReleaseTime() {
+            return lastReleaseTime;
+        }
+
+
+        public long getOwnerThread() {
+            return owner;
+        }
+
+        public String getOwnershipReason() {
+            return ownershipReason;
+        }
+
+        public TableToken getTableToken() {
+            return writer != null ? writer.getTableToken() : null;
         }
     }
 }

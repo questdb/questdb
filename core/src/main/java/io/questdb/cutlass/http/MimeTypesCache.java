@@ -46,7 +46,7 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
             Pattern pattern = Pattern.compile(regex);
 
             while (line != null) {
-                if (line.length() > 0 && line.charAt(0) != '#') {
+                if (!line.isEmpty() && line.charAt(0) != '#') {
                     Matcher matcher = pattern.matcher(line);
                     String l = matcher.replaceAll("\t");
                     String[] tuple = l.split("\t");

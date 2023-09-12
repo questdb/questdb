@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
@@ -63,11 +62,6 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         this.simpleMapValue = simpleMapValue;
         record.of(simpleMapValue);
         this.peeker = peeker;
-    }
-
-    @Override
-    public Record getRecord() {
-        return record;
     }
 
     @Override

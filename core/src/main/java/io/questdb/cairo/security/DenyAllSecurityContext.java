@@ -38,12 +38,7 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
-    public void authorizeShowUser(CharSequence userName) {
-        throw CairoException.nonCritical().put("permission denied");
-    }
-
-    @Override
-    public void authorizeShowUsers() {
+    public void authorizeSelectOnAnyColumn(TableToken tableToken) {
         throw CairoException.nonCritical().put("permission denied");
     }
 
@@ -54,6 +49,11 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
 
     @Override
     public void authorizeShowGroups(CharSequence userName) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowPermissions(CharSequence entityName) {
         throw CairoException.nonCritical().put("permission denied");
     }
 
@@ -73,7 +73,12 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
-    public void authorizeShowPermissions(CharSequence entityName) {
+    public void authorizeShowUser(CharSequence userName) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowUsers() {
         throw CairoException.nonCritical().put("permission denied");
     }
 }

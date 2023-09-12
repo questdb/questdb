@@ -58,7 +58,7 @@ public class WalListenerTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic()  {
         engine.setWalListener(DefaultWalListener.INSTANCE);
         if (!listener.events.isEmpty()) {
             System.err.println("Unexpected or unasserted WalListener events:");
@@ -145,8 +145,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     releaseInactive(engine);
 
                     // Empty segment does not generate close event
-                    Assert.assertEquals(0, listener.events.size()
-                    );
+                    Assert.assertEquals(0, listener.events.size());
                 }
             }
 
@@ -258,10 +257,10 @@ public class WalListenerTest extends AbstractCairoTest {
         }
 
         @Override
-        public void segmentClosed(TableToken tabletoken, long txn, int walId, int segmentId) {
+        public void segmentClosed(TableToken tableToken, long txn, int walId, int segmentId) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.SEGMENT_CLOSED,
-                    tabletoken,
+                    tableToken,
                     txn,
                     0,
                     walId,
@@ -319,8 +318,8 @@ public class WalListenerTest extends AbstractCairoTest {
         public final int segmentId;
         public final int segmentTxn;
         public final TableToken tableToken;
-        public final long txn;
         public final long timestamp;
+        public final long txn;
         public final WalListenerEventType type;
         public final int walId;
 

@@ -55,7 +55,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableResume() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(2, metrics, engine -> {
+        testJsonQuery(metrics, engine -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -72,11 +72,7 @@ public class HttpAlterTableTest extends AbstractTest {
                     "FROM test t1 JOIN test t2 \n" +
                     "ON t1.id = t2.id\n" +
                     "LIMIT 1";
-            sendAndReceiveBasicSelect(sql, "\r\n" +
-                    "0139\r\n" +
-                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"timestamp\":1,\"count\":1}\r\n" +
-                    "00\r\n" +
-                    "\r\n");
+            sendAndReceiveBasicSelect(sql);
 
             // RESUME
             sendAndReceiveDdl("ALTER TABLE test RESUME WAL");
@@ -86,7 +82,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableSetType() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(2, metrics, engine -> {
+        testJsonQuery(metrics, engine -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -102,11 +98,7 @@ public class HttpAlterTableTest extends AbstractTest {
                     "FROM test t1 JOIN test t2 \n" +
                     "ON t1.id = t2.id\n" +
                     "LIMIT 1";
-            sendAndReceiveBasicSelect(sql, "\r\n" +
-                    "0139\r\n" +
-                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"timestamp\":1,\"count\":1}\r\n" +
-                    "00\r\n" +
-                    "\r\n");
+            sendAndReceiveBasicSelect(sql);
 
             // convert table to WAL
             sendAndReceiveDdl("ALTER TABLE test SET TYPE WAL");
@@ -116,7 +108,7 @@ public class HttpAlterTableTest extends AbstractTest {
     @Test
     public void testAlterTableSquashPartition() throws Exception {
         Metrics metrics = Metrics.enabled();
-        testJsonQuery(2, metrics, engine -> {
+        testJsonQuery(metrics, engine -> {
             // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -137,7 +129,7 @@ public class HttpAlterTableTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendAndReceiveBasicSelect(String rawSelect, String expectedBody) throws InterruptedException {
+    private static void sendAndReceiveBasicSelect(String rawSelect) {
         sendAndReceive(
                 "GET /query?query=" + HttpUtils.urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
@@ -157,11 +149,15 @@ public class HttpAlterTableTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
-                        expectedBody
+                        "\r\n" +
+                        "0139\r\n" +
+                        "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
         );
     }
 
-    private static void sendAndReceiveDdl(String rawDdl) throws InterruptedException {
+    private static void sendAndReceiveDdl(String rawDdl) {
         sendAndReceive(
                 "GET /query?query=" + HttpUtils.urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
@@ -186,7 +182,7 @@ public class HttpAlterTableTest extends AbstractTest {
         );
     }
 
-    private void testJsonQuery(int workerCount, Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
+    private void testJsonQuery(Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
@@ -195,7 +191,7 @@ public class HttpAlterTableTest extends AbstractTest {
             }
         };
         new HttpQueryTestBuilder()
-                .withWorkerCount(workerCount)
+                .withWorkerCount(2)
                 .withTempFolder(root)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withMetrics(metrics)

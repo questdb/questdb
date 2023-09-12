@@ -101,7 +101,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.join;
     exports io.questdb.griffin.engine.ops;
     exports io.questdb.cairo.sql.async;
-    exports io.questdb.client;
+    exports io.questdb.cutlass.http.client;
     exports io.questdb.griffin.engine.functions.long128;
     exports io.questdb.cairo.wal;
     exports io.questdb.cairo.wal.seq;
@@ -109,6 +109,7 @@ open module io.questdb {
     exports io.questdb.cutlass.line.tcp.auth;
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
+    exports io.questdb.client;
 
     provides FunctionFactory with
             // test functions
@@ -677,7 +678,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedAgeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgIsInRecoveryFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgIsInRecoveryFunctionFactory,
@@ -709,6 +709,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.TablePartitionsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory,
             io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory,
+            io.questdb.griffin.engine.functions.table.WriterPoolFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory,
             io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory,
 

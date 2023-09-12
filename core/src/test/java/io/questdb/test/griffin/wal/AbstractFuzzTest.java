@@ -26,6 +26,7 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -47,7 +48,10 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -394,7 +398,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
                 forceReleaseTableWriter(applyRnd);
-                purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+                purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob);
             }
         }
     }
@@ -446,7 +450,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
                 while (done.get() == 0 && errors.isEmpty()) {
                     int reader = runRnd.nextInt(tableCount);
-                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
+                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob);
                     Os.sleep(50);
                 }
             }
@@ -497,8 +501,19 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 } else {
                     writer.commit();
                 }
-                purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
+                purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob);
             }
+        }
+    }
+
+    static void assertCounts(String tableNameWal, String timestampColumnName) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.assertEquals(
+                    compiler,
+                    sqlExecutionContext,
+                    "select count() from " + tableNameWal,
+                    "select count() from " + tableNameWal + " where " + timestampColumnName + " > '1970-01-01' or " + timestampColumnName + " < '2100-01-01'"
+            );
         }
     }
 
@@ -510,8 +525,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return 1 + rnd.nextInt(2);
     }
 
-    protected static void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
-        if (reloadRnd.nextDouble() < realoadThreashold) {
+    protected static void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob) {
+        if (reloadRnd.nextDouble() < 0.25) {
             purgeJob.run(0);
             reloadReader(reloadRnd, rdr1, "1");
             reloadReader(reloadRnd, rdr2, "2");
@@ -526,6 +541,30 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                     if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
                             && metadata.isColumnIndexed(columnIndex)) {
                         checkIndexRandomValueScan(tableNameNoWal, tableNameWal, rnd, reader.size(), metadata.getColumnName(columnIndex));
+                    }
+                }
+            }
+        }
+    }
+
+    protected void assertStringColDensity(String tableNameWal) {
+        try (TableReader reader = getReader(tableNameWal)) {
+            TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                int columnType = metadata.getColumnType(i);
+                if (ColumnType.isVariableLength(columnType)) {
+                    for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
+                        reader.openPartition(partitionIndex);
+                        int columnBase = reader.getColumnBase(partitionIndex);
+                        MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
+                        MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
+
+                        long colTop = reader.getColumnTop(columnBase, i);
+                        long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
+                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dCol.getPageAddress(0), columnType)) {
+                            Assert.fail("var column " + reader.getMetadata().getColumnName(i)
+                                    + " is not dense, .i file record size is different from .d file record size");
+                        }
                     }
                 }
             }
@@ -627,9 +666,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             createInitialTable(tableNameNoWal, false, initialRowCount);
 
             ObjList<FuzzTransaction> transactions;
+            String timestampColumnName;
             try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
                 TableReaderMetadata metadata = reader.getMetadata();
-
+                timestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
                 long end = start + partitionCount * Timestamps.DAY_MICROS;
                 transactions = generateSet(rnd, metadata, start, end, tableNameNoWal);
@@ -663,6 +703,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                     assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
                     LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
                 }
+
+                assertCounts(tableNameWal, timestampColumnName);
+                assertCounts(tableNameNoWal, timestampColumnName);
+                assertStringColDensity(tableNameWal);
             } finally {
                 sharedWorkerPool.halt();
             }

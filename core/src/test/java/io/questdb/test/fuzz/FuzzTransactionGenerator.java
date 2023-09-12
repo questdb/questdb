@@ -121,6 +121,7 @@ public class FuzzTransactionGenerator {
                 }
                 long size = (maxTimestamp - minTimestamp) / transactionCount;
                 if (o3) {
+                    //noinspection lossy-conversions
                     size *= rnd.nextDouble();
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);

@@ -35,7 +35,6 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -255,7 +254,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public @NotNull FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
 
@@ -698,11 +697,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlMapKeyCapacity() {
-        return 128;
-    }
-
-    @Override
     public int getSqlMapMaxPages() {
         return 1024;
     }
@@ -710,11 +704,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlMapMaxResizes() {
         return 64;
-    }
-
-    @Override
-    public int getSqlMapPageSize() {
-        return 16 * Numbers.SIZE_1MB;
     }
 
     @Override

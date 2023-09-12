@@ -76,10 +76,6 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
-        }
-
-        @Override
         public long getTimestamp(Record rec) {
             final long result = next;
             next += longIncrement.getLong(rec);
@@ -90,11 +86,6 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             longIncrement.init(symbolTableSource, executionContext);
             next = start;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override
@@ -142,11 +133,6 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             start.init(symbolTableSource, executionContext);
             longIncrement.init(symbolTableSource, executionContext);
             next = 0;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override

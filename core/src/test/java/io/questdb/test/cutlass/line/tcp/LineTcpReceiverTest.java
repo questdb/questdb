@@ -711,19 +711,21 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             mayDrainWalQueue();
 
-            String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
-                    "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
-                    "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
-                    "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tNaN\n" +
-                    "west4\tNaN\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
-                    "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tNaN\n";
-            assertTable(expected, meteorology);
+            assertEventually(() -> {
+                String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
+                        "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
+                        "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
+                        "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tNaN\n" +
+                        "west4\tNaN\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
+                        "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tNaN\n";
+                assertTable(expected, meteorology);
 
-            expected = "location\tsource\ttemp\ttimestamp\n" +
-                    "east5\tsensor2\t50.0\t2016-06-13T17:43:50.100800Z\n" +
-                    "west6\tsensor3\t60.0\t2016-06-13T17:43:50.100900Z\n" +
-                    "north\tsensor4\t70.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, weather);
+                expected = "location\tsource\ttemp\ttimestamp\n" +
+                        "east5\tsensor2\t50.0\t2016-06-13T17:43:50.100800Z\n" +
+                        "west6\tsensor3\t60.0\t2016-06-13T17:43:50.100900Z\n" +
+                        "north\tsensor4\t70.0\t2016-06-13T17:43:50.101000Z\n";
+                assertTable(expected, weather);
+            });
 
         }, false, 250);
     }
@@ -1561,8 +1563,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int rmdir(Path path) {
-                    return 5;
+                public boolean rmdir(Path path) {
+                    return false;
                 }
             };
 

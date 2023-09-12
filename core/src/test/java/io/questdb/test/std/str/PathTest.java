@@ -264,10 +264,10 @@ public class PathTest {
         Path path = Path.getThreadLocal(root);
         path.concat("banana");
         Assert.assertEquals(7, path.length());
-        Assert.assertEquals("" + Files.SEPARATOR + "banana", path.toString());
+        Assert.assertEquals(Files.SEPARATOR + "banana", path.toString());
         path.$();
         Assert.assertEquals(7, path.length());
-        Assert.assertEquals("" + Files.SEPARATOR + "banana", path.toString());
+        Assert.assertEquals(Files.SEPARATOR + "banana", path.toString());
     }
 
     @Test

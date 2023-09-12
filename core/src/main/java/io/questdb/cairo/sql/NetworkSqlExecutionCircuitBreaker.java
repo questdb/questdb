@@ -93,7 +93,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void close() {
-        buffer = Unsafe.free(buffer, bufferSize, this.memoryTag);
+        buffer = Unsafe.free(buffer, bufferSize, memoryTag);
         fd = -1;
     }
 
@@ -149,15 +149,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.timeout = timeout;
     }
 
-    @Override
-    public void statefulThrowExceptionIfTripped() {
-        if (testCount < throttle) {
-            testCount++;
-        } else {
-            statefulThrowExceptionIfTrippedNoThrottle();
-        }
-    }
-
     public void statefulThrowExceptionIfTimeout() {
         // Same as statefulThrowExceptionIfTripped but does not check the connection state.
         // Useful to check timeout before trying to send something on the connection.
@@ -166,6 +157,15 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         } else {
             testCount = 0;
             testTimeout();
+        }
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTripped() {
+        if (testCount < throttle) {
+            testCount++;
+        } else {
+            statefulThrowExceptionIfTrippedNoThrottle();
         }
     }
 

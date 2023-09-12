@@ -1192,7 +1192,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "xyz\t1\t42\n",
                         factory,
                         false,
-                        false
+                        true
                 );
             }
         });

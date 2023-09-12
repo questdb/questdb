@@ -131,7 +131,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         record = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
-                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
+                httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
             } else {
                 recordCursorFactory.close();
             }
@@ -322,36 +322,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private static void putGeoHashStringByteValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
         byte l = rec.getGeoByte(col);
-        putGeoHashStringValue(socket, l, bitFlags);
+        GeoHashes.append(l, bitFlags, socket);
     }
 
     private static void putGeoHashStringIntValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
         int l = rec.getGeoInt(col);
-        putGeoHashStringValue(socket, l, bitFlags);
+        GeoHashes.append(l, bitFlags, socket);
     }
 
     private static void putGeoHashStringLongValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
         long l = rec.getGeoLong(col);
-        putGeoHashStringValue(socket, l, bitFlags);
+        GeoHashes.append(l, bitFlags, socket);
     }
 
     private static void putGeoHashStringShortValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
         short l = rec.getGeoShort(col);
-        putGeoHashStringValue(socket, l, bitFlags);
-    }
-
-    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int bitFlags) {
-        if (value == GeoHashes.NULL) {
-            socket.put("null");
-        } else {
-            socket.put('\"');
-            if (bitFlags < 0) {
-                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
-            } else {
-                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
-            }
-            socket.put('\"');
-        }
+        GeoHashes.append(l, bitFlags, socket);
     }
 
     private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
@@ -521,7 +507,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private void doQueryMetadataSuffix(HttpChunkedResponseSocket socket) {
         queryState = QUERY_METADATA_SUFFIX;
         socket.bookmark();
-        socket.put("],\"dataset\":[");
+        socket.put("],\"timestamp\":").put(queryTimestampIndex);
+        socket.put(",\"dataset\":[");
     }
 
     private boolean doQueryNextRecord() {
@@ -657,12 +644,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponseSocket socket,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // we no longer need cursor when we reached query suffix
+        // closing cursor here guarantees that by the time http client finished reading response the table
+        // is released
+        cursor = Misc.free(cursor);
         queryState = QUERY_SUFFIX;
         if (count > -1) {
             logTimings();
             socket.bookmark();
             socket.put(']');
-            socket.put(',').putQuoted("timestamp").put(':').put(queryTimestampIndex);
             socket.put(',').putQuoted("count").put(':').put(count);
             if (timings) {
                 socket.put(',').putQuoted("timings").put(':')
@@ -815,10 +805,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .putQuoted("position").put(':').put(position)
                 .put('}');
         socket.sendChunk(true);
-    }
-
-    boolean noCursor() {
-        return cursor == null;
     }
 
     boolean of(
