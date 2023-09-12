@@ -50,13 +50,20 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
         (JNIEnv *e, jclass cl, jboolean blocking) {
 
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s && !blocking) {
-        u_long mode = 1;
-        if (ioctlsocket(s, FIONBIO, &mode) != 0) {
-            SaveLastError();
-            closesocket(s);
-            return -1;
+    if (s) {
+        if (!blocking) {
+            u_long mode = 1;
+            if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+                SaveLastError();
+                closesocket(s);
+                return -1;
+            }
         }
+        tcp_keepalive keepaliveParams;
+        DWORD ret = 0;
+        keepaliveParams.onoff = 1;
+        keepaliveParams.keepaliveinterval = keepaliveParams.keepalivetime = 30000;
+        WSAIoctl(sockfd, SIO_KEEPALIVE_VALS, &keepaliveParams, sizeof(keepaliveParams), NULL, 0, &ret, NULL, NULL);
     } else {
         SaveLastError();
     }

@@ -58,13 +58,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
         }
 
         // enable TCP keepalive probes, otherwise firewalls and load balancers may drop connections
-        // during a period of inactivity. this is best effort only, hence we ignore errors
+        // during a period of inactivity
         set_int_sockopt(fd, SOL_SOCKET, SO_KEEPALIVE, 1);
+        int idle_sec = 30;
         #ifdef __linux__
-            // send TCP probes every 30 seconds after 30 seconds of inactivity
-            // these options are Linux specific :-(
-            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, 30);
-            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, 30);
+            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle_sec);
+            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, idle_sec);
+        #endif
+        #ifdef __APPLE__
+            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec);
         #endif
     }
     return fd;
