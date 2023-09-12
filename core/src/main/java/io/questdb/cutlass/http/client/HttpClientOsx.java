@@ -67,6 +67,6 @@ public class HttpClientOsx extends HttpClient {
 
     @Override
     protected void setupIoWait() {
-        // noop on OSX
+        // no-op on OSX
     }
 }
