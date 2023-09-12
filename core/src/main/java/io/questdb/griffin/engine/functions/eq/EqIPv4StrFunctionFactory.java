@@ -53,6 +53,7 @@ public class EqIPv4StrFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
+
         return EqIPv4FunctionFactory.createHalfConstantFunc(b, a);
     }
 }
