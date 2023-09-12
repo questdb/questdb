@@ -1138,9 +1138,33 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void mayRollSegmentOnNextRow() {
-        if (!rollSegmentOnNextRow && (segmentRowCount >= configuration.getWalSegmentRolloverRowCount()) || lastSegmentTxn > Integer.MAX_VALUE - 2) {
-            rollSegmentOnNextRow = true;
+        if (rollSegmentOnNextRow) {
+            return;
         }
+        rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
+                || (getLastSegmentSize() > configuration.getWalSegmentRolloverSize())
+                || (lastSegmentTxn > Integer.MAX_VALUE - 2);
+    }
+
+    private long getLastSegmentSize() {
+        long tally = 0;
+        for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
+            final MemoryMA column = columns.getQuick(colIndex);
+            if ((column != null) && !(column instanceof NullMemory)) {
+                tally += column.getAppendOffset();
+            }
+        }
+
+        // TODO [amunra]: Temporary, remove me.
+        if (tally > configuration.getWalSegmentRolloverSize()) {
+            LOG.info().$("large segment size detected ")
+                    .$("[table=").$(tableToken)
+                    .$(", wal=").$(walId)
+                    .$(", segment=").$(segmentId)
+                    .$(", size=").$(tally)
+                    .I$();
+        }
+        return tally;
     }
 
     private void mkWalDir() {

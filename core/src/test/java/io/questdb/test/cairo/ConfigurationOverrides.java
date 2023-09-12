@@ -133,6 +133,8 @@ public interface ConfigurationOverrides {
 
     long getWalSegmentRolloverRowCount();
 
+    long getWalSegmentRolloverSize();
+
     int getWalTxnNotificationQueueCapacity();
 
     long getWriterAsyncCommandBusyWaitTimeout();
@@ -270,6 +272,8 @@ public interface ConfigurationOverrides {
     void setWalPurgeInterval(long walPurgeInterval);
 
     void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount);
+
+    void setWalSegmentRolloverSize(long walSegmentRolloverSize);
 
     void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity);
 

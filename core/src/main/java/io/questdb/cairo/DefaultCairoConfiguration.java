@@ -857,6 +857,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalSegmentRolloverSize() {
+        return 1024 * 1024 * 1024;  // 1GiB
+    }
+
+    @Override
     public double getWalSquashUncommittedRowsMultiplier() {
         return 20;
     }

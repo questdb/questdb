@@ -852,6 +852,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWalSegmentRolloverSize() {
+        return delegate.getWalSegmentRolloverSize();
+    }
+
+    @Override
     public double getWalSquashUncommittedRowsMultiplier() {
         return delegate.getWalSquashUncommittedRowsMultiplier();
     }
