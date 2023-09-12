@@ -269,24 +269,25 @@ public class FuzzRunner {
 
     public TableToken createInitialTable(String tableName1, boolean isWal, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
-        compile("create table " + tableName1 + " as (" +
-                "select x as c1, " +
-                " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
-                " cast(x as int) c3," +
-                " rnd_bin() c4," +
-                " to_long128(3 * x, 6 * x) c5," +
-                " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
-                " rnd_boolean() bool1 " +
-                " from long_sequence(" + rowCount + ")" +
-                "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
-        // force few column tops
-        compile("alter table " + tableName1 + " add column long_top long");
-        compile("alter table " + tableName1 + " add column str_top long");
-        compile("alter table " + tableName1 + " add column sym_top symbol index");
-        compile("alter table " + tableName1 + " add column ip4 ipv4");
-
+        if (engine.getTableTokenIfExists(tableName1) == null) {
+            compile("create table " + tableName1 + " as (" +
+                    "select x as c1, " +
+                    " rnd_symbol('AB', 'BC', 'CD') c2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                    " cast(x as int) c3," +
+                    " rnd_bin() c4," +
+                    " to_long128(3 * x, 6 * x) c5," +
+                    " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
+                    " rnd_boolean() bool1 " +
+                    " from long_sequence(" + rowCount + ")" +
+                    "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+            // force few column tops
+            compile("alter table " + tableName1 + " add column long_top long");
+            compile("alter table " + tableName1 + " add column str_top long");
+            compile("alter table " + tableName1 + " add column sym_top symbol index");
+            compile("alter table " + tableName1 + " add column ip4 ipv4");
+        }
         return engine.verifyTableName(tableName1);
     }
 
