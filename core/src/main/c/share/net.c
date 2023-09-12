@@ -43,17 +43,29 @@ int set_int_sockopt(int fd, int level, int opt, int value) {
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
         (JNIEnv *e, jclass cl, jboolean blocking) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd > 0 && !blocking) {
-        if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
-            close(fd);
-            return -1;
+    if (fd > 0) {
+        if (!blocking) {
+            if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
+                close(fd);
+                return -1;
+            }
+
+            int oni = 1;
+            if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *) &oni, sizeof(oni)) < 0) {
+                close(fd);
+                return -1;
+            }
         }
 
-        int oni = 1;
-        if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *) &oni, sizeof(oni)) < 0) {
-            close(fd);
-            return -1;
-        }
+        // enable TCP keepalive probes, otherwise firewalls and load balancers may drop connections
+        // during a period of inactivity. this is best effort only, hence we ignore errors
+        set_int_sockopt(fd, SOL_SOCKET, SO_KEEPALIVE, 1);
+        #ifdef __linux__
+            // send TCP probes every 30 seconds after 30 seconds of inactivity
+            // these options are Linux specific :-(
+            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, 30);
+            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, 30);
+        #endif
     }
     return fd;
 }
