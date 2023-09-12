@@ -607,7 +607,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // Give up and close the connection.
             throw ServerDisconnectException.INSTANCE;
         }
-        sendException(socket, 0, message, state.getQuery(), configuration.getKeepAliveHeader());
+        int position = 0;
+        if (e instanceof CairoException) {
+            position = ((CairoException) e).getPosition();
+        }
+
+        sendException(socket, position, message, state.getQuery(), configuration.getKeepAliveHeader());
     }
 
     private boolean parseUrl(
