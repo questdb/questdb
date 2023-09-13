@@ -34,10 +34,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 import static io.questdb.std.Numbers.*;
 
+//second arg is contained within or equals first arg
 public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
 
     @Override
@@ -58,36 +60,24 @@ public class NegContainsEqIPv4FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return createHalfConstantFunc(args.getQuick(1), args.getQuick(0));
+        return createHalfConstantFunc(args.getQuick(1), args.getQuick(0), argPositions.getQuick(0));
     }
 
-    private Function createHalfConstantFunc(Function varFunc, Function constFunc) throws SqlException {
+    private Function createHalfConstantFunc(Function varFunc, Function constFunc, int constFuncPos) throws SqlException {
         CharSequence constValue = constFunc.getStr(null);
 
         if (constValue == null) {
             return new NegContainsEqIPv4FunctionFactory.NullCheckFunc(varFunc);
         }
 
-        int subnet = getIPv4Subnet(constValue);
-        int netmask = getIPv4Netmask(constValue);
-
-        //catches negative netmask
-        if (subnet == -2 && netmask == -2) {
-            throw SqlException.$(18, "invalid argument: ").put(constValue);
+        try {
+            long subnetAndNetmask = getIPv4Subnet(constValue);
+            int subnet = (int) (subnetAndNetmask >> 32);
+            int netmask = (int) (subnetAndNetmask);
+            return new NegContainsEqIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet & netmask, netmask);
+        } catch (NumericException ne) {
+            throw SqlException.$(constFuncPos, "invalid argument: ").put(constValue);
         }
-        //arg is invalid OR a subnet (-2 used as sentinel because -1 is valid (0xffffffff))
-        else if (subnet == -2) {
-            // check if arg is subnet
-            subnet = parseSubnet(constValue);
-
-            // arg is not a valid subnet/ip address
-            if (subnet == -2) {
-                throw SqlException.$(18, "invalid argument: ").put(constValue);
-            } else {
-                return new NegContainsEqIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);
-            }
-        }
-        return new NegContainsEqIPv4FunctionFactory.ConstCheckFunc(varFunc, subnet, netmask);
     }
 
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
