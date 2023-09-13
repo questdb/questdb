@@ -3169,6 +3169,11 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
+                public boolean isInUse(Path path) {
+                    return false;
+                }
+
+                @Override
                 public boolean isTruncateFilesOnClose() {
                     return true;
                 }

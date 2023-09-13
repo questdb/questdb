@@ -96,10 +96,11 @@ public class ServerMainTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 Assert.assertNotNull(serverMain.getConfiguration());
                 Assert.assertNotNull(serverMain.getEngine());
-                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+                Assert.assertNull(serverMain.getWorkerPoolManager());
                 Assert.assertFalse(serverMain.hasStarted());
                 Assert.assertFalse(serverMain.hasBeenClosed());
                 serverMain.start();
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
             }
         });
     }

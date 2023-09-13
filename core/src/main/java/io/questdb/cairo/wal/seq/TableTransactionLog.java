@@ -318,7 +318,6 @@ public class TableTransactionLog implements Closeable {
                 txnMetaIndexFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
                 long txnCount = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
                 if (txnCount > -1L) {
-
                     long maxStructureVersion = ff.readNonNegativeLong(txnFd, HEADER_SIZE + (txnCount - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
                     if (maxStructureVersion > structureVersionLo) {
                         txnMetaOffset = ff.readNonNegativeLong(txnMetaIndexFd, structureVersionLo * Long.BYTES);
