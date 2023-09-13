@@ -858,7 +858,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWalSegmentRolloverSize() {
-        return 1024 * 1024 * 1024;  // 1GiB
+        return 0;  // watermark level disabled.
     }
 
     @Override

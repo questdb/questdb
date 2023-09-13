@@ -2502,6 +2502,81 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRolloverSegmentSizeInt() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final TableToken tableToken;
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                tableToken = createTable(model);
+            }
+
+            final long rolloverSize = 1024;
+            configOverrideWalSegmentRolloverSize(rolloverSize);  // 1 KiB
+
+            // Size of all columns per row: 4 bytes for INT, 16 bytes for timestamp (8 bytes index + 8 bytes timestamp).
+            final long bytesPerRow = 4 + 16;
+
+            // The maximum number of rows we can insert before we trigger the size-based rollover.
+            final long nonBreachRowCount = rolloverSize / bytesPerRow;
+
+            long timestamp = 1694590000000000L;
+            int value = 0;
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                // Insert the one less than the maximum number of rows to cause a roll-over at the next row.
+                for (long rowIndex = 0; rowIndex < (nonBreachRowCount - 1); ++rowIndex, timestamp += 1000, value += 1) {
+                    final TableWriter.Row row = walWriter.newRow(timestamp);
+                    row.putInt(0, value);
+                    row.append();
+                }
+                walWriter.commit();
+
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                // Inserting the next row is still within limit: Will not roll over.
+                {
+                    final TableWriter.Row row = walWriter.newRow(timestamp);
+                    row.putInt(0, value);
+                    row.append();
+                    timestamp += 1000;
+                    ++value;
+                }
+                walWriter.commit();
+
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                // We're now over the limit, but the logic is to roll over the row _after_ this one.
+                {
+                    final TableWriter.Row row = walWriter.newRow(timestamp);
+                    row.putInt(0, value);
+                    row.append();
+                    timestamp += 1000;
+                    ++value;
+                }
+                walWriter.commit();
+
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                // finally, a row rolled over.
+                {
+                    final TableWriter.Row row = walWriter.newRow(timestamp);
+                    row.putInt(0, value);
+                    row.append();
+                }
+                walWriter.commit();
+
+                assertSegmentExistence(true, tableName, 1, 1);
+            }
+        });
+    }
+
+    @Test
     public void testSameWalAfterEngineCleared() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -3039,13 +3114,13 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void rollbackDirectory(Path path) {
-                    // do nothing
+                public boolean isTruncateFilesOnClose() {
+                    return true;
                 }
 
                 @Override
-                public boolean isTruncateFilesOnClose() {
-                    return true;
+                public void rollbackDirectory(Path path) {
+                    // do nothing
                 }
             });
 

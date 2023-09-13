@@ -509,7 +509,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         walApplyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_ENABLED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
-        this.walSegmentRolloverSize = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 1024 * 1024 * 1024L);  // 1GiB
+        this.walSegmentRolloverSize = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 0);  // disabled by default.
+        if ((this.walSegmentRolloverSize != 0) && (this.walSegmentRolloverSize < 1024)) {  // 1KiB segments minimum
+            throw CairoException.critical(0).put("cairo.wal.segment.rollover.size must be 0 (disabled) or >= 1024 (1KiB)");
+        }
         this.walWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, Numbers.SIZE_1MB));
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 20.0);
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, Math.max((int) Math.round(walSquashUncommittedRowsMultiplier), 1));
@@ -1586,10 +1589,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_MAP_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY,
-                    PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY);
+                    PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY
+            );
         }
 
         public ValidationResult validate(Properties properties) {

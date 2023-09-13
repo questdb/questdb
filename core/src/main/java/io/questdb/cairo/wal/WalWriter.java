@@ -107,6 +107,7 @@ public class WalWriter implements TableWriterAPI {
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
     private int walLockFd = -1;
+
     public WalWriter(
             CairoConfiguration configuration,
             TableToken tableToken,
@@ -1081,6 +1082,30 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
+    private long getLastSegmentSize() {
+        if (configuration.getWalSegmentRolloverSize() == 0) {
+            return Long.MAX_VALUE;
+        }
+        long tally = 0;
+        for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
+            final MemoryMA column = columns.getQuick(colIndex);
+            if ((column != null) && !(column instanceof NullMemory)) {
+                tally += column.getAppendOffset();
+            }
+        }
+
+        // TODO [amunra]: Temporary to debug test cases, remove me.
+        if (tally > configuration.getWalSegmentRolloverSize()) {
+            LOG.info().$("large segment size detected ")
+                    .$("[table=").$(tableToken)
+                    .$(", wal=").$(walId)
+                    .$(", segment=").$(segmentId)
+                    .$(", size=").$(tally)
+                    .I$();
+        }
+        return tally;
+    }
+
     private MemoryMA getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
@@ -1144,27 +1169,6 @@ public class WalWriter implements TableWriterAPI {
         rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
                 || (getLastSegmentSize() > configuration.getWalSegmentRolloverSize())
                 || (lastSegmentTxn > Integer.MAX_VALUE - 2);
-    }
-
-    private long getLastSegmentSize() {
-        long tally = 0;
-        for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
-            final MemoryMA column = columns.getQuick(colIndex);
-            if ((column != null) && !(column instanceof NullMemory)) {
-                tally += column.getAppendOffset();
-            }
-        }
-
-        // TODO [amunra]: Temporary, remove me.
-        if (tally > configuration.getWalSegmentRolloverSize()) {
-            LOG.info().$("large segment size detected ")
-                    .$("[table=").$(tableToken)
-                    .$(", wal=").$(walId)
-                    .$(", segment=").$(segmentId)
-                    .$(", size=").$(tally)
-                    .I$();
-        }
-        return tally;
     }
 
     private void mkWalDir() {

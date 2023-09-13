@@ -427,7 +427,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic()  {
+    public static void tearDownStatic() {
         forEachNode(QuestDBTestNode::closeCairo);
         circuitBreaker = Misc.free(circuitBreaker);
         nodes.clear();
@@ -1218,6 +1218,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
         node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
+    }
+
+    protected static void configOverrideWalSegmentRolloverSize(long walSegmentRolloverSize) {
+        node1.getConfigurationOverrides().setWalSegmentRolloverSize(walSegmentRolloverSize);
     }
 
     protected static void configOverrideWriterMixedIOEnabled(boolean enableMixedIO) {
