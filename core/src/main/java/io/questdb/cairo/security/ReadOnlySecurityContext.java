@@ -45,7 +45,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAddPassword() {
+    public void authorizeAddPassword(CharSequence userOrServiceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -130,7 +130,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCreateJwk() {
+    public void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -160,7 +160,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDropJwk() {
+    public void authorizeDropJwk(CharSequence userOrServiceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -205,7 +205,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeRemovePassword() {
+    public void authorizeRemovePassword(CharSequence userOrServiceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 

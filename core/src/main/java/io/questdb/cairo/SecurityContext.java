@@ -34,7 +34,7 @@ public interface SecurityContext {
 
     void assumeServiceAccount(CharSequence serviceAccountName);
 
-    void authorizeAddPassword();
+    void authorizeAddPassword(CharSequence userOrServiceAccountName);
 
     void authorizeAddUser();
 
@@ -69,7 +69,7 @@ public interface SecurityContext {
 
     void authorizeCreateGroup();
 
-    void authorizeCreateJwk();
+    void authorizeCreateJwk(CharSequence userOrServiceAccountName);
 
     void authorizeCreateServiceAccount();
 
@@ -81,7 +81,7 @@ public interface SecurityContext {
 
     void authorizeDropGroup();
 
-    void authorizeDropJwk();
+    void authorizeDropJwk(CharSequence userOrServiceAccountName);
 
     void authorizeDropServiceAccount();
 
@@ -91,7 +91,7 @@ public interface SecurityContext {
 
     void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
-    // columnNames.size() = 0 means all columns
+    // columnNames - empty means all columns
     void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     // Add column over ILP/TCP.
@@ -103,15 +103,13 @@ public interface SecurityContext {
     // Create table over ILP/TCP.
     void authorizeLineTableCreate();
 
-    void authorizeRemovePassword();
+    void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 
     void authorizeRemoveUser();
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeSelectOnAnyColumn(TableToken tableToken) {
-        //TODO: make non-default 
-    }
+    void authorizeSelectOnAnyColumn(TableToken tableToken);
 
     void authorizeShowGroups();
 
@@ -135,7 +133,7 @@ public interface SecurityContext {
 
     void authorizeTableDrop(TableToken tableToken);
 
-    // columnNames - empty means all columns
+    // columnNames - empty means all indexed columns
     void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableRename(TableToken tableToken);
