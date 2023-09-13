@@ -7426,8 +7426,8 @@ public class IODispatcherTest extends AbstractTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "63\r\n" +
-                                    "{\"query\":\"show columns from balances\",\"error\":\"table does not exist [table=balances]\",\"position\":0}\r\n" +
+                                    "64\r\n" +
+                                    "{\"query\":\"show columns from balances\",\"error\":\"table does not exist [table=balances]\",\"position\":18}\r\n" +
                                     "00\r\n\r\n",
                             1,
                             0,

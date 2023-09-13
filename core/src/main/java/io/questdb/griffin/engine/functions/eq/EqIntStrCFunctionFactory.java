@@ -87,7 +87,12 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val('!');
             }
-            sink.val('=').val(right);
+            sink.val('=');
+            if (right != Numbers.INT_NaN) {
+                sink.val(right);
+            } else {
+                sink.val("null");
+            }
         }
     }
 
