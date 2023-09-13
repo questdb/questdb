@@ -3331,7 +3331,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 final String dirName = extractLast(name);
                 if (!dirName.equals("seq")) {
                     rmdirCallCount.getAndIncrement();
@@ -3339,7 +3339,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                         Assert.fail(dirName + " not expected");
                     }
                 }
-                return Files.rmdir(name);
+                return super.rmdir(name, lazy);
             }
 
             @Override

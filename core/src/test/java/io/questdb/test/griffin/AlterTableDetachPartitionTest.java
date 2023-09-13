@@ -568,13 +568,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         AtomicInteger counter = new AtomicInteger();
         ff = new TestFilesFacadeImpl() {
             @Override
-            public int rmdir(Path path) {
+            public boolean rmdir(Path path, boolean lazy) {
                 if (Chars.contains(path, "2022-06-03")) {
                     if (counter.getAndIncrement() == 0) {
-                        return 1;
+                        return false;
                     }
                 }
-                return super.rmdir(path);
+                return super.rmdir(path, lazy);
             }
         };
 
@@ -613,11 +613,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             }
 
             @Override
-            public int rmdir(Path path) {
+            public boolean rmdir(Path path, boolean lazy) {
                 if (!copyCalled) {
-                    return super.rmdir(path);
+                    return super.rmdir(path, lazy);
                 }
-                return 1;
+                return false;
             }
         };
         assertMemoryLeak(

@@ -1403,7 +1403,7 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testMaxLagTxnCount() throws Exception {
         configOverrideWalApplyTableTimeQuota(0);
-        configOverrideWalMaxLagTxnCount(1);
+        configOverrideWalMaxLagTxnCount();
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 

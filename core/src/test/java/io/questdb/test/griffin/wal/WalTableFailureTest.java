@@ -1051,6 +1051,63 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTableResumeContinuesAfterEject() throws Exception {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
+
+            //1
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            //2 fail
+            compile("update " + tableToken.getTableName() + " set x = 1111");
+            //3
+            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (1, 'AB', 'EF', '2022-02-24T01')");
+            //4
+            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (2, 'AB', 'EF', '2022-02-24T02')");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            engine.getTableSequencerAPI().releaseAll();
+
+            drainWalQueue();
+
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            engine.getTableSequencerAPI().releaseAll();
+            compile("alter table " + tableToken.getTableName() + " resume wal");
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            drainWalQueue();
+
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1111\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tAB\t2022-02-24T01:00:00.000000Z\tEF\n" +
+                    "2\tAB\t2022-02-24T02:00:00.000000Z\tEF\n", tableToken.getTableName());
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t0\t4\n", "wal_tables()");
+        });
+    }
+
+    @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;

@@ -482,12 +482,12 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             AtomicInteger deleteAttempts = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int rmdir(Path name) {
+                public boolean rmdir(Path name, boolean lazy) {
                     if (Chars.endsWith(name, "1970-01-10")) {
                         deleteAttempts.incrementAndGet();
-                        return 5;
+                        return false;
                     }
-                    return super.rmdir(name);
+                    return super.rmdir(name, lazy);
                 }
             };
 
@@ -518,13 +518,13 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             AtomicInteger deleteAttempts = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int rmdir(Path name) {
+                public boolean rmdir(Path name, boolean lazy) {
                     if (Chars.endsWith(name, "1970-01-10")) {
                         if (deleteAttempts.incrementAndGet() < 3) {
-                            return 5;
+                            return false;
                         }
                     }
-                    return super.rmdir(name);
+                    return super.rmdir(name, lazy);
                 }
             };
 

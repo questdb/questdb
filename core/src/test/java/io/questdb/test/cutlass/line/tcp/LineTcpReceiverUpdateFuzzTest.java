@@ -73,6 +73,8 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         writerCommandQueueCapacity = 1024;
         writerAsyncCommandBusyWaitTimeout = 5000;
         super.setUp();
+        node1.getConfigurationOverrides().setWriterAsyncCommandBusyWaitTimeout(5000);
+        node1.getConfigurationOverrides().setSpinLockTimeout(5000);
     }
 
     @Test

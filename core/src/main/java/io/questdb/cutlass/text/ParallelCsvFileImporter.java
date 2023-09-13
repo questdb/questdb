@@ -250,10 +250,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         try (Path path = new Path()) {
             switch (TableUtils.exists(ff, path, root, tableDir)) {
                 case TableUtils.TABLE_EXISTS:
-                    int errno;
-                    if ((errno = ff.rmdir(path)) != 0) {
-                        LOG.error().$("could not overwrite table [tableName='").utf8(tableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
-                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(tableName).put("]");
+                    if (!ff.rmdir(path)) {
+                        LOG.error()
+                                .$("could not overwrite table [tableName='").utf8(tableName)
+                                .$("',path='").utf8(path)
+                                .$(", errno=").$(ff.errno())
+                                .I$();
+                        throw CairoException.critical(ff.errno()).put("could not overwrite [tableName=").put(tableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     securityContext.authorizeTableCreate();
@@ -1309,9 +1312,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             LOG.info().$("removing import work directory [path='").$(workDirPath).$("']").$();
 
-            int errno = ff.rmdir(workDirPath);
-            if (errno != 0) {
-                throw TextException.$("could not remove import work directory [path='").put(workDirPath).put("', errno=").put(errno).put(']');
+            if (!ff.rmdir(workDirPath)) {
+                throw TextException.$("could not remove import work directory [path='").put(workDirPath).put("', errno=").put(ff.errno()).put(']');
             }
         }
     }

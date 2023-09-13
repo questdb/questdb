@@ -921,12 +921,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public int rmdir(Path path) {
+            public boolean rmdir(Path path, boolean lazy) {
                 if (Chars.equals(path, pretendNotExist.get()) && count++ == 0) {
                     super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR).$());
-                    return -1;
+                    return false;
                 }
-                return super.rmdir(path);
+                return super.rmdir(path, lazy);
             }
         };
 
@@ -991,7 +991,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDroppedTableHappendIntheMiddleOfWalApplication() throws Exception {
+    public void testDroppedTableHappendInTheMiddleOfWalApplication() throws Exception {
         String tableName = testName.getMethodName();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override

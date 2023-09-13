@@ -96,7 +96,7 @@ public class Table2IlpTest {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        Files.rmdir(path.slash$(), true);
     }
 
     public static void setCairoStatic() {

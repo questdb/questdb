@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -60,8 +59,6 @@ public class HttpHealthCheckTestBuilder {
             if (metrics == null) {
                 metrics = Metrics.enabled();
             }
-
-            QueryCache.configure(httpConfiguration, metrics);
 
             WorkerPool workerPool = new TestWorkerPool(1, metrics);
 

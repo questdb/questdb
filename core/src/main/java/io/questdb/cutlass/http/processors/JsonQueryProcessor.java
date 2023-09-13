@@ -162,7 +162,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 return;
             }
 
-            final RecordCursorFactory factory = QueryCache.getThreadLocalInstance().poll(state.getQuery());
+            final RecordCursorFactory factory = context.getSelectCache().poll(state.getQuery());
             if (factory != null) {
                 // queries with sensitive info aren't cached
                 state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();

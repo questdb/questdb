@@ -1471,8 +1471,9 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         final Path path = Path.getThreadLocal(root);
-        final int rc = TestFilesFacadeImpl.INSTANCE.rmdir(path.slash$());
-        Assert.assertTrue("Test dir cleanup error, rc=" + rc, rc <= 0);
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        path.slash$();
+        Assert.assertTrue("Test dir cleanup error", !ff.exists(path) || ff.rmdir(path.slash$()));
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {

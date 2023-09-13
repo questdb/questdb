@@ -667,15 +667,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
-    public void apply(AbstractOperation operation, long seqTxn) {
+    public long apply(AbstractOperation operation, long seqTxn) {
         try {
             setSeqTxn(seqTxn);
             long txnBefore = getTxn();
-            operation.apply(this, true);
+            long rowsAffected = operation.apply(this, true);
             if (txnBefore == getTxn()) {
                 // Commit to update seqTxn
                 txWriter.commit(denseSymbolMapWriters);
             }
+            return rowsAffected;
         } catch (CairoException ex) {
             // This is non-critical error, we can mark seqTxn as processed
             if (ex.isWALTolerable()) {
@@ -1162,7 +1163,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 // rollback detached copy
                 detachedPath.trimTo(detachedPathLen).slash().$();
-                if (ff.rmdir(detachedPath) != 0) {
+                if (ff.rmdir(detachedPath)) {
                     LOG.error()
                             .$("could not rollback detached copy (rmdir) [errno=").$(ff.errno())
                             .$(", undo=").$(detachedPath)
@@ -6065,12 +6066,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txn
                     );
                     other.$();
-                    int errno = ff.unlinkOrRemove(other, LOG);
-                    if (!(errno == 0 || errno == -1)) {
+                    if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
-                                .$("could not purge partition version, async purge will be scheduled [path=")
-                                .utf8(other)
-                                .$(", errno=").$(errno).I$();
+                                .$("could not purge partition version, async purge will be scheduled [path=").utf8(other)
+                                .$(", errno=").$(ff.errno()).I$();
                         scheduleAsyncPurge = true;
                     }
                 } finally {
@@ -7800,9 +7799,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (removeDirOnCancelRow) {
                     try {
                         setStateForTimestamp(path, txWriter.getPartitionTimestampByTimestamp(dirtyMaxTimestamp));
-                        int errno;
-                        if ((errno = ff.rmdir(path.$())) != 0) {
-                            throw CairoException.critical(errno).put("Cannot remove directory: ").put(path);
+                        if (!ff.rmdir(path.$())) {
+                            throw CairoException.critical(ff.errno()).put("could not remove directory: ").put(path);
                         }
                         removeDirOnCancelRow = false;
                     } finally {

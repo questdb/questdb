@@ -560,11 +560,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 if (!allowRemove.get()) {
-                    return 5;
+                    return false;
                 } else {
-                    return super.rmdir(name);
+                    return super.rmdir(name, lazy);
                 }
             }
         };
@@ -610,11 +610,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         AtomicBoolean canDelete = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int rmdir(Path path) {
+            public boolean rmdir(Path path, boolean lazy) {
                 if (Chars.endsWith(path, Files.SEPARATOR + WalUtils.WAL_NAME_BASE + "1") && !canDelete.get()) {
-                    return 5;  // Access denied.
+                    return false;
                 } else {
-                    return super.rmdir(path);
+                    return super.rmdir(path, lazy);
                 }
             }
         };

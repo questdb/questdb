@@ -192,9 +192,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             symLinkTarget = null;
                         }
                     }
-                    ff.rmdir(pathToDelete);
+                    ff.rmdir(pathToDelete, false);
                     if (symLinkTarget != null) {
-                        ff.rmdir(symLinkTarget);
+                        ff.rmdir(symLinkTarget, false);
                     }
                     TableUtils.lockName(pathToDelete);
                     ff.remove(pathToDelete);
@@ -347,10 +347,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean recursiveDelete(Path path) {
-        final int errno = ff.rmdir(path);
-        if (errno > 0 && !CairoException.errnoRemovePathDoesNotExist(errno)) {
-            LOG.error().$("could not delete directory [path=").utf8(path)
-                    .$(", errno=").$(errno).$(']').$();
+        if (!ff.rmdir(path, false) && !CairoException.errnoRemovePathDoesNotExist(ff.errno())) {
+            LOG.debug()
+                    .$("could not delete directory [path=").utf8(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
             return false;
         }
         return true;
@@ -610,7 +611,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private class FsDeleter implements Deleter {
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId, int lockId) {
-            LOG.info().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
+            LOG.debug().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId)
                     .$(", segmentId=").$(segmentId).$(']').$();
             if (recursiveDelete(setSegmentPath(tableToken, walId, segmentId))) {
@@ -622,7 +623,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteWalDirectory(int walId, int lockId) {
-            LOG.info().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
+            LOG.debug().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId).$(']').$();
             if (recursiveDelete(setWalPath(tableToken, walId))) {
                 ff.closeRemove(lockId, setWalLockPath(tableToken, walId));

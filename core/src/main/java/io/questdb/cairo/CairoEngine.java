@@ -387,9 +387,8 @@ public class CairoEngine implements Closeable, WriterSource {
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getRoot()).concat(tableToken).$();
-                    int errno;
-                    if ((errno = configuration.getFilesFacade().unlinkOrRemove(path, LOG)) != 0) {
-                        throw CairoException.critical(errno).put("could not remove table [name=").put(tableToken)
+                    if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
+                        throw CairoException.critical(configuration.getFilesFacade().errno()).put("could not remove table [name=").put(tableToken)
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }
                 } finally {
@@ -557,6 +556,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
+    }
+
+    public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
+        return writerPool.entries();
     }
 
     public TableReader getReaderWithRepair(TableToken tableToken) {
