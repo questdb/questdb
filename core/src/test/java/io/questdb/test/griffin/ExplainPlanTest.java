@@ -1729,41 +1729,42 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         final StringSink sink = new StringSink();
 
-        IntObjHashMap<Function> constFuncs = new IntObjHashMap<>();
-        constFuncs.put(ColumnType.BOOLEAN, BooleanConstant.TRUE);
-        constFuncs.put(ColumnType.BYTE, new ByteConstant((byte) 1));
-        constFuncs.put(ColumnType.SHORT, new ShortConstant((short) 2));
-        constFuncs.put(ColumnType.CHAR, new CharConstant('a'));
-        constFuncs.put(ColumnType.INT, new IntConstant(3));
-        constFuncs.put(ColumnType.IPv4, new IPv4Constant(3));
-        constFuncs.put(ColumnType.LONG, new LongConstant(4));
-        constFuncs.put(ColumnType.DATE, new DateConstant(0));
-        constFuncs.put(ColumnType.TIMESTAMP, new TimestampConstant(86400000000L));
-        constFuncs.put(ColumnType.FLOAT, new FloatConstant(5f));
-        constFuncs.put(ColumnType.DOUBLE, new DoubleConstant(6));
-        constFuncs.put(ColumnType.STRING, new StrConstant("bbb"));
-        constFuncs.put(ColumnType.SYMBOL, new SymbolConstant("symbol", 0));
-        constFuncs.put(ColumnType.LONG256, new Long256Constant(0, 1, 2, 3));
-        constFuncs.put(ColumnType.GEOBYTE, new GeoByteConstant((byte) 1, ColumnType.getGeoHashTypeWithBits(5)));
-        constFuncs.put(ColumnType.GEOSHORT, new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(10)));
-        constFuncs.put(ColumnType.GEOINT, new GeoIntConstant(1, ColumnType.getGeoHashTypeWithBits(20)));
-        constFuncs.put(ColumnType.GEOLONG, new GeoLongConstant(1, ColumnType.getGeoHashTypeWithBits(35)));
-        constFuncs.put(ColumnType.GEOHASH, new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
-        constFuncs.put(ColumnType.BINARY, new NullBinConstant());
-        constFuncs.put(ColumnType.LONG128, new Long128Constant(0, 1));
-        constFuncs.put(ColumnType.UUID, new UuidConstant(0, 1));
+        IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<ObjList<Function>>();
+        constFuncs.put(ColumnType.BOOLEAN, list(BooleanConstant.TRUE, BooleanConstant.FALSE));
+        constFuncs.put(ColumnType.BYTE, list(new ByteConstant((byte) 1)));
+        constFuncs.put(ColumnType.SHORT, list(new ShortConstant((short) 2)));
+        constFuncs.put(ColumnType.CHAR, list(new CharConstant('a')));
+        constFuncs.put(ColumnType.INT, list(new IntConstant(3)));
+        constFuncs.put(ColumnType.IPv4, list(new IPv4Constant(3)));
+        constFuncs.put(ColumnType.LONG, list(new LongConstant(4)));
+        constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
+        constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
+        constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
+        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(6)));
+        constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
+        constFuncs.put(ColumnType.SYMBOL, list(new SymbolConstant("symbol", 0)));
+        constFuncs.put(ColumnType.LONG256, list(new Long256Constant(0, 1, 2, 3)));
+        constFuncs.put(ColumnType.GEOBYTE, list(new GeoByteConstant((byte) 1, ColumnType.getGeoHashTypeWithBits(5))));
+        constFuncs.put(ColumnType.GEOSHORT, list(new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(10))));
+        constFuncs.put(ColumnType.GEOINT, list(new GeoIntConstant(1, ColumnType.getGeoHashTypeWithBits(20))));
+        constFuncs.put(ColumnType.GEOLONG, list(new GeoLongConstant(1, ColumnType.getGeoHashTypeWithBits(35))));
+        constFuncs.put(ColumnType.GEOHASH, list(new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(15))));
+        constFuncs.put(ColumnType.BINARY, list(new NullBinConstant()));
+        constFuncs.put(ColumnType.LONG128, list(new Long128Constant(0, 1)));
+        constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
+        constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("bbb", ColumnType.INT));
-        constFuncs.put(ColumnType.RECORD, new RecordColumn(0, metadata));
+        constFuncs.put(ColumnType.RECORD, list(new RecordColumn(0, metadata)));
 
         GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
         cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
-        constFuncs.put(ColumnType.CURSOR, new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
+        constFuncs.put(ColumnType.CURSOR, list(new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
             public boolean supportPageFrameCursor() {
                 return true;
             }
-        }));
+        })));
 
         IntObjHashMap<Function> colFuncs = new IntObjHashMap<>();
         colFuncs.put(ColumnType.BOOLEAN, new BooleanColumn(1));
@@ -1839,10 +1840,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 int combinations = 1;
 
                 for (int p = 0; p < sigArgCount; p++) {
-                    boolean isConstant = FunctionFactoryDescriptor.isConstant(descriptor.getArgTypeMask(p));
-                    if (!isConstant) {
-                        combinations *= 2;
-                    }
+                    int argTypeMask = descriptor.getArgTypeMask(p);
+                    boolean isConstant = FunctionFactoryDescriptor.isConstant(argTypeMask);
+                    short sigArgType = FunctionFactoryDescriptor.toType(argTypeMask);
+                    ObjList<Function> availableValues = constFuncs.get(sigArgType);
+                    int constValues = availableValues != null ? availableValues.size() : 1;
+                    combinations *= (constValues + (isConstant ? 0 : 1));
                 }
 
                 boolean goodArgsFound = false;
@@ -1927,7 +1930,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
                             } else {
-                                args.add(getConst(constFuncs, sigArgType, p));
+                                args.add(getConst(constFuncs, sigArgType, p, no));
                             }
 
                             if (!isConstant) {
@@ -7948,7 +7951,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    private Function getConst(IntObjHashMap<Function> values, int type, int paramNo) {
+    private Function getConst(IntObjHashMap<ObjList<Function>> values, int type, int paramNo, int iteration) {
         //use param number to work around rnd factories validation logic
         int val = paramNo + 1;
 
@@ -7968,8 +7971,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             case ColumnType.TIMESTAMP:
                 return new TimestampConstant(val * 86_400_000L);
             default:
-                return values.get(type);
+                ObjList<Function> availableValues = values.get(type);
+                if (availableValues != null) {
+                    int n = availableValues.size();
+                    return availableValues.get(iteration % n);
+                } else {
+                    return null;
+                }
         }
+    }
+
+    private <T> ObjList<T> list(T... values) {
+        return new ObjList<T>(values);
     }
 
     private void test2686Prepare() throws Exception {

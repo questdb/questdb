@@ -144,6 +144,7 @@ public class IODispatcherTest extends AbstractTest {
     public void setUp() {
         super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
+        testHttpClient.setKeepConnection(false);
     }
 
     @Test
@@ -900,6 +901,23 @@ public class IODispatcherTest extends AbstractTest {
                 true,
                 1
         );
+    }
+
+    @Test
+    public void testHttpClientSupportsConnectionReuse() throws Exception {
+        getSimpleTester().run(engine -> {
+            testHttpClient.setKeepConnection(true);
+            testHttpClient.assertGet(
+                    "{\"query\":\"SELECT 'foo'\",\"columns\":[{\"name\":\"foo\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"foo\"]],\"count\":1}",
+                    "SELECT 'foo'"
+            );
+            // This time it's fine to disconnect after the request.
+            testHttpClient.setKeepConnection(false);
+            testHttpClient.assertGet(
+                    "{\"query\":\"SELECT 'bar'\",\"columns\":[{\"name\":\"bar\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"bar\"]],\"count\":1}",
+                    "SELECT 'bar'"
+            );
+        });
     }
 
     @Test
@@ -7408,8 +7426,8 @@ public class IODispatcherTest extends AbstractTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "63\r\n" +
-                                    "{\"query\":\"show columns from balances\",\"error\":\"table does not exist [table=balances]\",\"position\":0}\r\n" +
+                                    "64\r\n" +
+                                    "{\"query\":\"show columns from balances\",\"error\":\"table does not exist [table=balances]\",\"position\":18}\r\n" +
                                     "00\r\n\r\n",
                             1,
                             0,
