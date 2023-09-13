@@ -24,13 +24,14 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.TableToken;
 import io.questdb.std.str.Path;
 
 public interface WalInitializer {
     void initDirectory(Path dirPath);
 
     void rollbackDirectory(Path path);
+
+    boolean isInUse(Path path);
 
     boolean isTruncateFilesOnClose();
 }

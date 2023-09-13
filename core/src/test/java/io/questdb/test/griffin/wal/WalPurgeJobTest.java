@@ -27,6 +27,7 @@ package io.questdb.test.griffin.wal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.DefaultWalInitializer;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -40,6 +41,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -53,6 +55,24 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
 public class WalPurgeJobTest extends AbstractCairoTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        engine.setWalInitializer(
+                new DefaultWalInitializer() {
+                    @Override
+                    public boolean isInUse(Path path) {
+                        int len = path.length();
+                        try {
+                            return ff.exists(path.concat(".pending").concat("test.pending").$());
+                        } finally {
+                            path.trimTo(len);
+                        }
+                    }
+                }
+        );
+    }
 
     @Test
     public void testClosedButUnappliedSegment() throws Exception {
@@ -298,18 +318,18 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 Assert.assertEquals(0, counter.get());
                 currentMicros += interval / 2 + 1;
                 walPurgeJob.run(0);
-                Assert.assertEquals(2, counter.get());
+                Assert.assertEquals(1, counter.get());
                 currentMicros += interval / 2 + 1;
                 walPurgeJob.run(0);
                 walPurgeJob.run(0);
                 walPurgeJob.run(0);
-                Assert.assertEquals(2, counter.get());
+                Assert.assertEquals(1, counter.get());
                 currentMicros += interval;
                 walPurgeJob.run(0);
-                Assert.assertEquals(4, counter.get());
+                Assert.assertEquals(2, counter.get());
                 currentMicros += 10 * interval;
                 walPurgeJob.run(0);
-                Assert.assertEquals(6, counter.get());
+                Assert.assertEquals(3, counter.get());
             }
         });
     }
@@ -462,7 +482,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // We write a marker file to prevent the second segment "wal1/1" from being reaped.
             final File pendingDirPath = new File(segment1DirPath, WalUtils.WAL_PENDING_FS_MARKER);
             Assert.assertTrue(pendingDirPath.mkdirs());
-            final File pendingFilePath = new File(pendingDirPath, "task.pending");
+            final File pendingFilePath = new File(pendingDirPath, "test.pending");
             Assert.assertTrue(pendingFilePath.createNewFile());
 
             // Create a third segment.
@@ -521,7 +541,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // We write a marker file to prevent the segment "wal1/0" from being reaped.
             final File pendingDirPath = new File(segment0DirPath, WalUtils.WAL_PENDING_FS_MARKER);
             Assert.assertTrue(pendingDirPath.mkdirs());
-            final File pendingFilePath = new File(pendingDirPath, "task.pending");
+            final File pendingFilePath = new File(pendingDirPath, "test.pending");
             Assert.assertTrue(pendingFilePath.createNewFile());
 
             // Drop the table and apply all outstanding operations.
@@ -1157,8 +1177,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
-        public final ObjList<DeletionEvent> events = new ObjList<>();
         public final IntList closedFds = new IntList();
+        public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId, int lockId) {

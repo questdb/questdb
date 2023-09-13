@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.TableToken;
 import io.questdb.std.str.Path;
 
 public class DefaultWalInitializer implements WalInitializer {
@@ -32,6 +31,11 @@ public class DefaultWalInitializer implements WalInitializer {
 
     @Override
     public void initDirectory(Path dirPath) {
+    }
+
+    @Override
+    public boolean isInUse(Path path) {
+        return false;
     }
 
     @Override

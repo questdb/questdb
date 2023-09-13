@@ -65,8 +65,10 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final Log log;
+    private final Metrics metrics;
     private final AtomicBoolean running = new AtomicBoolean();
-    private final WorkerPoolManager workerPoolManager;
+    private boolean initialized;
+    private WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -76,19 +78,152 @@ public class ServerMain implements Closeable {
         this.config = bootstrap.getConfiguration();
         this.log = bootstrap.getLog();
         this.banner = bootstrap.getBanner();
-        final Metrics metrics = bootstrap.getMetrics();
+        this.metrics = bootstrap.getMetrics();
 
         // create cairo engine
-        final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         engine = freeOnExit.register(bootstrap.newCairoEngine());
         config.init(engine, freeOnExit);
         freeOnExit.register(config.getFactoryProvider());
         engine.load();
+    }
+
+    public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
+        LineAuthenticatorFactory authenticatorFactory;
+        // create default authenticator for Line TCP protocol
+        if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
+            // we need "root/" here, not "root/db/"
+            final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
+            final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
+            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
+            authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
+        } else {
+            authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
+        }
+        return authenticatorFactory;
+    }
+
+    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration, DirectByteCharSink defaultUserPasswordSink, DirectByteCharSink readOnlyUserPasswordSink) {
+        UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
+        return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
+    }
+
+    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
+        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance()
+                || configuration.isReadOnlyReplica();
+        if (readOnlyInstance) {
+            return ReadOnlySecurityContextFactory.INSTANCE;
+        } else {
+            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
+            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
+            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
+            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
+            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
+            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
+            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
+        }
+    }
+
+    public static void main(String[] args) {
+        try {
+            new ServerMain(args).start(true);
+        } catch (Throwable thr) {
+            thr.printStackTrace();
+            LogFactory.closeInstance();
+            System.exit(55);
+        }
+    }
+
+    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration, DirectByteCharSink defaultUserPasswordSink, DirectByteCharSink readOnlyUserPasswordSink) {
+        String defaultUsername = configuration.getDefaultUsername();
+        String defaultPassword = configuration.getDefaultPassword();
+        boolean defaultUserEnabled = !Chars.empty(defaultUsername) && !Chars.empty(defaultPassword);
+
+        String readOnlyUsername = configuration.getReadOnlyUsername();
+        String readOnlyPassword = configuration.getReadOnlyPassword();
+        boolean readOnlyUserValid = !Chars.empty(readOnlyUsername) && !Chars.empty(readOnlyPassword);
+        boolean readOnlyUserEnabled = configuration.isReadOnlyUserEnabled() && readOnlyUserValid;
+
+        if (defaultUserEnabled && readOnlyUserEnabled) {
+            defaultUserPasswordSink.encodeUtf8(defaultPassword);
+            readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
+
+            return new CombiningUsernamePasswordMatcher(
+                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.getPtr(), defaultUserPasswordSink.length()),
+                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.getPtr(), readOnlyUserPasswordSink.length())
+            );
+        } else if (defaultUserEnabled) {
+            defaultUserPasswordSink.encodeUtf8(defaultPassword);
+            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.getPtr(), defaultUserPasswordSink.length());
+        } else if (readOnlyUserEnabled) {
+            readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
+            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.getPtr(), readOnlyUserPasswordSink.length());
+        } else {
+            return NeverMatchUsernamePasswordMatcher.INSTANCE;
+        }
+    }
+
+    @Override
+    public void close() {
+        if (closed.compareAndSet(false, true)) {
+            if (initialized) {
+                workerPoolManager.halt();
+            }
+            freeOnExit.close();
+        }
+    }
+
+    public ServerConfiguration getConfiguration() {
+        return config;
+    }
+
+    public CairoEngine getEngine() {
+        if (closed.get()) {
+            throw new IllegalStateException("close was called");
+        }
+        return engine;
+    }
+
+    public WorkerPoolManager getWorkerPoolManager() {
+        if (closed.get()) {
+            throw new IllegalStateException("close was called");
+        }
+        return workerPoolManager;
+    }
+
+    public boolean hasBeenClosed() {
+        return closed.get();
+    }
+
+    public boolean hasStarted() {
+        return running.get();
+    }
+
+    public void start() {
+        start(false);
+    }
+
+    public synchronized void start(boolean addShutdownHook) {
+        if (!closed.get() && running.compareAndSet(false, true)) {
+            initialize();
+
+            if (addShutdownHook) {
+                addShutdownHook();
+            }
+            workerPoolManager.start(log);
+            Bootstrap.logWebConsoleUrls(config, log, banner);
+            System.gc(); // final GC
+            log.advisoryW().$("enjoy").$();
+        }
+    }
+
+    private synchronized void initialize() {
+        initialized = true;
 
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
         final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
+        final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         workerPoolManager = new WorkerPoolManager(config, metrics.health()) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
@@ -200,131 +335,6 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("server is ready to be started").$();
-    }
-
-    public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
-        LineAuthenticatorFactory authenticatorFactory;
-        // create default authenticator for Line TCP protocol
-        if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
-            // we need "root/" here, not "root/db/"
-            final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
-            final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
-            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
-            authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
-        } else {
-            authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
-        }
-        return authenticatorFactory;
-    }
-
-    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration, DirectByteCharSink defaultUserPasswordSink, DirectByteCharSink readOnlyUserPasswordSink) {
-        UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
-        return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
-    }
-
-    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
-        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance()
-                || configuration.isReadOnlyReplica();
-        if (readOnlyInstance) {
-            return ReadOnlySecurityContextFactory.INSTANCE;
-        } else {
-            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
-            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
-            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
-            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
-        }
-    }
-
-    public static void main(String[] args) {
-        try {
-            new ServerMain(args).start(true);
-        } catch (Throwable thr) {
-            thr.printStackTrace();
-            LogFactory.closeInstance();
-            System.exit(55);
-        }
-    }
-
-    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration, DirectByteCharSink defaultUserPasswordSink, DirectByteCharSink readOnlyUserPasswordSink) {
-        String defaultUsername = configuration.getDefaultUsername();
-        String defaultPassword = configuration.getDefaultPassword();
-        boolean defaultUserEnabled = !Chars.empty(defaultUsername) && !Chars.empty(defaultPassword);
-
-        String readOnlyUsername = configuration.getReadOnlyUsername();
-        String readOnlyPassword = configuration.getReadOnlyPassword();
-        boolean readOnlyUserValid = !Chars.empty(readOnlyUsername) && !Chars.empty(readOnlyPassword);
-        boolean readOnlyUserEnabled = configuration.isReadOnlyUserEnabled() && readOnlyUserValid;
-
-        if (defaultUserEnabled && readOnlyUserEnabled) {
-            defaultUserPasswordSink.encodeUtf8(defaultPassword);
-            readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
-
-            return new CombiningUsernamePasswordMatcher(
-                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.getPtr(), defaultUserPasswordSink.length()),
-                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.getPtr(), readOnlyUserPasswordSink.length())
-            );
-        } else if (defaultUserEnabled) {
-            defaultUserPasswordSink.encodeUtf8(defaultPassword);
-            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.getPtr(), defaultUserPasswordSink.length());
-        } else if (readOnlyUserEnabled) {
-            readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
-            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.getPtr(), readOnlyUserPasswordSink.length());
-        } else {
-            return NeverMatchUsernamePasswordMatcher.INSTANCE;
-        }
-    }
-
-    @Override
-    public void close() {
-        if (closed.compareAndSet(false, true)) {
-            workerPoolManager.halt();
-            freeOnExit.close();
-        }
-    }
-
-    public ServerConfiguration getConfiguration() {
-        return config;
-    }
-
-    public CairoEngine getEngine() {
-        if (closed.get()) {
-            throw new IllegalStateException("close was called");
-        }
-        return engine;
-    }
-
-    public WorkerPoolManager getWorkerPoolManager() {
-        if (closed.get()) {
-            throw new IllegalStateException("close was called");
-        }
-        return workerPoolManager;
-    }
-
-    public boolean hasBeenClosed() {
-        return closed.get();
-    }
-
-    public boolean hasStarted() {
-        return running.get();
-    }
-
-    public void start() {
-        start(false);
-    }
-
-    public void start(boolean addShutdownHook) {
-        if (!closed.get() && running.compareAndSet(false, true)) {
-            if (addShutdownHook) {
-                addShutdownHook();
-            }
-            workerPoolManager.start(log);
-            Bootstrap.logWebConsoleUrls(config, log, banner);
-            System.gc(); // final GC
-            log.advisoryW().$("enjoy").$();
-        }
     }
 
     private void addShutdownHook() {
