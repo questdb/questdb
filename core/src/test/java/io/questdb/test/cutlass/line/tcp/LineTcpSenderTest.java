@@ -24,12 +24,14 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -42,6 +44,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.security.PrivateKey;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.function.Consumer;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
@@ -269,7 +273,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testInsertNonAsciiStringAndUuid() throws Exception {
-        // this is to check that a non-ASCII string will not prevent 
+        // this is to check that a non-ASCII string will not prevent
         // parsing a subsequent UUID
         runInContext(r -> {
             try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
@@ -402,6 +406,62 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testSymbolsCannotBeWrittenAfterString() throws Exception {
         assertSymbolsCannotBeWrittenAfterOtherType(s -> s.stringColumn("columnName", "42"));
+    }
+
+    @Test
+    public void testTimestampOverloads() throws Exception {
+        runInContext(r -> {
+            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.DAY)
+                    .col("i", ColumnType.INT)
+                    .col("t", ColumnType.TIMESTAMP)
+                    .timestamp()) {
+                CreateTableTestUtils.create(model);
+            }
+
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsColMicros = IntervalUtils.parseFloorPartialTimestamp("2014-04-01T07:05:03");
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01");
+                sender.table("mytable")
+                        .longColumn("i", 1)
+                        .timestampColumn("t", tsColMicros / 1000_000, ChronoUnit.SECONDS)
+                        .at(tsMicros / 1000_000, ChronoUnit.SECONDS);
+                sender.table("mytable")
+                        .longColumn("i", 2)
+                        .timestampColumn("t", tsColMicros / 1000, ChronoUnit.MILLIS)
+                        .at(tsMicros / 1000, ChronoUnit.MILLIS);
+                sender.table("mytable")
+                        .longColumn("i", 3)
+                        .timestampColumn("t", tsColMicros, ChronoUnit.MICROS)
+                        .at(tsMicros, ChronoUnit.MICROS);
+                sender.table("mytable")
+                        .longColumn("i", 4)
+                        .timestampColumn("t", tsColMicros * 1000, ChronoUnit.NANOS)
+                        .at(tsMicros * 1000, ChronoUnit.NANOS);
+                sender.table("mytable")
+                        .longColumn("i", 5)
+                        .timestampColumn("t", Instant.ofEpochMilli(tsColMicros / 1000))
+                        .at(Instant.ofEpochMilli(tsMicros / 1000));
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, "mytable", 5);
+            try (TableReader reader = getReader("mytable")) {
+                TestUtils.assertReader(
+                        "i\tt\ttimestamp\n" +
+                                "1\t2014-04-01T07:05:03.000000Z\t2013-03-31T17:55:01.000000Z\n" +
+                                "2\t2014-04-01T07:05:03.000000Z\t2013-03-31T17:55:01.000000Z\n" +
+                                "3\t2014-04-01T07:05:03.000000Z\t2013-03-31T17:55:01.000000Z\n" +
+                                "4\t2014-04-01T07:05:03.000000Z\t2013-03-31T17:55:01.000000Z\n" +
+                                "5\t2014-04-01T07:05:03.000000Z\t2013-03-31T17:55:01.000000Z\n",
+                        reader,
+                        new StringSink()
+                );
+            }
+        });
     }
 
     @Test

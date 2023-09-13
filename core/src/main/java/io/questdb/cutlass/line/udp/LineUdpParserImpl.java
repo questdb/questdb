@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -99,7 +100,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         this.clock = configuration.getMicrosecondClock();
         this.engine = engine;
         this.udpConfiguration = udpConfiguration;
-        this.timestampAdapter = udpConfiguration.getTimestampAdapter();
+        this.timestampAdapter = LineProtoNanoTimestampAdapter.INSTANCE;
 
         defaultFloatColumnType = udpConfiguration.getDefaultColumnTypeForFloat();
         defaultIntegerColumnType = udpConfiguration.getDefaultColumnTypeForInteger();

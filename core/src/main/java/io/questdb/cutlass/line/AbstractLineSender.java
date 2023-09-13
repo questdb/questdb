@@ -28,11 +28,14 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.security.*;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable, Sender {
@@ -77,6 +80,18 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     @Override
     public final void at(long timestamp) {
         put(' ').put(timestamp);
+        atNow();
+    }
+
+    @Override
+    public final void at(long timestamp, ChronoUnit unit) {
+        put(' ').put(timestamp * unit.getDuration().toNanos());
+        atNow();
+    }
+
+    @Override
+    public final void at(Instant timestamp) {
+        put(' ').put(timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano());
         atNow();
     }
 
@@ -301,6 +316,22 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value) {
         writeFieldName(name).put(value).put('t');
+        return this;
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+        long valueNanos = value * unit.getDuration().toNanos();
+        long valueMicros = LineProtoNanoTimestampAdapter.INSTANCE.getMicros(valueNanos);
+        writeFieldName(name).put(valueMicros).put('t');
+        return this;
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
+        long valueNanos = value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano();
+        long valueMicros = LineProtoNanoTimestampAdapter.INSTANCE.getMicros(valueNanos);
+        writeFieldName(name).put(valueMicros).put('t');
         return this;
     }
 

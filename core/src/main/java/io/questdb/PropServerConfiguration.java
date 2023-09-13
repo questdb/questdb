@@ -31,7 +31,6 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -153,7 +152,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int lineUdpOwnThreadAffinity;
     private final int lineUdpReceiveBufferSize;
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
-    private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
     private final boolean lineUdpUnicast;
     private final DateLocale locale;
     private final Log log;
@@ -384,7 +382,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpNetConnectionQueueTimeout;
     private int lineTcpNetConnectionRcvBuf;
     private long lineTcpNetConnectionTimeout;
-    private LineProtoTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpWriterQueueCapacity;
     private int[] lineTcpWriterWorkerAffinity;
     private int lineTcpWriterWorkerCount;
@@ -998,7 +995,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
             this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE);
-            this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
             String defaultUdpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
             if (this.lineUdpDefaultPartitionBy == -1) {
@@ -1030,7 +1026,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF, this.lineTcpNetConnectionRcvBuf);
 
                 this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.LINE_TCP_CONNECTION_POOL_CAPACITY, 8);
-                this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.lineTcpMsgBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 32768);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
                 if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
@@ -1249,24 +1244,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return CommitMode.NOSYNC;
-    }
-
-    private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigProperty propNm) {
-        final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
-        switch (lineUdpTimestampSwitch) {
-            case "u":
-                return LineProtoMicroTimestampAdapter.INSTANCE;
-            case "ms":
-                return LineProtoMilliTimestampAdapter.INSTANCE;
-            case "s":
-                return LineProtoSecondTimestampAdapter.INSTANCE;
-            case "m":
-                return LineProtoMinuteTimestampAdapter.INSTANCE;
-            case "h":
-                return LineProtoHourTimestampAdapter.INSTANCE;
-            default:
-                return LineProtoNanoTimestampAdapter.INSTANCE;
-        }
     }
 
     private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
@@ -1575,6 +1552,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY
             );
             registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
+            registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
+            registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -3225,11 +3204,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineProtoTimestampAdapter getTimestampAdapter() {
-            return lineTcpTimestampAdapter;
-        }
-
-        @Override
         public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
         }
@@ -3454,11 +3428,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getReceiveBufferSize() {
             return lineUdpReceiveBufferSize;
-        }
-
-        @Override
-        public LineProtoTimestampAdapter getTimestampAdapter() {
-            return lineUdpTimestampAdapter;
         }
 
         @Override

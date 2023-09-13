@@ -31,6 +31,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -128,7 +129,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             address,
                             addressSize,
                             lineConfiguration.getMicrosecondClock(),
-                            lineConfiguration.getTimestampAdapter(),
+                            LineProtoNanoTimestampAdapter.INSTANCE,
                             defaultColumnTypes,
                             lineConfiguration.isStringToCharCastAllowed(),
                             lineConfiguration.getMaxFileNameLength(),
@@ -346,7 +347,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             TableUpdateDetails tud
     ) throws CommitFailedException, MetadataChangedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
-        LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
+        LineProtoTimestampAdapter timestampAdapter = LineProtoNanoTimestampAdapter.INSTANCE;
         // pass 1: create all columns that do not exist
         final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());
         ld.resetStateIfNecessary();

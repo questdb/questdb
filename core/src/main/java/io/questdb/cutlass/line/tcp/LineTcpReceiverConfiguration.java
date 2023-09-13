@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -86,8 +85,6 @@ public interface LineTcpReceiverConfiguration {
     NetworkFacade getNetworkFacade();
 
     long getSymbolCacheWaitUsBeforeReload();
-
-    LineProtoTimestampAdapter getTimestampAdapter();
 
     long getWriterIdleTimeout();
 
