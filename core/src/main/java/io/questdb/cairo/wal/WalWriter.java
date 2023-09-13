@@ -792,6 +792,27 @@ public class WalWriter implements TableWriterAPI {
         return lastSeqTxn = txn;
     }
 
+    private boolean breachedRolloverSizeThreshold() {
+        final long threshold = configuration.getWalSegmentRolloverSize();
+        if (threshold == 0) {
+            return false;
+        }
+
+        long tally = 0;
+        for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
+            final MemoryMA column = columns.getQuick(colIndex);
+            if ((column != null) && !(column instanceof NullMemory)) {
+                final long columnSize = column.getAppendOffset();
+                tally += columnSize;
+            }
+        }
+
+        // The events file will also contain the symbols.
+        tally += events.size();
+
+        return tally > threshold;
+    }
+
     private void checkDistressed() {
         if (!distressed) {
             return;
@@ -1082,30 +1103,6 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
-    private long getLastSegmentSize() {
-        if (configuration.getWalSegmentRolloverSize() == 0) {
-            return Long.MAX_VALUE;
-        }
-        long tally = 0;
-        for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
-            final MemoryMA column = columns.getQuick(colIndex);
-            if ((column != null) && !(column instanceof NullMemory)) {
-                tally += column.getAppendOffset();
-            }
-        }
-
-        // TODO [amunra]: Temporary to debug test cases, remove me.
-        if (tally > configuration.getWalSegmentRolloverSize()) {
-            LOG.info().$("large segment size detected ")
-                    .$("[table=").$(tableToken)
-                    .$(", wal=").$(walId)
-                    .$(", segment=").$(segmentId)
-                    .$(", size=").$(tally)
-                    .I$();
-        }
-        return tally;
-    }
-
     private MemoryMA getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
@@ -1167,7 +1164,7 @@ public class WalWriter implements TableWriterAPI {
             return;
         }
         rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
-                || (getLastSegmentSize() > configuration.getWalSegmentRolloverSize())
+                || breachedRolloverSizeThreshold()
                 || (lastSegmentTxn > Integer.MAX_VALUE - 2);
     }
 

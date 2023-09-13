@@ -229,6 +229,11 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
+    /** Size in bytes consumed by the events file, including any symbols. */
+    public long size() {
+        return eventMem.getAppendOffset();
+    }
+
     int appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
