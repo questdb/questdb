@@ -50,6 +50,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
@@ -2501,13 +2502,12 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testRolloverSegmentSizeInt() throws Exception {
+    public void testRolloverSegmentSize(int colType, boolean colNeedsIndex, long bytesPerRow, Consumer<TableWriter.Row> valueInserter) throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final TableToken tableToken;
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
+                    .col("a", colType)
                     .timestamp("ts")
                     .wal()
             ) {
@@ -2517,20 +2517,17 @@ public class WalWriterTest extends AbstractCairoTest {
             final long rolloverSize = 1024;
             configOverrideWalSegmentRolloverSize(rolloverSize);  // 1 KiB
 
-            // Size of all columns per row: 4 bytes for INT, 16 bytes for timestamp (8 bytes index + 8 bytes timestamp).
-            final long bytesPerRow = 4 + 16;
-
             // The maximum number of rows we can insert before we trigger the size-based rollover.
-            final long nonBreachRowCount = rolloverSize / bytesPerRow;
+            // If the col needs an index, we need to remove this from the size count.
+            final long nonBreachRowCount = (rolloverSize - (colNeedsIndex ? 8 : 0)) / bytesPerRow;
 
             long timestamp = 1694590000000000L;
-            int value = 0;
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 // Insert the one less than the maximum number of rows to cause a roll-over at the next row.
-                for (long rowIndex = 0; rowIndex < (nonBreachRowCount - 1); ++rowIndex, timestamp += 1000, value += 1) {
+                for (long rowIndex = 0; rowIndex < (nonBreachRowCount - 1); ++rowIndex, timestamp += 1000) {
                     final TableWriter.Row row = walWriter.newRow(timestamp);
-                    row.putInt(0, value);
+                    valueInserter.accept(row);
                     row.append();
                 }
                 walWriter.commit();
@@ -2542,10 +2539,9 @@ public class WalWriterTest extends AbstractCairoTest {
                 // Inserting the next row is still within limit: Will not roll over.
                 {
                     final TableWriter.Row row = walWriter.newRow(timestamp);
-                    row.putInt(0, value);
+                    valueInserter.accept(row);
                     row.append();
                     timestamp += 1000;
-                    ++value;
                 }
                 walWriter.commit();
 
@@ -2554,10 +2550,9 @@ public class WalWriterTest extends AbstractCairoTest {
                 // We're now over the limit, but the logic is to roll over the row _after_ this one.
                 {
                     final TableWriter.Row row = walWriter.newRow(timestamp);
-                    row.putInt(0, value);
+                    valueInserter.accept(row);
                     row.append();
                     timestamp += 1000;
-                    ++value;
                 }
                 walWriter.commit();
 
@@ -2566,13 +2561,41 @@ public class WalWriterTest extends AbstractCairoTest {
                 // finally, a row rolled over.
                 {
                     final TableWriter.Row row = walWriter.newRow(timestamp);
-                    row.putInt(0, value);
+                    valueInserter.accept(row);
                     row.append();
                 }
                 walWriter.commit();
 
                 assertSegmentExistence(true, tableName, 1, 1);
             }
+        });
+    }
+
+    @Test
+    public void testRolloverSegmentSizeInt() throws Exception {
+        // Size of all columns per row: 4 bytes for INT, 16 bytes for timestamp (8 bytes index + 8 bytes timestamp).
+        final long bytesPerRow = 4 + 16;
+
+        AtomicInteger value = new AtomicInteger();
+        testRolloverSegmentSize(ColumnType.INT, false, bytesPerRow, (row) -> row.putInt(0, value.getAndIncrement()));
+    }
+
+    @Test
+    public void testRolloverSegmentSizeStr() throws Exception {
+        // NB. All our test strings are 3 chars. This gives us fixed sizes per row.
+        //
+        // Size of all columns per row:
+        //   * 8 bytes for the string index column (secondary column).
+        //   * 10 bytes data column:
+        //       * 6 bytes payload (because utf-16).
+        //       * 4 bytes len prefix.
+        //   * 16 bytes for timestamp (8 bytes index + 8 bytes timestamp).
+        final long bytesPerRow = 8 + 10 + 16;
+
+        AtomicInteger value = new AtomicInteger();
+        testRolloverSegmentSize(ColumnType.STRING, true, bytesPerRow, (row) -> {
+            final String formatted = String.format("%03d", value.getAndIncrement());
+            row.putStr(0, formatted);
         });
     }
 
