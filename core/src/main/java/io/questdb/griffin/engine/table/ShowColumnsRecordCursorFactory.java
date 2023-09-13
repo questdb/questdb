@@ -42,10 +42,12 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
+    private final int tokenPosition;
 
-    public ShowColumnsRecordCursorFactory(TableToken tableToken) {
+    public ShowColumnsRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
         this.tableToken = tableToken;
+        this.tokenPosition = tokenPosition;
     }
 
     @Override
@@ -113,7 +115,12 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private ShowColumnsCursor of(SqlExecutionContext executionContext) {
-            reader = executionContext.getReader(tableToken);
+            try {
+                reader = executionContext.getReader(tableToken);
+            } catch (CairoException e) {
+                e.position(tokenPosition);
+                throw e;
+            }
             toTop();
             return this;
         }

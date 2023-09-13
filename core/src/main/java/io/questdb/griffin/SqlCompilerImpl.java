@@ -2487,7 +2487,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             if (isTablesKeyword(tok)) {
                 factory = new TableListRecordCursorFactory();
             } else if (isColumnsKeyword(tok)) {
-                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext));
+                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext), lexer.lastTokenPosition());
             } else if (isPartitionsKeyword(tok)) {
                 factory = new ShowPartitionsRecordCursorFactory(sqlShowFromTable(executionContext));
             } else if (isTransactionKeyword(tok)) {
