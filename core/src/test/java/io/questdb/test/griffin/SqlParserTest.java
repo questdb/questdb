@@ -144,7 +144,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAliasWithSpaceX() throws Exception {
-        assertSyntaxError("from x 'a b' where x > 1", 7, "unexpected");
+        assertSyntaxError("x 'a b' where x > 1", 0, "impossible type cast, invalid type");
     }
 
     @Test
@@ -1368,6 +1368,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableIfNotExistsTableNameIsUnquotedKeyword() throws Exception {
+        assertException(
+                "create table if not exists from (a int)",
+                27,
+                "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+        );
+    }
+
+    @Test
     public void testCreateTableIfNotTable() throws Exception {
         assertSyntaxError("create table if not x", 20, "'if not exists' expected");
     }
@@ -2245,16 +2254,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException(
                 "create table from (a int)",
                 13,
-                "table name is a keyword, use double quotes, such as \"from\""
-        );
-    }
-
-    @Test
-    public void testCreateTableIfNotExistsTableNameIsUnquotedKeyword() throws Exception {
-        assertException(
-                "create table if not exists from (a int)",
-                27,
-                "table name is a keyword, use double quotes, such as \"from\""
+                "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
         );
     }
 
@@ -3136,7 +3136,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 14, "table name is a keyword, use double quotes, such as \"select\"",
+        assertSyntaxError("explain (xyz) select * from x", 14, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
@@ -3245,7 +3245,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExtraCommaPartitionByInAnalyticFunction() throws Exception {
-        assertSyntaxError("select a,b, f(c) over (partition by b, order by ts) from xyz", 45, "')' expected");
+        assertQuery(
+                "select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select a,b, f(c) over (partition by b, order by ts) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+
+        );
     }
 
     @Test
@@ -4107,8 +4116,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInvalidTypeCast() throws Exception {
         assertSyntaxError(
                 "select cast('2005-04-02 12:00:00-07' as timestamp with time z) col from x",
-                11,
-                "unbalanced (",
+                50,
+                "dangling literal",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
     }
@@ -4117,8 +4126,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInvalidTypeCast2() throws Exception {
         assertSyntaxError(
                 "select cast('2005-04-02 12:00:00-07' as timestamp with tz) col from x",
-                11,
-                "unbalanced (",
+                50,
+                "dangling literal",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
     }
@@ -7283,6 +7292,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectFromNoColumns() throws Exception {
+        assertSyntaxError(
+                "select from",
+                7,
+                "column expression expected"
+        );
+    }
+
+    @Test
     public void testSelectFromNonCursorFunction() throws Exception {
         assertSyntaxError("select * from length('hello')", 14, "function must return CURSOR");
     }
@@ -7291,7 +7309,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectFromSelectWildcardAndExpr() throws SqlException {
         assertQuery(
                 "select-virtual column + x column from (select-virtual [x, x + y column] x, y, x1, z, x + y column from (select-choose [tab1.x x, tab1.y y] tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x] from tab2 on tab2.x = tab1.x)))",
-                "select column + x from (select *, tab1.x + y from tab1 join tab2 on (x))",
+                "select \"column\" + x from (select *, tab1.x + y from tab1 join tab2 on (x))",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -7387,6 +7405,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectMissing() throws Exception {
+        assertSyntaxError("from x 'a b' where x > 1", 0, "Did you mean 'select * from'?");
+    }
+
+    @Test
     public void testSelectMissingExpression() throws Exception {
         assertSyntaxError(
                 "select ,a from tab",
@@ -7422,24 +7445,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a, c from (select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0 order by a)",
                 "(select a, count() c from tab order by 1) where c > 0",
                 modelOf("tab").col("a", ColumnType.SYMBOL)
-        );
-    }
-
-    @Test
-    public void testSelectTrailingComma() throws SqlException {
-        assertQuery(
-                "select-choose a, b, c, d from (select [a, b, c, d] from tab)",
-                "select " +
-                        "a," +
-                        "b," +
-                        "c," +
-                        "d," +
-                        "from tab",
-                modelOf("tab")
-                        .col("a", ColumnType.SYMBOL)
-                        .col("b", ColumnType.SYMBOL)
-                        .col("c", ColumnType.SYMBOL)
-                        .col("d", ColumnType.SYMBOL)
         );
     }
 
@@ -7499,6 +7504,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSql("x1\tx\n" +
                 "1\t1\n" +
                 "2\t4\n", "select x, sum(x)*sum(x) x from long_sequence(2)");
+    }
+
+    @Test
+    public void testSelectTrailingComma() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, d from (select [a, b, c, d] from tab)",
+                "select " +
+                        "a," +
+                        "b," +
+                        "c," +
+                        "d," +
+                        "from tab",
+                modelOf("tab")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.SYMBOL)
+                        .col("c", ColumnType.SYMBOL)
+                        .col("d", ColumnType.SYMBOL)
+        );
     }
 
     @Test
@@ -7570,10 +7593,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWildcardDetachedStar() throws Exception {
-        assertSyntaxError(
-                "select tab2.*, bxx.  * from tab1 a join tab2 on (x)",
-                33,
-                "',', 'from' or 'over' expected",
+        assertQuery(
+                "select-choose tab2.x x, tab2.z z, a.x x1, a.y y from (select [x, y] from tab1 a join select [x, z] from tab2 on tab2.x = a.x) a",
+                "select tab2.*, a.  * from tab1 a join tab2 on (x)",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );

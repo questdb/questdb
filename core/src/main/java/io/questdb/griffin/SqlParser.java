@@ -234,6 +234,7 @@ public class SqlParser {
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "literal");
         int pos = lexer.lastTokenPosition();
+        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, pos);
         validateLiteral(pos, tok);
         return nextLiteral(GenericLexer.immutableOf(GenericLexer.unquote(tok)), pos);
     }
@@ -762,7 +763,9 @@ public class SqlParser {
 
     private void parseCreateTableColumns(GenericLexer lexer, CreateTableModel model) throws SqlException {
         while (true) {
-            final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));
+            CharSequence tok = notTermTok(lexer);
+            SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(tok));
             final int position = lexer.lastTokenPosition();
             final int type = toColumnType(lexer, notTermTok(lexer));
 
@@ -772,7 +775,6 @@ public class SqlParser {
 
             model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity());
 
-            CharSequence tok;
             if (ColumnType.isSymbol(type)) {
                 tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
@@ -1432,6 +1434,7 @@ public class SqlParser {
                     throw err(lexer, tok, "missing column name");
                 }
 
+                SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                 model.addColumn(GenericLexer.unquote(tok), lexer.lastTokenPosition());
 
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
@@ -1700,6 +1703,9 @@ public class SqlParser {
                 } else {
                     // cut off some obvious errors
                     if (isFromKeyword(tok)) {
+                        if (accumulatedColumns.size() == 0) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "column expression expected");
+                        }
                         hasFrom = true;
                         lexer.unparseLast();
                         break;
@@ -1741,6 +1747,15 @@ public class SqlParser {
                         ObjList<ExpressionNode> partitionBy = ((AnalyticColumn) col).getPartitionBy();
 
                         do {
+                            // allow dangling comma by previewing the token
+                            tok = tok(lexer, "column name, 'order' or ')'");
+                            if (SqlKeywords.isOrderKeyword(tok)) {
+                                if (partitionBy.size() == 0) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "at least one column is expected in `partition by` clause");
+                                }
+                                break;
+                            }
+                            lexer.unparseLast();
                             partitionBy.add(expectExpr(lexer));
                             tok = tok(lexer, "'order' or ')'");
                         } while (Chars.equals(tok, ','));
@@ -1780,11 +1795,14 @@ public class SqlParser {
                     // verify that * wildcard is not aliased
 
                     if (isAsKeyword(tok)) {
-                        CharSequence aliasTok = GenericLexer.immutableOf(tok(lexer, "alias"));
+                        tok = tok(lexer, "alias");
+                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                        CharSequence aliasTok = GenericLexer.immutableOf(tok);
                         validateIdentifier(lexer, aliasTok);
                         alias = GenericLexer.unquote(aliasTok);
                     } else {
                         validateIdentifier(lexer, tok);
+                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
                     }
 
@@ -2385,6 +2403,10 @@ public class SqlParser {
 
         if (isWithKeyword(tok)) {
             return parseWith(lexer);
+        }
+
+        if (isFromKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
         return parseSelect(lexer);

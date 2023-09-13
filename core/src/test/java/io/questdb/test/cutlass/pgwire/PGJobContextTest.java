@@ -2812,7 +2812,7 @@ if __name__ == "__main__":
                 {"drop doesnt", "ERROR: 'table' or 'all tables' expected"},
                 {"drop", "ERROR: 'table' or 'all tables' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
-                {"drop table exists doesnt", "ERROR: table name is a keyword, use double quotes, such as \"exists\""},
+                {"drop table exists doesnt", "ERROR: table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
                 {"drop all table if exists;", "ERROR: 'tables' expected"},
@@ -8608,11 +8608,11 @@ create table tab as (
 
                     mayDrainWalQueue();
 
-                    try (PreparedStatement statement = connection.prepareStatement("SELECT id as Case, ts FROM ts ORDER BY id ASC")) {
+                    try (PreparedStatement statement = connection.prepareStatement("SELECT id, ts FROM ts ORDER BY id ASC")) {
                         sink.clear();
                         try (ResultSet rs = statement.executeQuery()) {
                             assertResultSet(
-                                    "Case[INTEGER],ts[TIMESTAMP]\n" +
+                                    "id[INTEGER],ts[TIMESTAMP]\n" +
                                             "0,2021-09-27 16:45:03.202345\n" +
                                             "1,2021-09-27 16:45:03.202345\n" +
                                             "2,2021-09-27 16:45:03.202345\n" +

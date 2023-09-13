@@ -2149,10 +2149,10 @@ public class SqlKeywords {
         }
     }
 
-    static void assertTableNameIsQuotedOrNotAKeyword(CharSequence tableName, int tableNamePos) throws SqlException {
-        final boolean quoted = Chars.isQuoted(tableName);
-        if (!quoted && SqlKeywords.isKeyword(tableName)) {
-            throw SqlException.$(tableNamePos, "table name is a keyword, use double quotes, such as \"").put(tableName).put('"');
+    static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
+        final boolean quoted = Chars.isQuoted(keyword);
+        if (!quoted && SqlKeywords.isKeyword(keyword)) {
+            throw SqlException.$(position, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"").put(keyword).put('"');
         }
     }
 
@@ -2196,7 +2196,6 @@ public class SqlKeywords {
         KEYWORDS.add("attach");
         KEYWORDS.add("batch");
         KEYWORDS.add("between");
-        KEYWORDS.add("by");
         KEYWORDS.add("bypass");
         KEYWORDS.add("cancel");
         KEYWORDS.add("case");
