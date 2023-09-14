@@ -53,7 +53,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
             return -1;
         }
     #endif
-    #ifdef __APPLE__ || __FreeBSD__
+    #if defined(__APPLE__) || defined(__FreeBSD__)
         if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec) < 0) {
             return -1;
         }
