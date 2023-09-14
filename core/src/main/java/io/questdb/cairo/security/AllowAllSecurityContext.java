@@ -51,6 +51,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAdminAction() {
+    }
+
+    @Override
     public void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 

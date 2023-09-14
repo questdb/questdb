@@ -140,7 +140,7 @@ public class SecurityContextTest {
                     switch (parameters.length) {
                         case 0:
                             method.invoke(sc, NO_PARAM_ARGS);
-                            if (name.startsWith("authorizeShow")) {
+                            if (name.startsWith("authorizeShow") || name.startsWith("authorizeAdminAction")) {
                                 continue;
                             }
                             Assert.fail();
