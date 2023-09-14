@@ -53,7 +53,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
     DWORD ret = 0;
     keepaliveParams.onoff = 1;
     keepaliveParams.keepaliveinterval = keepaliveParams.keepalivetime = idle_sec * 1000;
-    if (WSAIoctl(s, SIO_KEEPALIVE_VALS, &keepaliveParams, sizeof(keepaliveParams), NULL, 0, &ret, NULL, NULL) < 0) {
+    if (WSAIoctl(fd, SIO_KEEPALIVE_VALS, &keepaliveParams, sizeof(keepaliveParams), NULL, 0, &ret, NULL, NULL) < 0) {
         SaveLastError();
         return -1;
     }
