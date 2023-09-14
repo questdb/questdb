@@ -121,6 +121,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
+    private final int forceRecvFragmentationChunkSize;
+    private final int forceSendFragmentationChunkSize;
     private final int maxBlobSizeOnQuery;
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final WeakMutableObjectPool<Portal> namedPortalPool;
@@ -169,6 +171,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long recvBuffer;
     private long recvBufferReadOffset = 0;
     private long recvBufferWriteOffset = 0;
+    private boolean replyAndContinue;
     private PGResumeProcessor resumeProcessor;
     private Rnd rnd;
     private long rowCount;
@@ -214,6 +217,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
+        this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
@@ -425,6 +430,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 doSend(bufferRemainingOffset, bufferRemainingSize);
                 if (resumeProcessor != null) {
                     resumeProcessor.resume(false);
+                }
+                if (replyAndContinue) {
+                    doSend(bufferRemainingOffset, bufferRemainingSize);
+                    replyAndContinue();
                 }
             }
 
@@ -1152,6 +1161,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private void checkSendBufferFitsProtocolCommand() throws PeerDisconnectedException {
+        if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
+            sendAndResetWait();
+        }
+    }
+
     private void clearCursorAndFactory() {
         resumeProcessor = null;
         currentCursor = Misc.free(currentCursor);
@@ -1180,6 +1195,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 typesAndUpdate = Misc.free(typesAndUpdate);
             }
         }
+    }
+
+    private void clearRecvBuffer() {
+        recvBufferWriteOffset = 0;
+        recvBufferReadOffset = 0;
     }
 
     private void closePendingWriters(boolean commit) {
@@ -1323,20 +1343,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int remaining = bufferSize;
 
         while (remaining > 0) {
-            int m = socket.send(sendBuffer + offset, remaining);
+            int m = socket.send(sendBuffer + offset, Math.min(remaining, forceSendFragmentationChunkSize));
             if (m < 0) {
                 LOG.info().$("disconnected on write [code=").$(m).I$();
                 throw PeerDisconnectedException.INSTANCE;
-            }
-            if (m == 0) {
-                // The socket is not ready for write.
-                break;
             }
 
             dumpBuffer('<', sendBuffer + offset, m);
 
             remaining -= m;
             offset += m;
+
+            if (m == 0 || forceSendFragmentationChunkSize < sendBufferSize) {
+                // The socket is not ready for write, or we're simulating network fragmentation.
+                break;
+            }
         }
 
         if (remaining > 0) {
@@ -1364,7 +1385,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void executeInsert() throws SqlException {
+    private void executeInsert() throws SqlException, PeerDisconnectedException {
         TableWriterAPI writer;
         boolean recompileStale = true;
         for (int retries = 0; true; retries++) {
@@ -1448,7 +1469,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void executeUpdate() throws SqlException {
+    private void executeUpdate() throws SqlException, PeerDisconnectedException {
         boolean recompileStale = true;
         for (int retries = 0; recompileStale; retries++) {
             try {
@@ -2463,27 +2484,30 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareError(ex);
+    private void replyAndContinue() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        replyAndContinue = true;
         sendReadyForNewQuery();
         clearRecvBuffer();
+    }
+
+    private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareError(ex);
+        replyAndContinue();
     }
 
     private void reportNonCriticalError(int position, CharSequence flyweightMessage)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareNonCriticalError(position, flyweightMessage);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
+        replyAndContinue();
     }
 
     private void reportQueryCancelled(CharSequence flyweightMessage)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareQueryCanceled(flyweightMessage);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
+        replyAndContinue();
     }
 
-    private void resumeCommandComplete(boolean queryWasPaused) {
+    private void resumeCommandComplete(boolean queryWasPaused) throws PeerDisconnectedException {
         prepareCommandComplete(true);
     }
 
@@ -2525,8 +2549,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        doSend(0, (int) (sendBufferPtr - sendBuffer));
+        doSend(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
         responseAsciiSink.reset();
+        replyAndContinue = false;
     }
 
     private void sendAndResetWait() throws PeerDisconnectedException {
@@ -2534,7 +2559,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // This method busy waits to send buffer.
         while (true) {
             try {
-                doSend(0, (int) (sendBufferPtr - sendBuffer));
+                doSend(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
                 break;
             } catch (PeerIsSlowToReadException e) {
                 Os.sleep(1);
@@ -2542,6 +2567,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
         responseAsciiSink.reset();
+        replyAndContinue = false;
     }
 
     // This method is currently unused. it's used for the COPY sub-protocol, which is currently not implemented.
@@ -2639,9 +2665,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             prepareCommandComplete(true);
         } else {
-            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
-                sendAndResetWait();
-            }
+            checkSendBufferFitsProtocolCommand();
             prepareSuspended();
             // Prevents re-sending current record row when buffer is sent fully.
             resumeProcessor = null;
@@ -2746,11 +2770,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    void clearRecvBuffer() {
-        recvBufferWriteOffset = 0;
-        recvBufferReadOffset = 0;
-    }
-
     int doReceive(int remaining) {
         final long data = recvBuffer + recvBufferWriteOffset;
         final int n = socket.recv(data, remaining);
@@ -2773,7 +2792,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bufferRemainingOffset = 0;
     }
 
-    void prepareCommandComplete(boolean addRowCount) {
+    void prepareCommandComplete(boolean addRowCount) throws PeerDisconnectedException {
+        checkSendBufferFitsProtocolCommand();
         if (isEmptyQuery) {
             prepareEmptyQueryResponse();
         } else {
@@ -2798,9 +2818,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     void prepareReadyForQuery() throws PeerDisconnectedException {
         if (sendRNQ) {
             LOG.debug().$("RNQ sent").$();
-            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
-                sendAndResetWait();
-            }
+            checkSendBufferFitsProtocolCommand();
 
             responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
             responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
@@ -2830,7 +2848,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         assertBufferSize(remaining > 0);
 
-        int n = doReceive(remaining);
+        int n = doReceive(Math.min(forceRecvFragmentationChunkSize, remaining));
         LOG.debug().$("recv [n=").$(n).I$();
         if (n < 0) {
             LOG.info().$("disconnected on read [code=").$(n).I$();

@@ -3543,6 +3543,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getForceRecvFragmentationChunkSize() {
+            return Integer.MAX_VALUE;
+        }
+
+        @Override
+        public int getForceSendFragmentationChunkSize() {
+            return Integer.MAX_VALUE;
+        }
+
+        @Override
         public int getInsertCacheBlockCount() {
             return pgInsertCacheBlockCount;
         }
