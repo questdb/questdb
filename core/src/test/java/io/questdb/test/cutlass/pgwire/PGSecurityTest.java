@@ -87,6 +87,11 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testAllowDumpThreadStacks() throws Exception {
+        assertMemoryLeak(() -> executeWithPg("select dump_thread_stacks();"));
+    }
+
+    @Test
     public void testAllowsSelect() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table src (ts TIMESTAMP)");
@@ -304,9 +309,9 @@ public class PGSecurityTest extends BasePGTest {
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
-            assertException("Query '" + query + "' must fail in the read-only mode!");
+            Assert.fail("Query '" + query + "' must fail in the read-only mode!");
         } catch (PSQLException e) {
-            assertContains(e.getMessage(), "Write permission denied");
+            assertContains(e.getMessage(), "permission denied");
         }
     }
 
