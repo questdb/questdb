@@ -5,6 +5,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -23,7 +24,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
         int timestampIndex = tableWriter.getMetadata().getTimestampIndex();
         RecordMetadata copyDenseMeta = denseMetaCopy(tableWriter.getMetadata(), timestampIndex);
 
-        try (var vm = Vm.getMARWInstance(); Path path = new Path()) {
+        try (MemoryMARW vm = Vm.getMARWInstance(); Path path = new Path()) {
             engine.releaseInactive();
             while (true) {
                 try {
