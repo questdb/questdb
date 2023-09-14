@@ -45,7 +45,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
     if (set_int_sockopt(fd, SOL_SOCKET, SO_KEEPALIVE, 1) < 0) {
         return -1;
     }
-    #ifdef __linux__
+    #if defined(__linux__) || defined(__FreeBSD__)
         if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle_sec) < 0) {
             return -1;
         }
@@ -53,7 +53,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
             return -1;
         }
     #endif
-    #if defined(__APPLE__) || defined(__FreeBSD__)
+    #ifdef __APPLE__
         if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec) < 0) {
             return -1;
         }
