@@ -15,7 +15,7 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md)
 
 # QuestDB
 
@@ -34,9 +34,9 @@ QuestDB implementa ANSI SQL con estensioni SQL native alle serie temporali. Ques
 
 ## Prova QuestDB
 
-Forniamo una [demo live](https://demo.questdb.io/) con l'ultima versione di QuestDB ed alcuni set di dati come esempi: 
+Forniamo una [demo live](https://demo.questdb.io/) con l'ultima versione di QuestDB ed alcuni set di dati come esempi:
 
-- Viaggi: oltre 1,6 miliardi di righe di dati relativi agli ultimi 10 anni di viaggi in taxi a New York.  - Operazioni finanziare: oltre 30 milioni di righe di dati in tempo reale relativi al mercato cripto.
+- Viaggi: oltre 1,6 miliardi di righe di dati relativi agli ultimi 10 anni di viaggi in taxi a New York. - Operazioni finanziare: oltre 30 milioni di righe di dati in tempo reale relativi al mercato cripto.
 - Posizionamento: dati relativi alla geolocalizzazione di 250.000 navi nel corso del tempo.
 
 | Query                                                                         | Tempi di esecuzione                                                                                                                                                                                      |
