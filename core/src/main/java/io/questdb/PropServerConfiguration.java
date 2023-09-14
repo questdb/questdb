@@ -321,7 +321,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpAllowDeflateBeforeSend;
     private boolean httpFrozenClock;
     private boolean httpHealthCheckAuthRequired;
-    private boolean httpHealthCheckForcePlaintext;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
     private boolean httpMinNetConnectionHint;
@@ -686,7 +685,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
             this.httpHealthCheckAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED, true);
-            this.httpHealthCheckForcePlaintext = getBoolean(properties, env, PropertyKey.HTTP_HEALTH_CHECK_FORCE_PLAINTEXT, false);
             this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
             this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
@@ -2930,11 +2928,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isHealthCheckForcePlainText() {
-            return httpHealthCheckForcePlaintext;
-        }
-
-        @Override
         public boolean isPessimisticHealthCheckEnabled() {
             return httpPessimisticHealthCheckEnabled;
         }
@@ -3025,11 +3018,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isHealthCheckAuthenticationRequired() {
             return httpHealthCheckAuthRequired;
-        }
-
-        @Override
-        public boolean isHealthCheckForcePlainText() {
-            return false;
         }
 
         @Override

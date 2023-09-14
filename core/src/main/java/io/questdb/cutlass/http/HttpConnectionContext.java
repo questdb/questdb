@@ -72,9 +72,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
 
-    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, boolean forcePlainText) {
+    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
         super(
-                forcePlainText ? PlainSocketFactory.INSTANCE : configuration.getHttpContextConfiguration().getFactoryProvider().getHttpSocketFactory(),
+                socketFactory,
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
                 LOG
         );

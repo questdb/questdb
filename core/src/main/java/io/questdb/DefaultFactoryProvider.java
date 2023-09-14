@@ -60,6 +60,11 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
+    public @NotNull SocketFactory getMinHttpSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
     public @NotNull SocketFactory getPGWireSocketFactory() {
         return PlainSocketFactory.INSTANCE;
     }

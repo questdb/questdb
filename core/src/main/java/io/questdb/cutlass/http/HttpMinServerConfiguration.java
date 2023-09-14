@@ -40,7 +40,5 @@ public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
 
     boolean isHealthCheckAuthenticationRequired();
 
-    boolean isHealthCheckForcePlainText();
-
     boolean isPessimisticHealthCheckEnabled();
 }

@@ -50,6 +50,9 @@ public interface FactoryProvider extends QuietCloseable {
     SocketFactory getLineSocketFactory();
 
     @NotNull
+    SocketFactory getMinHttpSocketFactory();
+
+    @NotNull
     SocketFactory getPGWireSocketFactory();
 
     @NotNull
