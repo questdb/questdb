@@ -276,13 +276,17 @@ public class SqlParser {
             model.setSampleBy(n);
             return;
         }
-        // This is complex expression of sample by period. It must follow time unit interval
-        ExpressionNode periodUnit = expectLiteral(lexer);
-        if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL || !isValidSampleByPeriodLetter(periodUnit.token)) {
-            int lexerPosition = lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition();
-            throw SqlException.$(periodUnit != null ? periodUnit.position : lexerPosition, "one letter sample by period unit expected");
+
+        // this is complex expression of sample by period. It must follow time unit interval
+        // lets preempt the problem where time unit interval is missing, and we hit keyword instead
+        final int pos = lexer.lastTokenPosition();
+        final CharSequence tok = tok(lexer, "time interval unit");
+
+        if (isValidSampleByPeriodLetter(tok)) {
+            model.setSampleBy(n, SqlUtil.nextLiteral(expressionNodePool, tok, pos));
+            return;
         }
-        model.setSampleBy(n, periodUnit);
+        throw SqlException.$(pos, "one letter sample by period unit expected");
     }
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
