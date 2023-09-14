@@ -2917,7 +2917,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testEmptySampleBy() throws Exception {
-        assertSyntaxError("select x, y from tab sample by", 30, "literal expected");
+        assertSyntaxError("select x, y from tab sample by", 30, "time interval unit expected");
     }
 
     @Test
@@ -3983,17 +3983,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidGroupBy1() throws Exception {
-        assertSyntaxError("select x, y from tab sample by x,", 32, "literal expected");
+        assertSyntaxError("select x, y from tab sample by x,", 32, "one letter sample by period unit expected");
     }
 
     @Test
     public void testInvalidGroupBy2() throws Exception {
-        assertSyntaxError("select x, y from (tab sample by x,)", 33, "literal expected");
+        assertSyntaxError("select x, y from (tab sample by x,)", 33, "one letter sample by period unit expected");
     }
 
     @Test
     public void testInvalidGroupBy3() throws Exception {
-        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "literal expected");
+        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "one letter sample by period unit expected");
     }
 
     @Test
