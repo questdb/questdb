@@ -40,34 +40,41 @@ int set_int_sockopt(int fd, int level, int opt, int value) {
     return setsockopt(fd, level, opt, &value, sizeof(value));
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
+        (JNIEnv *e, jclass cl, jint fd, jint idle_sec) {
+    if (set_int_sockopt(fd, SOL_SOCKET, SO_KEEPALIVE, 1) < 0) {
+        return -1;
+    }
+    #ifdef __linux__
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle_sec) < 0) {
+            return -1;
+        }
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, idle_sec) < 0) {
+            return -1;
+        }
+    #endif
+    #ifdef __APPLE__ || __FreeBSD__
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec) < 0) {
+            return -1;
+        }
+    #endif
+    return fd;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
         (JNIEnv *e, jclass cl, jboolean blocking) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd > 0) {
-        if (!blocking) {
-            if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
-                close(fd);
-                return -1;
-            }
-
-            int oni = 1;
-            if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *) &oni, sizeof(oni)) < 0) {
-                close(fd);
-                return -1;
-            }
+    if (fd > 0 && !blocking) {
+        if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
+            close(fd);
+            return -1;
         }
 
-        // enable TCP keepalive probes, otherwise firewalls and load balancers may drop connections
-        // during a period of inactivity
-        set_int_sockopt(fd, SOL_SOCKET, SO_KEEPALIVE, 1);
-        int idle_sec = 30;
-        #ifdef __linux__
-            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle_sec);
-            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, idle_sec);
-        #endif
-        #ifdef __APPLE__
-            set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec);
-        #endif
+        int oni = 1;
+        if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *) &oni, sizeof(oni)) < 0) {
+            close(fd);
+            return -1;
+        }
     }
     return fd;
 }

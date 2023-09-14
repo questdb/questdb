@@ -45,6 +45,10 @@ public final class Net {
     public static final long MMSGHDR_BUFFER_LENGTH_OFFSET;
     public static final long MMSGHDR_SIZE;
     public static final int SHUT_WR = 1;
+    // TCP KeepAlive not meant to be configurable. It's a last resort measure to disable/change keepalive if the default
+    // value causes problems in some environments. If it does not cause problems then this option should be removed after a few releases.
+    // It's not exposed as PropertyKey, because it would become a supported and hard to remove API.
+    private static final int TCP_KEEPALIVE_SECONDS = Integer.getInteger("questdb.unsupported.tcp.keepalive.seconds", 30);
 
     private static final AtomicInteger ADDR_INFO_COUNTER = new AtomicInteger();
     private static final AtomicInteger SOCK_ADDR_COUNTER = new AtomicInteger();
@@ -279,8 +283,17 @@ public final class Net {
     }
 
     public static int socketTcp(boolean blocking) {
-        return Files.bumpFileCount(socketTcp0(blocking));
+        return Files.bumpFileCount(setKeepAlive(socketTcp0(blocking), TCP_KEEPALIVE_SECONDS));
     }
+
+    private static int setKeepAlive(int fd, int seconds) {
+        if (fd == -1) {
+            return -1;
+        }
+        return seconds > 0 ? setKeepAlive0(fd, seconds) : fd;
+    }
+
+    private static native int setKeepAlive0(int fd, int seconds);
 
     public static int socketUdp() {
         return Files.bumpFileCount(socketUdp0());

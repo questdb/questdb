@@ -47,24 +47,29 @@ int set_int_sockopt(SOCKET fd, int level, int opt, DWORD value) {
     return result;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
+        (JNIEnv *e, jclass cl, jint fd, jint idle_sec) {
+    struct tcp_keepalive keepaliveParams;
+    DWORD ret = 0;
+    keepaliveParams.onoff = 1;
+    keepaliveParams.keepaliveinterval = keepaliveParams.keepalivetime = idle_sec * 1000;
+    if (WSAIoctl(s, SIO_KEEPALIVE_VALS, &keepaliveParams, sizeof(keepaliveParams), NULL, 0, &ret, NULL, NULL) < 0) {
+        SaveLastError();
+        return -1;
+    }
+    return fd;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
         (JNIEnv *e, jclass cl, jboolean blocking) {
-
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s) {
-        if (!blocking) {
-            u_long mode = 1;
-            if (ioctlsocket(s, FIONBIO, &mode) != 0) {
-                SaveLastError();
-                closesocket(s);
-                return -1;
-            }
+    if (s && !blocking) {
+        u_long mode = 1;
+        if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+            SaveLastError();
+            closesocket(s);
+            return -1;
         }
-        struct tcp_keepalive keepaliveParams;
-        DWORD ret = 0;
-        keepaliveParams.onoff = 1;
-        keepaliveParams.keepaliveinterval = keepaliveParams.keepalivetime = 30000;
-        WSAIoctl(s, SIO_KEEPALIVE_VALS, &keepaliveParams, sizeof(keepaliveParams), NULL, 0, &ret, NULL, NULL);
     } else {
         SaveLastError();
     }
