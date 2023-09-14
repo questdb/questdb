@@ -64,7 +64,9 @@ public class SecurityContextTest {
                             method.invoke(sc, sc);
                         } else if (name.equals("authorizeTableBackup")) {
                             method.invoke(sc, new ObjHashSet<CharSequence>());
-                        } else if (name.startsWith("authorizeShow")) {
+                        } else if (name.startsWith("authorizeShow")
+                                || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
+                                || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")) {
                             method.invoke(sc, "userName");
                         } else {
                             method.invoke(sc, ONE_PARAM_ARGS);
@@ -101,7 +103,9 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
-                            } else if (name.startsWith("authorizeShow")) {
+                            } else if (name.startsWith("authorizeShow")
+                                    || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
+                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")) {
                                 method.invoke(sc, "userName");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
@@ -146,7 +150,9 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
-                            } else if (name.startsWith("authorizeShow")) {
+                            } else if (name.startsWith("authorizeShow")
+                                    || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
+                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")) {
                                 method.invoke(sc, "userName");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
