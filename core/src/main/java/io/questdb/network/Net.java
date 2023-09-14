@@ -298,7 +298,7 @@ public final class Net {
         }
         if (setKeepAlive0(fd, TCP_KEEPALIVE_SECONDS) < 0) {
             int errno = Os.errno();
-            LOG.error().$("could not set tcp keepalive [fd=").$(fd).$(", errno=").$(errno).$(']').$();
+            LOG.error().$("could not set tcp keepalive [fd=").$(fd).$(", errno=").$(errno).I$();
         }
     }
 
