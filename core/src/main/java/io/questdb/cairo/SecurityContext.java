@@ -38,6 +38,8 @@ public interface SecurityContext {
 
     void authorizeAddUser();
 
+    void authorizeAdminAction();
+
     void authorizeAlterTableAddColumn(TableToken tableToken);
 
     void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
@@ -109,9 +111,7 @@ public interface SecurityContext {
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeSelectOnAnyColumn(TableToken tableToken) {
-        //TODO: make non-default 
-    }
+    void authorizeSelectOnAnyColumn(TableToken tableToken);
 
     void authorizeShowGroups();
 
@@ -150,5 +150,16 @@ public interface SecurityContext {
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
+    /**
+     * User account used for permission checks, i.e. the session user account
+     * or the service account defined by an executed ASSUME statement.
+     */
     CharSequence getPrincipal();
+
+    /**
+     * User account used in initial authentication, i.e. to start the session.
+     */
+    default CharSequence getSessionPrincipal() {
+        return getPrincipal();
+    }
 }
