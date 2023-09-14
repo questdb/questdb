@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
@@ -52,6 +54,8 @@ public final class Net {
 
     private static final AtomicInteger ADDR_INFO_COUNTER = new AtomicInteger();
     private static final AtomicInteger SOCK_ADDR_COUNTER = new AtomicInteger();
+
+    private static final Log LOG = LogFactory.getLog(Net.class);
 
     private Net() {
     }
@@ -283,14 +287,19 @@ public final class Net {
     }
 
     public static int socketTcp(boolean blocking) {
-        return Files.bumpFileCount(setKeepAlive(socketTcp0(blocking), TCP_KEEPALIVE_SECONDS));
+        int fd = Files.bumpFileCount(socketTcp0(blocking));
+        configureKeepAlive(fd);
+        return fd;
     }
 
-    private static int setKeepAlive(int fd, int seconds) {
-        if (fd == -1) {
-            return -1;
+    private static void configureKeepAlive(int fd) {
+        if (TCP_KEEPALIVE_SECONDS < 0 || fd < 0) {
+            return;
         }
-        return seconds > 0 ? setKeepAlive0(fd, seconds) : fd;
+        if (setKeepAlive0(fd, TCP_KEEPALIVE_SECONDS) < 0) {
+            int errno = Os.errno();
+            LOG.error().$("could not set tcp keepalive [fd=").$(fd).$(", errno=").$(errno).$(']').$();
+        }
     }
 
     private static native int setKeepAlive0(int fd, int seconds);
