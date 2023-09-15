@@ -32,7 +32,7 @@ public class HttpMinBootstrapTest extends BootstrapTest {
     }
 
     @Test
-    public void testHttpServerEnabledMinStillWorking() throws Exception {
+    public void testHttpServerDisabledMinServerStillWorking() throws Exception {
         Map<String, String> env = new HashMap<>(System.getenv());
         env.put("QDB_HTTP_ENABLED", "false");
         Bootstrap bootstrap = new Bootstrap(
