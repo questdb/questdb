@@ -22,42 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.network.SocketFactory;
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface FactoryProvider extends QuietCloseable {
+public class StdDevPopDoubleGroupByFunctionFactory implements FunctionFactory {
     @Override
-    default void close() {
+    public String getSignature() {
+        return "stddev_pop(D)";
     }
 
-    @NotNull
-    HttpAuthenticatorFactory getHttpAuthenticatorFactory();
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    @NotNull
-    SocketFactory getHttpMinSocketFactory();
-
-    @NotNull
-    SocketFactory getHttpSocketFactory();
-
-    @NotNull
-    LineAuthenticatorFactory getLineAuthenticatorFactory();
-
-    @NotNull
-    SocketFactory getLineSocketFactory();
-
-    @NotNull
-    SocketFactory getPGWireSocketFactory();
-
-    @NotNull
-    PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
-
-    @NotNull
-    SecurityContextFactory getSecurityContextFactory();
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new StdDevPopDoubleGroupByFunction(args.getQuick(0));
+    }
 }

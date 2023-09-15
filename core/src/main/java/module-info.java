@@ -703,8 +703,12 @@ open module io.questdb {
 //                  avg()
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory,
+//                 stddev()
+            io.questdb.griffin.engine.functions.groupby.StdDevDoubleGroupByFunctionFactory,
 //                 stddev_samp()
             io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFactory,
+//                 stddev_pop()
+            io.questdb.griffin.engine.functions.groupby.StdDevPopDoubleGroupByFunctionFactory,
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
