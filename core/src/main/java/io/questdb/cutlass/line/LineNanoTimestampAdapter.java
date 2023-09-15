@@ -24,10 +24,19 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
-public interface LineProtoTimestampAdapter {
-    long getMicros(CharSequence value) throws NumericException;
+public class LineNanoTimestampAdapter implements LineTimestampAdapter {
+    public static final LineNanoTimestampAdapter INSTANCE = new LineNanoTimestampAdapter();
 
-    long getMicros(long lineProtoTimestamp);
+    @Override
+    public long getMicros(CharSequence value) throws NumericException {
+        return Numbers.parseLong(value) / 1000L;
+    }
+
+    @Override
+    public long getMicros(long timestamp) {
+        return timestamp / 1000L;
+    }
 }

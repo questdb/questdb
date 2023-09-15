@@ -22,11 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.test.cutlass.line;
 
-public class LineProtoException extends RuntimeException {
-    public static final LineProtoException INSTANCE = new LineProtoException();
+import io.questdb.cutlass.line.LineMilliTimestampAdapter;
+import io.questdb.std.NumericException;
+import org.junit.Assert;
+import org.junit.Test;
 
-    private LineProtoException() {
+public class LineMilliTimestampAdapterTest {
+
+    @Test
+    public void testRounding() throws NumericException {
+        Assert.assertEquals(5679000L, LineMilliTimestampAdapter.INSTANCE.getMicros("5679"));
     }
 }

@@ -24,7 +24,10 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SqlWalMode;
+import io.questdb.cairo.TableReader;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -852,16 +855,28 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 "value\ttimestamp\n" +
                         "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:01.000000Z\n" +
                         "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:02.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:08.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:09.000000Z\n" +
-                        "\t1970-01-01T00:00:10.000000Z\n" +
-                        "\t1970-01-01T00:00:11.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:12.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:13.000000Z\n" +
-                        "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:14.000000Z\n",
+                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:03.000000Z\n" +
+                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:04.000000Z\n" +
+                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:05.000000Z\n" +
+                        "1970-01-19T21:02:13.000000Z\t1970-01-01T00:00:06.000000Z\n" +
+                        "1970-04-24T06:13:00.000000Z\t1970-01-01T00:00:07.000000Z\n" +
+                        "1971-11-11T13:00:00.000000Z\t1970-01-01T00:00:08.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:14.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:15.000000Z\n" +
+                        "\t1970-01-01T00:00:16.000000Z\n" +
+                        "\t1970-01-01T00:00:17.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:18.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:19.000000Z\n" +
+                        "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:20.000000Z\n",
                 new CharSequence[]{
                         "1630933921000i", // valid
                         "1630933921000t", // valid
+                        "1630933921000000t_ns", // valid
+                        "1630933921000t_us", // valid
+                        "1630933921t_ms", // valid
+                        "1630933t_s", // valid
+                        "163093t_m", // valid
+                        "16309t_h", // valid
                         "1630933921000", // discarded bad type double
                         "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
                         "1970-01-01T00:\"00:05.00\"0000Z", // discarded bad type symbol
@@ -904,7 +919,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             do {
                 handleContextIO0();
                 Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
             closeContext();
             mayDrainWalQueue();
             try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), table)) {

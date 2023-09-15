@@ -153,7 +153,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int lineUdpOwnThreadAffinity;
     private final int lineUdpReceiveBufferSize;
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
-    private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
+    private final LineTimestampAdapter lineUdpTimestampAdapter;
     private final boolean lineUdpUnicast;
     private final DateLocale locale;
     private final Log log;
@@ -384,7 +384,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpNetConnectionQueueTimeout;
     private int lineTcpNetConnectionRcvBuf;
     private long lineTcpNetConnectionTimeout;
-    private LineProtoTimestampAdapter lineTcpTimestampAdapter;
+    private LineTcpTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpWriterQueueCapacity;
     private int[] lineTcpWriterWorkerAffinity;
     private int lineTcpWriterWorkerCount;
@@ -1033,7 +1033,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF, this.lineTcpNetConnectionRcvBuf);
 
                 this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.LINE_TCP_CONNECTION_POOL_CAPACITY, 8);
-                this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
+                LineTimestampAdapter timestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
+                this.lineTcpTimestampAdapter = new LineTcpTimestampAdapter(timestampAdapter);
                 this.lineTcpMsgBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 32768);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
                 if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
@@ -1254,21 +1255,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         return CommitMode.NOSYNC;
     }
 
-    private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigProperty propNm) {
+    private LineTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigProperty propNm) {
         final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
         switch (lineUdpTimestampSwitch) {
             case "u":
-                return LineProtoMicroTimestampAdapter.INSTANCE;
+                return LineMicroTimestampAdapter.INSTANCE;
             case "ms":
-                return LineProtoMilliTimestampAdapter.INSTANCE;
+                return LineMilliTimestampAdapter.INSTANCE;
             case "s":
-                return LineProtoSecondTimestampAdapter.INSTANCE;
+                return LineSecondTimestampAdapter.INSTANCE;
             case "m":
-                return LineProtoMinuteTimestampAdapter.INSTANCE;
+                return LineMinuteTimestampAdapter.INSTANCE;
             case "h":
-                return LineProtoHourTimestampAdapter.INSTANCE;
+                return LineHourTimestampAdapter.INSTANCE;
             default:
-                return LineProtoNanoTimestampAdapter.INSTANCE;
+                return LineNanoTimestampAdapter.INSTANCE;
         }
     }
 
@@ -3228,7 +3229,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineProtoTimestampAdapter getTimestampAdapter() {
+        public LineTcpTimestampAdapter getTimestampAdapter() {
             return lineTcpTimestampAdapter;
         }
 
@@ -3460,7 +3461,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineProtoTimestampAdapter getTimestampAdapter() {
+        public LineTimestampAdapter getTimestampAdapter() {
             return lineUdpTimestampAdapter;
         }
 

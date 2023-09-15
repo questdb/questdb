@@ -22,22 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.test.cutlass.line;
 
-import io.questdb.std.Numbers;
+import io.questdb.cutlass.line.LineMicroTimestampAdapter;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.Timestamps;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class LineProtoMinuteTimestampAdapter implements LineProtoTimestampAdapter {
-    public static final LineProtoMinuteTimestampAdapter INSTANCE = new LineProtoMinuteTimestampAdapter();
+public class LineMicroTimestampAdapterTest {
 
-    @Override
-    public long getMicros(CharSequence value) throws NumericException {
-        return Numbers.parseLong(value) * Timestamps.MINUTE_MICROS;
-    }
-
-    @Override
-    public long getMicros(long lineProtoTimestamp) {
-        return lineProtoTimestamp * Timestamps.MINUTE_MICROS;
+    @Test
+    public void testRounding() throws NumericException {
+        Assert.assertEquals(5679L, LineMicroTimestampAdapter.INSTANCE.getMicros("5679"));
     }
 }

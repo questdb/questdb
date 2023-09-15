@@ -24,13 +24,13 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.LineProtoException;
+import io.questdb.cutlass.line.LineException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ProtoEntity;
-import io.questdb.test.cutlass.line.udp.LineUdpLexerTest;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.line.udp.LineUdpLexerTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -276,10 +276,41 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 "लаблअца,символ=значение2  161\n"
         );
 
-
         assertThat(
                 "table,tag=ok field=\"значение2 non ascii quoted\" 161--non ascii--\n",
                 "table,tag=ok field=\"значение2 non ascii quoted\" 161\n"
+        );
+    }
+
+    @Test
+    public void testTimestampSuffixes() {
+        assertThat(
+                "measurement,tag=value 100000\n",
+                "measurement,tag=value 100000\n"
+        );
+        assertThat(
+                "measurement,tag=value 100000t_ns\n",
+                "measurement,tag=value 100000t_ns\n"
+        );
+        assertThat(
+                "measurement,tag=value 100000t_us\n",
+                "measurement,tag=value 100000t_us\n"
+        );
+        assertThat(
+                "measurement,tag=value 100000t_ms\n",
+                "measurement,tag=value 100000t_ms\n"
+        );
+        assertThat(
+                "measurement,tag=value 100000t_s\n",
+                "measurement,tag=value 100000t_s\n"
+        );
+        assertThat(
+                "measurement,tag=value 100000t_m\n",
+                "measurement,tag=value 100000t_m\n"
+        );
+        assertThat(
+                "measurement,tag=value 100000t_h\n",
+                "measurement,tag=value 100000t_h\n"
         );
     }
 
@@ -465,6 +496,28 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         if (lineTcpParser.hasTimestamp()) {
             sink.put(' ');
             Numbers.append(sink, lineTcpParser.getTimestamp());
+            if (lineTcpParser.getTimestampUnit() != LineTcpParser.ENTITY_UNIT_NONE) {
+                switch (lineTcpParser.getTimestampUnit()) {
+                    case LineTcpParser.ENTITY_UNIT_NANO:
+                        sink.put("t_ns");
+                        break;
+                    case LineTcpParser.ENTITY_UNIT_MICRO:
+                        sink.put("t_us");
+                        break;
+                    case LineTcpParser.ENTITY_UNIT_MILLI:
+                        sink.put("t_ms");
+                        break;
+                    case LineTcpParser.ENTITY_UNIT_SECOND:
+                        sink.put("t_s");
+                        break;
+                    case LineTcpParser.ENTITY_UNIT_MINUTE:
+                        sink.put("t_m");
+                        break;
+                    case LineTcpParser.ENTITY_UNIT_HOUR:
+                        sink.put("t_h");
+                        break;
+                }
+            }
         }
 
         if (lineTcpParser.hasNonAsciiChars()) {
@@ -530,11 +583,11 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         lineTcpParser.of(mem);
     }
 
-    protected void assertThat(CharSequence expected, String lineStr) throws LineProtoException {
+    protected void assertThat(CharSequence expected, String lineStr) throws LineException {
         assertThat(expected, lineStr, 1);
     }
 
-    protected void assertThat(CharSequence expected, String lineStr, int start) throws LineProtoException {
+    protected void assertThat(CharSequence expected, String lineStr, int start) throws LineException {
         byte[] line = lineStr.getBytes(Files.UTF_8);
         final int len = line.length;
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';

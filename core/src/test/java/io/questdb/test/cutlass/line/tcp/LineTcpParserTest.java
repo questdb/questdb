@@ -69,7 +69,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "tRuE");
 
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4\"");
-        assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
+        assertType(LineTcpParser.ENTITY_TYPE_STRING, LineTcpParser.ENTITY_UNIT_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks like=long256, but tis not!\"");
         assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!"); // missing closing '"'
         assertError(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4 looks \\\" like=long256,\\\n but tis not!\""); // wanted to be a string, missing opening '"'
@@ -79,6 +79,18 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
 
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "123i");
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "1i");
+
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "42t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "-42t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "9223372036854775807t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "-9223372036854775808t");
+
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_NANO, "42t_ns");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "42t_us");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MILLI, "42t_ms");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_SECOND, "42t_s");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MINUTE, "42t_m");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_HOUR, "42t_h");
 
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1.45");
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1e-13");
@@ -92,37 +104,50 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "xi");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "oXi");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "0xi");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_t_ns");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_t_us");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_t_ms");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_t_s");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_t_m");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_t_h");
 
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "123a4");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "ox1");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "0x1");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4");
 
-        // in this edge case, type is guessed as best as possible, later the parser would fail, its a feature
+        // in this edge case, type is guessed at the best effort, later the parser would fail, it's a feature
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x123a4i");
 
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "-9223372036854775808i");
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "9223372036854775807i");
     }
 
-    private static void assertError(int type, String value) throws Exception {
-        assertType(type, value, value, LineTcpParser.ParseResult.ERROR, false, false);
+    private static void assertError(byte type, String value) throws Exception {
+        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.ERROR, false, false);
     }
 
-    private static void assertType(int type, String value) throws Exception {
-        assertType(type, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
+    private static void assertType(byte type, String value) throws Exception {
+        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value);
     }
 
-    private static void assertType(int type, String value, boolean stringAsTagSupported, boolean symbolAsFieldSupported) throws Exception {
-        assertType(type, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, stringAsTagSupported, symbolAsFieldSupported);
+    private static void assertType(byte type, byte unit, String value) throws Exception {
+        assertType(type, unit, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
     }
 
-    private static void assertType(int type,
-                                   String value,
-                                   String expectedValue,
-                                   LineTcpParser.ParseResult expectedParseResult,
-                                   boolean stringAsTagSupported,
-                                   boolean symbolAsFieldSupported) throws Exception {
+    private static void assertType(byte type, String value, boolean stringAsTagSupported, boolean symbolAsFieldSupported) throws Exception {
+        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, stringAsTagSupported, symbolAsFieldSupported);
+    }
+
+    private static void assertType(
+            byte type,
+            byte unit,
+            String value,
+            String expectedValue,
+            LineTcpParser.ParseResult expectedParseResult,
+            boolean stringAsTagSupported,
+            boolean symbolAsFieldSupported
+    ) throws Exception {
         final LineTcpParser lineTcpParser = new LineTcpParser(stringAsTagSupported, symbolAsFieldSupported);
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
@@ -138,6 +163,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                 Assert.assertEquals(expectedParseResult, lineTcpParser.parseMeasurement(mem + len));
                 LineTcpParser.ProtoEntity entity = lineTcpParser.getEntity(0);
                 Assert.assertEquals(type, entity.getType());
+                Assert.assertEquals(unit, entity.getUnit());
                 Assert.assertEquals("v", entity.getName().toString());
                 if (expectedParseResult == LineTcpParser.ParseResult.MEASUREMENT_COMPLETE) {
                     switch (type) {
@@ -147,6 +173,30 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                         case LineTcpParser.ENTITY_TYPE_INTEGER:
                         case LineTcpParser.ENTITY_TYPE_LONG256:
                             Assert.assertEquals(expectedValue, entity.getValue().toString() + "i");
+                            break;
+                        case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
+                            switch (unit) {
+                                case LineTcpParser.ENTITY_UNIT_NANO:
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t_ns");
+                                    break;
+                                case LineTcpParser.ENTITY_UNIT_MICRO:
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t_us");
+                                    break;
+                                case LineTcpParser.ENTITY_UNIT_MILLI:
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t_ms");
+                                    break;
+                                case LineTcpParser.ENTITY_UNIT_SECOND:
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t_s");
+                                    break;
+                                case LineTcpParser.ENTITY_UNIT_MINUTE:
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t_m");
+                                    break;
+                                case LineTcpParser.ENTITY_UNIT_HOUR:
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t_h");
+                                    break;
+                                default:
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t");
+                            }
                             break;
                         default:
                             Assert.assertEquals(expectedValue, entity.getValue().toString());

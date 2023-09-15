@@ -28,8 +28,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 
-public class LineProtoSecondTimestampAdapter implements LineProtoTimestampAdapter {
-    public static final LineProtoSecondTimestampAdapter INSTANCE = new LineProtoSecondTimestampAdapter();
+public class LineSecondTimestampAdapter implements LineTimestampAdapter {
+    public static final LineSecondTimestampAdapter INSTANCE = new LineSecondTimestampAdapter();
 
     @Override
     public long getMicros(CharSequence value) throws NumericException {
@@ -37,7 +37,7 @@ public class LineProtoSecondTimestampAdapter implements LineProtoTimestampAdapte
     }
 
     @Override
-    public long getMicros(long lineProtoTimestamp) {
-        return lineProtoTimestamp * Timestamps.SECOND_MICROS;
+    public long getMicros(long timestamp) {
+        return timestamp * Timestamps.SECOND_MICROS;
     }
 }
