@@ -157,9 +157,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean completed = true;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
-    private long cursorRowCount;
+    private boolean errorSkipToSync;
+    private boolean freezeRecvBuffer;
     private boolean isEmptyQuery = false;
     private boolean isPausedQuery = false;
+    private byte lastMsgType;
     private long maxReceiveRows;
     private long maxSendRows;
     private int parsePhaseBindVariableCount;
@@ -356,6 +358,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         isEmptyQuery = false;
         queryContainsSecret = false;
         tlsSessionStarting = false;
+        errorSkipToSync = false;
+        replyAndContinue = false;
+        freezeRecvBuffer = false;
     }
 
     @Override
@@ -476,16 +481,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
             } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
-            reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
+            handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
         } catch (ImplicitCastException e) {
-            reportNonCriticalError(-1, e.getFlyweightMessage());
+            handleException(-1, e.getFlyweightMessage(), false, -1, true);
         } catch (CairoException e) {
-            clearCursorAndFactory();
-            if (e.isInterruption()) {
-                reportQueryCancelled(e.getFlyweightMessage());
-            } else {
-                reportError(e);
-            }
+            handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
         }
     }
 
@@ -511,6 +511,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
         bindVariableService.setBin(index, this.binarySequenceParamsPool.next().of(address, valueLen));
+        freezeRecvBuffer = true;
     }
 
     public void setBooleanBindVariable(int index, int valueLen) throws SqlException {
@@ -1660,6 +1661,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return true;
     }
 
+    private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        clearCursorAndFactory();
+        if (interruption) {
+            prepareErrorResponse(position, message);
+        } else {
+            prepareError(position, message, critical, errno);
+        }
+        resumeProcessor = null;
+        errorSkipToSync = lastMsgType != 'S' && lastMsgType != 'X' && lastMsgType != 'H' && lastMsgType != 'Q';
+        if (errorSkipToSync) {
+            throw PeerIsSlowToReadException.INSTANCE;
+        } else {
+            replyAndContinue();
+        }
+    }
+
     private void handleTlsRequest() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
         if (!socket.supportsTls() || tlsSessionStarting || socket.isTlsSessionStarted()) {
             return;
@@ -1749,6 +1766,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset += msgLen + 1;
         final long msgLimit = address + msgLen + 1;
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
+        lastMsgType = type;
+        if (errorSkipToSync) {
+            if (lastMsgType == 'S' || lastMsgType == 'H') {
+                errorSkipToSync = false;
+                replyAndContinue();
+            }
+            // Skip all input until Sync or Flush messages received.
+            return;
+        }
 
         switch (type) {
             case 'P': // parse
@@ -1864,11 +1890,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseAsciiSink.putIntDirect(INT_BYTES_X);
     }
 
-    private void prepareError(CairoException ex) {
-        int errno = ex.getErrno();
-        CharSequence message = ex.getFlyweightMessage();
-        prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
-        if (ex.isCritical()) {
+    private void prepareError(int position, CharSequence message, boolean critical, int errno) {
+        prepareErrorResponse(position, message);
+        if (critical) {
             LOG.critical()
                     .$("error [msg=`").utf8(message)
                     .$("`, errno=").$(errno)
@@ -1911,6 +1935,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             queryText = null;
             wrapper = null;
             syncActions.clear();
+            freezeRecvBuffer = false;
             sendParameterDescription = false;
         }
     }
@@ -1949,13 +1974,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void prepareParseComplete() {
         responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
         responseAsciiSink.putIntDirect(INT_BYTES_X);
-    }
-
-    private void prepareQueryCanceled(CharSequence message) {
-        prepareErrorResponse(-1, message);
-        LOG.info()
-                .$("query cancelled [msg=`").$(message).$('`')
-                .I$();
     }
 
     private void prepareRowDescription() {
@@ -2403,9 +2421,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 prepareNonCriticalError(ex.getPosition(), ex.getFlyweightMessage());
             } catch (CairoException ex) {
                 if (ex.isInterruption()) {
-                    prepareQueryCanceled(ex.getFlyweightMessage());
+                    prepareErrorResponse(-1, ex.getFlyweightMessage());
                 } else {
-                    prepareError(ex);
+                    prepareError(ex.getPosition(), ex.getFlyweightMessage(), ex.isCritical(), ex.getErrno());
                 }
             }
         } else {
@@ -2488,23 +2506,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         replyAndContinue = true;
         sendReadyForNewQuery();
         clearRecvBuffer();
-    }
-
-    private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareError(ex);
-        replyAndContinue();
-    }
-
-    private void reportNonCriticalError(int position, CharSequence flyweightMessage)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareNonCriticalError(position, flyweightMessage);
-        replyAndContinue();
-    }
-
-    private void reportQueryCancelled(CharSequence flyweightMessage)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareQueryCanceled(flyweightMessage);
-        replyAndContinue();
     }
 
     private void resumeCommandComplete(boolean queryWasPaused) throws PeerDisconnectedException {
@@ -2743,18 +2744,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {
-        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
-        LOG.debug()
-                .$("shift [offset=").$(readOffsetBeforeParse)
-                .$(", len=").$(len)
-                .I$();
+        if (!freezeRecvBuffer) {
+            final long len = recvBufferWriteOffset - readOffsetBeforeParse;
+            LOG.debug()
+                    .$("shift [offset=").$(readOffsetBeforeParse)
+                    .$(", len=").$(len)
+                    .I$();
 
-        Vect.memcpy(
-                recvBuffer, recvBuffer + readOffsetBeforeParse,
-                len
-        );
-        recvBufferWriteOffset = len;
-        recvBufferReadOffset = 0;
+            Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
+            recvBufferWriteOffset = len;
+            recvBufferReadOffset = 0;
+        }
     }
 
     private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {

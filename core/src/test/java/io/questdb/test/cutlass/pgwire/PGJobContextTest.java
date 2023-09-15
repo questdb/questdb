@@ -130,6 +130,8 @@ public class PGJobContextTest extends BasePGTest {
     private static List<Object[]> datesArr;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
+    private int minRecvBufferSize;
+    private int minSendBufferSize;
 
     public PGJobContextTest(WalMode walMode) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
@@ -158,16 +160,18 @@ public class PGJobContextTest extends BasePGTest {
     public void setUp() {
         super.setUp();
 
-        sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
+        sendBufferSize = Math.max(minSendBufferSize, 512 * (1 + bufferSizeRnd.nextInt(15)));
         forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
-//        recvBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
-//        forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
+        recvBufferSize = Math.max(minRecvBufferSize, 512 * (1 + bufferSizeRnd.nextInt(15)));
+        forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
-//        sendBufferSize = recvBufferSize = 2048;
-//        forceSendFragmentationChunkSize = forceRecvFragmentationChunkSize = 17;
+        LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize)
+                .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
+                .$(", recvBufferSize=").$(recvBufferSize)
+                .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
+                .I$();
 
-        LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize).$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize).I$();
         configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
     }
 
@@ -175,6 +179,8 @@ public class PGJobContextTest extends BasePGTest {
     public void tearDown() throws Exception {
         super.tearDown();
         configOverrideDefaultTableWriteMode(-1);
+        minRecvBufferSize = 0;
+        minSendBufferSize = 0;
     }
 
     @Test
@@ -3154,35 +3160,35 @@ if __name__ == "__main__":
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderHashJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from crj join xx on x = p0 ";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftHashJoin() throws Exception {//slave - cross join
         final String query = "with crj as (select first(x) as p0 from xx)  select x / p0 from crj left join (select * from xx x1 cross join xx x2) on x = p0 and x <= 1";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftHashJoinLight() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx)  select x / p0 from crj left join xx on x = p0 and x <= 1";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftNLJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx left join crj on x <= p0";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
@@ -3820,7 +3826,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore // TODO: support big binary parameter buffers (epic)
     public void testInsertBinaryOver1Mb() throws Exception {
         final int maxLength = 1024 * 1024;
         testBinaryInsert(maxLength, false);
@@ -4824,6 +4829,8 @@ nodejs code:
     @Test
     public void testLargeSelect() throws Exception {
         assertMemoryLeak(() -> {
+            sendBufferSize = Math.max(sendBufferSize, 2048);
+            recvBufferSize = Math.max(recvBufferSize, 5000);
             try (
                     final PGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5150,6 +5157,7 @@ nodejs code:
 
     @Test
     public void testMetadata() throws Exception {
+        minRecvBufferSize = recvBufferSize = 2048;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
@@ -6781,6 +6789,7 @@ nodejs code:
     public void testRegProcedure() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            recvBufferSize = Math.max(2048, recvBufferSize);
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -9703,7 +9712,7 @@ create table tab as (
                 }
             });
         } finally {
-            tearDown();
+            super.tearDown();
         }
     }
 
@@ -10086,6 +10095,9 @@ create table tab as (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
+                recvBufferSize = Math.max(recvBufferSize, maxLength + 100);
+                sendBufferSize = Math.max(sendBufferSize, maxLength + 100);
+
                 workerPool.start(LOG);
                 try (
                         final Connection connection = getConnection(server.getPort(), false, binaryProtocol);
@@ -10102,11 +10114,17 @@ create table tab as (
                             if (maxLength == value) return -1;
                             return value++ % 255;
                         }
+
+                        @Override
+                        public void reset() {
+                            value = 0;
+                        }
                     }) {
-                        int totalCount = 1;
-                        for (int i = 0; i < totalCount; i++) {
+                        int totalCount = 10;
+                        for (int r = 0; r < totalCount; r++) {
                             insert.setBinaryStream(1, str);
                             insert.execute();
+                            str.reset();
                         }
                         connection.commit();
 
@@ -10500,9 +10518,13 @@ create table tab as (
         }
     }
 
-    private void testFetchDisconnnectReleasesReader(String query) throws Exception {
+    private void testFetchDisconnectReleasesReader(String query) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            // Circuit breaker does not work with fragmented buffer
+            // TODO: find a solution, Net.peek() always return a byte when the incoming buffer not read fully
+            // when executing 'E' (execute) postgres protocol command
+            forceRecvFragmentationChunkSize = recvBufferSize;
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()

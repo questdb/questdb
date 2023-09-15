@@ -64,15 +64,14 @@ import static io.questdb.std.Numbers.hexDigits;
 public abstract class BasePGTest extends AbstractCairoTest {
 
     protected CopyRequestJob copyRequestJob = null;
-
-    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        assertResultSet(null, expected, sink, rs);
-    }
-
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
     protected int recvBufferSize = 1024 * 1024;
     protected int sendBufferSize = 1024 * 1024;
+
+    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs);
+    }
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
