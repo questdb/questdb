@@ -42,6 +42,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -166,7 +167,7 @@ public class HttpQueryTestBuilder {
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {

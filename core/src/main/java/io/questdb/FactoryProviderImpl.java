@@ -62,6 +62,11 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
+    public @NotNull SocketFactory getHttpMinSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
     public @NotNull SocketFactory getHttpSocketFactory() {
         return PlainSocketFactory.INSTANCE;
     }
