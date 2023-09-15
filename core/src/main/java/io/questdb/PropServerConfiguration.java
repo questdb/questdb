@@ -318,6 +318,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int dateAdapterPoolCapacity;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
+    private int forceRecvFragmentationChunkSize;
+    private int forceSendFragmentationChunkSize;
     private boolean httpAllowDeflateBeforeSend;
     private boolean httpFrozenClock;
     private boolean httpHealthCheckAuthRequired;
@@ -776,6 +778,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
+
+                this.forceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.PG_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
+                this.forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.PG_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             }
 
             int walApplyWorkers = 2;
@@ -3547,12 +3552,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getForceRecvFragmentationChunkSize() {
-            return Integer.MAX_VALUE;
+            return forceRecvFragmentationChunkSize;
         }
 
         @Override
         public int getForceSendFragmentationChunkSize() {
-            return Integer.MAX_VALUE;
+            return forceSendFragmentationChunkSize;
         }
 
         @Override
