@@ -45,6 +45,11 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
+    public @NotNull SocketFactory getHttpMinSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
     public @NotNull SocketFactory getHttpSocketFactory() {
         return PlainSocketFactory.INSTANCE;
     }
@@ -56,11 +61,6 @@ public class DefaultFactoryProvider implements FactoryProvider {
 
     @Override
     public @NotNull SocketFactory getLineSocketFactory() {
-        return PlainSocketFactory.INSTANCE;
-    }
-
-    @Override
-    public @NotNull SocketFactory getMinHttpSocketFactory() {
         return PlainSocketFactory.INSTANCE;
     }
 

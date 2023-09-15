@@ -192,7 +192,7 @@ public final class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, configuration.getFactoryProvider().getMinHttpSocketFactory());
+        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
