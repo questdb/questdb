@@ -3364,6 +3364,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
                     }
 
+                    if (tempVaf.size() == 0) {// select distinct case 
+                        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+                        columnTypes.clear();
+                        columnTypes.add(metadata.getColumnType(0));
+
+                        int keyKind = specialCaseKeys ? SqlCodeGenerator.GKK_HOUR_INT : SqlCodeGenerator.GKK_VANILLA_INT;
+                        CountVectorAggregateFunction countFunction = new CountVectorAggregateFunction(keyKind);
+                        countFunction.pushValueTypes(columnTypes);
+                        tempVaf.add(countFunction);
+
+                        tempSymbolSkewIndexes.clear();
+                        tempSymbolSkewIndexes.add(0);
+                    }
+
                     try {
                         GroupByUtils.validateGroupByColumns(model, 1);
                     } catch (Throwable e) {
