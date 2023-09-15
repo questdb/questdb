@@ -41,6 +41,7 @@ public class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunc
     @Override
     public void close() {
         managedCursor = Misc.free(managedCursor);
+        super.close();
     }
 
     public void of(RecordCursor managedCursor, RecordCursor baseCursor) {

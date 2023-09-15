@@ -3143,6 +3143,27 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByLimit() throws SqlException {
+        ddl("create table if not exists test(id uuid)");
+        insert("insert into test(id) select rnd_uuid4() from long_sequence(3)");
+        try (RecordCursorFactory factory = select(
+                "select id " +
+                        "from test " +
+                        "group by id " +
+                        "limit 10")) {
+
+            assertCursor("id\n" +
+                    "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                    "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                    "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n", factory, true, false, false);
+            assertCursor("id\n" +
+                    "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                    "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                    "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n", factory, true, false, false);
+        }
+    }
+
+    @Test
     public void testInLongTypeMismatch() throws Exception {
         assertFailure(43, "cannot compare LONG with type DOUBLE", "select 1 from long_sequence(1) where x in (123.456)");
     }
