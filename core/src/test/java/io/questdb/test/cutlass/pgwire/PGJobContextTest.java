@@ -5464,6 +5464,7 @@ nodejs code:
     public void testNullTypeSerialization() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            recvBufferSize = 2048;
             try (final PGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
@@ -6074,6 +6075,7 @@ nodejs code:
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            sendBufferSize = 1024;
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -7296,6 +7298,7 @@ nodejs code:
         assertMemoryLeak(() -> {
 
             sink.clear();
+            recvBufferSize = 2048;
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()

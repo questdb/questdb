@@ -477,7 +477,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                             continue OUTER;
                         }
                     } while (recvBufferReadOffset < recvBufferWriteOffset);
-                    clearRecvBuffer();
+
+                    if (!freezeRecvBuffer) {
+                        clearRecvBuffer();
+                    }
                 }
             } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
@@ -2505,6 +2508,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void replyAndContinue() throws PeerDisconnectedException, PeerIsSlowToReadException {
         replyAndContinue = true;
         sendReadyForNewQuery();
+        freezeRecvBuffer = false;
         clearRecvBuffer();
     }
 
