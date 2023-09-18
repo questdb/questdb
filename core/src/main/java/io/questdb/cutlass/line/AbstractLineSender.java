@@ -28,14 +28,11 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.security.*;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable, Sender {
@@ -74,18 +71,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public void $() {
-        atNow();
-    }
-
-    @Override
-    public final void at(long timestamp, ChronoUnit unit) {
-        put(' ').put(timestamp * unit.getDuration().toNanos() / 1000).put("tus");
-        atNow();
-    }
-
-    @Override
-    public final void at(Instant timestamp) {
-        put(' ').put((timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano()) / 1000).put("tus");
         atNow();
     }
 
@@ -307,18 +292,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(value * unit.getDuration().toNanos() / 1000).put("tus");
-        return this;
-    }
-
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000).put("tus");
-        return this;
-    }
-
     private static int findEOL(long ptr, int len) {
         for (int i = 0; i < len; i++) {
             byte b = Unsafe.getUnsafe().getByte(ptr + i);
@@ -384,21 +357,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
     }
 
-    private CharSink writeFieldName(CharSequence name) {
-        validateNotClosed();
-        validateColumnName(name);
-        if (hasTable) {
-            if (!hasColumns) {
-                put(' ');
-                hasColumns = true;
-            } else {
-                put(',');
-            }
-            return encodeUtf8(name).put('=');
-        }
-        throw new LineSenderException("table expected");
-    }
-
     protected void send00() {
         validateNotClosed();
         int len = (int) (ptr - lineStart);
@@ -451,5 +409,20 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         if (closed) {
             throw new LineSenderException("sender already closed");
         }
+    }
+
+    protected CharSink writeFieldName(CharSequence name) {
+        validateNotClosed();
+        validateColumnName(name);
+        if (hasTable) {
+            if (!hasColumns) {
+                put(' ');
+                hasColumns = true;
+            } else {
+                put(',');
+            }
+            return encodeUtf8(name).put('=');
+        }
+        throw new LineSenderException("table expected");
     }
 }
