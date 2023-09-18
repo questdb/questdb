@@ -437,14 +437,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     resumeProcessor.resume(false);
                 }
                 if (replyAndContinue) {
-                    doSend(bufferRemainingOffset, bufferRemainingSize);
+                    if (bufferRemainingSize > 0) {
+                        doSend(bufferRemainingOffset, bufferRemainingSize);
+                    }
                     replyAndContinue();
                 }
             }
 
+            boolean readSocket = (operation == IOOperation.READ);
             OUTER:
             do {
-                if (operation == IOOperation.READ) {
+                if (readSocket) {
                     recv();
                 }
 
@@ -468,17 +471,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         if (readOffsetBeforeParse > 0) {
                             shiftReceiveBuffer(readOffsetBeforeParse);
                         }
-                        // Even if the original operation was WRITE, it's already done now,
-                        // it's time to switch to the reading
-                        operation = IOOperation.READ;
+                        readSocket = true;
                         continue OUTER;
                     }
+                    readSocket = recvBufferReadOffset == recvBufferWriteOffset;
                 } while (recvBufferReadOffset < recvBufferWriteOffset);
 
                 if (!freezeRecvBuffer) {
                     clearRecvBuffer();
                 }
-            } while (operation == IOOperation.READ);
+                // exit this loop only by exception: need read or write or disconnected
+            } while (true);
         } catch (SqlException e) {
             handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
         } catch (ImplicitCastException e) {
