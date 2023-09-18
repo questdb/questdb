@@ -256,7 +256,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
             return function;
         } finally {
-            if (metadataStack.size() == 0) {
+            if (metadataStack.isEmpty()) {
                 this.metadata = null;
             } else {
                 this.metadata = metadataStack.poll();
