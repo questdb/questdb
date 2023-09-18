@@ -28,8 +28,6 @@ import io.questdb.cutlass.line.tcp.LineTcpParser;
 import org.jetbrains.annotations.TestOnly;
 
 public class LineTcpTimestampAdapter {
-    // Adapter for line date columns (milli).
-    public static final LineTcpTimestampAdapter DATE_COLUMN_INSTANCE = new LineTcpTimestampAdapter(LineMilliTimestampAdapter.INSTANCE);
     // Default adapter for line timestamps (nano).
     public static final LineTcpTimestampAdapter DEFAULT_TS_INSTANCE = new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
     // Adapter for line timestamp columns (micro).

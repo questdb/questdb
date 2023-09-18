@@ -245,7 +245,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:22.000000Z\n",
                 new CharSequence[]{
                         "1630933921000i", // valid
-                        "1630933921000t", // valid
+                        "1630933921000000t", // valid
                         "1630933921000000000tns", // valid
                         "1630933921000000tus", // valid
                         "1630933921000tms", // valid
