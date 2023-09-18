@@ -9,10 +9,10 @@ public class BasicExample {
         try (Sender sender = Sender.builder().address("localhost:9009").build()) {
             sender.table("inventors")
                     .symbol("born", "Austrian Empire")
-                    .timestampColumn("birthdate", Instant.parse("1856-07-10").toEpochMilli() * 1000) // epoch in microseconds
+                    .timestampColumn("birthdate", Instant.parse("1856-07-10").toEpochMilli() * 1000) // epoch in micros
                     .longColumn("id", 0)
                     .stringColumn("name", "Nicola Tesla")
-                    .at(System.nanoTime()); // epoch in nanoseconds
+                    .at(System.nanoTime()); // epoch in nanos
             sender.table("inventors")
                     .symbol("born", "USA")
                     .timestampColumn("birthdate", Instant.parse("1847-02-11").toEpochMilli() * 1000)
