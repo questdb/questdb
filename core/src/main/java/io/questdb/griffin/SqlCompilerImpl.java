@@ -586,10 +586,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
                 }
             } else if (SqlKeywords.isDedupKeyword(tok) || SqlKeywords.isDeduplicateKeyword(tok)) {
-                executionContext.getSecurityContext().authorizeAlterTableSetDedup(tableToken);
                 tok = expectToken(lexer, "'dedup columns'");
 
                 if (SqlKeywords.isDisableKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableDedupDisable(tableToken);
                     AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
                             tableNamePosition,
                             tableToken
@@ -597,6 +597,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     compiledQuery.ofAlter(setDedup.build());
                 } else {
                     lexer.unparseLast();
+                    executionContext.getSecurityContext().authorizeAlterTableDedupDisable(tableToken);
                     alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else {
