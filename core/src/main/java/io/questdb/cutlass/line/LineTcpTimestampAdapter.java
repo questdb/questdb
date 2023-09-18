@@ -25,17 +25,24 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cutlass.line.tcp.LineTcpParser;
+import org.jetbrains.annotations.TestOnly;
 
 public class LineTcpTimestampAdapter {
+    // Adapter for line date columns (milli).
+    public static final LineTcpTimestampAdapter DATE_COLUMN_INSTANCE = new LineTcpTimestampAdapter(LineMilliTimestampAdapter.INSTANCE);
     // Default adapter for line timestamps (nano).
     public static final LineTcpTimestampAdapter DEFAULT_TS_INSTANCE = new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
     // Adapter for line timestamp columns (micro).
     public static final LineTcpTimestampAdapter TS_COLUMN_INSTANCE = new LineTcpTimestampAdapter(LineMicroTimestampAdapter.INSTANCE);
-
     private final LineTimestampAdapter defaultAdapter;
 
     public LineTcpTimestampAdapter(LineTimestampAdapter defaultAdapter) {
         this.defaultAdapter = defaultAdapter;
+    }
+
+    @TestOnly
+    public LineTimestampAdapter getDefaultAdapter() {
+        return defaultAdapter;
     }
 
     public long getMicros(long timestamp, byte unit) {

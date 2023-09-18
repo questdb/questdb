@@ -480,10 +480,10 @@ public class LineTcpParser {
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
                         case 's':
-                            // t_ns
-                            // t_us
-                            // t_ms
-                            if (charSeqLen > 4 && charSeq.byteAt(charSeqLen - 4) == 't' && charSeq.byteAt(charSeqLen - 3) == '_') {
+                            // tns
+                            // tus
+                            // tms
+                            if (charSeqLen > 3 && charSeq.byteAt(charSeqLen - 3) == 't') {
                                 byte unit = charSeq.byteAt(charSeqLen - 2);
                                 if (unit == 'n') {
                                     timestampUnit = ENTITY_UNIT_NANO;
@@ -493,31 +493,35 @@ public class LineTcpParser {
                                     timestampUnit = ENTITY_UNIT_MILLI;
                                 }
                                 if (timestampUnit != ENTITY_UNIT_NONE) {
-                                    timestamp = Numbers.parseLong(charSeq.decHi(4));
+                                    timestamp = Numbers.parseLong(charSeq.decHi(3));
                                     break;
                                 }
                             }
-                            // t_s
-                            if (charSeqLen > 3 && charSeq.byteAt(charSeqLen - 3) == 't' && charSeq.byteAt(charSeqLen - 2) == '_') {
+                            // ts
+                            if (charSeqLen > 2 && charSeq.byteAt(charSeqLen - 2) == 't') {
                                 timestampUnit = ENTITY_UNIT_SECOND;
-                                timestamp = Numbers.parseLong(charSeq.decHi(3));
+                                timestamp = Numbers.parseLong(charSeq.decHi(2));
                                 break;
                             }
                         case 'm':
-                            // t_m
-                            if (charSeqLen > 3 && charSeq.byteAt(charSeqLen - 3) == 't' && charSeq.byteAt(charSeqLen - 2) == '_') {
+                            // tm
+                            if (charSeqLen > 2 && charSeq.byteAt(charSeqLen - 2) == 't') {
                                 timestampUnit = ENTITY_UNIT_MINUTE;
-                                timestamp = Numbers.parseLong(charSeq.decHi(3));
+                                timestamp = Numbers.parseLong(charSeq.decHi(2));
                                 break;
                             }
                         case 'h':
-                            // t_h
-                            if (charSeqLen > 3 && charSeq.byteAt(charSeqLen - 3) == 't' && charSeq.byteAt(charSeqLen - 2) == '_') {
+                            // th
+                            if (charSeqLen > 2 && charSeq.byteAt(charSeqLen - 2) == 't') {
                                 timestampUnit = ENTITY_UNIT_HOUR;
-                                timestamp = Numbers.parseLong(charSeq.decHi(3));
+                                timestamp = Numbers.parseLong(charSeq.decHi(2));
                                 break;
                             }
-                            // fall through
+                        case 't':
+                            // t
+                            timestamp = Numbers.parseLong(charSeq.decHi(1));
+                            break;
+                        // fall through
                         default:
                             timestamp = Numbers.parseLong(charSeq);
                     }
@@ -724,10 +728,10 @@ public class LineTcpParser {
                     return true;
                 }
                 case 's':
-                    // t_ns
-                    // t_us
-                    // t_ms
-                    if (valueLen > 4 && value.byteAt(valueLen - 4) == 't' && value.byteAt(valueLen - 3) == '_') {
+                    // tns
+                    // tus
+                    // tms
+                    if (valueLen > 3 && value.byteAt(valueLen - 3) == 't') {
                         byte unit = value.byteAt(valueLen - 2);
                         if (unit == 'n') {
                             this.unit = ENTITY_UNIT_NANO;
@@ -737,25 +741,25 @@ public class LineTcpParser {
                             this.unit = ENTITY_UNIT_MILLI;
                         }
                         if (this.unit != ENTITY_UNIT_NONE) {
-                            return parseLong(ENTITY_TYPE_TIMESTAMP, 4);
+                            return parseLong(ENTITY_TYPE_TIMESTAMP, 3);
                         }
                     }
-                    // t_s
-                    if (valueLen > 3 && value.byteAt(valueLen - 3) == 't' && value.byteAt(valueLen - 2) == '_') {
+                    // ts
+                    if (valueLen > 2 && value.byteAt(valueLen - 2) == 't') {
                         this.unit = ENTITY_UNIT_SECOND;
-                        return parseLong(ENTITY_TYPE_TIMESTAMP, 3);
+                        return parseLong(ENTITY_TYPE_TIMESTAMP, 2);
                     }
                 case 'm':
-                    // t_m
-                    if (valueLen > 3 && value.byteAt(valueLen - 3) == 't' && value.byteAt(valueLen - 2) == '_') {
+                    // tm
+                    if (valueLen > 2 && value.byteAt(valueLen - 2) == 't') {
                         this.unit = ENTITY_UNIT_MINUTE;
-                        return parseLong(ENTITY_TYPE_TIMESTAMP, 3);
+                        return parseLong(ENTITY_TYPE_TIMESTAMP, 2);
                     }
                 case 'h':
-                    // t_h
-                    if (valueLen > 3 && value.byteAt(valueLen - 3) == 't' && value.byteAt(valueLen - 2) == '_') {
+                    // th
+                    if (valueLen > 2 && value.byteAt(valueLen - 2) == 't') {
                         this.unit = ENTITY_UNIT_HOUR;
-                        return parseLong(ENTITY_TYPE_TIMESTAMP, 3);
+                        return parseLong(ENTITY_TYPE_TIMESTAMP, 2);
                     }
                     // fall through
                 default:

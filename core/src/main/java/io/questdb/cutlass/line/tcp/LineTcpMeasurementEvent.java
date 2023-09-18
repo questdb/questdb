@@ -564,10 +564,8 @@ class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addTimestamp(offset, timestampValue);
                             break;
                         case ColumnType.DATE:
-                            if (entity.getUnit() != LineTcpParser.ENTITY_UNIT_NONE) {
-                                throw castError("timestamp", columnWriterIndex, colType, entity.getName());
-                            }
-                            offset = buffer.addDate(offset, entity.getLongValue() / 1000);
+                            long dateValue = LineTcpTimestampAdapter.DATE_COLUMN_INSTANCE.getMicros(entity.getLongValue(), entity.getUnit());
+                            offset = buffer.addDate(offset, dateValue / 1000);
                             break;
                         case ColumnType.SYMBOL:
                             offset = buffer.addSymbol(

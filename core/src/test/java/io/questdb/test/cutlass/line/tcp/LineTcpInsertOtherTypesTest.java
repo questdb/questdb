@@ -230,14 +230,28 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 // no literal representation for date, only longs and timestamps can be inserted
                 "value\ttimestamp\n" +
                         "2021-09-06T13:12:01.000Z\t1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:07.000000Z\n" +
-                        "\t1970-01-01T00:00:08.000000Z\n" +
-                        "\t1970-01-01T00:00:09.000000Z\n" +
-                        "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:10.000000Z\n" +
-                        "292278994-08-17T07:12:55.807Z\t1970-01-01T00:00:11.000000Z\n" +
-                        "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:15.000000Z\n",
+                        "2021-09-06T13:12:01.000Z\t1970-01-01T00:00:02.000000Z\n" +
+                        "2021-09-06T13:12:01.000Z\t1970-01-01T00:00:03.000000Z\n" +
+                        "2021-09-06T13:12:01.000Z\t1970-01-01T00:00:04.000000Z\n" +
+                        "2021-09-06T13:12:01.000Z\t1970-01-01T00:00:05.000000Z\n" +
+                        "2021-09-06T13:12:01.000Z\t1970-01-01T00:00:06.000000Z\n" +
+                        "2021-09-06T13:12:00.000Z\t1970-01-01T00:00:07.000000Z\n" +
+                        "2021-09-06T13:00:00.000Z\t1970-01-01T00:00:08.000000Z\n" +
+                        "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:14.000000Z\n" +
+                        "\t1970-01-01T00:00:15.000000Z\n" +
+                        "\t1970-01-01T00:00:16.000000Z\n" +
+                        "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:17.000000Z\n" +
+                        "292278994-08-17T07:12:55.807Z\t1970-01-01T00:00:18.000000Z\n" +
+                        "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:22.000000Z\n",
                 new CharSequence[]{
                         "1630933921000i", // valid
+                        "1630933921000t", // valid
+                        "1630933921000000000tns", // valid
+                        "1630933921000000tus", // valid
+                        "1630933921000tms", // valid
+                        "1630933921ts", // valid
+                        "27182232tm", // valid
+                        "453037th", // valid
                         "1630933921000", // discarded bad type double
                         "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
                         "1970-01-01T00:\"00:05.00\"0000Z", // discarded bad type symbol
@@ -850,17 +864,62 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testInsertTimestamp() throws Exception {
+        assertTimestamp("value\ttimestamp\n" +
+                        "0.0\t2021-09-06T13:00:00.000000Z\n" +
+                        "1.0\t2021-09-06T13:12:00.000000Z\n" +
+                        "2.0\t2021-09-06T13:12:01.000000Z\n" +
+                        "3.0\t2021-09-06T13:12:01.000000Z\n" +
+                        "4.0\t2021-09-06T13:12:01.000000Z\n" +
+                        "5.0\t2021-09-06T13:12:01.000000Z\n" +
+                        "6.0\t2021-09-06T13:12:01.000000Z\n" +
+                        "7.0\t2021-09-06T13:12:01.000000Z\n",
+                new CharSequence[]{
+                        "453037th",
+                        "27182232tm",
+                        "1630933921000000000",
+                        "1630933921000000000t",
+                        "1630933921000000000tns",
+                        "1630933921000000tus",
+                        "1630933921000tms",
+                        "1630933921ts"
+                });
+    }
+
+    @Test
+    public void testInsertTimestampTableDoesNotExist() throws Exception {
+        assertTypeNoTable("value\ttimestamp\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:01.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:02.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:03.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:04.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:05.000000Z\n" +
+                        "2021-09-06T13:12:00.000000Z\t1970-01-01T00:00:06.000000Z\n" +
+                        "2021-09-06T13:00:00.000000Z\t1970-01-01T00:00:07.000000Z\n",
+                new CharSequence[]{
+                        "1630933921000000t",
+                        "1630933921000000000tns",
+                        "1630933921000000tus",
+                        "1630933921000tms",
+                        "1630933921ts",
+                        "27182232tm",
+                        "453037th"
+                },
+                false);
+    }
+
+    @Test
     public void testInsertTimestampTableExists() throws Exception {
         assertType(ColumnType.TIMESTAMP,
                 "value\ttimestamp\n" +
-                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:02.000000Z\n" +
-                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:03.000000Z\n" +
-                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:04.000000Z\n" +
-                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:05.000000Z\n" +
-                        "1970-01-19T21:02:13.000000Z\t1970-01-01T00:00:06.000000Z\n" +
-                        "1970-04-24T06:13:00.000000Z\t1970-01-01T00:00:07.000000Z\n" +
-                        "1971-11-11T13:00:00.000000Z\t1970-01-01T00:00:08.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:01.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:02.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:03.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:04.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:05.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:06.000000Z\n" +
+                        "2021-09-06T13:12:00.000000Z\t1970-01-01T00:00:07.000000Z\n" +
+                        "2021-09-06T13:00:00.000000Z\t1970-01-01T00:00:08.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:14.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:15.000000Z\n" +
                         "\t1970-01-01T00:00:16.000000Z\n" +
@@ -869,14 +928,14 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:19.000000Z\n" +
                         "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:20.000000Z\n",
                 new CharSequence[]{
-                        "1630933921000i", // valid
-                        "1630933921000t", // valid
-                        "1630933921000000t_ns", // valid
-                        "1630933921000t_us", // valid
-                        "1630933921t_ms", // valid
-                        "1630933t_s", // valid
-                        "163093t_m", // valid
-                        "16309t_h", // valid
+                        "1630933921000000i", // valid
+                        "1630933921000000t", // valid
+                        "1630933921000000000tns", // valid
+                        "1630933921000000tus", // valid
+                        "1630933921000tms", // valid
+                        "1630933921ts", // valid
+                        "27182232tm", // valid
+                        "453037th", // valid
                         "1630933921000", // discarded bad type double
                         "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
                         "1970-01-01T00:\"00:05.00\"0000Z", // discarded bad type symbol
@@ -895,6 +954,28 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "t", // discarded bad type boolean
                 },
                 false);
+    }
+
+    private void assertTimestamp(String expected, CharSequence[] values) throws Exception {
+        runInContext(() -> {
+            sink.clear();
+            for (int i = 0; i < values.length; i++) {
+                sink.put(table)
+                        .put(' ').put(targetColumnName).put('=').put(i)
+                        .put(' ').put(values[i])
+                        .put('\n');
+            }
+            recvBuffer = sink.toString();
+            do {
+                handleContextIO0();
+                Assert.assertFalse(disconnected);
+            } while (!recvBuffer.isEmpty());
+            closeContext();
+            mayDrainWalQueue();
+            try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), table)) {
+                TestUtils.assertReader(expected, reader, sink);
+            }
+        });
     }
 
     private void assertType(int columnType, String expected, CharSequence[] values, boolean isTag) throws Exception {

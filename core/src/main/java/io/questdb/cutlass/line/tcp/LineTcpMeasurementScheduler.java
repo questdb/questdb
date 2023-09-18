@@ -620,10 +620,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 r.putTimestamp(columnIndex, timestampValue);
                                 break;
                             case ColumnType.DATE:
-                                if (ent.getUnit() != LineTcpParser.ENTITY_UNIT_NONE) {
-                                    throw castError("timestamp", i, colType, ent.getName());
-                                }
-                                r.putTimestamp(columnIndex, ent.getLongValue() / 1000);
+                                long dateValue = LineTcpTimestampAdapter.DATE_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
+                                r.putTimestamp(columnIndex, dateValue / 1000);
                                 break;
                             case ColumnType.SYMBOL:
                                 r.putSym(columnIndex, ent.getValue());
