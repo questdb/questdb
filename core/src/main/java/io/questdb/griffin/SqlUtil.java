@@ -145,7 +145,7 @@ public class SqlUtil {
      * @param lexer input lexer
      * @return with next valid token or null if end of input is reached .
      */
-    public static CharSequence fetchNext(GenericLexer lexer) {
+    public static CharSequence fetchNext(GenericLexer lexer) throws SqlException {
         int blockCount = 0;
         boolean lineComment = false;
         while (lexer.hasNext()) {
@@ -174,6 +174,10 @@ public class SqlUtil {
             }
 
             if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
+                // unclosed quote check
+                if (cs.length() == 1 && cs.charAt(0) == '"') {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
+                }
                 return cs;
             }
         }

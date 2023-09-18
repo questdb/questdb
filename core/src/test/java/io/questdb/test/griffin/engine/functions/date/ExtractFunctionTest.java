@@ -111,6 +111,15 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDanglingArg() throws Exception {
+        assertException(
+                "select extract(hour from to_timestamp('2022-03-11T22:00:30.555555Z') table)",
+                69,
+                "dangling literal"
+        );
+    }
+
+    @Test
     public void testDayNull() throws Exception {
         assertQuery(
                 "extract\n" +
@@ -374,8 +383,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testMissingPart() throws Exception {
         assertException(
                 "select extract(from to_timestamp('2022-03-11T22:00:30.555555Z'))",
-                14,
-                "unbalanced ("
+                15,
+                "Huh? What would you like to extract?"
         );
     }
 
@@ -396,8 +405,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testMultipleFrom() throws Exception {
         assertException(
                 "select extract(hour from from to_timestamp('2022-03-11T22:00:30.555555Z'))",
-                14,
-                "unbalanced ("
+                25,
+                "Unnecessary `from`. Typo?"
         );
     }
 
@@ -414,8 +423,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testNotExtractFrom() throws Exception {
         assertException(
                 "select something(null from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                16,
-                "unbalanced ("
+                22,
+                "dangling literal"
         );
     }
 
