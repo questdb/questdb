@@ -53,10 +53,10 @@ public class SimpleTableTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
             }
 
-            String expected2 = "with\n" +
+            String expected2 = "timestamp\n" +
                     "1970-01-01T00:00:00.000001Z\n";
 
-            assertSql(expected2, "select timestamp with from t;");
+            assertSql(expected2, "select timestamp from t;");
 
             String expected3 = "time\ttimestamp\n" +
                     "2020-12-31T15:15:51.663000Z\t1970-01-01T00:00:00.000001Z\n";

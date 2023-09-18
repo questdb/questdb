@@ -658,13 +658,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDotSpaceStar() {
-        assertFail("a. *", 3, "too few arguments");
-    }
-
-    @Test
     public void testDotSpaceStarExpression() throws SqlException {
-        x("a. 3 *", "a. * 3");
+        x("a. *", "a. * 3");
     }
 
     @Test
