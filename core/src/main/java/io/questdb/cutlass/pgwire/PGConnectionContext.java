@@ -423,7 +423,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // Start listening for read.
             throw PeerIsSlowToWriteException.INSTANCE;
         }
-        boolean afterAuthentication = handleAuthentication();
+        handleAuthentication();
 
         try {
             if (isPausedQuery) {
@@ -442,47 +442,43 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
             }
 
-            boolean keepReceiving = true;
             OUTER:
             do {
                 if (operation == IOOperation.READ) {
-                    if (recv() == 0 && !afterAuthentication) {
-                        // if we are just after authentication we may already have a full message in the receive buffer
-                        keepReceiving = false;
-                    }
-                    afterAuthentication = false;
+                    recv();
                 }
 
                 // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
-                if (keepReceiving) {
-                    do {
-                        // Parse will update the value of recvBufferOffset upon completion of
-                        // logical block. We cannot count on return value because 'parse' may try to
-                        // respond to client and fail with exception. When it does fail we would have
-                        // to retry 'send' but not parse the same input again
+                do {
+                    // Parse will update the value of recvBufferOffset upon completion of
+                    // logical block. We cannot count on return value because 'parse' may try to
+                    // respond to client and fail with exception. When it does fail we would have
+                    // to retry 'send' but not parse the same input again
 
-                        long readOffsetBeforeParse = recvBufferReadOffset;
-                        totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                        parse(
-                                recvBuffer + recvBufferReadOffset,
-                                (int) (recvBufferWriteOffset - recvBufferReadOffset)
-                        );
+                    long readOffsetBeforeParse = recvBufferReadOffset;
+                    totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+                    parse(
+                            recvBuffer + recvBufferReadOffset,
+                            (int) (recvBufferWriteOffset - recvBufferReadOffset)
+                    );
 
-                        // nothing changed?
-                        if (readOffsetBeforeParse == recvBufferReadOffset) {
-                            // shift to start
-                            if (readOffsetBeforeParse > 0) {
-                                shiftReceiveBuffer(readOffsetBeforeParse);
-                            }
-                            continue OUTER;
+                    // nothing changed?
+                    if (readOffsetBeforeParse == recvBufferReadOffset) {
+                        // shift to start
+                        if (readOffsetBeforeParse > 0) {
+                            shiftReceiveBuffer(readOffsetBeforeParse);
                         }
-                    } while (recvBufferReadOffset < recvBufferWriteOffset);
-
-                    if (!freezeRecvBuffer) {
-                        clearRecvBuffer();
+                        // Even if the original operation was WRITE, it's already done now,
+                        // it's time to switch to the reading
+                        operation = IOOperation.READ;
+                        continue OUTER;
                     }
+                } while (recvBufferReadOffset < recvBufferWriteOffset);
+
+                if (!freezeRecvBuffer) {
+                    clearRecvBuffer();
                 }
-            } while (keepReceiving && operation == IOOperation.READ);
+            } while (operation == IOOperation.READ);
         } catch (SqlException e) {
             handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
         } catch (ImplicitCastException e) {
@@ -1630,9 +1626,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private boolean handleAuthentication() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
+    private void handleAuthentication() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
         if (authenticator.isAuthenticated()) {
-            return false;
+            return;
         }
         int r;
         try {
@@ -1661,7 +1657,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it
         recvBufferWriteOffset = authenticator.getRecvBufPos() - recvBuffer;
         recvBufferReadOffset = authenticator.getRecvBufPseudoStart() - recvBuffer;
-        return true;
     }
 
     private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -2782,7 +2777,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     void doSend(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final int n = socket.send(sendBuffer + offset, size);
+        final int n = socket.send(sendBuffer + offset, Math.min(size, forceSendFragmentationChunkSize));
         dumpBuffer('<', sendBuffer + offset, n);
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
@@ -2847,7 +2842,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseAsciiSink.putIntDirect(INT_BYTES_X);
     }
 
-    int recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
+    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
         assertBufferSize(remaining > 0);
@@ -2864,7 +2859,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         recvBufferWriteOffset += n;
-        return n;
     }
 
     @FunctionalInterface
