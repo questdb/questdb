@@ -677,11 +677,13 @@ public class LineTcpMeasurementScheduler implements Closeable {
             if (r != null) {
                 r.cancel();
             }
+            throw th;
         } catch (Throwable th) {
             LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
             if (r != null) {
                 r.cancel();
             }
+            throw th;
         }
     }
 
