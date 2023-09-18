@@ -324,8 +324,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 CreateTableTestUtils.create(m);
             }
 
-            final String lineData = tableName + " dt=631150000000t 631150000000000000\n" +
-                    tableName + " dt=631160000000t 631160000000000000\n";
+            final String lineData = tableName + " dt=631150000000000t 631150000000000000\n" +
+                    tableName + " dt=631160000000000t 631160000000000000\n";
             sendLinger(lineData, tableName);
 
             String expected = "ts\tdt\n" +
@@ -1198,62 +1198,62 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
-                    "col ipv4, " +
-                    "ts timestamp " +
-                    ") timestamp(ts) partition by day");
+                ddl("create table test (" +
+                        "col ipv4, " +
+                        "ts timestamp " +
+                        ") timestamp(ts) partition by day");
 
-            engine.releaseInactive();
-            runInContext((receiver) -> {
-                String lineData =
-                        "test col=\"0.0.0.0\" 631150000000000000\n" +
-                                "test col=\"0.0.0.0\" 31152000000000000\n" +
-                                "test col=\"0.0.0.0\" 631160000000000000\n" +
-                                "test col=\"0.0.0.0\" 631170000000000000\n";
-                sendLinger(lineData, "test");
-            });
-            mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("test"));
-            }
+                engine.releaseInactive();
+                runInContext((receiver) -> {
+                    String lineData =
+                            "test col=\"0.0.0.0\" 631150000000000000\n" +
+                                    "test col=\"0.0.0.0\" 31152000000000000\n" +
+                                    "test col=\"0.0.0.0\" 631160000000000000\n" +
+                                    "test col=\"0.0.0.0\" 631170000000000000\n";
+                    sendLinger(lineData, "test");
+                });
+                mayDrainWalQueue();
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("test"));
+                }
 
-            String expected = "col\tts\n" +
-                    "\t1970-12-27T13:20:00.000000Z\n" +
-                    "\t1989-12-31T23:26:40.000000Z\n" +
-                    "\t1990-01-01T02:13:20.000000Z\n" +
-                    "\t1990-01-01T05:00:00.000000Z\n";
-            assertTable(expected, "test");
+                String expected = "col\tts\n" +
+                        "\t1970-12-27T13:20:00.000000Z\n" +
+                        "\t1989-12-31T23:26:40.000000Z\n" +
+                        "\t1990-01-01T02:13:20.000000Z\n" +
+                        "\t1990-01-01T05:00:00.000000Z\n";
+                assertTable(expected, "test");
         });
     }
 
     @Test
     public void testTcpIPv4Null2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
-                    "col ipv4, " +
-                    "ts timestamp " +
-                    ") timestamp(ts) partition by day");
+                ddl("create table test (" +
+                        "col ipv4, " +
+                        "ts timestamp " +
+                        ") timestamp(ts) partition by day");
 
-            engine.releaseInactive();
-            runInContext((receiver) -> {
-                String lineData =
-                        "test col=\"\" 631150000000000000\n" +
-                                "test col=\"\" 31152000000000000\n" +
-                                "test col=\"\" 631160000000000000\n" +
-                                "test col=\"\" 631170000000000000\n";
-                sendLinger(lineData, "test");
-            });
-            mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("test"));
-            }
+                engine.releaseInactive();
+                runInContext((receiver) -> {
+                    String lineData =
+                            "test col=\"\" 631150000000000000\n" +
+                                    "test col=\"\" 31152000000000000\n" +
+                                    "test col=\"\" 631160000000000000\n" +
+                                    "test col=\"\" 631170000000000000\n";
+                    sendLinger(lineData, "test");
+                });
+                mayDrainWalQueue();
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("test"));
+                }
 
-            String expected = "col\tts\n" +
-                    "\t1970-12-27T13:20:00.000000Z\n" +
-                    "\t1989-12-31T23:26:40.000000Z\n" +
-                    "\t1990-01-01T02:13:20.000000Z\n" +
-                    "\t1990-01-01T05:00:00.000000Z\n";
-            assertTable(expected, "test");
+                String expected = "col\tts\n" +
+                        "\t1970-12-27T13:20:00.000000Z\n" +
+                        "\t1989-12-31T23:26:40.000000Z\n" +
+                        "\t1990-01-01T02:13:20.000000Z\n" +
+                        "\t1990-01-01T05:00:00.000000Z\n";
+                assertTable(expected, "test");
         });
     }
 
