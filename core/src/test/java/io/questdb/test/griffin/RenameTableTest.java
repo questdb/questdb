@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -53,12 +52,17 @@ public class RenameTableTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionDestTableName() throws Exception {
-        assertFailure("rename table x to y()", 18);
+        assertException("rename table x to y()", 19, "function call is not allowed here");
+    }
+
+    @Test
+    public void testRenameTrailingDebris() throws Exception {
+        assertException("rename table x to y xyz", 20, "debris?");
     }
 
     @Test
     public void testFunctionSrcTableName() throws Exception {
-        assertFailure("rename table x() to y", 13);
+        assertException("rename table x() to y", 14, "function call is not allowed here");
     }
 
     @Test
@@ -128,18 +132,6 @@ public class RenameTableTest extends AbstractCairoTest {
                     );
                 }
         );
-    }
-
-    private void assertFailure(String sql, int position) throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                createX();
-                assertException(sql);
-            } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "literal or constant expected");
-            }
-        });
     }
 
     private void createX() throws SqlException {

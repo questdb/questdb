@@ -3364,6 +3364,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
                     }
 
+                    if (tempVaf.size() == 0) {// similar to DistinctKeyRecordCursorFactory, handles e.g. select id from tab group by id  
+                        int keyKind = specialCaseKeys ? SqlCodeGenerator.GKK_HOUR_INT : SqlCodeGenerator.GKK_VANILLA_INT;
+                        CountVectorAggregateFunction countFunction = new CountVectorAggregateFunction(keyKind);
+                        countFunction.pushValueTypes(arrayColumnTypes);
+                        tempVaf.add(countFunction);
+
+                        tempSymbolSkewIndexes.clear();
+                        tempSymbolSkewIndexes.add(0);
+                    }
+
                     try {
                         GroupByUtils.validateGroupByColumns(model, 1);
                     } catch (Throwable e) {

@@ -396,8 +396,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         }
         logQuery();
         final int tableNamePosition = lexer.getPosition();
-        tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-        final TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
+        tok = expectToken(lexer, "table name");
+        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
+        final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
@@ -2006,7 +2007,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         }
     }
 
-    private int getNextValidTokenPosition() {
+    private int getNextValidTokenPosition() throws SqlException {
         while (lexer.hasNext()) {
             CharSequence token = SqlUtil.fetchNext(lexer);
             if (token == null) {
@@ -2020,7 +2021,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         return -1;
     }
 
-    private int goToQueryEnd() {
+    private int goToQueryEnd() throws SqlException {
         CharSequence token;
         lexer.unparseLast();
         while (lexer.hasNext()) {
@@ -2674,6 +2675,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             CharSequence tableName = expectToken(lexer, "table name");
+            SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
@@ -3455,7 +3457,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     } else {
                         lexer.unparseLast(); // tok has table name
                     }
-                    final CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table-name"));
+                    tok = expectToken(lexer, "table-name");
+
+                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                    final CharSequence tableName = GenericLexer.unquote(tok);
                     final int tableNamePosition = lexer.lastTokenPosition();
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {
