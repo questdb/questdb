@@ -3159,10 +3159,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt2() throws SqlException {
         ddl("create table if not exists test(ts timestamp)");
-        insert("insert into test select x::timestamp from long_sequence(3)");
+        insert("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
 
         assertSql("hour\n" +
-                "0\n", "select hour(ts) " +
+                "0\n" +
+                "1\n" +
+                "2\n", "select hour(ts) " +
                 "from test " +
                 "group by 1 " +
                 "order by 1 ");
