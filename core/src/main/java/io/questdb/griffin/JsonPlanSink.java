@@ -171,6 +171,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(int i) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(i);
         return this;
@@ -178,6 +179,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(long l) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(l);
         return this;
@@ -185,6 +187,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(float f) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(f);
         return this;
@@ -192,6 +195,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(double d) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(d);
         return this;
@@ -199,6 +203,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(boolean b) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(b);
         return this;
