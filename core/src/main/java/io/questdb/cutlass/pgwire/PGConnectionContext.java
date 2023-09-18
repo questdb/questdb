@@ -437,51 +437,50 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     resumeProcessor.resume(false);
                 }
                 if (replyAndContinue) {
-                    if (bufferRemainingSize > 0) {
-                        doSend(bufferRemainingOffset, bufferRemainingSize);
-                    }
                     replyAndContinue();
                 }
             }
 
-            boolean readSocket = (operation == IOOperation.READ);
-            OUTER:
-            do {
-                if (readSocket) {
+            long readOffsetBeforeParse = -1;
+            // exit from this loop is via exception when either need wait to read / write from socket
+            // or disconnection is detected / requested
+            //noinspection InfiniteLoopStatement
+            while (true) {
+
+                // Read more from socket or throw when
+                if (
+                    // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
+                        readOffsetBeforeParse == recvBufferReadOffset
+                                // - recv buffer is empty
+                                || recvBufferReadOffset == recvBufferWriteOffset
+                                // - socket is signalled ready to read at the first iteration of this loop
+                                || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
+                ) {
+                    // free up recv buffer
+                    if (!freezeRecvBuffer) {
+                        if (recvBufferReadOffset == recvBufferWriteOffset) {
+                            clearRecvBuffer();
+                        } else if (recvBufferReadOffset > 0) {
+                            // nothing changed?
+                            // shift to start
+                            shiftReceiveBuffer(recvBufferReadOffset);
+                        }
+                    }
+
                     recv();
                 }
 
-                // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
-                do {
-                    // Parse will update the value of recvBufferOffset upon completion of
-                    // logical block. We cannot count on return value because 'parse' may try to
-                    // respond to client and fail with exception. When it does fail we would have
-                    // to retry 'send' but not parse the same input again
-
-                    long readOffsetBeforeParse = recvBufferReadOffset;
-                    totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                    parse(
-                            recvBuffer + recvBufferReadOffset,
-                            (int) (recvBufferWriteOffset - recvBufferReadOffset)
-                    );
-
-                    // nothing changed?
-                    if (readOffsetBeforeParse == recvBufferReadOffset) {
-                        // shift to start
-                        if (readOffsetBeforeParse > 0) {
-                            shiftReceiveBuffer(readOffsetBeforeParse);
-                        }
-                        readSocket = true;
-                        continue OUTER;
-                    }
-                    readSocket = recvBufferReadOffset == recvBufferWriteOffset;
-                } while (recvBufferReadOffset < recvBufferWriteOffset);
-
-                if (!freezeRecvBuffer) {
-                    clearRecvBuffer();
-                }
-                // exit this loop only by exception: need read or write or disconnected
-            } while (true);
+                // Parse will update the value of recvBufferOffset upon completion of
+                // logical block. We cannot count on return value because 'parse' may try to
+                // respond to client and fail with exception. When it does fail we would have
+                // to retry 'send' but not parse the same input again
+                readOffsetBeforeParse = recvBufferReadOffset;
+                totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+                parse(
+                        recvBuffer + recvBufferReadOffset,
+                        (int) (recvBufferWriteOffset - recvBufferReadOffset)
+                );
+            }
         } catch (SqlException e) {
             handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
         } catch (ImplicitCastException e) {
