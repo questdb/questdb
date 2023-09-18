@@ -4748,8 +4748,8 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "4d\r\n" +
-                            "{\"query\":\"x where2 i = ('EHNRX')\",\"error\":\"unexpected token: i\",\"position\":9}\r\n" +
+                            "4e\r\n" +
+                            "{\"query\":\"x where2 i = ('EHNRX')\",\"error\":\"unexpected token [i]\",\"position\":9}\r\n" +
                             "00\r\n" +
                             "\r\n";
 

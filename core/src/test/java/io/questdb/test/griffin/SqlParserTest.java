@@ -487,7 +487,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' : ");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
-        assertSyntaxError("select 'a' ) ", 11, "unexpected token: )");
+        assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");
         assertIdentifierError("select 'a' $ ");
         assertIdentifierError("select 'a' 0 ");
         assertIdentifierError("select 'a' 12 ");
@@ -909,7 +909,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like y), index(s1)",
                 23,
-                "unexpected token: "
+                "unexpected token [,]"
         );
     }
 
@@ -936,7 +936,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like Y.z)",
                 22,
-                "unexpected token: ."
+                "unexpected token [.]"
         );
     }
 
@@ -971,7 +971,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table X.y as ( select a, b, c from tab )",
                 14,
-                "unexpected token: .",
+                "unexpected token [.]",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
@@ -1682,7 +1682,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR VOLUME peterson",
                 86,
-                "unexpected token: VOLUME"
+                "unexpected token [VOLUME]"
         );
 
         assertSyntaxError(
@@ -2376,7 +2376,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
                 96,
-                "unexpected token: x"
+                "unexpected token [x]"
         );
     }
 
@@ -2411,7 +2411,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000,",
                 95,
-                "unexpected token: ,"
+                "unexpected token [,]"
         );
     }
 
@@ -3110,21 +3110,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 21, "unexpected token: *",
+        assertSyntaxError("explain (xyz) select * from x", 21, "unexpected token [*]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql1() throws Exception {
-        assertSyntaxError("explain select 1)", 16, "unexpected token: )",
+        assertSyntaxError("explain select 1)", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql2() throws Exception {
-        assertSyntaxError("explain select 1))", 16, "unexpected token: )",
+        assertSyntaxError("explain select 1))", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
@@ -4945,7 +4945,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest by x+1",
                 29,
-                "unexpected token: +"
+                "unexpected token [+]"
         );
     }
 
@@ -5081,7 +5081,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest on ts partition by x+1",
                 45,
-                "unexpected token: +"
+                "unexpected token [+]"
         );
     }
 
@@ -7400,24 +7400,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectTrailingComma() throws SqlException {
-        assertQuery(
-                "select-choose a, b, c, d from (select [a, b, c, d] from tab)",
-                "select " +
-                        "a," +
-                        "b," +
-                        "c," +
-                        "d," +
-                        "from tab",
-                modelOf("tab")
-                        .col("a", ColumnType.SYMBOL)
-                        .col("b", ColumnType.SYMBOL)
-                        .col("c", ColumnType.SYMBOL)
-                        .col("d", ColumnType.SYMBOL)
-        );
-    }
-
-    @Test
     public void testSelectPlainColumns() throws Exception {
         assertQuery(
                 "select-choose a, b, c from (select [a, b, c] from t)",
@@ -7473,6 +7455,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSql("x1\tx\n" +
                 "1\t1\n" +
                 "2\t4\n", "select x, sum(x)*sum(x) x from long_sequence(2)");
+    }
+
+    @Test
+    public void testSelectTrailingComma() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, d from (select [a, b, c, d] from tab)",
+                "select " +
+                        "a," +
+                        "b," +
+                        "c," +
+                        "d," +
+                        "from tab",
+                modelOf("tab")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.SYMBOL)
+                        .col("c", ColumnType.SYMBOL)
+                        .col("d", ColumnType.SYMBOL)
+        );
     }
 
     @Test

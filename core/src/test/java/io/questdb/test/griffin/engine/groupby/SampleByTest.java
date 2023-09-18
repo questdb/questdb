@@ -10378,7 +10378,7 @@ public class SampleByTest extends AbstractCairoTest {
         testSampleByPeriodFails(
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1' T",
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1' T".length() - 1,
-                "unexpected token: T"
+                "unexpected token [T]"
         );
     }
 
