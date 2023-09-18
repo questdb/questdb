@@ -1450,8 +1450,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "                    \"Plans\": [\n" +
                     "                    {\n" +
                     "                        \"Node Type\": \"Async JIT Filter\",\n" +
-                    "                        \"workers\": \"1\",\n" +
-                    "                        \"limit\": \"4\",\n" +
+                    "                        \"workers\":  1,\n" +
+                    "                        \"limit\":  4,\n" +
                     "                        \"filter\": \"10<l\",\n" +
                     "                        \"Plans\": [\n" +
                     "                        {\n" +

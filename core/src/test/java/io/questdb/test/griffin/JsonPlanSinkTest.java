@@ -127,7 +127,7 @@ public class JsonPlanSinkTest {
             sink.attr("int");
             sink.val(2);
             sink.attr("long");
-            sink.val(100);
+            sink.val(100L);
         }
     }
 }
