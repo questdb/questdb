@@ -9867,7 +9867,7 @@ public class SampleByTest extends AbstractCairoTest {
         testSampleByPeriodFails(
                 "select sum(a), k from x sample by 300/10",
                 "select sum(a), k from x sample by 300/10".length(),
-                "literal expected"
+                "time interval unit expected"
         );
     }
 
