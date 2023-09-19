@@ -74,7 +74,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Metrics metrics;
     private final Predicate<CharSequence> protectedTableResolver;
     private final ReaderPool readerPool;
-    private final DatabaseSnapshotAgent snapshotAgent;
+    private final DatabaseSnapshotAgentImpl snapshotAgent;
     private final SqlCompilerPool sqlCompilerPool;
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
@@ -115,7 +115,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
-        this.snapshotAgent = new DatabaseSnapshotAgent(this);
+        this.snapshotAgent = new DatabaseSnapshotAgentImpl(this);
         try {
             this.tableIdGenerator.open();
         } catch (Throwable e) {
@@ -436,6 +436,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 DefaultLifecycleManager.INSTANCE,
                 backupDirName,
                 getDdlListener(tableToken),
+                NoOpDatabaseSnapshotAgent.INSTANCE,
                 Metrics.disabled()
         );
     }
@@ -555,10 +556,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.entries();
     }
 
-    public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
-        return writerPool.entries();
-    }
-
     public TableReader getReaderWithRepair(TableToken tableToken) {
         // todo: untested verification
         verifyTableToken(tableToken);
@@ -579,6 +576,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     .$(", error=").$(e.getMessage()).I$();
             throw e;
         }
+    }
+
+    public DatabaseSnapshotAgent getSnapshotAgent() {
+        return snapshotAgent;
     }
 
     public SqlCompiler getSqlCompiler() {
@@ -706,6 +707,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
+    public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
+        return writerPool.entries();
+    }
+
     public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
         return writerPool.get(tableToken, lockReason);
     }
@@ -746,6 +751,7 @@ public class CairoEngine implements Closeable, WriterSource {
             lockedReason = writerPool.lock(tableToken, lockReason);
             if (lockedReason == null) {
                 // not locked
+                // TODO prevent reader locking while a snapshot is on-going
                 if (readerPool.lock(tableToken)) {
                     LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
                     return null;
@@ -759,11 +765,13 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean lockReaders(TableToken tableToken) {
+        // TODO prevent locking this a snapshot is on-going
         verifyTableToken(tableToken);
         return readerPool.lock(tableToken);
     }
 
     public boolean lockReadersByTableToken(TableToken tableToken) {
+        // TODO prevent locking this a snapshot is on-going
         return readerPool.lock(tableToken);
     }
 

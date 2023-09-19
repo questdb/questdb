@@ -265,13 +265,13 @@ public class WriterPool extends AbstractPool {
                         e,
                         root,
                         engine.getDdlListener(tableToken),
+                        engine.getSnapshotAgent(),
                         engine.getMetrics()
                 );
             }
 
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
-
                 if (e.lockFd != -1) {
                     Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
                     TableUtils.lockName(path);
@@ -385,6 +385,7 @@ public class WriterPool extends AbstractPool {
                     e,
                     root,
                     engine.getDdlListener(tableToken),
+                    engine.getSnapshotAgent(),
                     engine.getMetrics()
             );
             e.ownershipReason = lockReason;
@@ -643,19 +644,9 @@ public class WriterPool extends AbstractPool {
             return !WriterPool.this.returnToPool(this);
         }
 
-        public TableWriter goodbye() {
-            TableWriter w = writer;
-            if (writer != null) {
-                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
-                writer = null;
-            }
-            return w;
-        }
-
         public long getLastReleaseTime() {
             return lastReleaseTime;
         }
-
 
         public long getOwnerThread() {
             return owner;
@@ -667,6 +658,15 @@ public class WriterPool extends AbstractPool {
 
         public TableToken getTableToken() {
             return writer != null ? writer.getTableToken() : null;
+        }
+
+        public TableWriter goodbye() {
+            TableWriter w = writer;
+            if (writer != null) {
+                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
+                writer = null;
+            }
+            return w;
         }
     }
 }

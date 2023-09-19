@@ -47,11 +47,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final StringSink[] fileNameSinks;
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final ObjList<DirectLongList> partitionList;
+    private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjList<TxReader> txnReaders;
     private final ObjList<TxnScoreboard> txnScoreboards;
 
-    public O3PartitionPurgeJob(MessageBus messageBus, int workerCount) {
+    public O3PartitionPurgeJob(MessageBus messageBus, DatabaseSnapshotAgent snapshotAgent, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
+        this.snapshotAgent = snapshotAgent;
         this.configuration = messageBus.getConfiguration();
         this.fileNameSinks = new StringSink[workerCount];
         this.partitionList = new ObjList<>(workerCount);
@@ -74,7 +76,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             Misc.freeObjList(txnScoreboards);
         }
     }
-
 
     private static void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
         int index = Chars.lastIndexOf(fileNameSink, '.');
@@ -245,8 +246,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             TableToken tableToken,
             TxnScoreboard txnScoreboard,
             TxReader txReader,
-            int partitionBy) {
-
+            int partitionBy
+    ) {
         LOG.info().$("processing [table=").utf8(tableToken.getDirName()).I$();
         Path path = Path.getThreadLocal(root).concat(tableToken);
         int plimit = path.length();
@@ -333,6 +334,12 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txnScoreboard.clear();
         }
         LOG.info().$("processed [table=").$(tableToken).I$();
+    }
+
+    @Override
+    protected boolean canRun() {
+        // No deletion must happen while a snapshot is in-flight.
+        return !snapshotAgent.isInFlight();
     }
 
     @Override

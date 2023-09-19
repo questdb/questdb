@@ -22,31 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.cairo;
 
-import org.jetbrains.annotations.NotNull;
+public class NoOpDatabaseSnapshotAgent implements DatabaseSnapshotAgent {
+    public static final DatabaseSnapshotAgent INSTANCE = new NoOpDatabaseSnapshotAgent();
 
-public abstract class AbstractQueueConsumerJob<T> implements Job {
-    protected final RingQueue<T> queue;
-    protected final Sequence subSeq;
-
-    public AbstractQueueConsumerJob(RingQueue<T> queue, Sequence subSeq) {
-        this.queue = queue;
-        this.subSeq = subSeq;
+    @Override
+    public void close() {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        if (!canRun()) {
-            return false;
-        }
-        final long cursor = subSeq.next();
-        return cursor == -2 || (cursor > -1 && doRun(workerId, cursor, runStatus));
+    public boolean isInFlight() {
+        return false;
     }
-
-    protected boolean canRun() {
-        return true;
-    }
-
-    protected abstract boolean doRun(int workerId, long cursor, RunStatus runStatus);
 }

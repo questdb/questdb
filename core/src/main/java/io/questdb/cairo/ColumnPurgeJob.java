@@ -63,6 +63,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final long retryDelayLimit;
     private final double retryDelayMultiplier;
     private final PriorityQueue<ColumnPurgeRetryTask> retryQueue;
+    private final DatabaseSnapshotAgent snapshotAgent;
     private final TableToken tableToken;
     private ColumnPurgeOperator columnPurgeOperator;
     private int inErrorCount;
@@ -112,6 +113,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
         this.writer = engine.getWriter(tableToken, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
+        this.snapshotAgent = engine.getSnapshotAgent();
         processTableRecords(engine);
     }
 
@@ -294,7 +296,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private boolean purge() {
         boolean useful = false;
         final long now = clock.getTicks() + 1;
-        while (retryQueue.size() > 0) {
+        while (!retryQueue.isEmpty()) {
             ColumnPurgeRetryTask nextTask = retryQueue.peek();
             if (nextTask.nextRunTimestamp < now) {
                 retryQueue.poll();
@@ -351,6 +353,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
         }
+        if (snapshotAgent.isInFlight()) {
+            // No deletion must happen while a snapshot is in-flight.
+            return false;
+        }
 
         try {
             boolean useful = processInQueue();
@@ -364,7 +370,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             LOG.error().$("failed to clean up column versions").$(th).$();
             inErrorCount++;
             if (inErrorCount == MAX_ERRORS) {
-                if (retryQueue.size() > 0) {
+                if (!retryQueue.isEmpty()) {
                     LOG.error().$("clean up column versions reached maximum error count and will be recycled. Some column version may be left behind.").$(th).$();
                     retryQueue.clear();
                     inErrorCount = 0;
