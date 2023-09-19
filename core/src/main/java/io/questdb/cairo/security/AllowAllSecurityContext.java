@@ -71,6 +71,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableDedupDisable(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableDedupEnable(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableDetachPartition(TableToken tableToken) {
     }
 
@@ -88,10 +96,6 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-    }
-
-    @Override
-    public void authorizeAlterTableSetDedup(TableToken tableToken) {
     }
 
     @Override

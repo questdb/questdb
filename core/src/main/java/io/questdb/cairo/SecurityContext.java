@@ -48,6 +48,10 @@ public interface SecurityContext {
 
     void authorizeAlterTableAttachPartition(TableToken tableToken);
 
+    void authorizeAlterTableDedupDisable(TableToken tableToken);
+
+    void authorizeAlterTableDedupEnable(TableToken tableToken);
+
     void authorizeAlterTableDetachPartition(TableToken tableToken);
 
     void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
@@ -58,8 +62,6 @@ public interface SecurityContext {
 
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
-
-    void authorizeAlterTableSetDedup(TableToken tableToken);
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
