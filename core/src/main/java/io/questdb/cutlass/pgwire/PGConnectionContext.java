@@ -118,7 +118,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
@@ -532,10 +531,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
-        dbcs.of(address, address + valueLen);
-        bindVariableService.define(index, ColumnType.DATE, 0);
-        bindVariableService.setStr(index, dbcs);
+    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException, BadProtocolException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Chars.utf8toUtf16(address, address + valueLen, e)) {
+            bindVariableService.define(index, ColumnType.DATE, 0);
+            bindVariableService.setStr(index, characterStore.toImmutable());
+        } else {
+            LOG.error().$("invalid str UTF8 bytes [index=").$(index).I$();
+            throw BadProtocolException.INSTANCE;
+        }
     }
 
     public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -2745,17 +2749,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {
-        if (!freezeRecvBuffer) {
-            final long len = recvBufferWriteOffset - readOffsetBeforeParse;
-            LOG.debug()
-                    .$("shift [offset=").$(readOffsetBeforeParse)
-                    .$(", len=").$(len)
-                    .I$();
+        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
+        LOG.debug()
+                .$("shift [offset=").$(readOffsetBeforeParse)
+                .$(", len=").$(len)
+                .I$();
 
-            Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
-            recvBufferWriteOffset = len;
-            recvBufferReadOffset = 0;
-        }
+        Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
+        recvBufferWriteOffset = len;
+        recvBufferReadOffset = 0;
     }
 
     private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {

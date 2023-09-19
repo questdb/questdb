@@ -92,7 +92,6 @@ import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.*;
 
-
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
@@ -130,8 +129,6 @@ public class PGJobContextTest extends BasePGTest {
     private static List<Object[]> datesArr;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
-    private int minRecvBufferSize;
-    private int minSendBufferSize;
 
     public PGJobContextTest(WalMode walMode) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
@@ -159,21 +156,17 @@ public class PGJobContextTest extends BasePGTest {
     @Before
     public void setUp() {
         super.setUp();
-
-        sendBufferSize = Math.max(minSendBufferSize, 512 * (1 + bufferSizeRnd.nextInt(15)));
+        sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
-        recvBufferSize = Math.max(minRecvBufferSize, 512 * (1 + bufferSizeRnd.nextInt(15)));
+        recvBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
-
-//        int sendBufferSize=3584, forceSendFragmentationChunkSize=10, recvBufferSize=2560, forceRecvFragmentationChunkSize=455;
 
         LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize)
                 .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
                 .$(", recvBufferSize=").$(recvBufferSize)
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
                 .I$();
-
         configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
     }
 
@@ -181,8 +174,6 @@ public class PGJobContextTest extends BasePGTest {
     public void tearDown() throws Exception {
         super.tearDown();
         configOverrideDefaultTableWriteMode(-1);
-        minRecvBufferSize = 0;
-        minSendBufferSize = 0;
     }
 
     @Test
@@ -3828,21 +3819,43 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testInsertBinaryOver1Mb() throws Exception {
-        final int maxLength = 1024 * 1024;
-        testBinaryInsert(maxLength, false);
+    public void testInsertBinaryOverHalfMb() throws Exception {
+        final int maxLength = 524287;
+        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
     @Test
     public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
-        testBinaryInsert(maxLength, true);
+        testBinaryInsert(maxLength, true, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
     @Test
     public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
-        testBinaryInsert(maxLength, false);
+        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
+    }
+
+    @Test
+    public void testInsertBinaryOverRecvOverflow() throws Exception {
+        final int maxLength = 524287;
+        try {
+            testBinaryInsert(maxLength, true, 2048, 1024 * 1024 + 100);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
+        }
+    }
+
+    @Test
+    public void testInsertBinarySendRecvOverflow() throws Exception {
+        final int maxLength = 524287;
+        try {
+            testBinaryInsert(maxLength, true, 1024 * 1024 + 100, 2048);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "server configuration error: not enough space in send buffer for row data");
+        }
     }
 
     @Test
@@ -5159,7 +5172,7 @@ nodejs code:
 
     @Test
     public void testMetadata() throws Exception {
-        minRecvBufferSize = recvBufferSize = 2048;
+        recvBufferSize = 2048;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
@@ -5401,7 +5414,7 @@ nodejs code:
 
     @Test
     public void testNoDataAndEmptyQueryResponsesHex_simpleTextProtocol() throws Exception {
-        /**
+        /*
          * go.mod:
          * module testquestpg
          *
@@ -9703,7 +9716,7 @@ create table tab as (
                 .$(", binary=").$(binary)
                 .$(", prepareThreshold=").$(prepareThreshold)
                 .I$();
-        setUp();
+        super.setUp();
         try {
             assertMemoryLeak(() -> {
                 try (
@@ -10089,7 +10102,7 @@ create table tab as (
         });
     }
 
-    private void testBinaryInsert(int maxLength, boolean binaryProtocol) throws Exception {
+    private void testBinaryInsert(int maxLength, boolean binaryProtocol, int recvBufferSize, int sendBufferSize) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             ddl("create table xyz (" +
@@ -10100,8 +10113,8 @@ create table tab as (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
-                recvBufferSize = Math.max(recvBufferSize, maxLength + 100);
-                sendBufferSize = Math.max(sendBufferSize, maxLength + 100);
+                this.recvBufferSize = recvBufferSize;
+                this.sendBufferSize = sendBufferSize;
 
                 workerPool.start(LOG);
                 try (
@@ -10133,24 +10146,29 @@ create table tab as (
                         }
                         connection.commit();
 
-                        try (RecordCursorFactory factory = select("xyz")) {
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                final Record record = cursor.getRecord();
-                                int count = 0;
-                                while (cursor.hasNext()) {
-                                    Assert.assertEquals(maxLength, record.getBinLen(0));
-                                    BinarySequence bs = record.getBin(0);
-                                    for (int i = 0; i < maxLength; i++) {
-                                        Assert.assertEquals(
-                                                i % 255,
-                                                bs.byteAt(i) & 0xff // Convert byte to unsigned int
-                                        );
-                                    }
-                                    count++;
-                                }
+                        try (
+                                PreparedStatement select = connection.prepareStatement("select a from xyz");
+                                ResultSet rs = select.executeQuery()
+                        ) {
 
-                                Assert.assertEquals(totalCount, count);
+                            int count = 0;
+                            while (rs.next()) {
+                                InputStream bs = rs.getBinaryStream(1);
+                                int len = 0;
+                                int i = bs.read();
+                                while (i > -1) {
+                                    Assert.assertEquals(
+                                            len % 255,
+                                            i & 0xff // Convert byte to unsigned int
+                                    );
+                                    len++;
+                                    i = bs.read();
+                                }
+                                Assert.assertEquals(maxLength, len);
+                                count++;
                             }
+
+                            Assert.assertEquals(totalCount, count);
                         }
                     }
                 }
@@ -10480,7 +10498,7 @@ create table tab as (
             ) {
                 workerPool.start(LOG);
                 for (int i = 0; i < clientCount; i++) {
-                    try (Connection connection = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
+                    try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
                         assertException("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
 

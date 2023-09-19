@@ -357,11 +357,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
 
             @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-
-            @Override
             public int getRecvBufferSize() {
                 return recvBufferSize;
             }
