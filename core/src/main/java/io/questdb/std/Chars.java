@@ -117,6 +117,10 @@ public final class Chars {
         }
     }
 
+    public static void base64UrlDecode(CharSequence encoded, DirectByteCharSink target) {
+        base64Decode(encoded, target, base64UrlInverted);
+    }
+
     /**
      * Decodes base64url encoded string into a byte buffer.
      * <p>
