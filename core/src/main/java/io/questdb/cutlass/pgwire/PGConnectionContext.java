@@ -118,9 +118,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
+    private final int forceRecvFragmentationChunkSize;
+    private final int forceSendFragmentationChunkSize;
     private final int maxBlobSizeOnQuery;
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final WeakMutableObjectPool<Portal> namedPortalPool;
@@ -155,9 +156,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean completed = true;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
-    private long cursorRowCount;
+    private boolean errorSkipToSync;
+    private boolean freezeRecvBuffer;
     private boolean isEmptyQuery = false;
     private boolean isPausedQuery = false;
+    private byte lastMsgType;
     private long maxReceiveRows;
     private long maxSendRows;
     private int parsePhaseBindVariableCount;
@@ -169,6 +172,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long recvBuffer;
     private long recvBufferReadOffset = 0;
     private long recvBufferWriteOffset = 0;
+    private boolean replyAndContinue;
     private PGResumeProcessor resumeProcessor;
     private Rnd rnd;
     private long rowCount;
@@ -214,6 +218,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
+        this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
@@ -351,6 +357,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         isEmptyQuery = false;
         queryContainsSecret = false;
         tlsSessionStarting = false;
+        errorSkipToSync = false;
+        replyAndContinue = false;
+        freezeRecvBuffer = false;
     }
 
     @Override
@@ -413,7 +422,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // Start listening for read.
             throw PeerIsSlowToWriteException.INSTANCE;
         }
-        boolean afterAuthentication = handleAuthentication();
+        handleAuthentication();
 
         try {
             if (isPausedQuery) {
@@ -426,57 +435,57 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (resumeProcessor != null) {
                     resumeProcessor.resume(false);
                 }
+                if (replyAndContinue) {
+                    replyAndContinue();
+                }
             }
 
-            boolean keepReceiving = true;
-            OUTER:
-            do {
-                if (operation == IOOperation.READ) {
-                    if (recv() == 0 && !afterAuthentication) {
-                        // if we are just after authentication we may already have a full message in the receive buffer
-                        keepReceiving = false;
-                    }
-                    afterAuthentication = false;
-                }
+            long readOffsetBeforeParse = -1;
+            // exit from this loop is via exception when either need wait to read / write from socket
+            // or disconnection is detected / requested
+            //noinspection InfiniteLoopStatement
+            while (true) {
 
-                // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
-                if (keepReceiving) {
-                    do {
-                        // Parse will update the value of recvBufferOffset upon completion of
-                        // logical block. We cannot count on return value because 'parse' may try to
-                        // respond to client and fail with exception. When it does fail we would have
-                        // to retry 'send' but not parse the same input again
-
-                        long readOffsetBeforeParse = recvBufferReadOffset;
-                        totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                        parse(
-                                recvBuffer + recvBufferReadOffset,
-                                (int) (recvBufferWriteOffset - recvBufferReadOffset)
-                        );
-
-                        // nothing changed?
-                        if (readOffsetBeforeParse == recvBufferReadOffset) {
+                // Read more from socket or throw when
+                if (
+                    // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
+                        readOffsetBeforeParse == recvBufferReadOffset
+                                // - recv buffer is empty
+                                || recvBufferReadOffset == recvBufferWriteOffset
+                                // - socket is signalled ready to read at the first iteration of this loop
+                                || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
+                ) {
+                    // free up recv buffer
+                    if (!freezeRecvBuffer) {
+                        if (recvBufferReadOffset == recvBufferWriteOffset) {
+                            clearRecvBuffer();
+                        } else if (recvBufferReadOffset > 0) {
+                            // nothing changed?
                             // shift to start
-                            if (readOffsetBeforeParse > 0) {
-                                shiftReceiveBuffer(readOffsetBeforeParse);
-                            }
-                            continue OUTER;
+                            shiftReceiveBuffer(recvBufferReadOffset);
                         }
-                    } while (recvBufferReadOffset < recvBufferWriteOffset);
-                    clearRecvBuffer();
+                    }
+
+                    recv();
                 }
-            } while (keepReceiving && operation == IOOperation.READ);
-        } catch (SqlException e) {
-            reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
-        } catch (ImplicitCastException e) {
-            reportNonCriticalError(-1, e.getFlyweightMessage());
-        } catch (CairoException e) {
-            clearCursorAndFactory();
-            if (e.isInterruption()) {
-                reportQueryCancelled(e.getFlyweightMessage());
-            } else {
-                reportError(e);
+
+                // Parse will update the value of recvBufferOffset upon completion of
+                // logical block. We cannot count on return value because 'parse' may try to
+                // respond to client and fail with exception. When it does fail we would have
+                // to retry 'send' but not parse the same input again
+                readOffsetBeforeParse = recvBufferReadOffset;
+                totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+                parse(
+                        recvBuffer + recvBufferReadOffset,
+                        (int) (recvBufferWriteOffset - recvBufferReadOffset)
+                );
             }
+        } catch (SqlException e) {
+            handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
+        } catch (ImplicitCastException e) {
+            handleException(-1, e.getFlyweightMessage(), false, -1, true);
+        } catch (CairoException e) {
+            handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
         }
     }
 
@@ -502,6 +511,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
         bindVariableService.setBin(index, this.binarySequenceParamsPool.next().of(address, valueLen));
+        freezeRecvBuffer = true;
     }
 
     public void setBooleanBindVariable(int index, int valueLen) throws SqlException {
@@ -521,10 +531,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
-        dbcs.of(address, address + valueLen);
-        bindVariableService.define(index, ColumnType.DATE, 0);
-        bindVariableService.setStr(index, dbcs);
+    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException, BadProtocolException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Chars.utf8toUtf16(address, address + valueLen, e)) {
+            bindVariableService.define(index, ColumnType.DATE, 0);
+            bindVariableService.setStr(index, characterStore.toImmutable());
+        } else {
+            LOG.error().$("invalid str UTF8 bytes [index=").$(index).I$();
+            throw BadProtocolException.INSTANCE;
+        }
     }
 
     public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -1152,6 +1167,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private void checkSendBufferFitsProtocolCommand() throws PeerDisconnectedException {
+        if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
+            sendAndResetWait();
+        }
+    }
+
     private void clearCursorAndFactory() {
         resumeProcessor = null;
         currentCursor = Misc.free(currentCursor);
@@ -1180,6 +1201,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 typesAndUpdate = Misc.free(typesAndUpdate);
             }
         }
+    }
+
+    private void clearRecvBuffer() {
+        recvBufferWriteOffset = 0;
+        recvBufferReadOffset = 0;
     }
 
     private void closePendingWriters(boolean commit) {
@@ -1323,20 +1349,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int remaining = bufferSize;
 
         while (remaining > 0) {
-            int m = socket.send(sendBuffer + offset, remaining);
+            int m = socket.send(sendBuffer + offset, Math.min(remaining, forceSendFragmentationChunkSize));
             if (m < 0) {
                 LOG.info().$("disconnected on write [code=").$(m).I$();
                 throw PeerDisconnectedException.INSTANCE;
-            }
-            if (m == 0) {
-                // The socket is not ready for write.
-                break;
             }
 
             dumpBuffer('<', sendBuffer + offset, m);
 
             remaining -= m;
             offset += m;
+
+            if (m == 0 || forceSendFragmentationChunkSize < sendBufferSize) {
+                // The socket is not ready for write, or we're simulating network fragmentation.
+                break;
+            }
         }
 
         if (remaining > 0) {
@@ -1364,7 +1391,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void executeInsert() throws SqlException {
+    private void executeInsert() throws SqlException, PeerDisconnectedException {
         TableWriterAPI writer;
         boolean recompileStale = true;
         for (int retries = 0; true; retries++) {
@@ -1448,7 +1475,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void executeUpdate() throws SqlException {
+    private void executeUpdate() throws SqlException, PeerDisconnectedException {
         boolean recompileStale = true;
         for (int retries = 0; recompileStale; retries++) {
             try {
@@ -1605,9 +1632,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private boolean handleAuthentication() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
+    private void handleAuthentication() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
         if (authenticator.isAuthenticated()) {
-            return false;
+            return;
         }
         int r;
         try {
@@ -1636,7 +1663,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it
         recvBufferWriteOffset = authenticator.getRecvBufPos() - recvBuffer;
         recvBufferReadOffset = authenticator.getRecvBufPseudoStart() - recvBuffer;
-        return true;
+    }
+
+    private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        clearCursorAndFactory();
+        if (interruption) {
+            prepareErrorResponse(position, message);
+        } else {
+            prepareError(position, message, critical, errno);
+        }
+        resumeProcessor = null;
+        errorSkipToSync = lastMsgType != 'S' && lastMsgType != 'X' && lastMsgType != 'H' && lastMsgType != 'Q';
+        if (errorSkipToSync) {
+            throw PeerIsSlowToReadException.INSTANCE;
+        } else {
+            replyAndContinue();
+        }
     }
 
     private void handleTlsRequest() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
@@ -1728,6 +1770,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset += msgLen + 1;
         final long msgLimit = address + msgLen + 1;
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
+        lastMsgType = type;
+        if (errorSkipToSync) {
+            if (lastMsgType == 'S' || lastMsgType == 'H') {
+                errorSkipToSync = false;
+                replyAndContinue();
+            }
+            // Skip all input until Sync or Flush messages received.
+            return;
+        }
 
         switch (type) {
             case 'P': // parse
@@ -1843,11 +1894,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseAsciiSink.putIntDirect(INT_BYTES_X);
     }
 
-    private void prepareError(CairoException ex) {
-        int errno = ex.getErrno();
-        CharSequence message = ex.getFlyweightMessage();
-        prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
-        if (ex.isCritical()) {
+    private void prepareError(int position, CharSequence message, boolean critical, int errno) {
+        prepareErrorResponse(position, message);
+        if (critical) {
             LOG.critical()
                     .$("error [msg=`").utf8(message)
                     .$("`, errno=").$(errno)
@@ -1890,6 +1939,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             queryText = null;
             wrapper = null;
             syncActions.clear();
+            freezeRecvBuffer = false;
             sendParameterDescription = false;
         }
     }
@@ -1928,13 +1978,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void prepareParseComplete() {
         responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
         responseAsciiSink.putIntDirect(INT_BYTES_X);
-    }
-
-    private void prepareQueryCanceled(CharSequence message) {
-        prepareErrorResponse(-1, message);
-        LOG.info()
-                .$("query cancelled [msg=`").$(message).$('`')
-                .I$();
     }
 
     private void prepareRowDescription() {
@@ -2382,9 +2425,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 prepareNonCriticalError(ex.getPosition(), ex.getFlyweightMessage());
             } catch (CairoException ex) {
                 if (ex.isInterruption()) {
-                    prepareQueryCanceled(ex.getFlyweightMessage());
+                    prepareErrorResponse(-1, ex.getFlyweightMessage());
                 } else {
-                    prepareError(ex);
+                    prepareError(ex.getPosition(), ex.getFlyweightMessage(), ex.isCritical(), ex.getErrno());
                 }
             }
         } else {
@@ -2463,27 +2506,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareError(ex);
+    private void replyAndContinue() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        replyAndContinue = true;
         sendReadyForNewQuery();
+        freezeRecvBuffer = false;
         clearRecvBuffer();
     }
 
-    private void reportNonCriticalError(int position, CharSequence flyweightMessage)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareNonCriticalError(position, flyweightMessage);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
-    }
-
-    private void reportQueryCancelled(CharSequence flyweightMessage)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareQueryCanceled(flyweightMessage);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
-    }
-
-    private void resumeCommandComplete(boolean queryWasPaused) {
+    private void resumeCommandComplete(boolean queryWasPaused) throws PeerDisconnectedException {
         prepareCommandComplete(true);
     }
 
@@ -2525,8 +2555,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        doSend(0, (int) (sendBufferPtr - sendBuffer));
+        doSend(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
         responseAsciiSink.reset();
+        replyAndContinue = false;
     }
 
     private void sendAndResetWait() throws PeerDisconnectedException {
@@ -2534,7 +2565,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // This method busy waits to send buffer.
         while (true) {
             try {
-                doSend(0, (int) (sendBufferPtr - sendBuffer));
+                doSend(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
                 break;
             } catch (PeerIsSlowToReadException e) {
                 Os.sleep(1);
@@ -2542,6 +2573,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
         responseAsciiSink.reset();
+        replyAndContinue = false;
     }
 
     // This method is currently unused. it's used for the COPY sub-protocol, which is currently not implemented.
@@ -2639,9 +2671,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             prepareCommandComplete(true);
         } else {
-            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
-                sendAndResetWait();
-            }
+            checkSendBufferFitsProtocolCommand();
             prepareSuspended();
             // Prevents re-sending current record row when buffer is sent fully.
             resumeProcessor = null;
@@ -2725,10 +2755,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 .$(", len=").$(len)
                 .I$();
 
-        Vect.memcpy(
-                recvBuffer, recvBuffer + readOffsetBeforeParse,
-                len
-        );
+        Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
         recvBufferWriteOffset = len;
         recvBufferReadOffset = 0;
     }
@@ -2746,11 +2773,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    void clearRecvBuffer() {
-        recvBufferWriteOffset = 0;
-        recvBufferReadOffset = 0;
-    }
-
     int doReceive(int remaining) {
         final long data = recvBuffer + recvBufferWriteOffset;
         final int n = socket.recv(data, remaining);
@@ -2759,7 +2781,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     void doSend(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final int n = socket.send(sendBuffer + offset, size);
+        final int n = socket.send(sendBuffer + offset, Math.min(size, forceSendFragmentationChunkSize));
         dumpBuffer('<', sendBuffer + offset, n);
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
@@ -2773,7 +2795,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bufferRemainingOffset = 0;
     }
 
-    void prepareCommandComplete(boolean addRowCount) {
+    void prepareCommandComplete(boolean addRowCount) throws PeerDisconnectedException {
+        checkSendBufferFitsProtocolCommand();
         if (isEmptyQuery) {
             prepareEmptyQueryResponse();
         } else {
@@ -2798,9 +2821,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     void prepareReadyForQuery() throws PeerDisconnectedException {
         if (sendRNQ) {
             LOG.debug().$("RNQ sent").$();
-            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
-                sendAndResetWait();
-            }
+            checkSendBufferFitsProtocolCommand();
 
             responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
             responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
@@ -2825,12 +2846,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseAsciiSink.putIntDirect(INT_BYTES_X);
     }
 
-    int recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
+    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
         assertBufferSize(remaining > 0);
 
-        int n = doReceive(remaining);
+        int n = doReceive(Math.min(forceRecvFragmentationChunkSize, remaining));
         LOG.debug().$("recv [n=").$(n).I$();
         if (n < 0) {
             LOG.info().$("disconnected on read [code=").$(n).I$();
@@ -2842,7 +2863,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         recvBufferWriteOffset += n;
-        return n;
     }
 
     @FunctionalInterface

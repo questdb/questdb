@@ -358,6 +358,8 @@ public enum PropertyKey implements ConfigProperty {
     PG_NAMED_STATEMENT_POOL_CAPACITY("pg.named.statement.pool.capacity"),
     PG_PENDING_WRITERS_CACHE_CAPACITY("pg.pending.writers.cache.capacity"),
     PG_NET_CONNECTION_SNDBUF("pg.net.connection.sndbuf"),
+    PG_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("pg.debug.force.send.fragmentation.chunk.size"),
+    PG_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("pg.debug.force.recv.fragmentation.chunk.size"),
     QUERY_TIMEOUT_SEC("query.timeout.sec"),
     SHARED_WORKER_COUNT("shared.worker.count"),
     SHARED_WORKER_AFFINITY("shared.worker.affinity"),

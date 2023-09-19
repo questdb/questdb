@@ -330,10 +330,6 @@ public class TableUpdateDetails implements Closeable {
         tick();
     }
 
-    CairoEngine getEngine() {
-        return engine;
-    }
-
     ThreadLocalDetails getThreadLocalDetails(int workerId) {
         lastMeasurementMillis = millisecondClock.getTicks();
         return localDetailsArray[workerId];
@@ -698,6 +694,7 @@ public class TableUpdateDetails implements Closeable {
                     latestKnownMetadata = engine.getMetadata(tableToken);
                 } catch (CairoException | TableReferenceOutOfDateException ex) {
                     if (isWal()) {
+                        LOG.critical().$("could not write to WAL [ex=").$(ex).I$();
                         setWriterInError();
                     } else {
                         throw ex;

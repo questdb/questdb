@@ -128,7 +128,7 @@ public class LogFactoryTest {
 
             Log logger1 = factory.create("com.questdb.x.y");
             for (int i = 0; i < messageCount; i++) {
-                logger1.criticalW().$("test ").$(i).$();
+                logger1.critical().$("test ").$(i).$();
             }
         } finally {
             factory.close(true);
@@ -867,7 +867,6 @@ public class LogFactoryTest {
             assertDisabled(logger.debugW());
             assertDisabled(logger.infoW());
             assertDisabled(logger.errorW());
-            assertDisabled(logger.criticalW());
             assertDisabled(logger.advisoryW());
 
             factory.init(null);
@@ -886,7 +885,6 @@ public class LogFactoryTest {
             assertEnabled(logger.debugW());
             assertDisabled(logger.infoW());
             assertEnabled(logger.errorW());
-            assertEnabled(logger.criticalW());
             assertEnabled(logger.advisoryW());
         }
     }

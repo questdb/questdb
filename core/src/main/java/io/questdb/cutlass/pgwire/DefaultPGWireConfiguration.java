@@ -101,6 +101,16 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public int getForceRecvFragmentationChunkSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getForceSendFragmentationChunkSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public int getInsertCacheBlockCount() {
         return 4;
     }
