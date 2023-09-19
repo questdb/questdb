@@ -43,7 +43,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAddPassword(CharSequence userOrServiceAccountName, byte entityType) {
+    public void authorizeAddPassword(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -115,7 +115,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCreateJwk(CharSequence userOrServiceAccountName, byte entityType) {
+    public void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -139,7 +139,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDropJwk(CharSequence userOrServiceAccountName, byte entityType) {
+    public void authorizeDropJwk(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -175,7 +175,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeRemovePassword(CharSequence userOrServiceAccountName, byte entityType) {
+    public void authorizeRemovePassword(CharSequence userOrServiceAccountName) {
     }
 
     @Override

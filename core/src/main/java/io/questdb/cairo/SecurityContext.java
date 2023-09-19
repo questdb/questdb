@@ -34,7 +34,7 @@ public interface SecurityContext {
 
     void assumeServiceAccount(CharSequence serviceAccountName);
 
-    void authorizeAddPassword(CharSequence userOrServiceAccountName, byte entityType);
+    void authorizeAddPassword(CharSequence userOrServiceAccountName);
 
     void authorizeAddUser();
 
@@ -71,7 +71,7 @@ public interface SecurityContext {
 
     void authorizeCreateGroup();
 
-    default void authorizeCreateJwk(CharSequence userOrServiceAccountName, byte entityType) {
+    default void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
     }
 
     void authorizeCreateServiceAccount();
@@ -84,7 +84,7 @@ public interface SecurityContext {
 
     void authorizeDropGroup();
 
-    void authorizeDropJwk(CharSequence userOrServiceAccountName, byte entityType);
+    void authorizeDropJwk(CharSequence userOrServiceAccountName);
 
     void authorizeDropServiceAccount();
 
@@ -106,7 +106,7 @@ public interface SecurityContext {
     // Create table over ILP/TCP.
     void authorizeLineTableCreate();
 
-    void authorizeRemovePassword(CharSequence userOrServiceAccountName, byte entityType);
+    void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 
     void authorizeRemoveUser();
 
