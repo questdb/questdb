@@ -139,7 +139,7 @@ public class Bootstrap {
         if (isOsSupported) {
             log.advisoryW().$(archName).$(sb).I$();
         } else {
-            log.criticalW().$(archName).$(sb).I$();
+            log.critical().$(archName).$(sb).I$();
         }
 
         try {
@@ -253,9 +253,9 @@ public class Bootstrap {
                             }
                         } while (counter.get() < maxFiles);
                         if (shouldRename && ff.rename(path, other) == 0) {
-                            log.criticalW().$("found crash file [path=").$(other).I$();
+                            log.critical().$("found crash file [path=").$(other).I$();
                         } else {
-                            log.criticalW().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
+                            log.critical().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
                         }
                     }
                 }
