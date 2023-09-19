@@ -597,7 +597,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     compiledQuery.ofAlter(setDedup.build());
                 } else {
                     lexer.unparseLast();
-                    executionContext.getSecurityContext().authorizeAlterTableDedupDisable(tableToken);
+                    executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
                     alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else {
