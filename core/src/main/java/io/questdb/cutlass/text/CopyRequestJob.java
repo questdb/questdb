@@ -83,7 +83,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
                     .$("\" (" +
                             "ts timestamp, " + // 0
                             "id string, " + // 1
-                            "table symbol, " + // 2
+                            "table_name symbol, " + // 2
                             "file symbol, " + // 3
                             "phase symbol, " + // 4
                             "status symbol, " + // 5

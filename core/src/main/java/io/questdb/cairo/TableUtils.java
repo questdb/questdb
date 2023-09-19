@@ -55,7 +55,6 @@ import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
 public final class TableUtils {
-    public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
     public static final String ATTACHABLE_DIR_MARKER = ".attachable";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
