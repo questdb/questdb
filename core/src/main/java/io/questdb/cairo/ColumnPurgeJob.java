@@ -353,7 +353,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
         }
-        if (snapshotAgent.isInFlight()) {
+        if (snapshotAgent.isInProgress()) {
             // No deletion must happen while a snapshot is in-flight.
             return false;
         }

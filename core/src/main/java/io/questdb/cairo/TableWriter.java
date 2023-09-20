@@ -874,7 +874,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (snapshotAgent.isInFlight()) {
+        if (snapshotAgent.isInProgress()) {
             // No deletion must happen while a snapshot is in-flight.
             return true;
         }
@@ -2968,7 +2968,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
-        if (snapshotAgent.isInFlight()) {
+        if (snapshotAgent.isInProgress()) {
             // No overwrite can happen while a snapshot is in-flight.
             return true;
         }

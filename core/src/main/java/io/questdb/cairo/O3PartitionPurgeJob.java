@@ -339,7 +339,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     @Override
     protected boolean canRun() {
         // No deletion must happen while a snapshot is in-flight.
-        return !snapshotAgent.isInFlight();
+        return !snapshotAgent.isInProgress();
     }
 
     @Override

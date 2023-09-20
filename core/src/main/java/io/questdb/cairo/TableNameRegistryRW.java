@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
@@ -37,7 +38,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     public TableNameRegistryRW(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
         super(configuration, protectedTableResolver);
-        if (!this.nameStore.lock()) {
+        if (!nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
             }
@@ -65,6 +66,11 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             return true;
         }
         return false;
+    }
+
+    @Override
+    public void dumpTo(MemoryARW mem) {
+        nameStore.dumpTo(nameTableTokenMap, reverseTableNameTokenMap, mem);
     }
 
     @Override

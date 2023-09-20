@@ -31,6 +31,7 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -61,8 +62,9 @@ import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
-    public static final String BUSY_READER = "busyReader";
     public static final Predicate<CharSequence> EMPTY_RESOLVER = (tableName) -> false;
+    public static final String REASON_BUSY_READER = "busyReader";
+    public static final String REASON_SNAPSHOT_IN_PROGRESS = "snapshotInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final CairoConfiguration configuration;
@@ -116,12 +118,14 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         this.snapshotAgent = new DatabaseSnapshotAgentImpl(this);
+
         try {
-            this.tableIdGenerator.open();
+            tableIdGenerator.open();
         } catch (Throwable e) {
             close();
             throw e;
         }
+
         // Recover snapshot, if necessary.
         try {
             snapshotAgent.recoverSnapshot();
@@ -129,6 +133,7 @@ public class CairoEngine implements Closeable, WriterSource {
             close();
             throw e;
         }
+
         // Migrate database files.
         try {
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
@@ -138,8 +143,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         try {
-            tableNameRegistry = configuration.isReadOnlyInstance() ?
-                    new TableNameRegistryRO(configuration, protectedTableResolver) : new TableNameRegistryRW(configuration, protectedTableResolver);
+            tableNameRegistry = configuration.isReadOnlyInstance()
+                    ? new TableNameRegistryRO(configuration, protectedTableResolver)
+                    : new TableNameRegistryRW(configuration, protectedTableResolver);
             tableNameRegistry.reloadTableNameCache();
         } catch (Throwable e) {
             close();
@@ -424,6 +430,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void dumpTableNameRegistry(MemoryARW mem) {
+        tableNameRegistry.dumpTo(mem);
+    }
+
     public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
         verifyTableToken(tableToken);
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
@@ -573,7 +583,8 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.critical()
                     .$("could not open reader [table=").$(tableToken)
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getMessage()).I$();
+                    .$(", error=").$(e.getMessage())
+                    .I$();
             throw e;
         }
     }
@@ -688,7 +699,6 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken.isWal()) {
             return new WalReader(configuration, tableToken, walName, segmentId, walRowCount);
         }
-
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
     }
 
@@ -713,10 +723,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
         return writerPool.get(tableToken, lockReason);
-    }
-
-    public void initialized() {
-
     }
 
     public void insert(CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -746,18 +752,24 @@ public class CairoEngine implements Closeable, WriterSource {
     public String lock(TableToken tableToken, String lockReason) {
         assert null != lockReason;
         // busy metadata is same as busy reader from user perspective
-        String lockedReason = BUSY_READER;
+        String lockedReason = REASON_BUSY_READER;
         if (metadataPool.lock(tableToken)) {
             lockedReason = writerPool.lock(tableToken, lockReason);
             if (lockedReason == null) {
                 // not locked
-                // TODO prevent reader locking while a snapshot is on-going
                 if (readerPool.lock(tableToken)) {
-                    LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
-                    return null;
+                    if (!snapshotAgent.isInProgress()) {
+                        LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
+                        return null;
+                    } else {
+                        // prevent reader locking while a snapshot is ongoing
+                        readerPool.unlock(tableToken);
+                        lockedReason = REASON_SNAPSHOT_IN_PROGRESS;
+                    }
+                } else {
+                    lockedReason = REASON_BUSY_READER;
                 }
                 writerPool.unlock(tableToken);
-                lockedReason = BUSY_READER;
             }
             metadataPool.unlock(tableToken);
         }
@@ -765,14 +777,20 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean lockReaders(TableToken tableToken) {
-        // TODO prevent locking this a snapshot is on-going
         verifyTableToken(tableToken);
-        return readerPool.lock(tableToken);
+        return lockReadersByTableToken(tableToken);
     }
 
     public boolean lockReadersByTableToken(TableToken tableToken) {
-        // TODO prevent locking this a snapshot is on-going
-        return readerPool.lock(tableToken);
+        if (readerPool.lock(tableToken)) {
+            if (snapshotAgent.isInProgress()) {
+                // prevent reader locking while a snapshot is ongoing
+                readerPool.unlock(tableToken);
+                return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     public TableToken lockTableName(CharSequence tableName, boolean isWal) {
@@ -788,6 +806,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
+    @SuppressWarnings("unused")
     @Nullable
     public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
         String tableNameStr = Chars.toString(tableName);
@@ -828,7 +847,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void recoverSnapshot() {
-        this.snapshotAgent.recoverSnapshot();
+        snapshotAgent.recoverSnapshot();
     }
 
     public void registerTableToken(TableToken tableToken) {
@@ -997,6 +1016,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @SuppressWarnings("unused")
     public void setDdlListener(@NotNull DdlListener ddlListener) {
         this.ddlListener = ddlListener;
     }

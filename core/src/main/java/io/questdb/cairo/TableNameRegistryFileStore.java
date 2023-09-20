@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -92,6 +93,26 @@ public class TableNameRegistryFileStore implements Closeable {
         }
     }
 
+    public static void unsafeDumpTo(
+            Map<CharSequence, TableToken> nameTableTokenMap,
+            Map<CharSequence, ReverseTableMapItem> reverseNameMap,
+            MemoryARW mem
+    ) {
+        mem.putLong(0L);
+
+        // Save tables not fully deleted yet to complete the deletion.
+        for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
+            if (reverseMapItem.isDropped()) {
+                writeEntry(mem, reverseMapItem.getToken(), OPERATION_ADD);
+                writeEntry(mem, reverseMapItem.getToken(), OPERATION_REMOVE);
+            }
+        }
+
+        for (TableToken token : nameTableTokenMap.values()) {
+            writeEntry(mem, token, OPERATION_ADD);
+        }
+    }
+
     public synchronized void appendEntry(final TableToken tableToken) {
         writeEntry(tableToken, OPERATION_ADD);
         tableNameMemory.sync(false);
@@ -104,6 +125,14 @@ public class TableNameRegistryFileStore implements Closeable {
             lockFd = -1;
         }
         tableNameMemory.close(false);
+    }
+
+    public synchronized void dumpTo(
+            Map<CharSequence, TableToken> nameTableTokenMap,
+            Map<CharSequence, ReverseTableMapItem> reverseNameMap,
+            MemoryARW mem
+    ) {
+        unsafeDumpTo(nameTableTokenMap, reverseNameMap, mem);
     }
 
     public boolean isLocked() {
@@ -145,6 +174,21 @@ public class TableNameRegistryFileStore implements Closeable {
         tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
     }
 
+    private static void writeEntry(MemoryARW mem, TableToken tableToken, int operation) {
+        mem.putInt(operation);
+        mem.putStr(tableToken.getTableName());
+        mem.putStr(tableToken.getDirName());
+        mem.putInt(tableToken.getTableId());
+        mem.putInt(tableToken.isWal() ? TableUtils.TABLE_TYPE_WAL : TableUtils.TABLE_TYPE_NON_WAL);
+
+        if (operation != OPERATION_REMOVE) {
+            for (int i = 0; i < TABLE_NAME_ENTRY_RESERVED_LONGS; i++) {
+                mem.putLong(0);
+            }
+        }
+        mem.putLong(0L, mem.getAppendOffset());
+    }
+
     private void compactTableNameFile(
             Map<CharSequence, TableToken> nameTableTokenMap,
             Map<CharSequence, ReverseTableMapItem> reverseNameMap,
@@ -161,19 +205,9 @@ public class TableNameRegistryFileStore implements Closeable {
         try {
             tableNameMemory.close(false);
             tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-            tableNameMemory.putLong(0L);
 
-            // Save tables not fully deleted yet to complete the deletion.
-            for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
-                if (reverseMapItem.isDropped()) {
-                    writeEntry(reverseMapItem.getToken(), OPERATION_ADD);
-                    writeEntry(reverseMapItem.getToken(), OPERATION_REMOVE);
-                }
-            }
+            unsafeDumpTo(nameTableTokenMap, reverseNameMap, tableNameMemory);
 
-            for (TableToken token : nameTableTokenMap.values()) {
-                writeEntry(token, OPERATION_ADD);
-            }
             tableNameMemory.sync(false);
             long newAppendOffset = tableNameMemory.getAppendOffset();
             tableNameMemory.close();
@@ -432,18 +466,7 @@ public class TableNameRegistryFileStore implements Closeable {
         if (!isLocked()) {
             throw CairoException.critical(0).put("table registry is not locked");
         }
-        tableNameMemory.putInt(operation);
-        tableNameMemory.putStr(tableToken.getTableName());
-        tableNameMemory.putStr(tableToken.getDirName());
-        tableNameMemory.putInt(tableToken.getTableId());
-        tableNameMemory.putInt(tableToken.isWal() ? TableUtils.TABLE_TYPE_WAL : TableUtils.TABLE_TYPE_NON_WAL);
-
-        if (operation != OPERATION_REMOVE) {
-            for (int i = 0; i < TABLE_NAME_ENTRY_RESERVED_LONGS; i++) {
-                tableNameMemory.putLong(0);
-            }
-        }
-        tableNameMemory.putLong(0L, tableNameMemory.getAppendOffset());
+        writeEntry(tableNameMemory, tableToken, operation);
     }
 
     void reload(

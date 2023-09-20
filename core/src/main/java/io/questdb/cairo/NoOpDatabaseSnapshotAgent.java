@@ -32,7 +32,7 @@ public class NoOpDatabaseSnapshotAgent implements DatabaseSnapshotAgent {
     }
 
     @Override
-    public boolean isInFlight() {
+    public boolean isInProgress() {
         return false;
     }
 }

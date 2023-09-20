@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -56,6 +57,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     @Override
     public boolean dropTable(TableToken token) {
         throw CairoException.critical(0).put("instance is read only");
+    }
+
+    @Override
+    public synchronized void dumpTo(MemoryARW mem) {
+        TableNameRegistryFileStore.unsafeDumpTo(nameTableTokenMap, reverseTableNameTokenMap, mem);
     }
 
     @Override

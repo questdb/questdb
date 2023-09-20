@@ -3309,6 +3309,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             int srcLen = srcPath.length();
 
             // backup table registry file (tables.d.<last>)
+            // Note: this is unsafe way to back up table name registry,
+            //       but since we're going to deprecate BACKUP, that's ok
             int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, srcPath, sink);
             srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
             dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$(); // reset to 0

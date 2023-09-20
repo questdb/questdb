@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -47,8 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
-import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_INX;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
@@ -57,9 +57,10 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final AtomicBoolean inFlight = new AtomicBoolean();
+    private final AtomicBoolean inProgress = new AtomicBoolean();
     private final ReentrantLock lock = new ReentrantLock();
     private final WalWriterMetadata metadata; // protected with #lock
+    private final StringSink nameSink = new StringSink(); // protected with #lock
     private final Path path = new Path(); // protected with #lock
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
@@ -92,8 +93,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
     }
 
     @Override
-    public boolean isInFlight() {
-        return inFlight.get();
+    public boolean isInProgress() {
+        return inProgress.get();
     }
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
@@ -120,7 +121,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
             }
 
             // Reset snapshot in-flight flag.
-            inFlight.set(false);
+            inProgress.set(false);
         } finally {
             lock.unlock();
         }
@@ -136,10 +137,10 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
         try {
-            if (inFlight.get()) {
+            if (inProgress.get()) {
                 throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
             }
-            inFlight.set(true);
+            inProgress.set(true);
 
             path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
             int snapshotLen = path.length();
@@ -156,20 +157,26 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                 throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
             }
 
-            try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory()) {
-                final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    final Record record = cursor.getRecord();
+            // Suspend the WalPurgeJob
+            if (walPurgeJobRunLock != null) {
+                final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
+                while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
+                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                }
+            }
 
-                    // Suspend the WalPurgeJob
-                    if (walPurgeJobRunLock != null) {
-                        final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
-                        while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
-                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
-                        }
-                    }
+            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                // Copy table registry.
+                path.trimTo(snapshotLen).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
+                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                engine.dumpTableNameRegistry(mem);
+                mem.close(false);
 
-                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory()) {
+                    final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
+                    try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                        final Record record = cursor.getRecord();
+
                         // Copy metadata files for all tables.
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
@@ -237,18 +244,16 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                         }
 
                         LOG.info().$("snapshot copying finished").$();
-                    } catch (Throwable e) {
-                        // Resume the WalPurgeJob
-                        if (walPurgeJobRunLock != null) {
-                            walPurgeJobRunLock.unlock();
-                        }
-                        inFlight.set(false);
-                        LOG.error()
-                                .$("snapshot error [e=").$(e)
-                                .I$();
-                        throw e;
                     }
                 }
+            } catch (Throwable e) {
+                // Resume the WalPurgeJob
+                if (walPurgeJobRunLock != null) {
+                    walPurgeJobRunLock.unlock();
+                }
+                inProgress.set(false);
+                LOG.error().$("snapshot error [e=").$(e).I$();
+                throw e;
             }
         } finally {
             lock.unlock();
@@ -264,7 +269,11 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
         final CharSequence root = configuration.getRoot();
         final CharSequence snapshotRoot = configuration.getSnapshotRoot();
 
-        try (Path srcPath = new Path(); Path dstPath = new Path(); MemoryCMARW memFile = Vm.getCMARWInstance()) {
+        try (
+                Path srcPath = new Path();
+                Path dstPath = new Path();
+                MemoryCMARW memFile = Vm.getCMARWInstance()
+        ) {
             srcPath.of(snapshotRoot).concat(configuration.getDbDirectory());
             final int snapshotRootLen = srcPath.length();
             dstPath.of(root);
@@ -293,15 +302,44 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
             LOG.info()
                     .$("starting snapshot recovery [currentId=`").$(currentInstanceId)
                     .$("`, previousId=`").$(snapshotInstanceId)
-                    .$("`]").$();
+                    .I$();
 
             // OK, we need to recover from the snapshot.
+
+            // First delete all table name registry files in dst.
+            srcPath.trimTo(snapshotRootLen).$();
+            final int snapshotDbLen = srcPath.length();
+            for (; ; ) {
+                dstPath.trimTo(rootLen).$();
+                int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, dstPath, nameSink);
+                dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(version).$();
+                LOG.info().$("backup removing table name registry file [dst=").utf8(dstPath).I$();
+                if (!ff.remove(dstPath)) {
+                    LOG.error()
+                            .$("could not remove tables.d file [dst=").utf8(dstPath)
+                            .$(", errno=").$(ff.errno())
+                            .I$();
+                }
+                if (version == 0) {
+                    break;
+                }
+            }
+            // Now copy the file name registry.
+            srcPath.trimTo(snapshotDbLen).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            if (ff.copy(srcPath, dstPath) < 0) {
+                LOG.error()
+                        .$("could not copy tables.d file [src=").utf8(srcPath)
+                        .$(", dst=").utf8(dstPath)
+                        .$(", errno=").$(ff.errno())
+                        .I$();
+            }
+
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
             AtomicInteger recoveredTxnFiles = new AtomicInteger();
             AtomicInteger recoveredCVFiles = new AtomicInteger();
             AtomicInteger recoveredWalFiles = new AtomicInteger();
             srcPath.trimTo(snapshotRootLen).$();
-            final int snapshotDbLen = srcPath.length();
             ff.iterateDir(srcPath, (pUtf8NameZ, type) -> {
                 if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                     dstPath.trimTo(rootLen).concat(pUtf8NameZ);
@@ -316,13 +354,13 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                     .$("could not copy _meta file [src=").utf8(srcPath)
                                     .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
-                                    .$(']').$();
+                                    .I$();
                         } else {
                             recoveredMetaFiles.incrementAndGet();
                             LOG.info()
                                     .$("recovered _meta file [src=").utf8(srcPath)
                                     .$(", dst=").utf8(dstPath)
-                                    .$(']').$();
+                                    .I$();
                         }
                     }
 
@@ -334,13 +372,13 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                     .$("could not copy _txn file [src=").utf8(srcPath)
                                     .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
-                                    .$(']').$();
+                                    .I$();
                         } else {
                             recoveredTxnFiles.incrementAndGet();
                             LOG.info()
                                     .$("recovered _txn file [src=").utf8(srcPath)
                                     .$(", dst=").utf8(dstPath)
-                                    .$(']').$();
+                                    .I$();
                         }
                     }
 
@@ -352,13 +390,13 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                     .$("could not copy _cv file [src=").utf8(srcPath)
                                     .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
-                                    .$(']').$();
+                                    .I$();
                         } else {
                             recoveredCVFiles.incrementAndGet();
                             LOG.info()
                                     .$("recovered _cv file [src=").utf8(srcPath)
                                     .$(", dst=").utf8(dstPath)
-                                    .$(']').$();
+                                    .I$();
                         }
                     }
 
@@ -377,7 +415,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                     .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").utf8(srcPath)
                                     .utf8(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
-                                    .$(']').$();
+                                    .I$();
                         } else {
                             try {
                                 srcPath.trimTo(srcPathLen);
@@ -400,7 +438,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                                 .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").utf8(dstPath)
                                                 .$(", oldMaxTxn=").$(oldMaxTxn)
                                                 .$(", newMaxTxn=").$(newMaxTxn)
-                                                .$(']').$();
+                                                .I$();
                                     }
                                 }
                             } catch (CairoException ex) {
@@ -408,14 +446,14 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                         .$("could not update file [src=").utf8(dstPath)
                                         .$("`, ex=").$(ex.getFlyweightMessage())
                                         .$(", errno=").$(ff.errno())
-                                        .$(']').$();
+                                        .I$();
                             }
 
                             recoveredWalFiles.incrementAndGet();
                             LOG.info()
                                     .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").utf8(srcPath)
                                     .$(", dst=").utf8(dstPath)
-                                    .$(']').$();
+                                    .I$();
                         }
                     }
                 }
@@ -425,7 +463,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())
                     .$(", cvFilesCount=").$(recoveredCVFiles.get())
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
-                    .$(']').$();
+                    .I$();
 
             // Delete snapshot directory to avoid recovery on next restart.
             srcPath.trimTo(snapshotRootLen).$();

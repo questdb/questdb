@@ -101,7 +101,7 @@ public class SnapshotTest extends AbstractCairoTest {
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash$());
-        // reset activePrepareFlag for all tests
+        // reset inProgress for all tests
         ddl("snapshot complete");
     }
 
@@ -169,7 +169,6 @@ public class SnapshotTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("Enable when table readers start preventing from column file deletion. This could be done along with column versioning.")
     @Test
     public void testRecoverSnapshotRestoresDroppedColumns() throws Exception {
         final String snapshotId = "00000000-0000-0000-0000-000000000000";
@@ -189,13 +188,16 @@ public class SnapshotTest extends AbstractCairoTest {
                     "JW\tC\t1\n" +
                     "WH\tB\t2\n" +
                     "PE\tB\t3\n";
-            assertSql("select * from " + tableName, expectedAllColumns);
+            assertSql(expectedAllColumns, "select * from " + tableName);
 
             ddl("alter table " + tableName + " drop column b");
-            assertSql("select * from " + tableName, "a\tc\n" +
-                    "JW\t1\n" +
-                    "WH\t2\n" +
-                    "PE\t3\n");
+            assertSql(
+                    "a\tc\n" +
+                            "JW\t1\n" +
+                            "WH\t2\n" +
+                            "PE\t3\n",
+                    "select * from " + tableName
+            );
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -203,7 +205,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.recoverSnapshot();
 
             // Dropped column should be there.
-            assertSql("select * from " + tableName, expectedAllColumns);
+            assertSql(expectedAllColumns, "select * from " + tableName);
         });
     }
 
@@ -549,6 +551,104 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSnapshotPreventsNonWalTableDeletion() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            insert("insert into test values (now(), 'foobar', 42);");
+            ddl("snapshot prepare;");
+
+            try {
+                drop("drop table test;");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test' [reason='snapshotInProgress']");
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPreventsNonWalTableTruncation() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            ddl("snapshot prepare;");
+
+            try {
+                ddl("truncate table test;");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "there is an active query against 'test'");
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotRestoresDroppedWalTable() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            drainWalQueue();
+
+            ddl("snapshot prepare;");
+
+            drop("drop table test;");
+            drainWalQueue();
+
+            assertSql("count\n0\n", "select count() from tables() where name = 'test';");
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            snapshotInstanceId = restartedId;
+            engine.recoverSnapshot();
+            engine.reloadTableNames();
+
+            drainWalQueue();
+
+            // Dropped table should be there.
+            assertSql("count\n1\n", "select count() from tables() where name = 'test';");
+            assertSql(
+                    "ts\tname\tval\n" +
+                            "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
+                    "test;"
+            );
+        });
+    }
+
+    @Test
+    public void testSnapshotRestoresTruncatedWalTable() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values (now(), 'foobar', 42);");
+            drainWalQueue();
+
+            ddl("snapshot prepare;");
+
+            ddl("truncate table test;");
+            drainWalQueue();
+
+            assertSql("count\n0\n", "select count() from test;");
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            snapshotInstanceId = restartedId;
+            engine.recoverSnapshot();
+
+            drainWalQueue();
+
+            // Dropped rows should be there.
+            assertSql("count\n1\n", "select count() from test;");
+        });
+    }
+
+    @Test
     public void testSnapshotUnknownSubOptionFails() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
@@ -678,10 +778,8 @@ public class SnapshotTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
             insert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
 
-
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-
             snapshotInstanceId = restartedId;
             engine.recoverSnapshot();
 

@@ -32,5 +32,5 @@ public interface DatabaseSnapshotAgent extends QuietCloseable {
      * Returns true is a snapshot is taking place, i.e.
      * SNAPSHOT PREPARE was called, but SNAPSHOT COMPLETE wasn't called yet.
      */
-    boolean isInFlight();
+    boolean isInProgress();
 }
