@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
@@ -39,10 +40,11 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class SmavFunctionFactory implements FunctionFactory {
+public class SmavgFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "mavg(D)";
     @Override
     public String getSignature() {
-        return "mavg(D)";
+        return SIGNATURE;
     }
 
     @Override
@@ -96,6 +98,11 @@ public class SmavFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
 
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }
