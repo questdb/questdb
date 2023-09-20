@@ -71,8 +71,7 @@ public interface SecurityContext {
 
     void authorizeCreateGroup();
 
-    default void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
-    }
+    void authorizeCreateJwk(CharSequence userOrServiceAccountName);
 
     void authorizeCreateServiceAccount();
 
