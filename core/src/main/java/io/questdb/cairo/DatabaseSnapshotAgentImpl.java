@@ -88,7 +88,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
         lock.lock();
         try {
             Misc.free(path);
-            metadata.close();
+            Misc.free(metadata);
+            Misc.free(tableNameRegistryStore);
         } finally {
             lock.unlock();
         }
@@ -194,18 +195,18 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                             path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                             LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
-                            tableNameRegistryStore.logAddTable(tableToken);
-
                             path.trimTo(snapshotDbLen).concat(tableToken);
                             int rootLen = path.length();
                             if (isWalTable) {
                                 path.concat(WalUtils.SEQ_DIR);
                             }
                             if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
-                                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
+                                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
                             }
 
                             try (TableReader reader = engine.getReaderWithRepair(tableToken)) {
+                                // Add entry to table name registry copy.
+                                tableNameRegistryStore.logAddTable(tableToken);
                                 // Copy _meta file.
                                 path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                                 mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);

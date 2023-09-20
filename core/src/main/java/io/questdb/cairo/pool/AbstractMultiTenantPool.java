@@ -116,7 +116,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                         tenant.updateTableToken(tableToken);
                         return tenant;
                     }
-                    LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
+                    LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i)
+                            .$(", thread=").$(thread)
+                            .I$();
                     tenant.updateTableToken(tableToken);
                     return tenant;
                 }
@@ -139,7 +141,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
         // max entries exceeded
         notifyListener(thread, tableToken, PoolListener.EV_FULL, -1, -1);
-        LOG.info().$("could not get, busy [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
+        LOG.info().$("could not get, busy [table=`").utf8(tableToken.getDirName())
+                .$("`, thread=").$(thread)
+                .$(", retries=").$(this.maxSegments)
+                .I$();
         throw EntryUnavailableException.instance(NO_LOCK_REASON);
     }
 
