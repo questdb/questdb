@@ -30,10 +30,13 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.model.AnalyticColumn;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -71,7 +74,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRangeExprPrecedingCurrentClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN 1 PRECEDING AND CURRENT ROW EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts range between 1 preceding and current row) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -114,7 +117,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRangeExprPrecedingExprPrecedingClauseValid() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN 20 PRECEDING AND 10 PRECEDING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN 20 PRECEDING AND 10 PRECEDING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts range between 20 preceding and 10 preceding) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -127,13 +130,101 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRangeExprPrecedingUnboundedFollowingClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN -(1) PRECEDING AND UNBOUNDED FOLLOWING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN -(1) PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("c", ColumnType.INT)
                         .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACRangeExprPrecedingUnboundedFollowingExcludeCurrentRowClause() throws Exception {
+        assertQuery(
+                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN -(1) PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following exclude current row) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACRangeExprPrecedingUnboundedFollowingExcludeGroupClause() throws Exception {
+        assertQuery(
+                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN -(1) PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE GROUP) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following exclude group) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACRangeExprPrecedingUnboundedFollowingExcludeTiesClause() throws Exception {
+        assertQuery(
+                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN -(1) PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE TIES) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following exclude ties) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACRangeExprPrecedingUnboundedFollowingExcludeNoOthersClause() throws Exception {
+        assertQuery(
+                "select-analytic a, b, f(c) f over (partition by b order by ts RANGE BETWEEN -(1) PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following exclude no others) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACRangeExprPrecedingUnboundedFollowingExcludeInvalid() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following exclude other) from xyz",
+                109,
+                "'current', 'group', 'ties' or 'no other' expected"
+        );
+    }
+
+    @Test
+    public void testACRangeExprPrecedingUnboundedFollowingExcludeNoOthersInvalid() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following exclude no prisoners) from xyz",
+                112,
+                "'others' expected"
+        );
+    }
+
+    @Test
+    public void testACRangeExprPrecedingUnboundedFollowingExcludeCurrentRowInvalid() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following exclude current table) from xyz",
+                117,
+                "'row' expected"
+        );
+    }
+
+    @Test
+    public void testACRangeExprPrecedingUnboundedFollowingExcludeMissing() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts range between -1 preceding and unbounded following exclude) from xyz",
+                108,
+                "'current', 'group', 'ties' or 'no other' expected"
         );
     }
 
@@ -158,7 +249,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsCurrentCurrentClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between current row and current row) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -171,7 +262,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsCurrentExprFollowingClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN CURRENT ROW AND 4 + 3 FOLLOWING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN CURRENT ROW AND 4 + 3 FOLLOWING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between current row and 4+3 following) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -193,7 +284,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsCurrentUnboundedFollowingClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between current row and unbounded following) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -215,7 +306,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsExprFollowingExprFollowingClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN 12 FOLLOWING AND 23 FOLLOWING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN 12 FOLLOWING AND 23 FOLLOWING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between 12 following and 23 following) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -260,7 +351,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsExprPrecedingExprFollowingClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN 10 PRECEDING AND 10 FOLLOWING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN 10 PRECEDING AND 10 FOLLOWING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between 10 preceding and 10 following) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -268,6 +359,41 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("c", ColumnType.INT)
                         .timestamp("ts")
         );
+    }
+
+    @Test
+    public void testACRowsExprPrecedingExprFollowingClausePos() throws Exception {
+        createModelsAndRun(
+                () -> {
+                    sink.clear();
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        ExecutionModel model = compiler.testCompileModel(
+                                "select a,b, f(c) over (partition by b order by ts rows between 10 preceding and 10 following) from xyz",
+                                sqlExecutionContext
+                        );
+                        ObjList<QueryColumn> columns = model.getQueryModel().getBottomUpColumns();
+                        Assert.assertEquals(3, columns.size());
+
+                        QueryColumn ac = columns.getQuick(2);
+                        Assert.assertTrue(ac.isWindowColumn());
+                        AnalyticColumn ac2 = (AnalyticColumn) ac;
+
+                        // start of window expr position
+                        Assert.assertEquals(63, ac2.getRowsLoExprPos());
+                        Assert.assertEquals(66, ac2.getRowsLoKindPos());
+
+                        // end of window expr position
+                        Assert.assertEquals(80, ac2.getRowsHiExprPos());
+                        Assert.assertEquals(83, ac2.getRowsHiKindPos());
+                    }
+                },
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
     }
 
     @Test
@@ -282,7 +408,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsExprPrecedingExprPrecedingClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN 28 PRECEDING AND 12 PRECEDING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN 28 PRECEDING AND 12 PRECEDING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between 28 preceding and 12 preceding) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -295,7 +421,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsShorthandCurrentRow() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows current row) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -321,7 +447,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testACRowsShorthandExprPreceding() throws Exception {
-        assertQuery("select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN 12 PRECEDING AND CURRENT ROW) from (select [a, b, c, ts] from xyz timestamp (ts))",
+        assertQuery("select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN 12 PRECEDING AND CURRENT ROW EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows 12 preceding) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -343,7 +469,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsShorthandUnboundedPreceding() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows unbounded preceding) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -365,7 +491,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsUnboundedPrecedingCurrentClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between unbounded preceding and current row) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -378,7 +504,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsUnboundedPrecedingExprFollowingClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN UNBOUNDED PRECEDING AND 10 FOLLOWING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN UNBOUNDED PRECEDING AND 10 FOLLOWING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between unbounded preceding and 10 following) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -400,7 +526,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACRowsUnboundedPrecedingUnboundedFollowingClause() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE NO OTHERS) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts rows between unbounded preceding and unbounded following) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)

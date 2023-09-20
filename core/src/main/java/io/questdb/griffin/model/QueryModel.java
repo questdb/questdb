@@ -1234,7 +1234,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             CharSequence alias = column.getAlias();
             ExpressionNode ast = column.getAst();
             ast.toSink(sink);
-            if (column instanceof AnalyticColumn || name == null) {
+            if (column.isWindowColumn() || name == null) {
 
                 if (alias != null) {
                     aliasToSink(alias, sink);
@@ -1325,6 +1325,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                     sink.put(" FOLLOWING");
                                     break;
                                 default:
+                                    assert false;
                                     break;
                             }
                         } else {
@@ -1340,6 +1341,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                     sink.put("CURRENT ROW");
                                     break;
                             }
+                        }
+
+                        switch (ac.getExclusionKind()) {
+                            case AnalyticColumn.EXCLUDE_CURRENT_ROW:
+                                sink.put(" EXCLUDE CURRENT ROW");
+                                break;
+                            case AnalyticColumn.EXCLUDE_GROUP:
+                                sink.put(" EXCLUDE GROUP");
+                                break;
+                            case AnalyticColumn.EXCLUDE_TIES:
+                                sink.put(" EXCLUDE TIES");
+                                break;
+                            case AnalyticColumn.EXCLUDE_NO_OTHERS:
+                                sink.put(" EXCLUDE NO OTHERS");
+                                break;
+                            default:
+                                assert false;
+                                break;
                         }
                     }
                     sink.put(')');

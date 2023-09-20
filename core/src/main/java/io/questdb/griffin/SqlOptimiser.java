@@ -1575,7 +1575,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
-            if (qc instanceof AnalyticColumn) {
+            if (qc.isWindowColumn()) {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 emitLiteralsTopDown(ac.getPartitionBy(), target);
                 emitLiteralsTopDown(ac.getOrderBy(), target);
@@ -2002,7 +2002,7 @@ public class SqlOptimiser implements Mutable {
         ObjList<QueryColumn> columns = limitModel.getColumns();
 
         for (int i = 0, n = columns.size(); i < n; i++) {
-            if (columns.getQuick(i) instanceof AnalyticColumn) {
+            if (columns.getQuick(i).isWindowColumn()) {
                 return true;
             }
         }
@@ -3957,7 +3957,7 @@ public class SqlOptimiser implements Mutable {
 
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
-            final boolean analytic = qc instanceof AnalyticColumn;
+            final boolean analytic = qc.isWindowColumn();
 
             // fail-fast if this is an arithmetic expression where we expect analytic function
             if (analytic && qc.getAst().type != ExpressionNode.FUNCTION) {
@@ -4123,7 +4123,7 @@ public class SqlOptimiser implements Mutable {
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
-            final boolean analytic = qc instanceof AnalyticColumn;
+            final boolean analytic = qc.isWindowColumn();
 
             if (qc.getAst().type == LITERAL) {
                 if (Chars.endsWith(qc.getAst().token, '*')) {
@@ -4348,7 +4348,7 @@ public class SqlOptimiser implements Mutable {
             // needs col_c to be emitted.
             for (int i = 0, k = columns.size(); i < k; i++) {
                 QueryColumn qc = columns.getQuick(i);
-                final boolean analytic = qc instanceof AnalyticColumn;
+                final boolean analytic = qc.isWindowColumn();
 
                 if (analytic & qc.getAst().type == ExpressionNode.FUNCTION) {
                     // Analytic model can be after either translation model directly

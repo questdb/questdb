@@ -2793,7 +2793,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final IntList columnIndexes = new IntList();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
-            if (!(qc instanceof AnalyticColumn)) {
+            if (!qc.isWindowColumn()) {
                 final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
                 final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                 chainMetadata.add(i, m);
@@ -2833,7 +2833,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         deferredAnalyticMetadata.clear();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
-            if (qc instanceof AnalyticColumn) {
+            if (qc.isWindowColumn()) {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 final ExpressionNode ast = qc.getAst();
                 if (ast.paramCount > 1) {

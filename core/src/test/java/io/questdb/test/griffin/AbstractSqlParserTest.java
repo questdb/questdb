@@ -110,7 +110,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
-    private void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
+    protected void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CreateTableTestUtils.create(tableModels[i]);
@@ -186,18 +186,21 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
     }
 
     protected void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
-        createModelsAndRun(() -> {
-            sink.clear();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
-                Assert.assertEquals(model.getModelType(), modelType);
-                ((Sinkable) model).toSink(sink);
-                TestUtils.assertEquals(expected, sink);
-                if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
-                    validateTopDownColumns((QueryModel) model);
-                }
-            }
-        }, tableModels);
+        createModelsAndRun(
+                () -> {
+                    sink.clear();
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
+                        Assert.assertEquals(model.getModelType(), modelType);
+                        ((Sinkable) model).toSink(sink);
+                        TestUtils.assertEquals(expected, sink);
+                        if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
+                            validateTopDownColumns((QueryModel) model);
+                        }
+                    }
+                },
+                tableModels
+        );
     }
 
     protected void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
