@@ -324,7 +324,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         try {
-            String lockedReason = lock(tableToken, "createTable");
+            String lockedReason = lockAll(tableToken, "createTable", true);
             if (lockedReason == null) {
                 boolean tableCreated = false;
                 try {
@@ -385,7 +385,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         .$(", dirName=").$(tableToken.getDirName()).I$();
             }
         } else {
-            CharSequence lockedReason = lock(tableToken, "removeTable");
+            CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getRoot()).concat(tableToken).$();
@@ -744,7 +744,7 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.reloadTableNameCache(convertedTables);
     }
 
-    public String lock(TableToken tableToken, String lockReason) {
+    public String lockAll(TableToken tableToken, String lockReason, boolean ignoreSnapshots) {
         assert null != lockReason;
         // busy metadata is same as busy reader from user perspective
         String lockedReason = REASON_BUSY_READER;
@@ -753,7 +753,7 @@ public class CairoEngine implements Closeable, WriterSource {
             if (lockedReason == null) {
                 // not locked
                 if (readerPool.lock(tableToken)) {
-                    if (!snapshotAgent.isInProgress()) {
+                    if (ignoreSnapshots || !snapshotAgent.isInProgress()) {
                         LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
                         return null;
                     } else {
@@ -946,7 +946,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                         TableUtils.overwriteTableNameFile(
                                 fromPath.of(configuration.getRoot()).concat(toTableToken),
-                                memory, configuration.getFilesFacade(),
+                                memory,
+                                configuration.getFilesFacade(),
                                 toTableToken.getTableName()
                         );
                     } finally {
@@ -967,7 +968,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             .put(']');
                 }
             } else {
-                String lockedReason = lock(fromTableToken, "renameTable");
+                String lockedReason = lockAll(fromTableToken, "renameTable", false);
                 if (lockedReason == null) {
                     try {
                         toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);

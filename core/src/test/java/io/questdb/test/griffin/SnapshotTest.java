@@ -554,7 +554,7 @@ public class SnapshotTest extends AbstractCairoTest {
     public void testSnapshotPreventsNonWalTableDeletion() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
-            insert("insert into test values (now(), 'foobar', 42);");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             ddl("snapshot prepare;");
 
             try {
@@ -562,6 +562,22 @@ public class SnapshotTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test' [reason='snapshotInProgress']");
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPreventsNonWalTableRenaming() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            ddl("snapshot prepare;");
+
+            try {
+                ddl("rename table test to test2;");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=snapshotInProgress]");
             }
         });
     }
@@ -615,6 +631,39 @@ public class SnapshotTest extends AbstractCairoTest {
                             "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
                     "test;"
             );
+        });
+    }
+
+    @Test
+    public void testSnapshotRestoresRenamedWalTableName() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            drainWalQueue();
+
+            ddl("snapshot prepare;");
+
+            ddl("rename table test to test2;");
+            drainWalQueue();
+
+            assertSql("count\n0\n", "select count() from tables() where name = 'test';");
+            assertSql("count\n1\n", "select count() from tables() where name = 'test2';");
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            snapshotInstanceId = restartedId;
+            engine.recoverSnapshot();
+            engine.reloadTableNames();
+
+            drainWalQueue();
+
+            // Renamed table should be there under the original name.
+            assertSql("count\n1\n", "select count() from tables() where name = 'test';");
+            assertSql("count\n0\n", "select count() from tables() where name = 'test2';");
         });
     }
 

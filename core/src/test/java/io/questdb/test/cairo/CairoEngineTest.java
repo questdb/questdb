@@ -209,7 +209,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 TableToken x = createX(engine);
                 try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
-                    Assert.assertEquals(CairoEngine.REASON_BUSY_READER, engine.lock(x, "testing"));
+                    Assert.assertEquals(CairoEngine.REASON_BUSY_READER, engine.lockAll(x, "testing", true));
                     assertReader(engine, x);
                     assertWriter(engine, x);
                 }
