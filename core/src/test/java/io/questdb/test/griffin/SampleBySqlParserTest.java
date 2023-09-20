@@ -36,7 +36,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h hello",
                 48,
-                "unexpected token: hello",
+                "unexpected token [hello]",
                 model()
         );
     }
@@ -46,7 +46,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar blah",
                 66,
-                "unexpected token: blah",
+                "unexpected token [blah]",
                 model()
         );
     }
@@ -96,7 +96,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' zone",
                 80,
-                "unexpected token: zone",
+                "unexpected token [zone]",
                 model()
         );
     }

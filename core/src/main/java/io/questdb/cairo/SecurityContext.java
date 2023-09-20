@@ -111,6 +111,8 @@ public interface SecurityContext {
 
     void authorizeRemoveUser();
 
+    void authorizeResumeWal(TableToken tableToken);
+
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
