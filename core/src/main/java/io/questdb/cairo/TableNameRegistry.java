@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -51,8 +50,6 @@ public interface TableNameRegistry extends Closeable {
      * @return true if table name was removed, false otherwise
      */
     boolean dropTable(TableToken token);
-
-    void dumpTo(MemoryARW mem);
 
     /**
      * Returns table token by table name. If table does not exist, returns null.

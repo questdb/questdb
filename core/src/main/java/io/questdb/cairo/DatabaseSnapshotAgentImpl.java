@@ -62,6 +62,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
     private final WalWriterMetadata metadata; // protected with #lock
     private final StringSink nameSink = new StringSink(); // protected with #lock
     private final Path path = new Path(); // protected with #lock
+    private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     DatabaseSnapshotAgentImpl(CairoEngine engine) {
@@ -69,6 +70,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
+        this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
     }
 
     @TestOnly
@@ -143,16 +145,16 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
             inProgress.set(true);
 
             path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-            int snapshotLen = path.length();
+            int snapshotDbLen = path.length();
             // Delete all contents of the snapshot/db dir.
             if (ff.exists(path.slash$())) {
-                path.trimTo(snapshotLen).$();
+                path.trimTo(snapshotDbLen).$();
                 if (!ff.rmdir(path)) {
                     throw CairoException.critical(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
                 }
             }
             // Recreate the snapshot/db dir.
-            path.trimTo(snapshotLen).slash$();
+            path.trimTo(snapshotDbLen).slash$();
             if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
                 throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
             }
@@ -165,86 +167,89 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                 }
             }
 
-            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                // Copy table registry.
-                path.trimTo(snapshotLen).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
-                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                engine.dumpTableNameRegistry(mem);
-                mem.close(false);
+            try {
+                // Prepare table name registry for copying.
+                path.trimTo(snapshotDbLen).$();
+                tableNameRegistryStore.of(path, 0);
 
-                try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory()) {
+                path.trimTo(snapshotDbLen).$();
+                try (
+                        TableListRecordCursorFactory factory = new TableListRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(executionContext);
+                        MemoryCMARW mem = Vm.getCMARWInstance()
+                ) {
                     final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
-                    try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                        final Record record = cursor.getRecord();
+                    final Record record = cursor.getRecord();
 
-                        // Copy metadata files for all tables.
-                        while (cursor.hasNext()) {
-                            CharSequence tableName = record.getStr(tableNameIndex);
-                            path.of(configuration.getRoot());
-                            TableToken tableToken = engine.verifyTableName(tableName);
-                            if (
-                                    TableUtils.isValidTableName(tableName, tableName.length())
-                                            && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
-                            ) {
-                                boolean isWalTable = engine.isWalTable(tableToken);
-                                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                                LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
+                    // Copy metadata files for all tables.
+                    while (cursor.hasNext()) {
+                        CharSequence tableName = record.getStr(tableNameIndex);
+                        path.of(configuration.getRoot());
+                        TableToken tableToken = engine.verifyTableName(tableName);
+                        if (
+                                TableUtils.isValidTableName(tableName, tableName.length())
+                                        && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
+                        ) {
+                            boolean isWalTable = engine.isWalTable(tableToken);
+                            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+                            LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
-                                path.trimTo(snapshotLen).concat(tableToken);
-                                int rootLen = path.length();
-                                if (isWalTable) {
-                                    path.concat(WalUtils.SEQ_DIR);
-                                }
-                                if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
-                                    throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
-                                }
+                            tableNameRegistryStore.logAddTable(tableToken);
 
-                                try (TableReader reader = engine.getReaderWithRepair(tableToken)) {
-                                    // Copy _meta file.
-                                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                                    reader.getMetadata().dumpTo(mem);
-                                    mem.close(false);
-                                    // Copy _txn file.
-                                    path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
-                                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                                    reader.getTxFile().dumpTo(mem);
-                                    mem.close(false);
-                                    // Copy _cv file.
-                                    path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                                    reader.getColumnVersionReader().dumpTo(mem);
-                                    mem.close(false);
-                                }
-
-                                if (isWalTable) {
-                                    metadata.clear();
-                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
-                                    path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                    metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
-                                    metadata.close(Vm.TRUNCATE_TO_POINTER);
-
-                                    mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                    mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn
-                                    mem.close(true, Vm.TRUNCATE_TO_POINTER);
-                                }
-                            } else {
-                                LOG.error().$("skipping, invalid table name or missing metadata [table=").$(tableName).I$();
+                            path.trimTo(snapshotDbLen).concat(tableToken);
+                            int rootLen = path.length();
+                            if (isWalTable) {
+                                path.concat(WalUtils.SEQ_DIR);
                             }
+                            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
+                                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
+                            }
+
+                            try (TableReader reader = engine.getReaderWithRepair(tableToken)) {
+                                // Copy _meta file.
+                                path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                reader.getMetadata().dumpTo(mem);
+                                mem.close(false);
+                                // Copy _txn file.
+                                path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
+                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                reader.getTxFile().dumpTo(mem);
+                                mem.close(false);
+                                // Copy _cv file.
+                                path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                reader.getColumnVersionReader().dumpTo(mem);
+                                mem.close(false);
+                            }
+
+                            if (isWalTable) {
+                                metadata.clear();
+                                long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
+                                path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
+                                metadata.close(Vm.TRUNCATE_TO_POINTER);
+
+                                mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn
+                                mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            }
+                        } else {
+                            LOG.error().$("skipping, invalid table name or missing metadata [table=").$(tableName).I$();
                         }
-
-                        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
-                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                        mem.putStr(configuration.getSnapshotInstanceId());
-                        mem.close();
-
-                        // Flush dirty pages and filesystem metadata to disk
-                        if (ff.sync() != 0) {
-                            throw CairoException.critical(ff.errno()).put("Could not sync");
-                        }
-
-                        LOG.info().$("snapshot copying finished").$();
                     }
+
+                    path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
+                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                    mem.putStr(configuration.getSnapshotInstanceId());
+                    mem.close();
+
+                    // Flush dirty pages and filesystem metadata to disk
+                    if (ff.sync() != 0) {
+                        throw CairoException.critical(ff.errno()).put("Could not sync");
+                    }
+
+                    LOG.info().$("snapshot copying finished").$();
                 }
             } catch (Throwable e) {
                 // Resume the WalPurgeJob
@@ -254,6 +259,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                 inProgress.set(false);
                 LOG.error().$("snapshot error [e=").$(e).I$();
                 throw e;
+            } finally {
+                tableNameRegistryStore.close();
             }
         } finally {
             lock.unlock();
@@ -311,7 +318,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
             final int snapshotDbLen = srcPath.length();
             for (; ; ) {
                 dstPath.trimTo(rootLen).$();
-                int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, dstPath, nameSink);
+                int version = TableNameRegistryStore.findLastTablesFileVersion(ff, dstPath, nameSink);
                 dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(version).$();
                 LOG.info().$("backup removing table name registry file [dst=").utf8(dstPath).I$();
                 if (!ff.remove(dstPath)) {

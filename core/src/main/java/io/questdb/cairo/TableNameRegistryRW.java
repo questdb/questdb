@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
@@ -69,11 +68,6 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public void dumpTo(MemoryARW mem) {
-        nameStore.dumpTo(nameTableTokenMap, reverseTableNameTokenMap, mem);
-    }
-
-    @Override
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
@@ -96,7 +90,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
         if (tableToken.isWal()) {
-            nameStore.appendEntry(tableToken);
+            nameStore.logAddTable(tableToken);
         }
         reverseTableNameTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
     }
@@ -125,7 +119,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             if (nameTableTokenMap.remove(oldName, tableToken)) {
                 // Persist to file
                 nameStore.logDropTable(tableToken);
-                nameStore.appendEntry(newNameRecord);
+                nameStore.logAddTable(newNameRecord);
                 reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
                 return newNameRecord;
             } else {
@@ -138,12 +132,11 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         }
     }
 
-
     @Override
     public void replaceAlias(TableToken alias, TableToken replaceWith) {
         if (nameTableTokenMap.remove(alias.getTableName(), alias)) {
             nameStore.logDropTable(alias);
-            nameStore.appendEntry(replaceWith);
+            nameStore.logAddTable(replaceWith);
             reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
         }
     }

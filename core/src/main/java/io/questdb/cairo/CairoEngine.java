@@ -31,7 +31,6 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -428,10 +427,6 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (TableReferenceOutOfDateException e) {
             // ignore
         }
-    }
-
-    public void dumpTableNameRegistry(MemoryARW mem) {
-        tableNameRegistry.dumpTo(mem);
     }
 
     public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
