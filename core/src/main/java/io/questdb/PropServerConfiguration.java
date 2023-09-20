@@ -1584,6 +1584,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY
             );
             registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
+            registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
+            registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
         }
 
         public ValidationResult validate(Properties properties) {
