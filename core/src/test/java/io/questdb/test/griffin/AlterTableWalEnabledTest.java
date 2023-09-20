@@ -149,7 +149,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
             } catch (SqlException ex) {
                 TestUtils.assertContains(
                         ex.getFlyweightMessage(),
-                        "unexpected token: NONE"
+                        "unexpected token [NONE]"
                 );
                 Assert.assertEquals(
                         "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY ".length(),
