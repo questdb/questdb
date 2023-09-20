@@ -29,10 +29,12 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest=$(includeTests)
+        "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
-        -DfailIfNoTests=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
+         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
