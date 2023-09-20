@@ -55,6 +55,10 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
         return false;
     }
 
+    int getForceRecvFragmentationChunkSize();
+
+    int getForceSendFragmentationChunkSize();
+
     int getInsertCacheBlockCount();
 
     int getInsertCacheRowCount();

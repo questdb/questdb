@@ -85,7 +85,7 @@ public class PGJobContext implements Closeable {
     public void handleClientOperation(
             PGConnectionContext context,
             int operation
-    ) throws PeerIsSlowToWriteException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+    ) throws Exception {
         context.handleClientOperation(
                 compiler,
                 typesAndSelectCache,

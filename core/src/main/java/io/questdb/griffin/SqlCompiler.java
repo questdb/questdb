@@ -289,7 +289,7 @@ public class SqlCompiler implements Closeable {
             @NotNull CharSequence query,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
+    ) throws Exception {
 
         LOG.info().$("batch [text=").$(query).I$();
 

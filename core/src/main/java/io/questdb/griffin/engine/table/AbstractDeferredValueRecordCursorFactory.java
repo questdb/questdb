@@ -91,7 +91,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (cursor == null && lookupDeferredSymbol(dataFrameCursor)) {
+        if (lookupDeferredSymbol(dataFrameCursor)) {
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }

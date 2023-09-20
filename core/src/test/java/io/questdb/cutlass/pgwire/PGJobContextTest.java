@@ -82,7 +82,6 @@ import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.*;
 
-
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
@@ -113,7 +112,7 @@ public class PGJobContextTest extends BasePGTest {
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
-
+    private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
     public PGJobContextTest(WalMode walMode) {
@@ -146,6 +145,18 @@ public class PGJobContextTest extends BasePGTest {
 
     @Before
     public void setUp() {
+        super.setUp();
+        sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
+        forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
+
+        recvBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
+        forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
+
+        LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize)
+                .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
+                .$(", recvBufferSize=").$(recvBufferSize)
+                .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
+                .I$();
         configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
     }
@@ -2319,35 +2330,35 @@ if __name__ == "__main__":
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderHashJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from crj join xx on x = p0 ";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftHashJoin() throws Exception {//slave - cross join
         final String query = "with crj as (select first(x) as p0 from xx)  select x / p0 from crj left join (select * from xx x1 cross join xx x2) on x = p0 and x <= 1";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftHashJoinLight() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx)  select x / p0 from crj left join xx on x = p0 and x <= 1";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftNLJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx left join crj on x <= p0";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
@@ -2861,22 +2872,43 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore // TODO: support big binary parameter buffers (epic)
-    public void testInsertBinaryOver1Mb() throws Exception {
-        final int maxLength = 1024 * 1024;
-        testBinaryInsert(maxLength, false);
-    }
-
-    @Test
     public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
-        testBinaryInsert(maxLength, true);
+        testBinaryInsert(maxLength, true, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
     @Test
     public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
-        testBinaryInsert(maxLength, false);
+        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
+    }
+
+    @Test
+    public void testInsertBinaryOverHalfMb() throws Exception {
+        final int maxLength = 524287;
+        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
+    }
+
+    @Test
+    public void testInsertBinaryOverRecvOverflow() throws Exception {
+        final int maxLength = 524287;
+        try {
+            testBinaryInsert(maxLength, true, 2048, 1024 * 1024 + 100);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
+        }
+    }
+
+    @Test
+    public void testInsertBinarySendRecvOverflow() throws Exception {
+        final int maxLength = 524287;
+        try {
+            testBinaryInsert(maxLength, true, 1024 * 1024 + 100, 2048);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "server configuration error: not enough space in send buffer for row data");
+        }
     }
 
     @Test
@@ -3633,6 +3665,10 @@ nodejs code:
     @Test
     public void testLargeBatchInsertMethod() throws Exception {
         skipOnWalRun(); // non-partitioned table
+
+        // Small fragmentation chunk makes this test very slow. Set the fragmentation to be near the send buffer size.
+        forceSendFragmentationChunkSize = Math.max(1024, forceSendFragmentationChunkSize);
+
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(4);
@@ -3860,6 +3896,8 @@ nodejs code:
     @Test
     public void testLargeSelect() throws Exception {
         assertMemoryLeak(() -> {
+            sendBufferSize = Math.max(sendBufferSize, 2048);
+            recvBufferSize = Math.max(recvBufferSize, 5000);
             try (
                     final PGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -3957,6 +3995,72 @@ nodejs code:
                     }
                     Assert.assertEquals(50_000, count);
                     Assert.assertEquals(24963.57352782434, sum, 0.00000001);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByDeferredValueFactoriesWithBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (connection, binary) -> {
+
+            try (PreparedStatement pstmt = connection.prepareStatement("CREATE TABLE IF NOT EXISTS tab (" +
+                    "ts timestamp, " +
+                    "sym symbol, " +
+                    "isym symbol," +
+                    "h string," +
+                    "type char," +
+                    "stat char" +
+                    "), index(isym) timestamp(ts) partition by MONTH")) {
+                pstmt.executeUpdate();
+            }
+
+            try (PreparedStatement pstmt = connection.prepareStatement("insert into tab values (0, 'S1', 'S1', 'h1', 'X', 'Y' )," +
+                    " (1, 'S2', 'S2', 'h2', 'X', 'Y' ), (3, null, null, 'h3', 'X', 'Y' )")) {
+                pstmt.executeUpdate();
+            }
+
+            mayDrainWalQueue();
+
+            testExecuteWithDifferentBindVariables(
+                    connection,
+                    "select h, isym from " +// LatestByValueFilteredRecordCursor
+                            "(select h, stat, isym from tab " +
+                            "where sym = ? and type = 'X' latest on ts partition by sym " +
+                            ") where stat='Y'"
+            );
+
+            testExecuteWithDifferentBindVariables(
+                    connection,
+                    "select h, isym from " + // LatestByValueRecordCursor
+                            "(select h, stat, isym from tab " +
+                            "where sym = ? latest on ts partition by sym " +
+                            ") where stat='Y'"
+            );
+
+            testExecuteWithDifferentBindVariables(
+                    connection,
+                    "select h, isym from " + // LatestByValueIndexedFilteredRecordCursor
+                            "(select h, stat, isym from tab " +
+                            "where isym = ? and type = 'X' latest on ts partition by isym" +
+                            ") where stat='Y'"
+            );
+        });
+    }
+
+    @Test
+    public void testLimitWithBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            try (PreparedStatement pstmt = connection.prepareStatement(
+                    "create table xx as ( select x from long_sequence(1000) )")) {
+                pstmt.execute();
+            }
+            try (PreparedStatement statement = connection.prepareStatement("select * from xx limit ?")) {
+                statement.setLong(1, 5);
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("x[BIGINT]\n1\n2\n3\n4\n5\n", sink, rs);
                 }
             }
         });
@@ -4113,6 +4217,12 @@ nodejs code:
                         "<!!",
                 new Port0PGWireConfiguration()
         );
+    }
+
+    @Test
+    public void testMetadata() throws Exception {
+        recvBufferSize = 2048;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
     @Test
@@ -4344,15 +4454,81 @@ nodejs code:
                 "<310000000432000000044300000008534554005a0000000549\n" +
                 ">500000000800000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
                 "<310000000432000000046e0000000449000000045a0000000549\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
+    }
+
+    @Test
+    public void testNoDataAndEmptyQueryResponsesHex_simpleTextProtocol() throws Exception {
+        /**
+         * go.mod:
+         * module testquestpg
+         *
+         * go 1.19
+         *
+         * require github.com/lib/pq v1.10.7 // indirect
+         *
+         * main.go:
+         *package main
+         *
+         * import (
+         * 	"database/sql"
+         * 	"fmt"
+         * 	_ "github.com/lib/pq"
+         * )
+         *
+         * const (
+         * 	host     = "localhost"
+         * 	port     = 8812
+         * 	user     = "xyz"
+         * 	password = "oh"
+         * 	dbname   = "qdb"
+         * )
+         *
+         * func main() {
+         * 	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+         *
+         * 	db, err := sql.Open("postgres", psqlconn)
+         * 	if err != nil {
+         * 		panic(err)
+         *        }
+         *
+         * 	err = db.Ping()
+         * 	if err != nil {
+         * 		panic(err)
+         *    }
+         *
+         * 	db.Close()
+         * }
+         *
+         *
+         */
+
+        // db.Ping() in the golang program above uses the simple text protocol to execute ";" as a query
+        // we need to make sure that we respond with an empty query response
+        String script = ">0000005c00030000636c69656e745f656e636f64696e6700555446380065787472615f666c6f61745f646967697473003200646174657374796c650049534f2c204d445900757365720078797a006461746162617365007164620000\n" +
+                "<520000000800000003\n" +
+                ">70000000076f6800\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">51000000063b00\n" +
+                "<49000000045a0000000549\n" +
+                ">5800000004";
+
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
     }
 
     @Test
     public void testNullTypeSerialization() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            recvBufferSize = 2048;
             try (final PGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
@@ -4965,6 +5141,7 @@ nodejs code:
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
         TestUtils.assertMemoryLeak(() -> {
+            sendBufferSize = 1024;
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5636,6 +5813,7 @@ nodejs code:
     public void testRegProcedure() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            recvBufferSize = Math.max(2048, recvBufferSize);
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6113,6 +6291,7 @@ nodejs code:
         assertMemoryLeak(() -> {
 
             sink.clear();
+            recvBufferSize = 2048;
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6419,6 +6598,40 @@ create table tab as (
     }
 
     @Test
+    public void testSendBufferFull() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        sendBufferSize = 512;
+        forceSendFragmentationChunkSize = 10;
+
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+
+            connection.setAutoCommit(false);
+            try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                    "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
+                pstmt.execute();
+            }
+
+
+            for (int i = 20; i < 100; i++) {
+                try (PreparedStatement select = connection.prepareStatement(
+                        "select x from long_sequence(" + i + ")")) {
+
+                    try (ResultSet resultSet = select.executeQuery()) {
+                        int r = 1;
+                        while (resultSet.next()) {
+                            Assert.assertEquals(r++, resultSet.getLong(1));
+                        }
+                    }
+                }
+
+                try (PreparedStatement pstmt = connection.prepareStatement("insert into t values (1, " + i + ")")) {
+                    pstmt.execute();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
         skipOnWalRun(); // non-partitioned table
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
@@ -6543,8 +6756,8 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement statement = connection.createStatement()) {
-                ResultSet rs = statement.executeQuery(
-                        "select " +
+                statement.execute(
+                        "create table x as (select " +
                                 "rnd_str(4,4,4) s, " +
                                 "rnd_int(0, 256, 4) i, " +
                                 "rnd_double(4) d, " +
@@ -6558,7 +6771,8 @@ create table tab as (
                                 "rnd_symbol(4,4,4,2), " +
                                 "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
                                 "rnd_bin(10,20,2) " +
-                                "from long_sequence(50)");
+                                "from long_sequence(50))");
+                ResultSet rs = statement.executeQuery("select * from x");
 
                 final String expected = "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY]\n" +
                         "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.462,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\n" +
@@ -7422,6 +7636,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUnsupportedParameterType() throws Exception {
         skipOnWalRun(); // non-partitioned table
@@ -7458,10 +7676,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdate() throws Exception {
@@ -7515,6 +7729,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
@@ -7593,10 +7811,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
@@ -8204,7 +8418,7 @@ create table tab as (
                 .$(", binary=").$(binary)
                 .$(", prepareThreshold=").$(prepareThreshold)
                 .I$();
-        setUp();
+        super.setUp();
         try {
             assertMemoryLeak(() -> {
                 try (
@@ -8218,7 +8432,7 @@ create table tab as (
                 }
             });
         } finally {
-            tearDown();
+            super.tearDown();
         }
     }
 
@@ -8588,7 +8802,7 @@ create table tab as (
         });
     }
 
-    private void testBinaryInsert(int maxLength, boolean binaryProtocol) throws Exception {
+    private void testBinaryInsert(int maxLength, boolean binaryProtocol, int recvBufferSize, int sendBufferSize) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             compiler.compile("create table xyz (" +
@@ -8600,6 +8814,9 @@ create table tab as (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
+                this.recvBufferSize = recvBufferSize;
+                this.sendBufferSize = sendBufferSize;
+
                 workerPool.start(LOG);
                 try (
                         final Connection connection = getConnection(server.getPort(), false, binaryProtocol);
@@ -8616,32 +8833,43 @@ create table tab as (
                             if (maxLength == value) return -1;
                             return value++ % 255;
                         }
+
+                        @Override
+                        public void reset() {
+                            value = 0;
+                        }
                     }) {
-                        int totalCount = 1;
-                        for (int i = 0; i < totalCount; i++) {
+                        int totalCount = 10;
+                        for (int r = 0; r < totalCount; r++) {
                             insert.setBinaryStream(1, str);
                             insert.execute();
+                            str.reset();
                         }
                         connection.commit();
 
-                        try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                final Record record = cursor.getRecord();
-                                int count = 0;
-                                while (cursor.hasNext()) {
-                                    Assert.assertEquals(maxLength, record.getBinLen(0));
-                                    BinarySequence bs = record.getBin(0);
-                                    for (int i = 0; i < maxLength; i++) {
-                                        Assert.assertEquals(
-                                                i % 255,
-                                                bs.byteAt(i) & 0xff // Convert byte to unsigned int
-                                        );
-                                    }
-                                    count++;
-                                }
+                        try (
+                                PreparedStatement select = connection.prepareStatement("select a from xyz");
+                                ResultSet rs = select.executeQuery()
+                        ) {
 
-                                Assert.assertEquals(totalCount, count);
+                            int count = 0;
+                            while (rs.next()) {
+                                InputStream bs = rs.getBinaryStream(1);
+                                int len = 0;
+                                int i = bs.read();
+                                while (i > -1) {
+                                    Assert.assertEquals(
+                                            len % 255,
+                                            i & 0xff // Convert byte to unsigned int
+                                    );
+                                    len++;
+                                    i = bs.read();
+                                }
+                                Assert.assertEquals(maxLength, len);
+                                count++;
                             }
+
+                            Assert.assertEquals(totalCount, count);
                         }
                     }
                 }
@@ -8908,9 +9136,43 @@ create table tab as (
         });
     }
 
-    private void testFetchDisconnnectReleasesReader(String query) throws Exception {
+    private void testExecuteWithDifferentBindVariables(Connection connection, String query) throws SQLException, IOException {
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setString(1, "S1");
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet("h[VARCHAR],isym[VARCHAR]\n" +
+                        "h1,S1\n", sink, rs);
+            }
+
+            stmt.setString(1, "S2");
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet("h[VARCHAR],isym[VARCHAR]\n" +
+                        "h2,S2\n", sink, rs);
+            }
+
+            stmt.setString(1, null);
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet("h[VARCHAR],isym[VARCHAR]\n" + "h3,null\n", sink, rs);
+            }
+
+            stmt.setString(1, "S0");
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet("h[VARCHAR],isym[VARCHAR]\n", sink, rs);
+            }
+        }
+    }
+
+    private void testFetchDisconnectReleasesReader(String query) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            // Circuit breaker does not work with fragmented buffer
+            // TODO: find a solution, Net.peek() always return a byte when the incoming buffer not read fully
+            // when executing 'E' (execute) postgres protocol command
+            forceRecvFragmentationChunkSize = recvBufferSize;
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -8945,7 +9207,7 @@ create table tab as (
 
     private void testGeoHashSelect(boolean simple, boolean binary) throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -8954,8 +9216,11 @@ create table tab as (
                 workerPool.start(LOG);
                 try (final Connection connection = getConnection(server.getPort(), simple, binary)) {
                     Statement statement = connection.createStatement();
-                    ResultSet rs = statement.executeQuery(
-                            "select " +
+
+                    // Create table with random values. Selecting it without materializing
+                    // will result in unstable select due to network fragmentation and line re-sending
+                    statement.execute(
+                            "create table x as (select " +
                                     "rnd_geohash(1) hash1b, " +
                                     "rnd_geohash(2) hash2b, " +
                                     "rnd_geohash(3) hash3b, " +
@@ -8963,7 +9228,9 @@ create table tab as (
                                     "rnd_geohash(10) hash2c, " +
                                     "rnd_geohash(20) hash4c, " +
                                     "rnd_geohash(40) hash8c " +
-                                    "from long_sequence(10)");
+                                    "from long_sequence(10))");
+
+                    ResultSet rs = statement.executeQuery("select * from x");
 
                     final String expected = "hash1b[VARCHAR],hash2b[VARCHAR],hash3b[VARCHAR],hash1c[VARCHAR],hash2c[VARCHAR],hash4c[VARCHAR],hash8c[VARCHAR]\n" +
                             "0,00,100,z,hp,wh4b,s2z2fyds\n" +
@@ -9477,24 +9744,27 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement statement = connection.createStatement()) {
-                ResultSet rs = statement.executeQuery(
+                statement.execute("create table x as (" +
                         "select " +
-                                "rnd_str(4,4,4) s, " +
-                                "rnd_int(0, 256, 4) i, " +
-                                s +
-                                "timestamp_sequence(0,10000) t, " +
-                                "rnd_float(4) f, " +
-                                "rnd_short() _short, " +
-                                "rnd_long(0, 10000000, 5) l, " +
-                                "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
-                                "rnd_byte(0,127) bb, " +
-                                "rnd_boolean() b, " +
-                                "rnd_symbol(4,4,4,2), " +
-                                "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                                "rnd_bin(10,20,2), " +
-                                "rnd_char(), " +
-                                "rnd_long256() " +
-                                "from long_sequence(50)");
+                        "rnd_str(4,4,4) s, " +
+                        "rnd_int(0, 256, 4) i, " +
+                        s +
+                        "timestamp_sequence(0,10000) t, " +
+                        "rnd_float(4) f, " +
+                        "rnd_short() _short, " +
+                        "rnd_long(0, 10000000, 5) l, " +
+                        "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
+                        "rnd_byte(0,127) bb, " +
+                        "rnd_boolean() b, " +
+                        "rnd_symbol(4,4,4,2), " +
+                        "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
+                        "rnd_bin(10,20,2), " +
+                        "rnd_char(), " +
+                        "rnd_long256() " +
+                        "from long_sequence(50)" +
+                        ")");
+
+                ResultSet rs = statement.executeQuery("select * from x");
 
                 final String expected = s2 +
                         "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.462,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e,D,0x5f20a35e80e154f458dfd08eeb9cc39ecec82869edec121bc2593f82b430328d\n" +

@@ -52,6 +52,12 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public abstract class BasePGTest extends AbstractGriffinTest {
 
+    protected int forceRecvFragmentationChunkSize = 1024 * 1024;
+    protected int forceSendFragmentationChunkSize = 1024 * 1024;
+    protected int recvBufferSize = 1024 * 1024;
+    protected int sendBufferSize = 1024 * 1024;
+
+
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
@@ -293,8 +299,28 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
 
             @Override
+            public int getForceRecvFragmentationChunkSize() {
+                return forceRecvFragmentationChunkSize;
+            }
+
+            @Override
+            public int getForceSendFragmentationChunkSize() {
+                return forceSendFragmentationChunkSize;
+            }
+
+            @Override
             public Rnd getRandom() {
                 return new Rnd();
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return recvBufferSize;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return sendBufferSize;
             }
 
             @Override
@@ -393,7 +419,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 0;  // Bind to ANY port.
+                        return 5432;
                     }
                 };
             }
@@ -408,7 +434,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 0;  // Bind to ANY port.
+                        return 5432;
                     }
                 };
             }

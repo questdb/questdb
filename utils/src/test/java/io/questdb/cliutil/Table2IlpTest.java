@@ -132,6 +132,16 @@ public class Table2IlpTest {
         bindVariableService.clear();
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
             @Override
+            public int getForceRecvFragmentationChunkSize() {
+                return 19;
+            }
+
+            @Override
+            public int getForceSendFragmentationChunkSize() {
+                return 19;
+            }
+
+            @Override
             public int getSendBufferSize() {
                 return 512;
             }
@@ -197,7 +207,7 @@ public class Table2IlpTest {
     @Test
     public void copyAllColumnTypes() throws SqlException, InterruptedException {
         String tableNameSrc = "src";
-        createTable(tableNameSrc, 20_000);
+        createTable(tableNameSrc, 40_000);
 
         String tableNameDst = "dst";
         createTable(tableNameDst, 1);

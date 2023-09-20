@@ -120,6 +120,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
+    private final int forceRecvFragmentationChunkSize;
+    private final int forceSendFragmentationChunkSize;
     private final int maxBlobSizeOnQuery;
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final WeakMutableObjectPool<Portal> namedPortalPool;
@@ -138,6 +140,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final IntList syncActions = new IntList(4);
     private final SCSequence tempSequence = new SCSequence();
     private final TypeManager typeManager;
+    // insert 'statements' are cached only for the duration of user session
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
     private final DirectCharSink utf8Sink;
@@ -152,9 +155,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private boolean completed = true;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
+    private boolean errorSkipToSync;
+    private boolean freezeRecvBuffer;
     private boolean isEmptyQuery = false;
     private boolean isPausedQuery = false;
-    private long maxRows;
+    private byte lastMsgType;
+    private long maxReceiveRows;
+    private long maxSendRows;
     private int parsePhaseBindVariableCount;
     //command tag used when returning row count to client,
     //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
@@ -163,6 +170,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long recvBuffer;
     private long recvBufferReadOffset = 0;
     private long recvBufferWriteOffset = 0;
+    private boolean replyAndContinue;
     private boolean requireInitialMessage = true;
     private PGResumeProcessor resumeProcessor;
     private Rnd rnd;
@@ -170,16 +178,15 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
-    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
+    private final PGResumeProcessor resumeExecuteCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
-    private boolean sendRNQ = true;
+    private boolean sendRNQ = true; /* send ReadyForQuery message */
     private SqlExecutionContextImpl sqlExecutionContext;
     private long statementTimeout = -1L;
     private SuspendEvent suspendEvent;
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
-    private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
     private TypesAndInsert typesAndInsert = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
@@ -193,7 +200,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private TypesAndUpdate typesAndUpdate = null;
     private AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private boolean typesAndUpdateIsCached = false;
+    private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
+    private final PGResumeProcessor resumeComputeCursorSizeQueryRef = this::resumeComputeCursorSizeQuery;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
+    private final PGResumeProcessor setResumeComputeCursorSizeExecuteRef = this::setResumeComputeCursorSizeExecute;
     private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private CharSequence username;
     private NamedStatementWrapper wrapper;
@@ -206,6 +216,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
+        this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
@@ -294,6 +306,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     @Override
     public void clear() {
+        super.clear();
+        freeBuffers();
         sendBufferPtr = sendBuffer;
         requireInitialMessage = true;
         bufferRemainingOffset = 0;
@@ -322,6 +336,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         circuitBreaker.unsetTimer();
         isPausedQuery = false;
         isEmptyQuery = false;
+        errorSkipToSync = false;
+        replyAndContinue = false;
+        freezeRecvBuffer = false;
         clearSuspendEvent();
     }
 
@@ -347,6 +364,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         Misc.free(utf8Sink);
         Misc.free(circuitBreaker);
         freeBuffers();
+        Misc.free(typesAndSelectCache);
+        Misc.free(typesAndUpdateCache);
+        Misc.free(typesAndInsertCache);
     }
 
     @Override
@@ -370,7 +390,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             @Transient AssociativeCache<TypesAndUpdate> typesAndUpdateCache,
             @Transient WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool,
             int operation
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, QueryPausedException, BadProtocolException {
+    ) throws Exception {
 
         this.typesAndSelectCache = selectAndTypesCache;
         this.typesAndSelectPool = selectAndTypesPool;
@@ -388,55 +408,58 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 if (resumeProcessor != null) {
                     resumeProcessor.resume(false);
                 }
+                if (replyAndContinue) {
+                    replyAndContinue();
+                }
             }
 
-            boolean keepReceiving = true;
-            OUTER:
-            do {
-                if (operation == IOOperation.READ) {
-                    if (recv() == 0) {
-                        keepReceiving = false;
-                    }
-                }
+            long readOffsetBeforeParse = -1;
+            // exit from this loop is via exception when either need wait to read / write from socket
+            // or disconnection is detected / requested
+            //noinspection InfiniteLoopStatement
+            while (true) {
 
-                // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
-                if (keepReceiving) {
-                    do {
-                        // Parse will update the value of recvBufferOffset upon completion of
-                        // logical block. We cannot count on return value because 'parse' may try to
-                        // respond to client and fail with exception. When it does fail we would have
-                        // to retry 'send' but not parse the same input again
-
-                        long readOffsetBeforeParse = recvBufferReadOffset;
-                        totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                        parse(
-                                recvBuffer + recvBufferReadOffset,
-                                (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                                compiler
-                        );
-
-                        // nothing changed?
-                        if (readOffsetBeforeParse == recvBufferReadOffset) {
+                // Read more from socket or throw when
+                if (
+                    // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
+                        readOffsetBeforeParse == recvBufferReadOffset
+                                // - recv buffer is empty
+                                || recvBufferReadOffset == recvBufferWriteOffset
+                                // - socket is signalled ready to read at the first iteration of this loop
+                                || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
+                ) {
+                    // free up recv buffer
+                    if (!freezeRecvBuffer) {
+                        if (recvBufferReadOffset == recvBufferWriteOffset) {
+                            clearRecvBuffer();
+                        } else if (recvBufferReadOffset > 0) {
+                            // nothing changed?
                             // shift to start
-                            if (readOffsetBeforeParse > 0) {
-                                shiftReceiveBuffer(readOffsetBeforeParse);
-                            }
-                            continue OUTER;
+                            shiftReceiveBuffer(recvBufferReadOffset);
                         }
-                    } while (recvBufferReadOffset < recvBufferWriteOffset);
-                    clearRecvBuffer();
+                    }
+
+                    recv();
                 }
-            } while (keepReceiving && operation == IOOperation.READ);
-        } catch (SqlException e) {
-            reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
-        } catch (ImplicitCastException e) {
-            reportNonCriticalError(-1, e.getFlyweightMessage());
-        } catch (CairoException e) {
-            if (e.isInterruption()) {
-                reportQueryCancelled(e.getFlyweightMessage());
-            } else {
-                reportError(e);
+
+                // Parse will update the value of recvBufferOffset upon completion of
+                // logical block. We cannot count on return value because 'parse' may try to
+                // respond to client and fail with exception. When it does fail we would have
+                // to retry 'send' but not parse the same input again
+                readOffsetBeforeParse = recvBufferReadOffset;
+                totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+                parse(
+                        recvBuffer + recvBufferReadOffset,
+                        (int) (recvBufferWriteOffset - recvBufferReadOffset),
+                        compiler
+                );
             }
+        } catch (SqlException e) {
+            handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
+        } catch (ImplicitCastException e) {
+            handleException(-1, e.getFlyweightMessage(), false, -1, true);
+        } catch (CairoException e) {
+            handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
         } catch (AuthenticationException e) {
             prepareNonCriticalError(-1, e.getMessage());
             sendAndReset();
@@ -467,6 +490,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
         bindVariableService.setBin(index, this.binarySequenceParamsPool.next().of(address, valueLen));
+        freezeRecvBuffer = true;
     }
 
     public void setBooleanBindVariable(int index, int valueLen) throws SqlException {
@@ -486,10 +510,15 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
-        dbcs.of(address, address + valueLen);
-        bindVariableService.define(index, ColumnType.DATE, 0);
-        bindVariableService.setStr(index, dbcs);
+    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException, BadProtocolException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Chars.utf8Decode(address, address + valueLen, e)) {
+            bindVariableService.define(index, ColumnType.DATE, 0);
+            bindVariableService.setStr(index, characterStore.toImmutable());
+        } else {
+            LOG.error().$("invalid str UTF8 bytes [index=").$(index).I$();
+            throw BadProtocolException.INSTANCE;
+        }
     }
 
     public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -522,7 +551,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         if (Chars.utf8Decode(address, address + valueLen, e)) {
             bindVariableService.setStr(index, characterStore.toImmutable());
         } else {
-            LOG.error().$("invalid str UTF8 bytes [index=").$(index).$(']').$();
+            LOG.error().$("invalid str UTF8 bytes [index=").$(index).I$();
             throw BadProtocolException.INSTANCE;
         }
     }
@@ -660,7 +689,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void appendDateColumnBin(Record record, int columnIndex) {
-        final long longValue = record.getLong(columnIndex);
+        final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
             responseAsciiSink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
@@ -948,7 +977,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void appendTimestampColumnBin(Record record, int columnIndex) {
-        final long longValue = record.getLong(columnIndex);
+        final long longValue = record.getTimestamp(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
             responseAsciiSink.setNullValue();
         } else {
@@ -1100,6 +1129,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
+    private void checkSendBufferFitsProtocolCommand() throws PeerDisconnectedException {
+        if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
+            sendAndResetWait();
+        }
+    }
+
     private void clearCursorAndFactory() {
         resumeProcessor = null;
         currentCursor = Misc.free(currentCursor);
@@ -1143,7 +1178,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private boolean compileQuery(@Transient SqlCompiler compiler) throws SqlException {
+    private boolean compileQuery(boolean doLog, @Transient SqlCompiler compiler) throws SqlException {
         if (queryText != null && queryText.length() > 0) {
 
             // try insert, peek because this is our private cache
@@ -1154,6 +1189,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             // poll this cache because it is shared and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
+                logQuery(doLog);
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
                 return false;
@@ -1162,6 +1198,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
+                logQuery(doLog);
                 typesAndUpdate.defineBindVariables(bindVariableService);
                 queryTag = TAG_UPDATE;
                 typesAndUpdateIsCached = true;
@@ -1171,7 +1208,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
-                LOG.info().$("query cache used [fd=").$(fd).I$();
+                logQuery(doLog);
+                LOG.info().$("query cache used [fd=").$(getFd()).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
                 typesAndSelect.defineBindVariables(bindVariableService);
@@ -1189,9 +1227,22 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         return true;
     }
 
+    private void computeCursorSize() throws QueryPausedException {
+        try {
+            final long cursorRowCount = currentCursor.size();
+            if (maxReceiveRows > 0) {
+                this.maxSendRows = cursorRowCount > 0 ? Long.min(maxReceiveRows, cursorRowCount) : maxReceiveRows;
+            } else {
+                this.maxSendRows = Long.MAX_VALUE;
+            }
+        } catch (DataUnavailableException e) {
+            isPausedQuery = true;
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+        }
+    }
+
     private void configureContextFromNamedStatement(CharSequence statementName, @Nullable @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException {
-
         this.sendParameterDescription = statementName != null;
 
         if (wrapper != null) {
@@ -1278,24 +1329,21 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         int remaining = bufferSize;
 
         while (remaining > 0) {
-            int m = nf.send(
-                    getFd(),
-                    sendBuffer + offset,
-                    remaining
-            );
+            int m = nf.send(getFd(), sendBuffer + offset, Math.min(remaining, forceSendFragmentationChunkSize));
             if (m < 0) {
                 LOG.info().$("disconnected on write [code=").$(m).$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
-            }
-            if (m == 0) {
-                // The socket is not ready for write.
-                break;
             }
 
             dumpBuffer('<', sendBuffer + offset, m);
 
             remaining -= m;
             offset += m;
+
+            if (m == 0 || forceSendFragmentationChunkSize < sendBufferSize) {
+                // The socket is not ready for write, or we're simulating network fragmentation.
+                break;
+            }
         }
 
         if (remaining > 0) {
@@ -1323,7 +1371,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void executeInsert(SqlCompiler compiler) throws SqlException {
+    private void executeInsert(SqlCompiler compiler) throws SqlException, PeerDisconnectedException {
         TableWriterAPI writer;
         boolean recompileStale = true;
         for (int retries = 0; recompileStale; retries++) {
@@ -1405,7 +1453,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void executeUpdate(SqlCompiler compiler) throws SqlException {
+    private void executeUpdate(SqlCompiler compiler) throws SqlException, PeerDisconnectedException {
         boolean recompileStale = true;
         for (int retries = 0; recompileStale; retries++) {
             try {
@@ -1426,6 +1474,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
                 processCompiledQuery(cc);
+            } catch (CairoException e) {
+                if (transactionState == IN_TRANSACTION) {
+                    transactionState = ERROR_TRANSACTION;
+                }
+                throw e;
             } catch (Throwable e) {
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 if (transactionState == IN_TRANSACTION) {
@@ -1552,6 +1605,28 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
+    private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        clearCursorAndFactory();
+        if (interruption) {
+            prepareErrorResponse(position, message);
+        } else {
+            prepareError(position, message, critical, errno);
+        }
+        resumeProcessor = null;
+        errorSkipToSync = lastMsgType != 'S' && lastMsgType != 'X' && lastMsgType != 'H' && lastMsgType != 'Q';
+        if (errorSkipToSync) {
+            throw PeerIsSlowToReadException.INSTANCE;
+        } else {
+            replyAndContinue();
+        }
+    }
+
+    private void logQuery(boolean doLog) {
+        if (doLog) {
+            LOG.info().$("parse [fd=").$(getFd()).$(", q=").utf8(queryText).I$();
+        }
+    }
+
     /**
      * Returns address of where parsing stopped. If there are remaining bytes left
      * in the buffer they need to be passed again in parse function along with
@@ -1561,7 +1636,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             long address,
             int len,
             @Transient SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, QueryPausedException, AuthenticationException, SqlException {
+    ) throws Exception {
 
         if (requireInitialMessage) {
             sendRNQ = true;
@@ -1611,6 +1686,15 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         recvBufferReadOffset += msgLen + 1;
         final long msgLimit = address + msgLen + 1;
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
+        lastMsgType = type;
+        if (errorSkipToSync) {
+            if (lastMsgType == 'S' || lastMsgType == 'H') {
+                errorSkipToSync = false;
+                replyAndContinue();
+            }
+            // Skip all input until Sync or Flush messages received.
+            return;
+        }
 
         if (authenticationRequired) {
             sendRNQ = true;
@@ -1680,7 +1764,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             queryText = characterStore.toImmutable();
 
             LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(queryText).I$();
-            compileQuery(compiler);
+            compileQuery(true, compiler);
             return;
         }
         LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -1720,19 +1804,23 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareDescribePortalResponse();
     }
 
-    private void prepareError(CairoException ex) {
-        int errno = ex.getErrno();
-        CharSequence message = ex.getFlyweightMessage();
-        prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
-        if (errno == CairoException.NON_CRITICAL) {
-            LOG.error()
-                    .$("error [msg=`").$(message).$('`')
-                    .$(", errno=`").$(errno)
+    private void prepareEmptyQueryResponse() {
+        LOG.debug().$("empty").$();
+        responseAsciiSink.put(MESSAGE_TYPE_EMPTY_QUERY);
+        responseAsciiSink.putIntDirect(INT_BYTES_X);
+    }
+
+    private void prepareError(int position, CharSequence message, boolean critical, int errno) {
+        prepareErrorResponse(position, message);
+        if (critical) {
+            LOG.critical()
+                    .$("error [msg=`").utf8(message)
+                    .$("`, errno=").$(errno)
                     .I$();
         } else {
-            LOG.critical()
-                    .$("error [msg=`").$(message).$('`')
-                    .$(", errno=`").$(errno)
+            LOG.error()
+                    .$("error [msg=`").utf8(message)
+                    .$("`, errno=").$(errno)
                     .I$();
         }
     }
@@ -1767,6 +1855,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             queryText = null;
             wrapper = null;
             syncActions.clear();
+            freezeRecvBuffer = false;
             sendParameterDescription = false;
         }
     }
@@ -1829,13 +1918,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         responseAsciiSink.putIntDirect(INT_BYTES_X);
     }
 
-    private void prepareQueryCanceled(CharSequence message) {
-        prepareErrorResponse(-1, message);
-        LOG.info()
-                .$("query cancelled [msg=`").$(message).$('`')
-                .I$();
-    }
-
     private void prepareRowDescription() {
         final RecordMetadata metadata = typesAndSelect.getFactory().getMetadata();
         ResponseAsciiSink sink = responseAsciiSink;
@@ -1888,6 +1970,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         hi = getStringLength(lo, msgLimit, "bad prepared statement name length [msgType='B']");
         final CharSequence statementName = getStatementName(lo, hi);
 
+        // clear currentCursor if it wasn't cleared by previous execute with maxRows or parse call
+        if (currentCursor != null) {
+            clearCursorAndFactory();
+        }
+
         configureContextFromNamedStatement(statementName, compiler);
         if (portalName != null) {
             configurePortal(portalName, statementName);
@@ -1901,7 +1988,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             if (parameterFormatCount == 1) {
                 // same format applies to all parameters
                 bindSingleFormatForAll(lo, msgLimit, activeBindVariableTypes);
-            } else if (parameterFormatCount == parsePhaseBindVariableCount) {
+            } else if (activeBindVariableTypes.size() > 0) {//client doesn't need to specify types in Parse message and can use those returned in ParameterDescription
                 bindParameterFormats(lo, msgLimit, parameterFormatCount, activeBindVariableTypes);
             }
         }
@@ -1919,7 +2006,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
         try {
             if (parameterValueCount > 0) {
-                if (this.parsePhaseBindVariableCount == parameterValueCount) {
+                //client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message
+                if (this.parsePhaseBindVariableCount == parameterValueCount || activeBindVariableTypes.size() > 0) {
                     lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
                 } else {
                     lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
@@ -2066,7 +2154,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 break;
             case CompiledQuery.COPY_LOCAL:
                 final RecordCursorFactory factory = cq.getRecordCursorFactory();
-                // factory is null in the COPY 'id' CANCEL; case
                 if (factory != null) {
                     // this query is non-cacheable
                     typesAndSelectIsCached = false;
@@ -2149,7 +2236,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             long lo,
             long msgLimit,
             SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException, SqlException {
+    ) throws Exception {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
 
         final long hi = getStringLength(lo, msgLimit, "bad portal name length");
@@ -2159,21 +2246,20 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
 
         lo = hi + 1;
-        final int maxRows = getInt(lo, msgLimit, "could not read max rows value");
+        maxReceiveRows = getInt(lo, msgLimit, "could not read max rows value");
 
         processSyncActions();
-        processExecute(maxRows, compiler);
+        processExecute(compiler);
         wrapper = null;
     }
 
     private void processExecute(
-            int maxRows,
             SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    ) throws Exception {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
             setupFactoryAndCursor(compiler);
-            sendCursor(maxRows, resumeCursorExecuteRef, resumeCommandCompleteRef);
+            sendCursor(resumeCursorExecuteRef, resumeExecuteCompleteRef, setResumeComputeCursorSizeExecuteRef);
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
             executeInsert(compiler);
@@ -2313,6 +2399,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         //query text
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
+
+        // clear currentCursor and factory if they weren't cleared by previous execute with maxRows
+        if (currentCursor != null) {
+            clearCursorAndFactory();
+        }
+
         //TODO: parsePhaseBindVariableCount have to be checked before parseQueryText and fed into it to serve as type hints !
         parseQueryText(lo, hi, compiler);
 
@@ -2361,23 +2453,27 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             long lo,
             long limit,
             @Transient SqlCompiler compiler
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException {
+    ) throws Exception {
         prepareForNewQuery();
+        isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
         CharacterStoreEntry e = characterStore.newEntry();
 
         if (Chars.utf8Decode(lo, limit - 1, e)) {
             queryText = characterStore.toImmutable();
             try {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+                if (isEmptyQuery) {
+                    prepareEmptyQueryResponse();
+                }
                 // we need to continue parsing receive buffer even if we errored out
                 // this is because PG client might expect separate responses to everything it sent
             } catch (SqlException ex) {
                 prepareNonCriticalError(ex.getPosition(), ex.getFlyweightMessage());
             } catch (CairoException ex) {
                 if (ex.isInterruption()) {
-                    prepareQueryCanceled(ex.getFlyweightMessage());
+                    prepareErrorResponse(-1, ex.getFlyweightMessage());
                 } else {
-                    prepareError(ex);
+                    prepareError(ex.getPosition(), ex.getFlyweightMessage(), ex.isCritical(), ex.getErrno());
                 }
             }
         } else {
@@ -2456,31 +2552,25 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareError(ex);
+    private void replyAndContinue() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        replyAndContinue = true;
         sendReadyForNewQuery();
+        freezeRecvBuffer = false;
         clearRecvBuffer();
     }
 
-    private void reportNonCriticalError(int position, CharSequence flyweightMessage)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareNonCriticalError(position, flyweightMessage);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
-    }
-
-    private void reportQueryCancelled(CharSequence flyweightMessage)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareQueryCanceled(flyweightMessage);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
-    }
-
-    private void resumeCommandComplete(boolean queryWasPaused) {
+    private void resumeCommandComplete(boolean queryWasPaused) throws PeerDisconnectedException {
         prepareCommandComplete(true);
     }
 
-    private void resumeCursorExecute(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void resumeComputeCursorSizeQuery(boolean queryWasPaused) throws Exception {
+        computeCursorSize();
+        resumeProcessor = resumeCursorQueryRef;
+        responseAsciiSink.bookmark();
+        sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), resumeQueryCompleteRef);
+    }
+
+    private void resumeCursorExecute(boolean queryWasPaused) throws Exception {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
         if (!queryWasPaused) {
@@ -2489,15 +2579,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             appendSingleRecord(record, columnCount);
         }
         responseAsciiSink.bookmark();
-        sendCursor0(record, columnCount, resumeCommandCompleteRef);
+        sendCursor0(record, columnCount, resumeExecuteCompleteRef);
     }
 
-    private void resumeCursorQuery(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        resumeCursorQuery0(queryWasPaused);
-        sendReadyForNewQuery();
-    }
-
-    private void resumeCursorQuery0(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void resumeCursorQuery(boolean queryWasPaused) throws Exception {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
         if (!queryWasPaused) {
@@ -2507,6 +2592,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
         responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, resumeQueryCompleteRef);
+        sendReadyForNewQuery();
     }
 
     private void resumeQueryComplete(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -2515,8 +2601,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        doSend(0, (int) (sendBufferPtr - sendBuffer));
+        doSend(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
         responseAsciiSink.reset();
+        replyAndContinue = false;
     }
 
     private void sendAndResetWait() throws PeerDisconnectedException {
@@ -2524,13 +2611,14 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         // This method busy waits to send buffer.
         while (true) {
             try {
-                doSend(0, (int) (sendBufferPtr - sendBuffer));
+                doSend(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
                 break;
             } catch (PeerIsSlowToReadException e) {
                 Os.sleep(1);
             }
         }
         responseAsciiSink.reset();
+        replyAndContinue = false;
     }
 
     // This method is currently unused. it's used for the COPY sub-protocol, which is currently not implemented.
@@ -2565,10 +2653,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void sendCursor(
-            int maxRows,
             PGResumeProcessor cursorResumeProcessor,
-            PGResumeProcessor commandCompleteResumeProcessor
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+            PGResumeProcessor commandCompleteResumeProcessor,
+            PGResumeProcessor computeCursorSizeResumeProcessor
+    ) throws Exception {
         // the assumption for now is that any record will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and it's a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
@@ -2576,21 +2664,16 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         // slow anyway.
 
         rowCount = 0;
-        final Record record = currentCursor.getRecord();
-        final RecordMetadata metadata = currentFactory.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-        final long cursorRowCount = currentCursor.size();
-        this.maxRows = maxRows > 0 ? Long.min(maxRows, cursorRowCount) : Long.MAX_VALUE;
-        this.resumeProcessor = cursorResumeProcessor;
+        // this might fail due to missing data
+        resumeProcessor = computeCursorSizeResumeProcessor;
+        computeCursorSize();
+
+        resumeProcessor = cursorResumeProcessor;
         responseAsciiSink.bookmark();
-        sendCursor0(record, columnCount, commandCompleteResumeProcessor);
+        sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), commandCompleteResumeProcessor);
     }
 
-    private void sendCursor0(
-            Record record,
-            int columnCount,
-            PGResumeProcessor commandCompleteResumeProcessor
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void sendCursor0(Record record, int columnCount, PGResumeProcessor commandCompleteResumeProcessor) throws Exception {
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
         }
@@ -2607,7 +2690,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         appendSingleRecord(record, columnCount);
                         responseAsciiSink.bookmark();
                     }
-                    if (rowCount >= maxRows) {
+                    if (rowCount >= maxSendRows) {
                         break;
                     }
                 } catch (SqlException e) {
@@ -2622,7 +2705,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         }
 
-        completed = maxRows <= 0 || rowCount < maxRows;
+        completed = maxSendRows <= 0 || rowCount < maxSendRows;
         if (completed) {
             clearCursorAndFactory();
             // at this point buffer can contain unsent data,
@@ -2633,9 +2716,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             }
             prepareCommandComplete(true);
         } else {
-            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
-                sendAndResetWait();
-            }
+            checkSendBufferFitsProtocolCommand();
             prepareSuspended();
             // Prevents re-sending current record row when buffer is sent fully.
             resumeProcessor = null;
@@ -2645,6 +2726,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareReadyForQuery();
         sendAndReset();
+    }
+
+    private void setResumeComputeCursorSizeExecute(boolean queryWasPaused) throws Exception {
+        computeCursorSize();
+        resumeProcessor = resumeCursorExecuteRef;
+        responseAsciiSink.bookmark();
+        sendCursor0(currentCursor.getRecord(), currentFactory.getMetadata().getColumnCount(), resumeExecuteCompleteRef);
     }
 
     private void setUuidBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -2677,7 +2765,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         }
                         LOG.info().$(e.getFlyweightMessage()).$();
                         freeFactory();
-                        compileQuery(compiler);
+                        compileQuery(false, compiler);
                         buildSelectColumnTypes();
                         applyLatestBindColumnFormats();
                     } catch (Throwable e) {
@@ -2700,7 +2788,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
-        if (!wrapper.alreadyExecuted && compileQuery(compiler) && typesAndSelect != null) {
+        if (!wrapper.alreadyExecuted && compileQuery(false, compiler) && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
         // We'll have to compile/execute the statement next time.
@@ -2714,10 +2802,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 .$(", len=").$(len)
                 .$(']').$();
 
-        Vect.memcpy(
-                recvBuffer, recvBuffer + readOffsetBeforeParse,
-                len
-        );
+        Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
         recvBufferWriteOffset = len;
         recvBufferReadOffset = 0;
     }
@@ -2748,7 +2833,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     void doSend(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final int n = nf.send(getFd(), sendBuffer + offset, size);
+        final int n = nf.send(getFd(), sendBuffer + offset, Math.min(size, forceSendFragmentationChunkSize));
         dumpBuffer('<', sendBuffer + offset, n);
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
@@ -2762,11 +2847,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         bufferRemainingOffset = 0;
     }
 
-    void prepareCommandComplete(boolean addRowCount) {
+    void prepareCommandComplete(boolean addRowCount) throws PeerDisconnectedException {
+        checkSendBufferFitsProtocolCommand();
         if (isEmptyQuery) {
-            LOG.debug().$("empty").$();
-            responseAsciiSink.put(MESSAGE_TYPE_EMPTY_QUERY);
-            responseAsciiSink.putIntDirect(INT_BYTES_X);
+            prepareEmptyQueryResponse();
         } else {
             responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
             long addr = responseAsciiSink.skip();
@@ -2789,9 +2873,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     void prepareReadyForQuery() throws PeerDisconnectedException {
         if (sendRNQ) {
             LOG.debug().$("RNQ sent").$();
-            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
-                sendAndResetWait();
-            }
+            checkSendBufferFitsProtocolCommand();
 
             responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
             responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
@@ -2816,13 +2898,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         responseAsciiSink.putIntDirect(INT_BYTES_X);
     }
 
-    int recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
+    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
         assertTrue(remaining > 0, "undersized receive buffer or someone is abusing protocol");
 
-        int n = doReceive(remaining);
-        LOG.debug().$("recv [n=").$(n).$(']').$();
+        int n = doReceive(Math.min(forceRecvFragmentationChunkSize, remaining));
+        LOG.debug().$("recv [n=").$(n).I$();
         if (n < 0) {
             LOG.info().$("disconnected on read [code=").$(n).$(']').$();
             throw PeerDisconnectedException.INSTANCE;
@@ -2833,12 +2915,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
 
         recvBufferWriteOffset += n;
-        return n;
     }
 
     @FunctionalInterface
     private interface PGResumeProcessor {
-        void resume(boolean queryWasPaused) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException;
+        void resume(boolean queryWasPaused) throws Exception;
     }
 
     public static class NamedStatementWrapper implements Mutable {
@@ -2874,10 +2955,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 SqlCompiler compiler,
                 CompiledQuery cq,
                 CharSequence text
-        ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
+        ) throws Exception {
             try {
                 PGConnectionContext.this.queryText = text;
-                LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
                 processCompiledQuery(cq);
 
                 if (typesAndSelect != null) {
@@ -2887,7 +2967,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     queryTag = TAG_SELECT;
                     setupFactoryAndCursor(compiler);
                     prepareRowDescription();
-                    sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
+                    maxReceiveRows = 0; // unlimited
+                    sendCursor(resumeCursorQueryRef, resumeQueryCompleteRef, resumeComputeCursorSizeQueryRef);
                 } else if (typesAndInsert != null) {
                     executeInsert(compiler);
                 } else if (typesAndUpdate != null) {
@@ -2904,7 +2985,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             } catch (QueryPausedException e) {
                 // keep circuit breaker's timer as is
                 throw e;
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 sqlExecutionContext.getCircuitBreaker().unsetTimer();
                 throw e;
             }
