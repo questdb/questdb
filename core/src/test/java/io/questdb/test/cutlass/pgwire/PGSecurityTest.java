@@ -128,7 +128,7 @@ public class PGSecurityTest extends BasePGTest {
                 assertException("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
             } catch (PSQLException e) {
                 // the parser does not support DELETE
-                assertContains(e.getMessage(), "unexpected token: from");
+                assertContains(e.getMessage(), "unexpected token [from]");
             }
         });
     }

@@ -187,6 +187,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeResumeWal(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 

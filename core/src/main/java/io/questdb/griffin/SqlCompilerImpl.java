@@ -576,6 +576,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 if (!engine.isWalTable(tableToken)) {
                     throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
                 }
+                securityContext.authorizeResumeWal(tableToken);
                 alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
                 securityContext.authorizeAlterTableDropPartition(tableToken);
@@ -1191,6 +1192,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
+
             engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
             executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             compiledQuery.ofTableResume();
@@ -1315,7 +1317,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
         compiledQuery.ofDeallocate(statementName);
     }
@@ -2520,7 +2522,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     return;
                 } else {
                     Misc.free(factory);
-                    throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [").put(tok).put(']');
+                    throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
                 }
             }
         }
@@ -2633,7 +2635,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             }
 
             if (tok != null && !Chars.equals(tok, ';')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected [token='").put(tok).put("']");
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
@@ -2914,7 +2916,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             int tableNamePosition,
             boolean hasIfExists
     ) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
     }
 
     @SuppressWarnings({"unused", "RedundantThrows"})
