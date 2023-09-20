@@ -66,7 +66,8 @@ public class SecurityContextTest {
                             method.invoke(sc, new ObjHashSet<CharSequence>());
                         } else if (name.startsWith("authorizeShow")
                                 || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")) {
+                                || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
+                                || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
                             method.invoke(sc, "userName");
                         } else {
                             method.invoke(sc, ONE_PARAM_ARGS);
@@ -105,7 +106,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
                             } else if (name.startsWith("authorizeShow")
                                     || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")) {
+                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
+                                    || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
                                 method.invoke(sc, "userName");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
@@ -122,6 +124,8 @@ public class SecurityContextTest {
                         default:
                             throw new IndexOutOfBoundsException();
                     }
+                } catch (IllegalArgumentException iae) {
+                    throw new RuntimeException("Call failed for " + method, iae);
                 } catch (InvocationTargetException err) {
                     Assert.assertTrue(err.getTargetException().getMessage().contains("permission denied"));
                 }
@@ -152,7 +156,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
                             } else if (name.startsWith("authorizeShow")
                                     || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")) {
+                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
+                                    || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
                                 method.invoke(sc, "userName");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
@@ -177,6 +182,8 @@ public class SecurityContextTest {
                         default:
                             throw new IndexOutOfBoundsException();
                     }
+                } catch (IllegalArgumentException iae) {
+                    throw new RuntimeException("Call failed for " + method, iae);
                 } catch (InvocationTargetException err) {
                     Assert.assertTrue(err.getTargetException().getMessage().contains("permission denied"));
                 }
