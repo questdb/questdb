@@ -44,7 +44,7 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public final void at(long timestamp, ChronoUnit unit) {
-        put(' ').put(timestamp * unit.getDuration().toNanos());
+        put(' ').put(timestamp * unitToNanos(unit));
         atNow();
     }
 
@@ -62,7 +62,7 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(value * unit.getDuration().toNanos() / 1000);
+        writeFieldName(name).put(value * unitToNanos(unit) / 1000);
         return this;
     }
 }

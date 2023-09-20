@@ -33,6 +33,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.security.*;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable, Sender {
@@ -354,6 +355,21 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
                     "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
+        }
+    }
+
+    protected static long unitToNanos(ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return 1;
+            case MICROS:
+                return 1_000;
+            case MILLIS:
+                return 1_000_000;
+            case SECONDS:
+                return 1_000_000_000;
+            default:
+                return unit.getDuration().toNanos();
         }
     }
 
