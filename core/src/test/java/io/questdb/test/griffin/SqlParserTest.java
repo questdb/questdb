@@ -4395,8 +4395,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(select country, sum(quantity) sum " +
                         "from orders o " +
                         "join customers c on c.customerId = o.customerId " +
-                        "join orderDetails d on o.orderId = d.orderId" +
-                        " where country ~ '^Z') where sum > 2",
+                        "join orderDetails d on o.orderId = d.orderId " +
+                        "where country ~ '^Z') where sum > 2",
                 modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE),
                 modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("comment", ColumnType.STRING)

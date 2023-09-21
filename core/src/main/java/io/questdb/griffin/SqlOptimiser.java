@@ -70,6 +70,9 @@ public class SqlOptimiser implements Mutable {
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
+    private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
+    private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
     private final IntHashSet deletedContexts = new IntHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -130,6 +133,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     public void clear() {
+        clearForNextUnionModel();
         contextPool.clear();
         intHashSetPool.clear();
         joinClausesSwap1.clear();
@@ -150,6 +154,12 @@ public class SqlOptimiser implements Mutable {
         groupByUsed.clear();
         tempColumnAlias = null;
         tempQueryModel = null;
+    }
+
+    public void clearForNextUnionModel() {
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
     }
 
     public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
@@ -173,8 +183,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel baseModel) {
-        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1 &&
-                Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
+        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1
+                && Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
     }
 
     private static void linkDependencies(QueryModel model, int parent, int child) {
@@ -529,10 +539,10 @@ public class SqlOptimiser implements Mutable {
             if (jc != null) {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
-                    if (jc.constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
-                        ExpressionNode node = expressionNodePool.next().of(ExpressionNode.OPERATION, jc.constNameToToken.get(name), 0, 0);
+                    if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
+                        ExpressionNode node = expressionNodePool.next().of(ExpressionNode.OPERATION, constNameToToken.get(name), 0, 0);
                         node.lhs = jc.aNodes.getQuick(k);
-                        node.rhs = jc.constNameToNode.get(name);
+                        node.rhs = constNameToNode.get(name);
                         node.paramCount = 2;
                         addWhereNode(model, jc.slaveIndex, node);
                     }
@@ -622,9 +632,9 @@ public class SqlOptimiser implements Mutable {
                     addJoinContext(parent, jc);
 
                     CharSequence cs = literalCollectorBNames.getQuick(0);
-                    jc.constNameToIndex.put(cs, jc.slaveIndex);
-                    jc.constNameToNode.put(cs, node.lhs);
-                    jc.constNameToToken.put(cs, node.token);
+                    constNameToIndex.put(cs, jc.slaveIndex);
+                    constNameToNode.put(cs, node.lhs);
+                    constNameToToken.put(cs, node.token);
                 } else {
                     parent.addParsedWhereNode(node, innerPredicate);
                 }
@@ -696,9 +706,9 @@ public class SqlOptimiser implements Mutable {
                     addJoinContext(parent, jc);
 
                     CharSequence cs = literalCollectorANames.getQuick(0);
-                    jc.constNameToIndex.put(cs, lhi);
-                    jc.constNameToNode.put(cs, node.rhs);
-                    jc.constNameToToken.put(cs, node.token);
+                    constNameToIndex.put(cs, lhi);
+                    constNameToNode.put(cs, node.rhs);
+                    constNameToToken.put(cs, node.token);
                 } else {
                     if (canMovePredicate) {
                         parent.addParsedWhereNode(node, innerPredicate);
@@ -719,7 +729,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void analyseRegex(QueryModel parent, JoinContext context, ExpressionNode node) throws SqlException {
+    private void analyseRegex(QueryModel parent, ExpressionNode node) throws SqlException {
         traverseNamesAndIndices(parent, node);
 
         if (literalCollector.nullCount == 0) {
@@ -727,9 +737,9 @@ public class SqlOptimiser implements Mutable {
             int bSize = literalCollectorBIndexes.size();
             if (aSize == 1 && bSize == 0) {
                 CharSequence name = literalCollectorANames.getQuick(0);
-                context.constNameToIndex.put(name, literalCollectorAIndexes.get(0));
-                context.constNameToNode.put(name, node.rhs);
-                context.constNameToToken.put(name, node.token);
+                constNameToIndex.put(name, literalCollectorAIndexes.get(0));
+                constNameToNode.put(name, node.rhs);
+                constNameToToken.put(name, node.token);
             }
         }
     }
@@ -2653,6 +2663,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void optimiseJoins(QueryModel model) throws SqlException {
+        clearForNextUnionModel();
+
         ObjList<QueryModel> joinModels = model.getJoinModels();
 
         int n = joinModels.size();
@@ -2824,7 +2836,7 @@ public class SqlOptimiser implements Mutable {
                         n = n.lhs;
                         break;
                     case JOIN_OP_REGEX:
-                        analyseRegex(parent, joinModel.getContext(), n);
+                        analyseRegex(parent, n);
                         if (joinBarriers.contains(joinModel.getJoinType())) {
                             addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
