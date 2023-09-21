@@ -80,13 +80,15 @@ public class LineTcpSender extends AbstractLineSender {
 
     @Override
     public final void at(long timestamp, ChronoUnit unit) {
-        put(' ').put(timestamp * unitToNanos(unit) / 1000).put("tus");
+        // nanos
+        put(' ').put(timestamp * unitToNanos(unit));
         atNow();
     }
 
     @Override
     public final void at(Instant timestamp) {
-        put(' ').put((timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano()) / 1000).put("tus");
+        // nanos
+        put(' ').put(timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano());
         atNow();
     }
 
@@ -98,13 +100,15 @@ public class LineTcpSender extends AbstractLineSender {
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000).put("tus");
+        // micros
+        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000).put('t');
         return this;
     }
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(value * unitToNanos(unit) / 1000).put("tus");
+        // micros
+        writeFieldName(name).put(value * unitToNanos(unit) / 1000).put('t');
         return this;
     }
 
