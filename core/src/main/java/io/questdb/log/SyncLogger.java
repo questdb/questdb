@@ -34,6 +34,9 @@ import io.questdb.std.str.StringSink;
 
 import java.io.File;
 
+import static io.questdb.log.LogFactory.LogInterceptor;
+import static io.questdb.log.LogFactory.getInterceptor;
+
 public final class SyncLogger implements LogRecord, Log {
     private final static ThreadLocal<StringSink> line = new ThreadLocal<>(StringSink::new);
     private final Sequence advisorySeq;
@@ -64,18 +67,20 @@ public final class SyncLogger implements LogRecord, Log {
 
     @Override
     public void $() {
-        StringSink sink = line.get();
-        System.out.println(sink);
+        final StringSink sink = sink();
+        final String logLine = sink.toString();
+        System.out.println(logLine);
+
+        final LogInterceptor interceptor = getInterceptor();
+        if (interceptor != null) {
+            interceptor.onLog(logLine);
+        }
         sink.clear();
     }
 
     @Override
     public LogRecord $(CharSequence sequence) {
-        if (sequence == null) {
-            sink().put("null");
-        } else {
-            sink().put(sequence);
-        }
+        sink().put(sequence == null ? "null" : sequence);
         return this;
     }
 

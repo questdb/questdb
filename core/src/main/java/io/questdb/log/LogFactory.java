@@ -60,6 +60,7 @@ public class LogFactory implements Closeable {
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static LogFactory INSTANCE;
     private static boolean envEnabled = true;
+    private static LogInterceptor interceptor;
     private static boolean overwriteWithSyncLogging = false;
     private static String rootDir;
     private final MicrosecondClock clock;
@@ -109,14 +110,16 @@ public class LogFactory implements Closeable {
 
     public static void configureAsync() {
         overwriteWithSyncLogging = false;
+        interceptor = null;
     }
 
     public static void configureRootDir(String rootDir) {
         LogFactory.rootDir = rootDir;
     }
 
-    public static void configureSync() {
+    public static void configureSync(LogInterceptor logInterceptor) {
         overwriteWithSyncLogging = true;
+        interceptor = logInterceptor;
     }
 
     public static void disableEnv() {
@@ -140,6 +143,10 @@ public class LogFactory implements Closeable {
             logFactory.init(rootDir);
         }
         return logFactory;
+    }
+
+    static LogInterceptor getInterceptor() {
+        return interceptor;
     }
 
     public static Log getLog(Class<?> clazz) {
@@ -630,6 +637,11 @@ public class LogFactory implements Closeable {
 
     private void setRecordLength(int recordLength) {
         this.recordLength = recordLength;
+    }
+
+    @FunctionalInterface
+    public interface LogInterceptor {
+        void onLog(String line);
     }
 
     private static class DeferredLogger implements Log {
