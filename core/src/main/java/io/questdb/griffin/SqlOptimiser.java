@@ -2663,8 +2663,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void optimiseJoins(QueryModel model) throws SqlException {
-        clearForNextUnionModel();
-
         ObjList<QueryModel> joinModels = model.getJoinModels();
 
         int n = joinModels.size();
@@ -2708,6 +2706,7 @@ public class SqlOptimiser implements Mutable {
 
             m = model.getJoinModels().getQuick(i).getUnionModel();
             if (m != null) {
+                clearForNextUnionModel();
                 optimiseJoins(m);
             }
         }
