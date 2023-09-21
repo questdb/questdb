@@ -130,7 +130,7 @@ public class WriterPool extends AbstractPool {
      * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.
      */
-    public TableWriter get(TableToken tableToken, String lockReason) {
+    public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
         return getWriterEntry(tableToken, lockReason, null);
     }
 
@@ -160,7 +160,7 @@ public class WriterPool extends AbstractPool {
      */
     public TableWriter getWriterOrPublishCommand(
             TableToken tableToken,
-            String lockReason,
+            @NotNull String lockReason,
             @NotNull AsyncWriterCommand asyncWriterCommand
     ) {
         while (true) {
@@ -415,10 +415,9 @@ public class WriterPool extends AbstractPool {
 
     private TableWriter getWriterEntry(
             TableToken tableToken,
-            String lockReason,
+            @NotNull String lockReason,
             @Nullable AsyncWriterCommand asyncWriterCommand
     ) {
-        assert lockReason != null;
         checkClosed();
 
         long thread = Thread.currentThread().getId();

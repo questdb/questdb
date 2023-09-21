@@ -634,7 +634,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(TableToken tableToken, @Nullable String lockReason) {
+    public TableWriterAPI getTableWriterAPI(TableToken tableToken, @NotNull String lockReason) {
         verifyTableToken(tableToken);
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
@@ -643,7 +643,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(CharSequence tableName, @NotNull String lockReason) {
         return getTableWriterAPI(verifyTableNameForRead(tableName), lockReason);
     }
 
@@ -692,7 +692,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.get(tableToken);
     }
 
-    public TableWriter getWriter(TableToken tableToken, String lockReason) {
+    public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {
         verifyTableToken(tableToken);
         return writerPool.get(tableToken, lockReason);
     }
@@ -706,7 +706,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.entries();
     }
 
-    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
+    public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
         return writerPool.get(tableToken, lockReason);
     }
 
