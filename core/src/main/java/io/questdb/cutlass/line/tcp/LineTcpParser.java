@@ -58,13 +58,10 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_UUID = 20;
 
-    public static final byte ENTITY_UNIT_HOUR = 6;
     public static final byte ENTITY_UNIT_MICRO = 2;
     public static final byte ENTITY_UNIT_MILLI = 3;
-    public static final byte ENTITY_UNIT_MINUTE = 5;
     public static final byte ENTITY_UNIT_NANO = 1;
     public static final byte ENTITY_UNIT_NONE = 0;
-    public static final byte ENTITY_UNIT_SECOND = 4;
 
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
@@ -479,47 +476,17 @@ public class LineTcpParser {
                     final int charSeqLen = charSeq.length();
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
-                        case 's':
-                            // tns
-                            // tus
-                            // tms
-                            if (charSeqLen > 3 && charSeq.byteAt(charSeqLen - 3) == 't') {
-                                byte unit = charSeq.byteAt(charSeqLen - 2);
-                                if (unit == 'n') {
-                                    timestampUnit = ENTITY_UNIT_NANO;
-                                } else if (unit == 'u') {
-                                    timestampUnit = ENTITY_UNIT_MICRO;
-                                } else if (unit == 'm') {
-                                    timestampUnit = ENTITY_UNIT_MILLI;
-                                }
-                                if (timestampUnit != ENTITY_UNIT_NONE) {
-                                    timestamp = Numbers.parseLong(charSeq.decHi(3));
-                                    break;
-                                }
-                            }
-                            // ts
-                            if (charSeqLen > 2 && charSeq.byteAt(charSeqLen - 2) == 't') {
-                                timestampUnit = ENTITY_UNIT_SECOND;
-                                timestamp = Numbers.parseLong(charSeq.decHi(2));
-                                break;
-                            }
-                        case 'm':
-                            // tm
-                            if (charSeqLen > 2 && charSeq.byteAt(charSeqLen - 2) == 't') {
-                                timestampUnit = ENTITY_UNIT_MINUTE;
-                                timestamp = Numbers.parseLong(charSeq.decHi(2));
-                                break;
-                            }
-                        case 'h':
-                            // th
-                            if (charSeqLen > 2 && charSeq.byteAt(charSeqLen - 2) == 't') {
-                                timestampUnit = ENTITY_UNIT_HOUR;
-                                timestamp = Numbers.parseLong(charSeq.decHi(2));
-                                break;
-                            }
+                        case 'n':
+                            timestampUnit = ENTITY_UNIT_NANO;
+                            timestamp = Numbers.parseLong(charSeq.decHi());
+                            break;
                         case 't':
-                            // t
-                            timestamp = Numbers.parseLong(charSeq.decHi(1));
+                            timestampUnit = ENTITY_UNIT_MICRO;
+                            timestamp = Numbers.parseLong(charSeq.decHi());
+                            break;
+                        case 'm':
+                            timestampUnit = ENTITY_UNIT_MILLI;
+                            timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         // fall through
                         default:
@@ -532,6 +499,7 @@ public class LineTcpParser {
             errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
             return false;
         } catch (NumericException ex) {
+            timestampUnit = ENTITY_UNIT_NONE;
             errorCode = ErrorCode.INVALID_TIMESTAMP;
             return false;
         }
@@ -672,7 +640,7 @@ public class LineTcpParser {
             switch (last) {
                 case 'i':
                     if (valueLen > 1 && value.charAt(1) != 'x') {
-                        return parseLong(ENTITY_TYPE_INTEGER, 1);
+                        return parseLong(ENTITY_TYPE_INTEGER);
                     }
                     if (valueLen > 3 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
                         value.decHi(); // remove 'i'
@@ -681,9 +649,23 @@ public class LineTcpParser {
                     }
                     type = ENTITY_TYPE_SYMBOL;
                     return true;
+                case 'n':
+                    if (valueLen > 1) {
+                        unit = ENTITY_UNIT_NANO;
+                        return parseLong(ENTITY_TYPE_TIMESTAMP);
+                    }
+                case 'm':
+                    if (valueLen > 1) {
+                        unit = ENTITY_UNIT_MILLI;
+                        return parseLong(ENTITY_TYPE_TIMESTAMP);
+                    }
+                    // fall through
+                    type = ENTITY_TYPE_SYMBOL;
+                    return true;
                 case 't':
                     if (valueLen > 1) {
-                        return parseLong(ENTITY_TYPE_TIMESTAMP, 1);
+                        unit = ENTITY_UNIT_MICRO;
+                        return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through
                 case 'T':
@@ -727,41 +709,7 @@ public class LineTcpParser {
                     type = ENTITY_TYPE_SYMBOL;
                     return true;
                 }
-                case 's':
-                    // tns
-                    // tus
-                    // tms
-                    if (valueLen > 3 && value.byteAt(valueLen - 3) == 't') {
-                        byte unit = value.byteAt(valueLen - 2);
-                        if (unit == 'n') {
-                            this.unit = ENTITY_UNIT_NANO;
-                        } else if (unit == 'u') {
-                            this.unit = ENTITY_UNIT_MICRO;
-                        } else if (unit == 'm') {
-                            this.unit = ENTITY_UNIT_MILLI;
-                        }
-                        if (this.unit != ENTITY_UNIT_NONE) {
-                            return parseLong(ENTITY_TYPE_TIMESTAMP, 3);
-                        }
-                    }
-                    // ts
-                    if (valueLen > 2 && value.byteAt(valueLen - 2) == 't') {
-                        this.unit = ENTITY_UNIT_SECOND;
-                        return parseLong(ENTITY_TYPE_TIMESTAMP, 2);
-                    }
-                case 'm':
-                    // tm
-                    if (valueLen > 2 && value.byteAt(valueLen - 2) == 't') {
-                        this.unit = ENTITY_UNIT_MINUTE;
-                        return parseLong(ENTITY_TYPE_TIMESTAMP, 2);
-                    }
-                case 'h':
-                    // th
-                    if (valueLen > 2 && value.byteAt(valueLen - 2) == 't') {
-                        this.unit = ENTITY_UNIT_HOUR;
-                        return parseLong(ENTITY_TYPE_TIMESTAMP, 2);
-                    }
-                    // fall through
+                // fall through
                 default:
                     try {
                         floatValue = Numbers.parseDouble(value.getLo(), value.length());
@@ -773,13 +721,14 @@ public class LineTcpParser {
             }
         }
 
-        private boolean parseLong(byte entityType, int suffixLen) {
+        private boolean parseLong(byte entityType) {
             try {
-                charSeq.of(value.getLo(), value.getHi() - suffixLen);
+                charSeq.of(value.getLo(), value.getHi() - 1);
                 longValue = Numbers.parseLong(charSeq);
-                value.decHi(suffixLen); // remove the suffix ('i', 't', 'th', 'ts', ...)
+                value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
                 type = entityType;
             } catch (NumericException notANumber) {
+                unit = ENTITY_UNIT_NONE;
                 type = ENTITY_TYPE_SYMBOL;
             }
             return true;

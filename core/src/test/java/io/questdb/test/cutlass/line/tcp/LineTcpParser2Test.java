@@ -289,28 +289,16 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 "measurement,tag=value 100000\n"
         );
         assertThat(
-                "measurement,tag=value 100000tns\n",
-                "measurement,tag=value 100000tns\n"
+                "measurement,tag=value 100000n\n",
+                "measurement,tag=value 100000n\n"
         );
         assertThat(
-                "measurement,tag=value 100000tus\n",
-                "measurement,tag=value 100000tus\n"
+                "measurement,tag=value 100000t\n",
+                "measurement,tag=value 100000t\n"
         );
         assertThat(
-                "measurement,tag=value 100000tms\n",
-                "measurement,tag=value 100000tms\n"
-        );
-        assertThat(
-                "measurement,tag=value 100000ts\n",
-                "measurement,tag=value 100000ts\n"
-        );
-        assertThat(
-                "measurement,tag=value 100000tm\n",
-                "measurement,tag=value 100000tm\n"
-        );
-        assertThat(
-                "measurement,tag=value 100000th\n",
-                "measurement,tag=value 100000th\n"
+                "measurement,tag=value 100000m\n",
+                "measurement,tag=value 100000m\n"
         );
     }
 
@@ -499,22 +487,13 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             if (lineTcpParser.getTimestampUnit() != LineTcpParser.ENTITY_UNIT_NONE) {
                 switch (lineTcpParser.getTimestampUnit()) {
                     case LineTcpParser.ENTITY_UNIT_NANO:
-                        sink.put("tns");
+                        sink.put("n");
                         break;
                     case LineTcpParser.ENTITY_UNIT_MICRO:
-                        sink.put("tus");
+                        sink.put("t");
                         break;
                     case LineTcpParser.ENTITY_UNIT_MILLI:
-                        sink.put("tms");
-                        break;
-                    case LineTcpParser.ENTITY_UNIT_SECOND:
-                        sink.put("ts");
-                        break;
-                    case LineTcpParser.ENTITY_UNIT_MINUTE:
-                        sink.put("tm");
-                        break;
-                    case LineTcpParser.ENTITY_UNIT_HOUR:
-                        sink.put("th");
+                        sink.put("m");
                         break;
                 }
             }

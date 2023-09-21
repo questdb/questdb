@@ -39,8 +39,5 @@ public class LineTcpTimestampAdapterTest {
         Assert.assertEquals(56799L, adapter.getMicros(56799000, LineTcpParser.ENTITY_UNIT_NANO));
         Assert.assertEquals(5679L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MICRO));
         Assert.assertEquals(5679000L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MILLI));
-        Assert.assertEquals(5679000000L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_SECOND));
-        Assert.assertEquals(340740000000L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MINUTE));
-        Assert.assertEquals(20444400000000L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_HOUR));
     }
 }

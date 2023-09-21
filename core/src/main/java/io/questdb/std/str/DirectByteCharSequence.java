@@ -58,11 +58,6 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         return this;
     }
 
-    public DirectByteCharSequence decHi(int dec) {
-        this.hi -= dec;
-        return this;
-    }
-
     public long getHi() {
         return hi;
     }

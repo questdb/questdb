@@ -55,15 +55,6 @@ public class LineTcpTimestampAdapter {
             case LineTcpParser.ENTITY_UNIT_MILLI:
                 adapter = LineMilliTimestampAdapter.INSTANCE;
                 break;
-            case LineTcpParser.ENTITY_UNIT_SECOND:
-                adapter = LineSecondTimestampAdapter.INSTANCE;
-                break;
-            case LineTcpParser.ENTITY_UNIT_MINUTE:
-                adapter = LineMinuteTimestampAdapter.INSTANCE;
-                break;
-            case LineTcpParser.ENTITY_UNIT_HOUR:
-                adapter = LineHourTimestampAdapter.INSTANCE;
-                break;
         }
         return adapter.getMicros(timestamp);
     }

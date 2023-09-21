@@ -80,17 +80,12 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "123i");
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "1i");
 
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "42t");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "-42t");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "9223372036854775807t");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "-9223372036854775808t");
-
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_NANO, "42tns");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "42tus");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MILLI, "42tms");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_SECOND, "42ts");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MINUTE, "42tm");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_HOUR, "42th");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "42t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "-42t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "9223372036854775807t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "-9223372036854775808t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_NANO, "42n");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MILLI, "42m");
 
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1.45");
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1e-13");
@@ -104,12 +99,9 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "xi");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "oXi");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "0xi");
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_tns");
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_tus");
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_tms");
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_ts");
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_tm");
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_th");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_t");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_n");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "foobar_m");
 
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "123a4");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "ox1");
@@ -177,25 +169,16 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                         case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
                             switch (unit) {
                                 case LineTcpParser.ENTITY_UNIT_NANO:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "tns");
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "n");
                                     break;
                                 case LineTcpParser.ENTITY_UNIT_MICRO:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "tus");
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t");
                                     break;
                                 case LineTcpParser.ENTITY_UNIT_MILLI:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "tms");
-                                    break;
-                                case LineTcpParser.ENTITY_UNIT_SECOND:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "ts");
-                                    break;
-                                case LineTcpParser.ENTITY_UNIT_MINUTE:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "tm");
-                                    break;
-                                case LineTcpParser.ENTITY_UNIT_HOUR:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "th");
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "m");
                                     break;
                                 default:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t");
+                                    Assert.assertEquals(expectedValue, entity.getValue().toString());
                             }
                             break;
                         default:
