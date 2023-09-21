@@ -555,10 +555,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.entries();
     }
 
-    public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
-        return writerPool.entries();
-    }
-
     public TableReader getReaderWithRepair(TableToken tableToken) {
         // todo: untested verification
         verifyTableToken(tableToken);
@@ -704,6 +700,10 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableWriter getWriterOrPublishCommand(TableToken tableToken, @NotNull AsyncWriterCommand asyncWriterCommand) {
         verifyTableToken(tableToken);
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
+    }
+
+    public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
+        return writerPool.entries();
     }
 
     public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
@@ -1159,16 +1159,23 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private void tryRepairTable(TableToken tableToken, RuntimeException rethrow) {
+    private void tryRepairTable(TableToken tableToken, CairoException rethrow) {
+        LOG.info()
+                .$("starting table repair [table=").$(tableToken)
+                .$(", dirName=").utf8(tableToken.getDirName())
+                .$(", cause=").$(rethrow.getFlyweightMessage())
+                .I$();
         try {
             writerPool.get(tableToken, "repair").close();
+            LOG.info().$("table repair succeeded [table=").$(tableToken).I$();
         } catch (EntryUnavailableException e) {
             // This is fine, writer is busy. Throw back origin error.
             throw rethrow;
         } catch (Throwable th) {
             LOG.critical()
-                    .$("could not repair before reading [dirName=").utf8(tableToken.getDirName())
-                    .$(" ,error=").$(th.getMessage()).I$();
+                    .$("table repair failed [dirName=").utf8(tableToken.getDirName())
+                    .$(", error=").$(th.getMessage())
+                    .I$();
             throw rethrow;
         }
     }

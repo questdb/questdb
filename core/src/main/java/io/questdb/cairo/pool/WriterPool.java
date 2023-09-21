@@ -418,7 +418,7 @@ public class WriterPool extends AbstractPool {
             String lockReason,
             @Nullable AsyncWriterCommand asyncWriterCommand
     ) {
-        assert null != lockReason;
+        assert lockReason != null;
         checkClosed();
 
         long thread = Thread.currentThread().getId();
@@ -643,19 +643,9 @@ public class WriterPool extends AbstractPool {
             return !WriterPool.this.returnToPool(this);
         }
 
-        public TableWriter goodbye() {
-            TableWriter w = writer;
-            if (writer != null) {
-                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
-                writer = null;
-            }
-            return w;
-        }
-
         public long getLastReleaseTime() {
             return lastReleaseTime;
         }
-
 
         public long getOwnerThread() {
             return owner;
@@ -667,6 +657,15 @@ public class WriterPool extends AbstractPool {
 
         public TableToken getTableToken() {
             return writer != null ? writer.getTableToken() : null;
+        }
+
+        public TableWriter goodbye() {
+            TableWriter w = writer;
+            if (writer != null) {
+                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
+                writer = null;
+            }
+            return w;
         }
     }
 }
