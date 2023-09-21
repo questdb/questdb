@@ -29,7 +29,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.std.*;
 
 
-//Metadata describing join conditions
+// Metadata describing join conditions
 public class JoinContext implements Mutable, Plannable {
     public static final ObjectFactory<JoinContext> FACTORY = JoinContext::new;
     private static final int TYPICAL_NUMBER_OF_JOIN_COLUMNS = 4;
@@ -40,6 +40,9 @@ public class JoinContext implements Mutable, Plannable {
     public final IntList bIndexes = new IntList();
     public final ObjList<CharSequence> bNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     public final ObjList<ExpressionNode> bNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
+    public final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
+    public final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
+    public final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     // indexes of parent join clauses
     public final IntHashSet parents = new IntHashSet(4);
     public int inCount;
@@ -57,6 +60,10 @@ public class JoinContext implements Mutable, Plannable {
 
         slaveIndex = -1;
         parents.clear();
+
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
     }
 
     public boolean isEmpty() {
