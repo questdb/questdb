@@ -65,7 +65,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
     @Override
     public T get(TableToken tableToken) {
-
         Entry<T> e = getEntry(tableToken);
 
         long lockOwner = e.lockOwner;

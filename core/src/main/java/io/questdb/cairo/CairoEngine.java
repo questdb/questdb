@@ -746,6 +746,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreSnapshots) {
         assert null != lockReason;
+        if (!ignoreSnapshots && snapshotAgent.isInProgress()) {
+            // prevent reader locking while a snapshot is ongoing
+            return REASON_SNAPSHOT_IN_PROGRESS;
+        }
         // busy metadata is same as busy reader from user perspective
         String lockedReason = REASON_BUSY_READER;
         if (metadataPool.lock(tableToken)) {
@@ -753,18 +757,13 @@ public class CairoEngine implements Closeable, WriterSource {
             if (lockedReason == null) {
                 // not locked
                 if (readerPool.lock(tableToken)) {
-                    if (ignoreSnapshots || !snapshotAgent.isInProgress()) {
-                        LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
-                        return null;
-                    } else {
-                        // prevent reader locking while a snapshot is ongoing
-                        readerPool.unlock(tableToken);
-                        lockedReason = REASON_SNAPSHOT_IN_PROGRESS;
-                    }
-                } else {
-                    lockedReason = REASON_BUSY_READER;
+                    LOG.info().$("locked [table=`").utf8(tableToken.getDirName())
+                            .$("`, thread=").$(Thread.currentThread().getId())
+                            .I$();
+                    return null;
                 }
                 writerPool.unlock(tableToken);
+                lockedReason = REASON_BUSY_READER;
             }
             metadataPool.unlock(tableToken);
         }
@@ -777,15 +776,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean lockReadersByTableToken(TableToken tableToken) {
-        if (readerPool.lock(tableToken)) {
-            if (snapshotAgent.isInProgress()) {
-                // prevent reader locking while a snapshot is ongoing
-                readerPool.unlock(tableToken);
-                return false;
-            }
-            return true;
+        if (snapshotAgent.isInProgress()) {
+            // prevent reader locking while a snapshot is ongoing
+            return false;
         }
-        return false;
+        return readerPool.lock(tableToken);
     }
 
     public TableToken lockTableName(CharSequence tableName, boolean isWal) {

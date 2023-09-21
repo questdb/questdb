@@ -70,10 +70,6 @@ public class SnapshotTest extends AbstractCairoTest {
             protected boolean testConnection(int fd) {
                 return false;
             }
-
-            {
-                setTimeout(-100); // trigger timeout on first check
-            }
         };
         AbstractCairoTest.setUpStatic();
     }
@@ -211,6 +207,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testRunWalPurgeJobLockTimeout() throws Exception {
+        circuitBreaker.setTimeout(-100); // trigger timeout on first check
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             SimpleWaitingLock lock = new SimpleWaitingLock();
@@ -437,6 +434,26 @@ public class SnapshotTest extends AbstractCairoTest {
             Assert.assertTrue(ff.remove(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
             assertException("snapshot prepare", 0, "Cannot append. File does not exist");
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareFailsOnLockedTableReader() throws Exception {
+        circuitBreaker.setTimeout(-100); // trigger timeout on first check
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int)");
+
+            TableToken tableToken = engine.getTableTokenIfExists("test");
+            engine.lockReadersByTableToken(tableToken);
+
+            try {
+                ddl("snapshot prepare");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
+            } finally {
+                engine.unlockReaders(tableToken);
+            }
         });
     }
 
