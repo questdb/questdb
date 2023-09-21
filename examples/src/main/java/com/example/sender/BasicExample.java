@@ -19,7 +19,7 @@ public class BasicExample {
                     .timestampColumn("birthday", Instant.parse("1847-02-11T00:00:00.00Z"))
                     .longColumn("id", 1)
                     .stringColumn("name", "Thomas Alva Edison")
-                    .atNow();
+                    .at(System.nanoTime(), ChronoUnit.NANOS);
         }
     }
 }
