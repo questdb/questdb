@@ -117,6 +117,10 @@ public class LogFactory implements Closeable {
         LogFactory.rootDir = rootDir;
     }
 
+    public static void configureSync() {
+        configureSync(null);
+    }
+
     public static void configureSync(LogInterceptor logInterceptor) {
         overwriteWithSyncLogging = true;
         interceptor = logInterceptor;
