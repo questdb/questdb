@@ -24,13 +24,10 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
-// import io.questdb.std.StatAggregator;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -39,48 +36,9 @@ import org.jetbrains.annotations.NotNull;
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
  */
 public class StdDevSampleDoubleGroupByFunction extends AbstractStatAggregatorGroupByFunction {
-    // private final StatAggregator statAggregator;
 
     public StdDevSampleDoubleGroupByFunction(@NotNull Function arg) {
         super(arg);
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        final double d = arg.getDouble(record);
-        if (Numbers.isFinite(d)) {
-            // double mean = 0;
-            // double sum = 0;
-            // long count = 1;
-            // double oldMean = mean;
-            // mean += (d - mean) / count;
-            // sum += (d - mean) * (d - oldMean);
-            // mapValue.putDouble(valueIndex, mean);
-            // mapValue.putDouble(valueIndex + 1, sum);
-            // mapValue.putLong(valueIndex + 2, 1L);
-            aggregate(mapValue, d);
-        } else {
-            mapValue.putDouble(valueIndex, 0);
-            mapValue.putDouble(valueIndex + 1, 0);
-            mapValue.putLong(valueIndex + 2, 0);
-        }
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        final double d = arg.getDouble(record);
-        if (Numbers.isFinite(d)) {
-            // double mean = mapValue.getDouble(valueIndex);
-            // double sum = mapValue.getDouble(valueIndex + 1);
-            // long count = mapValue.getLong(valueIndex + 2) + 1;
-            // double oldMean = mean;
-            // mean += (d - mean) / count;
-            // sum += (d - mean) * (d - oldMean);
-            // mapValue.putDouble(valueIndex, mean);
-            // mapValue.putDouble(valueIndex + 1, sum);
-            // mapValue.addLong(valueIndex + 2, 1L);
-            aggregate(mapValue, d);
-        }
     }
 
     @Override

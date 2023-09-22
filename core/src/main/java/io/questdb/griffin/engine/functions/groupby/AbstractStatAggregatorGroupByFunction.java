@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * This class, in addition, provides methods to aggregate statistics.
+ * This class, in addition, provides method to aggregate statistics.
  * We use the B. P. Welford algorithm which works by first aggregating sum of squares Sxx = sum[(X - mean) ^ 2].
  * Computation of standard deviation and variance is then simple (e.g. variance = Sxx / (n - 1))
  *
@@ -44,7 +44,6 @@ import org.jetbrains.annotations.NotNull;
  */
 
 public abstract class AbstractStatAggregatorGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
-    // protected double Sxx, Syy;
     protected final Function arg;
     protected int valueIndex;
 
@@ -56,14 +55,6 @@ public abstract class AbstractStatAggregatorGroupByFunction extends DoubleFuncti
         double mean = mapValue.getDouble(valueIndex);
         double sum = mapValue.getDouble(valueIndex + 1);
         long count = mapValue.getLong(valueIndex + 2) + 1;
-        // if (mapValue.getLong(valueIndex + 2) > 0) {
-        //     mean = mapValue.getDouble(valueIndex);
-        //     sum = mapValue.getDouble(valueIndex + 1);
-        //     count = mapValue.getLong(valueIndex + 2) + 1;
-        // } else {
-        //     count = 1;
-        //     sum = mean = oldMean = 0;
-        // }
 
         double oldMean = mean;
         mean += (value - mean) / count;
@@ -71,6 +62,25 @@ public abstract class AbstractStatAggregatorGroupByFunction extends DoubleFuncti
         mapValue.putDouble(valueIndex, mean);
         mapValue.putDouble(valueIndex + 1, sum);
         mapValue.addLong(valueIndex + 2, 1L);
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        final double d = arg.getDouble(record);
+        mapValue.putDouble(valueIndex, 0);
+        mapValue.putDouble(valueIndex + 1, 0);
+        mapValue.putLong(valueIndex + 2, 0);
+        if (Numbers.isFinite(d)) {
+            aggregate(mapValue, d);
+        }
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        final double d = arg.getDouble(record);
+        if (Numbers.isFinite(d)) {
+            aggregate(mapValue, d);
+        }
     }
 
     @Override

@@ -31,13 +31,13 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Standard deviation is calculated using an algorithm first proposed by B. P. Welford.
+ * Variance is calculated using an algorithm first proposed by B. P. Welford.
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
  */
-public class StdDevPopDoubleGroupByFunction extends AbstractStatAggregatorGroupByFunction {
+public class VarPopDoubleGroupByFunction extends AbstractStatAggregatorGroupByFunction {
 
-    public StdDevPopDoubleGroupByFunction(@NotNull Function arg) {
+    public VarPopDoubleGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 
@@ -46,14 +46,13 @@ public class StdDevPopDoubleGroupByFunction extends AbstractStatAggregatorGroupB
         long count = rec.getLong(valueIndex + 2);
         if (count > 0) {
             double sum = rec.getDouble(valueIndex + 1);
-            double variance = sum / count;
-            return Math.sqrt(variance);
+            return sum / count;
         }
         return Double.NaN;
     }
 
     @Override
     public String getName() {
-        return "stddev_pop";
+        return "var_pop";
     }
 }

@@ -696,6 +696,15 @@ io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFac
 # stddev_pop()
 io.questdb.griffin.engine.functions.groupby.StdDevPopDoubleGroupByFunctionFactory
 
+# variance()
+io.questdb.griffin.engine.functions.groupby.VarDoubleGroupByFunctionFactory
+
+# var_samp()
+io.questdb.griffin.engine.functions.groupby.VarSampleDoubleGroupByFunctionFactory
+
+# var_pop()
+io.questdb.griffin.engine.functions.groupby.VarPopDoubleGroupByFunctionFactory
+
 # strpos()
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
