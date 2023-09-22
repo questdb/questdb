@@ -50,7 +50,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.ByteSequence;
@@ -276,6 +275,7 @@ public class IODispatcherTest extends AbstractTest {
                 }
             };
 
+            //noinspection resource
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration() {
                         @Override
@@ -355,6 +355,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
+                            //noinspection resource
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
                                 public void close() {
@@ -5407,7 +5408,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     }
             )) {
-                HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
                     }
@@ -5421,38 +5422,39 @@ public class IODispatcherTest extends AbstractTest {
                     public HttpRequestProcessor select(CharSequence url) {
                         return null;
                     }
-                };
+                }) {
 
-                AtomicBoolean serverRunning = new AtomicBoolean(true);
-                SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
+                    AtomicBoolean serverRunning = new AtomicBoolean(true);
+                    SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
-                new Thread(() -> {
+                    new Thread(() -> {
+                        try {
+                            do {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(
+                                        (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                );
+                            } while (serverRunning.get());
+                        } finally {
+                            serverHaltLatch.countDown();
+                        }
+                    }).start();
+
+                    IntList openFds = new IntList();
+
+                    final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                    final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
                     try {
-                        do {
-                            dispatcher.run(0);
-                            dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                            );
-                        } while (serverRunning.get());
+                        for (int i = 0; i < 10; i++) {
+                            testMaxConnections0(dispatcher, sockAddr, openFds, buf);
+                        }
                     } finally {
-                        serverHaltLatch.countDown();
+                        Net.freeSockAddr(sockAddr);
+                        Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
+                        Assert.assertFalse(configuration.getLimit() < dispatcher.getConnectionCount());
+                        serverRunning.set(false);
+                        serverHaltLatch.await();
                     }
-                }).start();
-
-                IntList openFds = new IntList();
-
-                final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < 10; i++) {
-                        testMaxConnections0(dispatcher, sockAddr, openFds, buf);
-                    }
-                } finally {
-                    Net.freeSockAddr(sockAddr);
-                    Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
-                    Assert.assertFalse(configuration.getLimit() < dispatcher.getConnectionCount());
-                    serverRunning.set(false);
-                    serverHaltLatch.await();
                 }
             }
         });
@@ -5730,6 +5732,7 @@ public class IODispatcherTest extends AbstractTest {
                     final AtomicInteger totalEvents = new AtomicInteger();
                     final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
+                    final AtomicInteger errorCount = new AtomicInteger();
 
                     final Thread delayThread = new Thread(() -> {
                         while (!stopDelayThread.get()) {
@@ -5741,7 +5744,7 @@ public class IODispatcherTest extends AbstractTest {
                                     event.close();
                                     totalEvents.incrementAndGet();
                                 } catch (Exception e) {
-                                    e.printStackTrace();
+                                    errorCount.incrementAndGet();
                                 }
                             } else {
                                 Os.pause();
@@ -5759,6 +5762,7 @@ public class IODispatcherTest extends AbstractTest {
                     delayThread.join();
 
                     Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                    Assert.assertEquals(0, errorCount.get());
                 });
     }
 
@@ -6368,6 +6372,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
+                            //noinspection resource
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
                                 public void close() {
@@ -6535,6 +6540,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
+                            //noinspection resource
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
                                 public void close() {
@@ -6695,6 +6701,7 @@ public class IODispatcherTest extends AbstractTest {
                         @Override
                         public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
+                            //noinspection resource
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
                                 public void close() {
@@ -6888,6 +6895,7 @@ public class IODispatcherTest extends AbstractTest {
                     final AtomicInteger totalEvents = new AtomicInteger();
                     final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
+                    final AtomicInteger errorCounter = new AtomicInteger();
 
                     final Thread delayThread = new Thread(() -> {
                         while (!stopDelayThread.get()) {
@@ -6899,7 +6907,7 @@ public class IODispatcherTest extends AbstractTest {
                                     event.close();
                                     totalEvents.incrementAndGet();
                                 } catch (Exception e) {
-                                    e.printStackTrace();
+                                    errorCounter.incrementAndGet();
                                 }
                             } else {
                                 Os.pause();
@@ -6935,6 +6943,7 @@ public class IODispatcherTest extends AbstractTest {
                     delayThread.join();
 
                     Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                    Assert.assertEquals(0, errorCounter.get());
                 });
     }
 
@@ -7636,6 +7645,8 @@ public class IODispatcherTest extends AbstractTest {
             final AtomicInteger requestsReceived = new AtomicInteger();
             final AtomicBoolean finished = new AtomicBoolean(false);
             final SOCountDownLatch senderHalt = new SOCountDownLatch(senderCount);
+            final AtomicInteger errorCounter = new AtomicInteger();
+            //noinspection resource
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration() {
                         @Override
@@ -7647,153 +7658,156 @@ public class IODispatcherTest extends AbstractTest {
             )) {
 
                 // server will publish status of each request to this queue
-                final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024);
-                final MPSequence pubSeq = new MPSequence(queue.getCycle());
-                SCSequence subSeq = new SCSequence();
-                pubSeq.then(subSeq).then(pubSeq);
+                try (final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024)) {
+                    final MPSequence pubSeq = new MPSequence(queue.getCycle());
+                    SCSequence subSeq = new SCSequence();
+                    pubSeq.then(subSeq).then(pubSeq);
 
-                final AtomicBoolean serverRunning = new AtomicBoolean(true);
-                final SOCountDownLatch serverHaltLatch = new SOCountDownLatch(serverThreadCount);
+                    final AtomicBoolean serverRunning = new AtomicBoolean(true);
+                    final SOCountDownLatch serverHaltLatch = new SOCountDownLatch(serverThreadCount);
 
-                try {
-                    for (int j = 0; j < serverThreadCount; j++) {
-                        new Thread(() -> {
-                            final StringSink sink = new StringSink();
-                            final long responseBuf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
-                            Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
+                    try {
+                        for (int j = 0; j < serverThreadCount; j++) {
+                            new Thread(() -> {
+                                final StringSink sink = new StringSink();
+                                final long responseBuf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+                                Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
 
-                            final HttpRequestProcessor processor = new HttpRequestProcessor() {
-                                @Override
-                                public void onHeadersReady(HttpConnectionContext context) {
-                                    HttpRequestHeader headers = context.getRequestHeader();
-                                    sink.clear();
-                                    sink.put(headers.getMethodLine());
-                                    sink.put("\r\n");
-                                    ObjList<CharSequence> headerNames = headers.getHeaderNames();
-                                    for (int i = 0, n = headerNames.size(); i < n; i++) {
-                                        sink.put(headerNames.getQuick(i)).put(':');
-                                        sink.put(headers.getHeader(headerNames.getQuick(i)));
+                                final HttpRequestProcessor processor = new HttpRequestProcessor() {
+                                    @Override
+                                    public void onHeadersReady(HttpConnectionContext context) {
+                                        HttpRequestHeader headers = context.getRequestHeader();
+                                        sink.clear();
+                                        sink.put(headers.getMethodLine());
                                         sink.put("\r\n");
-                                    }
-                                    sink.put("\r\n");
-
-                                    boolean result;
-                                    try {
-                                        TestUtils.assertEquals(expected, sink);
-                                        result = true;
-                                    } catch (Exception e) {
-                                        result = false;
-                                    }
-
-                                    while (true) {
-                                        long cursor = pubSeq.next();
-                                        if (cursor < 0) {
-                                            continue;
+                                        ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                        for (int i = 0, n = headerNames.size(); i < n; i++) {
+                                            sink.put(headerNames.getQuick(i)).put(':');
+                                            sink.put(headers.getHeader(headerNames.getQuick(i)));
+                                            sink.put("\r\n");
                                         }
-                                        queue.get(cursor).valid = result;
-                                        pubSeq.done(cursor);
-                                        break;
-                                    }
+                                        sink.put("\r\n");
 
-                                    requestsReceived.incrementAndGet();
-
-                                    nf.sendRaw(context.getFd(), responseBuf, 1);
-                                }
-                            };
-
-                            HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
-                                @Override
-                                public void close() {
-                                }
-
-                                @Override
-                                public HttpRequestProcessor getDefaultProcessor() {
-                                    return processor;
-                                }
-
-                                @Override
-                                public HttpRequestProcessor select(CharSequence url) {
-                                    return null;
-                                }
-                            };
-
-                            try {
-                                while (serverRunning.get()) {
-                                    dispatcher.run(0);
-                                    dispatcher.processIOQueue(
-                                            (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                                    );
-                                }
-                            } finally {
-                                Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
-                                serverHaltLatch.countDown();
-                            }
-                        }).start();
-                    }
-
-                    AtomicInteger completedCount = new AtomicInteger();
-                    for (int j = 0; j < senderCount; j++) {
-                        int k = j;
-                        new Thread(() -> {
-                            long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                            try {
-                                for (int i = 0; i < N && !finished.get(); i++) {
-                                    int fd = Net.socketTcp(true);
-                                    try {
-                                        TestUtils.assertConnect(fd, sockAddr);
-                                        int len = request.length();
-                                        long buffer = TestUtils.toMemory(request);
+                                        boolean result;
                                         try {
-                                            Assert.assertEquals(len, Net.send(fd, buffer, len));
-                                            Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
-                                            LOG.info().$("i=").$(i).$(", j=").$(k).$();
-                                            Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
-                                        } finally {
-                                            Unsafe.free(buffer, len, MemoryTag.NATIVE_DEFAULT);
+                                            TestUtils.assertEquals(expected, sink);
+                                            result = true;
+                                        } catch (Exception e) {
+                                            result = false;
                                         }
-                                    } finally {
-                                        Net.close(fd);
-                                    }
-                                }
-                            } finally {
-                                completedCount.incrementAndGet();
-                                Net.freeSockAddr(sockAddr);
-                                senderHalt.countDown();
-                            }
-                        }).start();
-                    }
 
-                    int receiveCount = 0;
-                    while (receiveCount < N * senderCount) {
-                        long cursor = subSeq.next();
-                        if (cursor < 0) {
-                            if (cursor == -1 && completedCount.get() == senderCount) {
-                                Assert.fail("Not all requests successful, test failed, see previous failures");
-                                break;
-                            }
-                            Os.pause();
-                            continue;
+                                        while (true) {
+                                            long cursor = pubSeq.next();
+                                            if (cursor < 0) {
+                                                continue;
+                                            }
+                                            queue.get(cursor).valid = result;
+                                            pubSeq.done(cursor);
+                                            break;
+                                        }
+
+                                        requestsReceived.incrementAndGet();
+
+                                        nf.sendRaw(context.getFd(), responseBuf, 1);
+                                    }
+                                };
+
+                                @SuppressWarnings("resource")
+                                HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                                    @Override
+                                    public void close() {
+                                    }
+
+                                    @Override
+                                    public HttpRequestProcessor getDefaultProcessor() {
+                                        return processor;
+                                    }
+
+                                    @Override
+                                    public HttpRequestProcessor select(CharSequence url) {
+                                        return null;
+                                    }
+                                };
+
+                                try {
+                                    while (serverRunning.get()) {
+                                        dispatcher.run(0);
+                                        dispatcher.processIOQueue(
+                                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                        );
+                                    }
+                                } finally {
+                                    Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
+                                    serverHaltLatch.countDown();
+                                }
+                            }).start();
                         }
-                        boolean valid = queue.get(cursor).valid;
-                        subSeq.done(cursor);
-                        Assert.assertTrue(valid);
-                        receiveCount++;
+
+                        AtomicInteger completedCount = new AtomicInteger();
+                        for (int j = 0; j < senderCount; j++) {
+                            int k = j;
+                            new Thread(() -> {
+                                long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                                try {
+                                    for (int i = 0; i < N && !finished.get(); i++) {
+                                        int fd = Net.socketTcp(true);
+                                        try {
+                                            TestUtils.assertConnect(fd, sockAddr);
+                                            int len = request.length();
+                                            long buffer = TestUtils.toMemory(request);
+                                            try {
+                                                Assert.assertEquals(len, Net.send(fd, buffer, len));
+                                                Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
+                                                LOG.info().$("i=").$(i).$(", j=").$(k).$();
+                                                Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
+                                            } finally {
+                                                Unsafe.free(buffer, len, MemoryTag.NATIVE_DEFAULT);
+                                            }
+                                        } finally {
+                                            Net.close(fd);
+                                        }
+                                    }
+                                } finally {
+                                    completedCount.incrementAndGet();
+                                    Net.freeSockAddr(sockAddr);
+                                    senderHalt.countDown();
+                                }
+                            }).start();
+                        }
+
+                        int receiveCount = 0;
+                        while (receiveCount < N * senderCount) {
+                            long cursor = subSeq.next();
+                            if (cursor < 0) {
+                                if (cursor == -1 && completedCount.get() == senderCount) {
+                                    Assert.fail("Not all requests successful, test failed, see previous failures");
+                                    break;
+                                }
+                                Os.pause();
+                                continue;
+                            }
+                            boolean valid = queue.get(cursor).valid;
+                            subSeq.done(cursor);
+                            Assert.assertTrue(valid);
+                            receiveCount++;
+                        }
+                    } catch (Throwable e) {
+                        errorCounter.incrementAndGet();
+                        throw e;
+                    } finally {
+                        serverRunning.set(false);
+                        serverHaltLatch.await();
                     }
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    errorCounter.incrementAndGet();
                     throw e;
                 } finally {
-                    serverRunning.set(false);
-                    serverHaltLatch.await();
+                    finished.set(true);
+                    senderHalt.await();
                 }
-            } catch (Throwable e) {
-                e.printStackTrace();
-                throw e;
-            } finally {
-                finished.set(true);
-                senderHalt.await();
+                Assert.assertEquals(N * senderCount, requestsReceived.get());
+                Assert.assertEquals(0, errorCounter.get());
             }
-            Assert.assertEquals(N * senderCount, requestsReceived.get());
         });
     }
 
@@ -8864,17 +8878,10 @@ public class IODispatcherTest extends AbstractTest {
                     TestUtils.await(barrier);
                     for (int i = 0; i < count; i++) {
                         int index = rnd.nextPositiveInt() % requests.length;
-                        try {
-                            requester.execute(requests[index][0], requests[index][1]);
-                        } catch (Throwable e) {
-                            e.printStackTrace();
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
-                            throw e;
-                        }
+                        requester.execute(requests[index][0], requests[index][1]);
                     }
                 });
             } catch (Throwable e) {
-                e.printStackTrace();
                 errorCounter.incrementAndGet();
             } finally {
                 latch.countDown();

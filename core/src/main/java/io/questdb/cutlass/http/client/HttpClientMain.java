@@ -44,16 +44,37 @@ public class HttpClientMain {
             for (int i = 0; i < 1; i++) {
                 HttpClient.Request req = client.newRequest();
 
-                HttpClient.ResponseHeaders rsp = req
-                        .GET()
-                        .url("/exec")
-//                        .query("query", "cpu%20limit%20400000")
-                        .query("query", "cpu limit 2")
-//                .query("query", "cpu")
+                // query execution example
+//                HttpClient.Response rsp = req
+//                        .GET("localhost", 9000)
+//                        .url("/exec")
+//                        .query("query", "cpu limit 2")
+//                        .header("Accept", "gzip, deflate, br")
+//                        .header("SomethingElse", "vlad")
+//                        .authBasic("vlad", "hello")
+//                        .send();
+
+                // file upload example
+
+                HttpClient.MultipartRequest multipart = req
+                        .POST("localhost", 9000)
+                        .url("/imp")
+                        .query("fmt", "json")
+                        .query("name", "xy")
+                        .query("partitionBy", "NONE")
+                        .query("overwrite", "false")
+                        .query("skipLev", "false")
+                        .query("delimiter", "")
+                        .query("atomicitiy", "skipCol")
                         .header("Accept", "gzip, deflate, br")
                         .header("SomethingElse", "vlad")
                         .authBasic("vlad", "hello")
-                        .send("localhost", 9000);
+                        .multipart();
+
+                HttpClient.FormData data = multipart.formData("data", "2.txt");
+                data.put("5,6,7\r\n");
+                data.put("19,29,40");
+                HttpClient.Response rsp = multipart.send();
 
                 rsp.await();
 

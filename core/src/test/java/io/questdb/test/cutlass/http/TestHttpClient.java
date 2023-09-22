@@ -73,7 +73,7 @@ public class TestHttpClient implements QuietCloseable {
         try {
             HttpClient.Request req = httpClient.newRequest();
             req
-                    .GET()
+                    .GET("localhost", 9001)
                     .url(url);
 
             if (queryParams != null) {
@@ -87,7 +87,7 @@ public class TestHttpClient implements QuietCloseable {
                 req.authBasic(username, password);
             }
 
-            HttpClient.ResponseHeaders rsp = req.send("localhost", 9001);
+            HttpClient.Response rsp = req.send();
 
             rsp.await();
             ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
@@ -152,7 +152,7 @@ public class TestHttpClient implements QuietCloseable {
     ) {
         HttpClient.Request req = httpClient.newRequest();
         req
-                .GET()
+                .GET("localhost", 9001)
                 .url(url)
                 .query("query", sql);
 
@@ -160,7 +160,7 @@ public class TestHttpClient implements QuietCloseable {
             req.authBasic(username, password);
         }
 
-        HttpClient.ResponseHeaders rsp = req.send("localhost", 9001);
+        HttpClient.Response rsp = req.send();
 
         rsp.await();
         ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
