@@ -115,7 +115,7 @@ public class TestHttpClient implements QuietCloseable {
     ) {
         try {
             sink.clear();
-            toSink0(url, sql, sink, username, password);
+            toSinkGet0(url, sql, sink, username, password);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             if (!keepConnection) {
@@ -135,7 +135,7 @@ public class TestHttpClient implements QuietCloseable {
 
     public void toSink(CharSequence url, CharSequence sql, CharSink sink) {
         try {
-            toSink0(url, sql, sink, null, null);
+            toSinkGet0(url, sql, sink, null, null);
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -143,7 +143,7 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
-    private void toSink0(
+    private void toSinkGet0(
             CharSequence url,
             CharSequence sql,
             CharSink sink,
@@ -161,6 +161,43 @@ public class TestHttpClient implements QuietCloseable {
         }
 
         HttpClient.Response rsp = req.send();
+
+        rsp.await();
+        ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
+        Chunk chunk;
+
+        while ((chunk = chunkedResponse.recv()) != null) {
+            Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
+        }
+    }
+
+    private void toSinkImport0(
+            CharSequence url,
+            CharSequence tableName,
+            CharSequence csv,
+            CharSink sink,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
+        HttpClient.Request req = httpClient.newRequest();
+        req
+                .POST("localhost", 9001)
+                .url(url)
+                .query("name", tableName)
+                .query("partitionBy", "NONE")
+                .query("overwrite", "false")
+                .query("skipLev", "false")
+                .query("delimiter", "")
+                .query("atomicitiy", "skipCol")
+        ;
+
+        if (username != null && password != null) {
+            req.authBasic(username, password);
+        }
+        HttpClient.MultipartRequest multipart = req.multipart();
+        HttpClient.FormData data = multipart.formData("data");
+        data.put(csv);
+        HttpClient.Response rsp = multipart.send();
 
         rsp.await();
         ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
