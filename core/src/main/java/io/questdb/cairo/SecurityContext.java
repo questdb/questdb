@@ -65,7 +65,7 @@ public interface SecurityContext {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    void authorizeAssignServiceAccount();
+    void authorizeAssignServiceAccount(CharSequence serviceAccountName);
 
     void authorizeCopy();
 
@@ -150,7 +150,7 @@ public interface SecurityContext {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeUnassignServiceAccount();
+    void authorizeUnassignServiceAccount(CharSequence serviceAccountName);
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
