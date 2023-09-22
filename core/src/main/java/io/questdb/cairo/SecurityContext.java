@@ -167,7 +167,5 @@ public interface SecurityContext {
         return getPrincipal();
     }
 
-    default boolean isEnabled() {
-        return true;
-    }
+    boolean isEnabled();
 }
