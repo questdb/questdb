@@ -65,7 +65,7 @@ public interface SecurityContext {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    void authorizeAssignServiceAccount();
+    void authorizeAssignServiceAccount(CharSequence serviceAccountName);
 
     void authorizeCopy();
 
@@ -111,6 +111,8 @@ public interface SecurityContext {
 
     void authorizeRemoveUser();
 
+    void authorizeResumeWal(TableToken tableToken);
+
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
@@ -148,7 +150,7 @@ public interface SecurityContext {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeUnassignServiceAccount();
+    void authorizeUnassignServiceAccount(CharSequence serviceAccountName);
 
     void exitServiceAccount(CharSequence serviceAccountName);
 

@@ -3061,7 +3061,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 true
                         );
                     } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token:");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [");
                     }
                 });
     }

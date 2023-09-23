@@ -119,7 +119,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAssignServiceAccount() {
+    public void authorizeAssignServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -224,6 +224,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeResumeWal(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
@@ -304,7 +309,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignServiceAccount() {
+    public void authorizeUnassignServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
