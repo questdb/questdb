@@ -32,7 +32,7 @@ public class SqlKeywords {
     public static final int CASE_KEYWORD_LENGTH = 4;
     public static final String CONCAT_FUNC_NAME = "concat";
     public static final int GEOHASH_KEYWORD_LENGTH = 7;
-    private static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
+    protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
 
     public static boolean isAddKeyword(CharSequence tok) {
@@ -2149,13 +2149,6 @@ public class SqlKeywords {
         }
     }
 
-    static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
-        final boolean quoted = Chars.isQuoted(keyword);
-        if (!quoted && SqlKeywords.isKeyword(keyword)) {
-            throw SqlException.$(position, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"").put(keyword).put('"');
-        }
-    }
-
     private static boolean isGeoHashKeyword(CharSequence tok, int i) {
         return (tok.charAt(i++) | 32) == 'g'
                 && (tok.charAt(i++) | 32) == 'e'
@@ -2164,6 +2157,13 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 's'
                 && (tok.charAt(i) | 32) == 'h';
+    }
+
+    static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
+        final boolean quoted = Chars.isQuoted(keyword);
+        if (!quoted && SqlKeywords.isKeyword(keyword)) {
+            throw SqlException.$(position, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"").put(keyword).put('"');
+        }
     }
 
     static {

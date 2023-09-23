@@ -136,6 +136,10 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return getListIndexAt(keyIndex(cs));
     }
 
+    public boolean hasNull() {
+        return hasNull;
+    }
+
     public CharSequence keyAt(int index) {
         int index1 = -index - 1;
         return keys[index1];
