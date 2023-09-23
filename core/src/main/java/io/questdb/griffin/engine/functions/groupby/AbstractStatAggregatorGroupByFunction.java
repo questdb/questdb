@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * This class, in addition, provides method to aggregate statistics.
+ * The abstract class, in addition, provides a method to aggregate statistics.
  * We use the B. P. Welford algorithm which works by first aggregating sum of squares Sxx = sum[(X - mean) ^ 2].
  * Computation of standard deviation and variance is then simple (e.g. variance = Sxx / (n - 1))
  *

@@ -31,7 +31,7 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Standard deviation is calculated using an algorithm first proposed by B. P. Welford.
+ * Variance is calculated using an algorithm first proposed by B. P. Welford.
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
  */
