@@ -173,7 +173,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         testCount = 0;
         testTimeout();
-        if (testConnection(this.fd)) {
+        if (testConnection(fd)) {
             throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
     }

@@ -37,7 +37,7 @@ public interface TableNameRegistry extends Closeable {
     TableToken addTableAlias(String newName, TableToken tableToken);
 
     /**
-     * cleans the registry and releases all resources
+     * Cleans the registry and releases all resources
      */
     void close();
 
