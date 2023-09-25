@@ -2992,6 +2992,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testEraseColumnPrefixInJoinWithNestedUnion() throws Exception {
+        assertQuery(
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c left join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                "customers c" +
+                        " left join ((orders union orders) o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testEraseColumnPrefixInJoinWithOuterUnion() throws Exception {
+        assertQuery(
+                "select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join select [customerId] from (select-choose [customerId] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c)" +
+                        " union all" +
+                        " select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where customerId = 100) c)",
+                "(select c.customerId" +
+                        " from customers c" +
+                        " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100)" +
+                        " union all" +
+                        " (select c.customerId " +
+                        "  from customers c" +
+                        "  left join orders o on c.customerId = o.customerId" +
+                        "  where c.customerId = 100)",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testExcelODBCQ2() throws Exception {
         assertQuery(
                 "select-choose" +

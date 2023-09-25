@@ -133,7 +133,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     public void clear() {
-        clearForNextUnionModel();
+        clearForUnionModelInJoin();
         contextPool.clear();
         intHashSetPool.clear();
         joinClausesSwap1.clear();
@@ -156,7 +156,7 @@ public class SqlOptimiser implements Mutable {
         tempQueryModel = null;
     }
 
-    public void clearForNextUnionModel() {
+    public void clearForUnionModelInJoin() {
         constNameToIndex.clear();
         constNameToNode.clear();
         constNameToToken.clear();
@@ -1652,7 +1652,6 @@ public class SqlOptimiser implements Mutable {
             QueryModel validatingModel,
             boolean analyticCall
     ) throws SqlException {
-
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -1955,7 +1954,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private boolean hasAggregates(ExpressionNode node) {
-
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -2706,7 +2704,7 @@ public class SqlOptimiser implements Mutable {
 
             m = model.getJoinModels().getQuick(i).getUnionModel();
             if (m != null) {
-                clearForNextUnionModel();
+                clearForUnionModelInJoin();
                 optimiseJoins(m);
             }
         }

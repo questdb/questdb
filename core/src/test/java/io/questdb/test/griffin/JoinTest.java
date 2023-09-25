@@ -1735,7 +1735,7 @@ public class JoinTest extends AbstractCairoTest {
     public void testJoinContextIsolationInIntersect() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
-                    "CREATE TABLE IF NOT EXISTS t (\n" +
+                    "CREATE TABLE t (\n" +
                             "  created timestamp,\n" +
                             "  event short,\n" +
                             "  origin short\n" +
@@ -1770,7 +1770,7 @@ public class JoinTest extends AbstractCairoTest {
     public void testJoinContextIsolationInUnion() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
-                    "CREATE TABLE IF NOT EXISTS t (\n" +
+                    "CREATE TABLE t (\n" +
                             "  created timestamp,\n" +
                             "  event short,\n" +
                             "  origin short\n" +
