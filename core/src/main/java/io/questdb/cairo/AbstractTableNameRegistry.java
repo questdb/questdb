@@ -32,13 +32,13 @@ import java.util.function.Predicate;
 
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     // drop marker must contain special symbols to avoid a table created by the same name
-    protected final TableNameRegistryFileStore nameStore;
+    protected final TableNameRegistryStore nameStore;
     protected final Predicate<CharSequence> protectedTableResolver;
     private ConcurrentHashMap<TableToken> nameTokenMap;
     private ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
 
     public AbstractTableNameRegistry(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
-        this.nameStore = new TableNameRegistryFileStore(configuration, protectedTableResolver);
+        this.nameStore = new TableNameRegistryStore(configuration, protectedTableResolver);
         this.protectedTableResolver = protectedTableResolver;
     }
 

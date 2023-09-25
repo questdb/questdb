@@ -129,7 +129,6 @@ public class ColumnPurgeOperator implements Closeable {
         }
 
         final int errno = ff.errno();
-
         if (ff.exists(path)) {
             LOG.info().$("cannot delete file, will retry [path=").$(path).$(", errno=").$(errno).I$();
             return true;

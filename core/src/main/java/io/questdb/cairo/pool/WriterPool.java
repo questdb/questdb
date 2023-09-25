@@ -265,13 +265,13 @@ public class WriterPool extends AbstractPool {
                         e,
                         root,
                         engine.getDdlListener(tableToken),
+                        engine.getSnapshotAgent(),
                         engine.getMetrics()
                 );
             }
 
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
-
                 if (e.lockFd != -1) {
                     Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
                     TableUtils.lockName(path);
@@ -385,6 +385,7 @@ public class WriterPool extends AbstractPool {
                     e,
                     root,
                     engine.getDdlListener(tableToken),
+                    engine.getSnapshotAgent(),
                     engine.getMetrics()
             );
             e.ownershipReason = lockReason;
