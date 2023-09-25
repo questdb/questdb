@@ -87,6 +87,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
     public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
         assert Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName());
         metadata.renameTable(toTableName);
-        this.tableToken = metadata.getTableToken();
+        tableToken = metadata.getTableToken();
     }
 }

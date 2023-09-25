@@ -60,6 +60,7 @@ import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 public class WalTableFailureTest extends AbstractCairoTest {
+
     @Test
     public void testAddColumnFailToApplySequencerMetadataStructureChangeTransaction() throws Exception {
         assertMemoryLeak(() -> {
@@ -944,113 +945,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWalTableSuspendResume() throws Exception {
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
-            private int attempt = 0;
-
-            @Override
-            public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
-                    return -1;
-                }
-                return Files.openRW(name, opts);
-            }
-        };
-
-        assertMemoryLeak(filesFacade, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
-
-            compile("update " + tableToken.getTableName() + " set x = 1111");
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
-
-            drainWalQueue();
-
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-
-            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
-
-            compile("alter table " + tableToken.getTableName() + " resume wal");
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-
-            drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
-        });
-    }
-
-    @Test
-    public void testWalTableSuspendResumeFromTxn() throws Exception {
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
-            private int attempt = 0;
-
-            @Override
-            public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
-                    return -1;
-                }
-                return Files.openRW(name, opts);
-            }
-        };
-
-        assertMemoryLeak(filesFacade, () -> {
-
-            //1
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
-            //2 fail
-            compile("update " + tableToken.getTableName() + " set x = 1111");
-            //3
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
-            //4
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
-
-            drainWalQueue();
-
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-
-            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
-
-            try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from transaction 999"); // fails
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
-            }
-
-            compile("alter table " + tableToken.getTableName() + " resume wal from txn 3");
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            engine.releaseInactive(); // release writer from the pool
-            drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n1\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
-        });
-    }
-
-    @Test
-    public void testWalTableSuspendResumeSql() throws Exception {
-        assertMemoryLeak(ff, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
-            String nonWalTable = "W";
-            createStandardNonWalTable(nonWalTable);
-
-            assertAlterTableTypeFail("alter table " + nonWalTable + " resume wal", nonWalTable + " is not a WAL table");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wall", "'wal' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal frol", "'from' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from", "'transaction' or 'txn' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from tx", "'transaction' or 'txn' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn", "transaction value expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn -10", "invalid value [value=-]");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn 10AA", "invalid value [value=10AA]");
-
-            engine.getTableSequencerAPI().suspendTable(tableToken);
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertAlterTableTypeFail(
-                    "alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
-                    "table does not exist [table=" + tableToken.getTableName() + "ererer]"
-            );
-        });
-    }
-
-    @Test
     public void testWalTableResumeContinuesAfterEject() throws Exception {
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
@@ -1104,6 +998,112 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "1\tAB\t2022-02-24T01:00:00.000000Z\tEF\n" +
                     "2\tAB\t2022-02-24T02:00:00.000000Z\tEF\n", tableToken.getTableName());
             assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t0\t4\n", "wal_tables()");
+        });
+    }
+
+    @Test
+    public void testWalTableSuspendResume() throws Exception {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            compile("update " + tableToken.getTableName() + " set x = 1111;");
+            compile("update " + tableToken.getTableName() + " set sym = 'XXX';");
+            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            compile("alter table " + tableToken.getTableName() + " resume wal;");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
+        });
+    }
+
+    @Test
+    public void testWalTableSuspendResumeFromTxn() throws Exception {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+            //1
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            //2 fail
+            compile("update " + tableToken.getTableName() + " set x = 1111");
+            //3
+            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
+            //4
+            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            try {
+                compile("alter table " + tableToken.getTableName() + " resume wal from transaction 999;"); // fails
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
+            }
+
+            compile("alter table " + tableToken.getTableName() + " resume wal from txn 3;");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            engine.releaseInactive(); // release writer from the pool
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n1\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
+        });
+    }
+
+    @Test
+    public void testWalTableSuspendResumeSql() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            String nonWalTable = "W";
+            createStandardNonWalTable(nonWalTable);
+
+            assertAlterTableTypeFail("alter table " + nonWalTable + " resume wal", nonWalTable + " is not a WAL table");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wall", "'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal frol", "'from' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from", "'transaction' or 'txn' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from tx", "'transaction' or 'txn' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn", "transaction value expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn -10", "invalid value [value=-]");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn 10AA", "invalid value [value=10AA]");
+
+            engine.getTableSequencerAPI().suspendTable(tableToken);
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertAlterTableTypeFail(
+                    "alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
+                    "table does not exist [table=" + tableToken.getTableName() + "ererer]"
+            );
         });
     }
 
@@ -1214,7 +1214,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Misc.free(alterOperation);
             }
         });
-
     }
 
     private void failToApplyDoubleAlter(Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
