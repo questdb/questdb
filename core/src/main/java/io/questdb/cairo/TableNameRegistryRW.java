@@ -37,7 +37,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     public TableNameRegistryRW(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
         super(configuration, protectedTableResolver);
-        if (!this.nameStore.lock()) {
+        if (!nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
             }
@@ -90,7 +90,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
         if (tableToken.isWal()) {
-            nameStore.appendEntry(tableToken);
+            nameStore.logAddTable(tableToken);
         }
         reverseTableNameTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
     }
@@ -119,7 +119,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             if (nameTableTokenMap.remove(oldName, tableToken)) {
                 // Persist to file
                 nameStore.logDropTable(tableToken);
-                nameStore.appendEntry(newNameRecord);
+                nameStore.logAddTable(newNameRecord);
                 reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
                 return newNameRecord;
             } else {
@@ -132,12 +132,11 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         }
     }
 
-
     @Override
     public void replaceAlias(TableToken alias, TableToken replaceWith) {
         if (nameTableTokenMap.remove(alias.getTableName(), alias)) {
             nameStore.logDropTable(alias);
-            nameStore.appendEntry(replaceWith);
+            nameStore.logAddTable(replaceWith);
             reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
         }
     }
