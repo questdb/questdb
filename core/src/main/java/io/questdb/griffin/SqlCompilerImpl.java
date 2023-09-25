@@ -402,7 +402,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
-            String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
+            final String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
             tok = expectToken(lexer, expectedTokenDescription);
 
             if (SqlKeywords.isAddKeyword(tok)) {
@@ -557,7 +557,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
                 tok = SqlUtil.fetchNext(lexer); // optional from part
                 long fromTxn = -1;
-                if (tok != null) {
+                if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isFromKeyword(tok)) {
                         tok = expectToken(lexer, "'transaction' or 'txn'");
                         if (!(SqlKeywords.isTransactionKeyword(tok) || SqlKeywords.isTxnKeyword(tok))) {
