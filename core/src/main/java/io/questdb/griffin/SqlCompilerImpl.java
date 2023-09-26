@@ -402,7 +402,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
-            String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
+            final String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
             tok = expectToken(lexer, expectedTokenDescription);
 
             if (SqlKeywords.isAddKeyword(tok)) {
@@ -557,7 +557,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
                 tok = SqlUtil.fetchNext(lexer); // optional from part
                 long fromTxn = -1;
-                if (tok != null) {
+                if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isFromKeyword(tok)) {
                         tok = expectToken(lexer, "'transaction' or 'txn'");
                         if (!(SqlKeywords.isTransactionKeyword(tok) || SqlKeywords.isTxnKeyword(tok))) {
@@ -1665,6 +1665,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                         DefaultLifecycleManager.INSTANCE,
                         configuration.getRoot(),
                         engine.getDdlListener(tableToken),
+                        NoOpDatabaseSnapshotAgent.INSTANCE,
                         engine.getMetrics()
                 );
             } else {
@@ -3310,7 +3311,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             int srcLen = srcPath.length();
 
             // backup table registry file (tables.d.<last>)
-            int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, srcPath, sink);
+            // Note: this is unsafe way to back up table name registry,
+            //       but since we're going to deprecate BACKUP, that's ok
+            int version = TableNameRegistryStore.findLastTablesFileVersion(ff, srcPath, sink);
             srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
             dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$(); // reset to 0
             LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
