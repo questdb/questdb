@@ -2578,6 +2578,37 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testContextClearsTransactionFlag() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2, 60);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), true, -2)) {
+                    connection.setAutoCommit(true);
+                    try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                            "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
+                        pstmt.execute();
+                    }
+                    connection.prepareStatement("BEGIN").execute();
+                }
+
+                for (int i = 0; i < 100; i++) {
+                    try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                        connection.prepareStatement("insert into t values (1, 1)").execute();
+                    }
+                }
+
+                assertSql("count\n" +
+                        "100\n", "select count(*) from t");
+            }
+        });
+    }
+
+    @Test
     @Ignore
     public void testCopyIn() throws SQLException, SqlException {
         try (
@@ -3819,12 +3850,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testInsertBinaryOverHalfMb() throws Exception {
-        final int maxLength = 524287;
-        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
-    }
-
-    @Test
     public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
         testBinaryInsert(maxLength, true, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
@@ -3833,6 +3858,12 @@ if __name__ == "__main__":
     @Test
     public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
+        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
+    }
+
+    @Test
+    public void testInsertBinaryOverHalfMb() throws Exception {
+        final int maxLength = 524287;
         testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
@@ -7155,7 +7186,6 @@ nodejs code:
             testAddColumnBusyWriter(false, queryStartedCountDown);
         });
     }
-
 
     @Test
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {

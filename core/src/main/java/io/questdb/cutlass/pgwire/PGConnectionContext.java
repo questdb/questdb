@@ -332,6 +332,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public void clear() {
         super.clear();
+        transactionState = NO_TRANSACTION;
         freeBuffers();
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
