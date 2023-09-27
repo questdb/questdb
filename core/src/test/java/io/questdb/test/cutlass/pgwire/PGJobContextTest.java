@@ -2814,6 +2814,37 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDiscardClearsTransactionFlag() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2, 60);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                    try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                            "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
+                        pstmt.execute();
+                    }
+                    connection.prepareStatement("insert into t values (1, 1)").execute();
+                    connection.prepareStatement("COMMIT").execute();
+                    connection.prepareStatement("DISCARD ALL").execute();
+
+                    try (final Connection conn2 = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                        for (int i = 0; i < 100; i++) {
+                            conn2.prepareStatement("insert into t values (1, 1)").execute();
+                        }
+                    }
+                }
+                assertSql("count\n" +
+                        "101\n", "select count(*) from t");
+            }
+        });
+    }
+
+    @Test
     public void testDisconnectDuringAuth() throws Exception {
         skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
         for (int i = 0; i < 3; i++) {

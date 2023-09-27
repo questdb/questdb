@@ -36,7 +36,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -114,7 +113,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     //stores result format codes (0=Text,1=Binary) from the latest bind message
     //we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
     //pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
-    private final IntList bindSelectColumnFormats;
+    private final IntList bindSelectColumnFormats = new IntList();
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
@@ -123,6 +122,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final int forceRecvFragmentationChunkSize;
     private final int forceSendFragmentationChunkSize;
     private final int maxBlobSizeOnQuery;
+    private final Metrics metrics;
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final WeakMutableObjectPool<Portal> namedPortalPool;
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
@@ -136,7 +136,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final int sendBufferSize;
     private final IntList syncActions = new IntList(4);
     private final SCSequence tempSequence = new SCSequence();
-    private final TypeManager typeManager;
     // insert 'statements' are cached only for the duration of user session
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
@@ -214,7 +213,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         super(configuration.getFactoryProvider().getPGWireSocketFactory(), configuration.getNetworkFacade(), LOG);
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
-        this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -236,7 +234,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
 
-        final Metrics metrics = engine.getMetrics();
+        this.metrics = engine.getMetrics();
         final boolean enableSelectCache = configuration.isSelectCacheEnabled();
         final int selectBlockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
         final int selectRowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
@@ -266,7 +264,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
 
         this.batchCallback = new PGConnectionBatchCallback();
-        this.bindSelectColumnFormats = new IntList();
         this.queryTag = TAG_OK;
         this.queryContainsSecret = false;
         FactoryProvider factoryProvider = configuration.getFactoryProvider();
@@ -332,35 +329,68 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public void clear() {
         super.clear();
-        transactionState = NO_TRANSACTION;
+
         freeBuffers();
+        completed = true;
+        prepareForNewQuery();
+        clearWriters();
+        evictNamedStatementWrappersAndClear();
+        clearCursorAndFactory();
+
+        // Clear every field, even if already cleaned to be on the safe side.
+        bindSelectColumnFormats.clear();
+        bindVariableTypes.clear();
+        characterStore.clear();
+        circuitBreaker.clear();
+
+        clearPool(namedPortalMap, namedPortalPool, "named portal");
+        clearPool(namedStatementMap, namedStatementWrapperPool, "named statement");
+
+        pendingWriters.clear();
+        responseAsciiSink.reset();
+        selectColumnTypes.clear();
+        syncActions.clear();
+        utf8Sink.clear();
+        if (activeBindVariableTypes != null) {
+            activeBindVariableTypes.clear();
+        }
+        if (activeSelectColumnTypes != null) {
+            activeSelectColumnTypes.clear();
+        }
+        authenticator.clear();
+        bindVariableService.clear();
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
-        responseAsciiSink.reset();
-        prepareForNewQuery();
-        typeManager.clear();
-        clearWriters();
-        typesAndInsertCache.clear();
-        evictNamedStatementWrappersAndClear();
-        namedPortalMap.clear();
-        bindVariableService.clear();
-        bindVariableTypes.clear();
-        binarySequenceParamsPool.clear();
-        resumeProcessor = null;
         completed = true;
-        clearCursorAndFactory();
-        totalReceived = 0;
-        typesAndSelectIsCached = true;
-        typesAndUpdateIsCached = false;
-        statementTimeout = -1L;
-        authenticator.clear();
-        isPausedQuery = false;
-        isEmptyQuery = false;
-        queryContainsSecret = false;
-        tlsSessionStarting = false;
+        assert currentCursor == null;
+        assert currentFactory == null;
         errorSkipToSync = false;
-        replyAndContinue = false;
         freezeRecvBuffer = false;
+        isEmptyQuery = false;
+        isPausedQuery = false;
+        lastMsgType = 0;
+        maxReceiveRows = 0;
+        maxSendRows = 0;
+        parsePhaseBindVariableCount = 0;
+        queryContainsSecret = false;
+        queryTag = null;
+        queryText = null;
+        replyAndContinue = false;
+        resumeProcessor = null;
+        rowCount = 0;
+        sendParameterDescription = false;
+        sendRNQ = false;
+        statementTimeout = -1L;
+        suspendEvent = null;
+        tlsSessionStarting = false;
+        totalReceived = 0;
+        transactionState = NO_TRANSACTION;
+        assert typesAndInsert == null;
+        assert typesAndSelect == null;
+        typesAndSelectIsCached = true;
+        assert typesAndUpdate == null;
+        typesAndUpdateIsCached = false;
+        wrapper = null;
     }
 
     @Override
@@ -410,86 +440,91 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public void handleClientOperation(int operation) throws Exception {
         assert authenticator != null;
 
-        handleTlsRequest();
-        if (tlsSessionStarting) {
-            if (bufferRemainingSize > 0) {
-                doSend(bufferRemainingOffset, bufferRemainingSize);
-            }
-            tlsSessionStarting = false;
-            if (socket.startTlsSession() != 0) {
-                LOG.error().$("failed to create new TLS session").$();
-                throw BadProtocolException.INSTANCE;
-            }
-            // Start listening for read.
-            throw PeerIsSlowToWriteException.INSTANCE;
-        }
-        handleAuthentication();
-
         try {
-            if (isPausedQuery) {
-                isPausedQuery = false;
-                if (resumeProcessor != null) {
-                    resumeProcessor.resume(true);
+            handleTlsRequest();
+            if (tlsSessionStarting) {
+                if (bufferRemainingSize > 0) {
+                    doSend(bufferRemainingOffset, bufferRemainingSize);
                 }
-            } else if (bufferRemainingSize > 0) {
-                doSend(bufferRemainingOffset, bufferRemainingSize);
-                if (resumeProcessor != null) {
-                    resumeProcessor.resume(false);
+                tlsSessionStarting = false;
+                if (socket.startTlsSession() != 0) {
+                    LOG.error().$("failed to create new TLS session").$();
+                    throw BadProtocolException.INSTANCE;
                 }
-                if (replyAndContinue) {
-                    replyAndContinue();
-                }
+                // Start listening for read.
+                throw PeerIsSlowToWriteException.INSTANCE;
             }
+            handleAuthentication();
 
-            long readOffsetBeforeParse = -1;
-            // exit from this loop is via exception when either need wait to read / write from socket
-            // or disconnection is detected / requested
-            //noinspection InfiniteLoopStatement
-            while (true) {
+            try {
+                if (isPausedQuery) {
+                    isPausedQuery = false;
+                    if (resumeProcessor != null) {
+                        resumeProcessor.resume(true);
+                    }
+                } else if (bufferRemainingSize > 0) {
+                    doSend(bufferRemainingOffset, bufferRemainingSize);
+                    if (resumeProcessor != null) {
+                        resumeProcessor.resume(false);
+                    }
+                    if (replyAndContinue) {
+                        replyAndContinue();
+                    }
+                }
 
-                // Read more from socket or throw when
-                if (
-                    // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
-                        readOffsetBeforeParse == recvBufferReadOffset
-                                // - recv buffer is empty
-                                || recvBufferReadOffset == recvBufferWriteOffset
-                                // - socket is signalled ready to read at the first iteration of this loop
-                                || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
-                ) {
-                    // free up recv buffer
-                    if (!freezeRecvBuffer) {
-                        if (recvBufferReadOffset == recvBufferWriteOffset) {
-                            clearRecvBuffer();
-                        } else if (recvBufferReadOffset > 0) {
-                            // nothing changed?
-                            // shift to start
-                            shiftReceiveBuffer(recvBufferReadOffset);
+                long readOffsetBeforeParse = -1;
+                // exit from this loop is via exception when either need wait to read / write from socket
+                // or disconnection is detected / requested
+                //noinspection InfiniteLoopStatement
+                while (true) {
+
+                    // Read more from socket or throw when
+                    if (
+                        // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
+                            readOffsetBeforeParse == recvBufferReadOffset
+                                    // - recv buffer is empty
+                                    || recvBufferReadOffset == recvBufferWriteOffset
+                                    // - socket is signalled ready to read at the first iteration of this loop
+                                    || (operation == IOOperation.READ && readOffsetBeforeParse == -1)
+                    ) {
+                        // free up recv buffer
+                        if (!freezeRecvBuffer) {
+                            if (recvBufferReadOffset == recvBufferWriteOffset) {
+                                clearRecvBuffer();
+                            } else if (recvBufferReadOffset > 0) {
+                                // nothing changed?
+                                // shift to start
+                                shiftReceiveBuffer(recvBufferReadOffset);
+                            }
                         }
+
+                        recv();
                     }
 
-                    recv();
+                    // Parse will update the value of recvBufferOffset upon completion of
+                    // logical block. We cannot count on return value because 'parse' may try to
+                    // respond to client and fail with exception. When it does fail we would have
+                    // to retry 'send' but not parse the same input again
+                    readOffsetBeforeParse = recvBufferReadOffset;
+                    totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+                    parse(
+                            recvBuffer + recvBufferReadOffset,
+                            (int) (recvBufferWriteOffset - recvBufferReadOffset)
+                    );
                 }
-
-                // Parse will update the value of recvBufferOffset upon completion of
-                // logical block. We cannot count on return value because 'parse' may try to
-                // respond to client and fail with exception. When it does fail we would have
-                // to retry 'send' but not parse the same input again
-                readOffsetBeforeParse = recvBufferReadOffset;
-                totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                parse(
-                        recvBuffer + recvBufferReadOffset,
-                        (int) (recvBufferWriteOffset - recvBufferReadOffset)
-                );
+            } catch (SqlException e) {
+                handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
+            } catch (ImplicitCastException e) {
+                handleException(-1, e.getFlyweightMessage(), false, -1, true);
+            } catch (CairoException e) {
+                handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
             }
-        } catch (SqlException e) {
-            handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
-        } catch (ImplicitCastException e) {
-            handleException(-1, e.getFlyweightMessage(), false, -1, true);
-        } catch (CairoException e) {
-            handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
-            if (e.isEntityDisabled()) {
-                throw PeerDisconnectedException.INSTANCE;
-            }
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
+            // BAU, not error metric
+            throw e;
+        } catch (Throwable th) {
+            metrics.pgWire().getErrorCounter().inc();
+            throw th;
         }
     }
 
@@ -1207,6 +1242,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private <T extends Mutable> void clearPool(CharSequenceObjHashMap<T> map, WeakMutableObjectPool<T> pool, String poolName) {
+        for (int i = 0, n = map.keys().size(); i < n; i++) {
+            CharSequence key = map.keys().get(i);
+            pool.push(map.get(key));
+        }
+        map.clear();
+        int l = pool.resetLeased();
+        if (l != 0) {
+            LOG.critical().$(poolName).$(" pool is not empty at context clear [fd=").$(socket.getFd())
+                    .$(" leased=").$(l).I$();
+        }
+    }
+
     private void clearRecvBuffer() {
         recvBufferWriteOffset = 0;
         recvBufferReadOffset = 0;
@@ -1289,7 +1337,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void configureContextFromNamedStatement(CharSequence statementName, @Nullable @Transient CairoEngine engine)
+    private void configureContextFromNamedStatement(CharSequence statementName)
             throws BadProtocolException, SqlException {
         this.sendParameterDescription = statementName != null;
 
@@ -1304,7 +1352,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             LOG.debug().$("named statement [name=").$(statementName).I$();
             wrapper = namedStatementMap.get(statementName);
             if (wrapper != null) {
-                setupVariableSettersFromWrapper(wrapper, engine);
+                setupVariableSettersFromWrapper(wrapper);
             } else {
                 // todo: when we have nothing for prepared statement name we need to produce an error
                 LOG.error().$("statement does not exist [name=").$(statementName).I$();
@@ -1670,6 +1718,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        metrics.pgWire().getErrorCounter().inc();
         clearCursorAndFactory();
         if (interruption) {
             prepareErrorResponse(position, message);
@@ -1755,10 +1804,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     .$(", totalReceived=").$(totalReceived)
                     .I$();
             throw BadProtocolException.INSTANCE;
-        }
-
-        if (!sqlExecutionContext.getSecurityContext().isEnabled()) {
-            throw CairoException.entityIsDisabled(sqlExecutionContext.getSecurityContext().getPrincipal());
         }
 
         // msgLen does not take into account type byte
@@ -2040,7 +2085,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             clearCursorAndFactory();
         }
 
-        configureContextFromNamedStatement(statementName, engine);
+        configureContextFromNamedStatement(statementName);
         if (portalName != null) {
             configurePortal(portalName, statementName);
         }
@@ -2289,7 +2334,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
-        configureContextFromNamedStatement(target, engine);
+        configureContextFromNamedStatement(target);
 
         // initialize activeBindVariableTypes from bind variable service
         final int n = bindVariableService.getIndexedVariableCount();
@@ -2739,8 +2784,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void setupVariableSettersFromWrapper(
-            @Transient NamedStatementWrapper wrapper,
-            @Nullable @Transient CairoEngine engine
+            @Transient NamedStatementWrapper wrapper
     ) throws SqlException {
         queryText = wrapper.queryText;
         if (!wrapper.queryContainsSecret) {
