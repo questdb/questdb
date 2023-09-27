@@ -22,31 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractQueueConsumerJob<T> implements Job {
-    protected final RingQueue<T> queue;
-    protected final Sequence subSeq;
+public class StdDevPopGroupByFunction extends AbstractStdDevGroupByFunction {
 
-    public AbstractQueueConsumerJob(RingQueue<T> queue, Sequence subSeq) {
-        this.queue = queue;
-        this.subSeq = subSeq;
+    public StdDevPopGroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        if (!canRun()) {
-            return false;
+    public double getDouble(Record rec) {
+        long count = rec.getLong(valueIndex + 2);
+        if (count > 0) {
+            double sum = rec.getDouble(valueIndex + 1);
+            double variance = sum / count;
+            return Math.sqrt(variance);
         }
-        final long cursor = subSeq.next();
-        return cursor == -2 || (cursor > -1 && doRun(workerId, cursor, runStatus));
+        return Double.NaN;
     }
 
-    protected boolean canRun() {
-        return true;
+    @Override
+    public String getName() {
+        return "stddev_pop";
     }
-
-    protected abstract boolean doRun(int workerId, long cursor, RunStatus runStatus);
 }

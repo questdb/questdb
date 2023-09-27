@@ -22,31 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.griffin.engine.functions.groupby;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public abstract class AbstractQueueConsumerJob<T> implements Job {
-    protected final RingQueue<T> queue;
-    protected final Sequence subSeq;
-
-    public AbstractQueueConsumerJob(RingQueue<T> queue, Sequence subSeq) {
-        this.queue = queue;
-        this.subSeq = subSeq;
+public class StdDevSampleGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "stddev_samp(D)";
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        if (!canRun()) {
-            return false;
-        }
-        final long cursor = subSeq.next();
-        return cursor == -2 || (cursor > -1 && doRun(workerId, cursor, runStatus));
-    }
-
-    protected boolean canRun() {
+    public boolean isGroupBy() {
         return true;
     }
 
-    protected abstract boolean doRun(int workerId, long cursor, RunStatus runStatus);
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new StdDevSampleGroupByFunction(args.getQuick(0));
+    }
 }

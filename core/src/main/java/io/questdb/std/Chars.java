@@ -572,6 +572,19 @@ public final class Chars {
         return true;
     }
 
+    public static boolean isDoubleQuote(char c) {
+        return c == '"';
+    }
+
+    public static boolean isDoubleQuoted(CharSequence s) {
+        if (s == null || s.length() < 2) {
+            return false;
+        }
+
+        char open = s.charAt(0);
+        return isDoubleQuote(open) && open == s.charAt(s.length() - 1);
+    }
+
     public static boolean isMalformed3(int b1, int b2, int b3) {
         return b1 == -32 && (b2 & 224) == 128 || (b2 & 192) != 128 || (b3 & 192) != 128;
     }

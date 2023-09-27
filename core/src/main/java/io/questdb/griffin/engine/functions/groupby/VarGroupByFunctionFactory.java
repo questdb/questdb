@@ -22,31 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.griffin.engine.functions.groupby;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public abstract class AbstractQueueConsumerJob<T> implements Job {
-    protected final RingQueue<T> queue;
-    protected final Sequence subSeq;
-
-    public AbstractQueueConsumerJob(RingQueue<T> queue, Sequence subSeq) {
-        this.queue = queue;
-        this.subSeq = subSeq;
-    }
-
+public class VarGroupByFunctionFactory extends VarSampleGroupByFunctionFactory {
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        if (!canRun()) {
-            return false;
-        }
-        final long cursor = subSeq.next();
-        return cursor == -2 || (cursor > -1 && doRun(workerId, cursor, runStatus));
+    public String getSignature() {
+        return "variance(D)";
     }
-
-    protected boolean canRun() {
-        return true;
-    }
-
-    protected abstract boolean doRun(int workerId, long cursor, RunStatus runStatus);
 }
