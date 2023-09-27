@@ -307,6 +307,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     @Override
     public void clear() {
         super.clear();
+        transactionState = NO_TRANSACTION;
         freeBuffers();
         sendBufferPtr = sendBuffer;
         requireInitialMessage = true;
