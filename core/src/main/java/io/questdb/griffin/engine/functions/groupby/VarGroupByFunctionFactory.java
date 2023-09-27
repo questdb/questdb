@@ -24,35 +24,16 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.std.Numbers;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-/**
- * Variance is calculated using an algorithm first proposed by B. P. Welford.
- *
- * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
- */
-public class VarPopDoubleGroupByFunction extends AbstractStatAggregatorGroupByFunction {
-
-    public VarPopDoubleGroupByFunction(@NotNull Function arg) {
-        super(arg);
-    }
-
+public class VarGroupByFunctionFactory extends VarSampleGroupByFunctionFactory {
     @Override
-    public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 2);
-        if (count > 0) {
-            double sum = rec.getDouble(valueIndex + 1);
-            return sum / count;
-        }
-        return Double.NaN;
-    }
-
-    @Override
-    public String getName() {
-        return "var_pop";
+    public String getSignature() {
+        return "variance(D)";
     }
 }

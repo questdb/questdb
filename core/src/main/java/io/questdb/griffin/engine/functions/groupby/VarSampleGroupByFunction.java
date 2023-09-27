@@ -24,16 +24,30 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
+import org.jetbrains.annotations.NotNull;
 
-public class VarDoubleGroupByFunctionFactory extends VarSampleDoubleGroupByFunctionFactory {
+public class VarSampleGroupByFunction extends AbstractStdDevGroupByFunction {
+
+    public VarSampleGroupByFunction(@NotNull Function arg) {
+        super(arg);
+    }
+
     @Override
-    public String getSignature() {
-        return "variance(D)";
+    public double getDouble(Record rec) {
+        long count = rec.getLong(valueIndex + 2);
+        if (count - 1 > 0) {
+            double sum = rec.getDouble(valueIndex + 1);
+            return sum / (count - 1);
+        }
+        return Double.NaN;
+    }
+
+    @Override
+    public String getName() {
+        return "var_samp";
     }
 }

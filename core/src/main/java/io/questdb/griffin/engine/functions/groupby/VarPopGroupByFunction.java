@@ -30,30 +30,24 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-/**
- * Standard deviation is calculated using an algorithm first proposed by B. P. Welford.
- *
- * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
- */
-public class StdDevSampleDoubleGroupByFunction extends AbstractStatAggregatorGroupByFunction {
+public class VarPopGroupByFunction extends AbstractStdDevGroupByFunction {
 
-    public StdDevSampleDoubleGroupByFunction(@NotNull Function arg) {
+    public VarPopGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 
     @Override
     public double getDouble(Record rec) {
         long count = rec.getLong(valueIndex + 2);
-        if (count - 1 > 0) {
+        if (count > 0) {
             double sum = rec.getDouble(valueIndex + 1);
-            double variance = sum / (count - 1);
-            return Math.sqrt(variance);
+            return sum / count;
         }
         return Double.NaN;
     }
 
     @Override
     public String getName() {
-        return "stddev_samp";
+        return "var_pop";
     }
 }

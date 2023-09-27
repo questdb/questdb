@@ -30,14 +30,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-/**
- * Standard deviation is calculated using an algorithm first proposed by B. P. Welford.
- *
- * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
- */
-public class StdDevPopDoubleGroupByFunction extends AbstractStatAggregatorGroupByFunction {
+public class StdDevPopGroupByFunction extends AbstractStdDevGroupByFunction {
 
-    public StdDevPopDoubleGroupByFunction(@NotNull Function arg) {
+    public StdDevPopGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 

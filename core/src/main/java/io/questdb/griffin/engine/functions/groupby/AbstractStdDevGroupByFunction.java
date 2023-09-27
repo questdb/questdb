@@ -43,11 +43,11 @@ import org.jetbrains.annotations.NotNull;
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
  */
 
-public abstract class AbstractStatAggregatorGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
+public abstract class AbstractStdDevGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected int valueIndex;
 
-    protected AbstractStatAggregatorGroupByFunction(@NotNull Function arg) {
+    protected AbstractStdDevGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
