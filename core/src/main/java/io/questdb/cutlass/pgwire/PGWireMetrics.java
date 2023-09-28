@@ -32,6 +32,7 @@ public class PGWireMetrics {
 
     private final LongGauge cachedSelectsGauge;
     private final LongGauge cachedUpdatesGauge;
+    private final Counter errorCounter;
     private final Counter selectCacheHitCounter;
     private final Counter selectCacheMissCounter;
 
@@ -40,6 +41,7 @@ public class PGWireMetrics {
         this.cachedUpdatesGauge = metricsRegistry.newLongGauge("pg_wire_update_queries_cached");
         this.selectCacheHitCounter = metricsRegistry.newCounter("pg_wire_select_cache_hits");
         this.selectCacheMissCounter = metricsRegistry.newCounter("pg_wire_select_cache_misses");
+        this.errorCounter = metricsRegistry.newCounter("pg_wire_errors");
     }
 
     public LongGauge cachedSelectsGauge() {
@@ -48,6 +50,10 @@ public class PGWireMetrics {
 
     public LongGauge cachedUpdatesGauge() {
         return cachedUpdatesGauge;
+    }
+
+    public Counter getErrorCounter() {
+        return errorCounter;
     }
 
     public Counter selectCacheHitCounter() {
