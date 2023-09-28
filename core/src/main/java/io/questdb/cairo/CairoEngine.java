@@ -1189,6 +1189,7 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.info().$("table repair succeeded [table=").$(tableToken).I$();
         } catch (EntryUnavailableException e) {
             // This is fine, writer is busy. Throw back origin error.
+            LOG.info().$("writer is busy, skipping repair [table=").$(tableToken).I$();
             throw rethrow;
         } catch (Throwable th) {
             LOG.critical()
