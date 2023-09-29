@@ -407,8 +407,8 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         private void doSend() {
-            System.out.println("send()");
-            Net.dumpAscii(bufLo, (int) (ptr - bufLo));
+//            System.out.println("send()");
+//            Net.dumpAscii(bufLo, (int) (ptr - bufLo));
             int len = (int) (ptr - bufLo);
             if (len > 0) {
                 long p = bufLo;

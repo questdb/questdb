@@ -161,6 +161,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
+        context.disconnectPending();
         final long cursor = disconnectPubSeq.nextBully();
         assert cursor > -1;
         disconnectQueue.get(cursor).context = context;

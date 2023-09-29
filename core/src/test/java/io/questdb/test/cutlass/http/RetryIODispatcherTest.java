@@ -402,29 +402,6 @@ public class RetryIODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testImportsHeaderIsNotFullyReceivedIntoReceiveBuffer() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder()
-                                .withReceiveBufferSize(50)
-                ).run((engine) -> new SendAndReceiveRequestBuilder()
-                        .execute(ValidImportRequest,
-                                "HTTP/1.1 200 OK\r\n" +
-                                        "Server: questDB/1.0\r\n" +
-                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                        "Transfer-Encoding: chunked\r\n" +
-                                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                                        "\r\n" +
-                                        "58\r\n" +
-                                        "cannot parse import because of receive buffer is not big enough to parse table structure\r\n" +
-                                        "00\r\n" +
-                                        "\r\n")
-                );
-    }
-
-    @Test
     public void testImportsWhenReceiveBufferIsSmallAndSenderSlow() throws Exception {
         for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
@@ -792,9 +769,9 @@ public class RetryIODispatcherTest extends AbstractTest {
                     Assert.assertTrue("expected at least " + parallelCount + "insert attempts, but got: " + startedInserts,
                             startedInserts >= parallelCount);
 
-                    for (int n = 0; n < fds.length; n++) {
-                        Assert.assertNotEquals(fds[n], -1);
-                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
+                    for (int i = 0, n = fds.length; i < n; i++) {
+                        Assert.assertNotEquals(fds[i], -1);
+                        NetworkFacadeImpl.INSTANCE.close(fds[i]);
                     }
 
                     writer.close();

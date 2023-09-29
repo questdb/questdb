@@ -126,7 +126,6 @@ public class TestHttpClient implements QuietCloseable {
 
     public void assertSendMultipart(
             CharSequence expectedResponse,
-            CharSequence url,
             @Nullable CharSequence json,
             CharSequence csv,
             CharSequence fileName,
@@ -138,7 +137,6 @@ public class TestHttpClient implements QuietCloseable {
         sink.clear();
         try {
             toSinkImport0(
-                    url,
                     tableName,
                     json,
                     csv,
@@ -202,7 +200,6 @@ public class TestHttpClient implements QuietCloseable {
     }
 
     private void toSinkImport0(
-            CharSequence url,
             CharSequence tableName,
             CharSequence json,
             CharSequence csv,
@@ -215,7 +212,7 @@ public class TestHttpClient implements QuietCloseable {
         HttpClient.Request req = httpClient.newRequest();
         req
                 .POST("localhost", 9001)
-                .url(url)
+                .url("/upload")
                 .query("name", tableName)
                 .query("fmt", responseFormat)
                 .query("timestamp", timestampColumnName)

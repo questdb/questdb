@@ -1170,7 +1170,6 @@ public class IODispatcherTest extends AbstractTest {
                                         "|              0  |                                             col_b  |                     LONG  |           0  |\r\n" +
                                         "|              1  |                                             col_a  |                     LONG  |           0  |\r\n" +
                                         "+-----------------------------------------------------------------------------------------------------------------+\r\n",
-                                "/upload",
                                 null,
                                 "col_a,col_b\r\n" +
                                         "1000,1000\r\n" +
@@ -1204,7 +1203,6 @@ public class IODispatcherTest extends AbstractTest {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
                         "{\"status\":\"Unexpected symbol\"}",
-                        "/upload",
                         "[{\"name\":\"timestamp,\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]",
                         "timestamp,bid\r\n" +
                                 "27/05/2018 00:00:01,100\r\n" +
@@ -1276,132 +1274,106 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportColumnMismatch() throws Exception {
         testImport(
-                ValidImportResponse,
-                "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--",
-                NetworkFacadeImpl.INSTANCE,
-                false,
-                1
-        );
+                engine -> {
+                    testHttpClient.assertSendMultipart(
+                            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                    "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                    "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
+                                    "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
+                                    "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
+                                    "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
+                                    "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
+                                    "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n",
+                            "[\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"date\",\r\n" +
+                                    "    \"type\": \"DATE\",\r\n" +
+                                    "    \"pattern\": \"d MMMM y.\",\r\n" +
+                                    "    \"locale\": \"ru-RU\"\r\n" +
+                                    "  }\r\n" +
+                                    "]",
+                            "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                                    "B00008,2017-02-01 00:30:00,,,\r\n" +
+                                    "B00008,2017-02-01 00:40:00,,,\r\n" +
+                                    "B00009,2017-02-01 00:30:00,,,\r\n" +
+                                    "B00013,2017-02-01 00:11:00,,,\r\n" +
+                                    "B00013,2017-02-01 00:41:00,,,\r\n" +
+                                    "B00013,2017-02-01 00:00:00,,,\r\n" +
+                                    "B00013,2017-02-01 00:53:00,,,\r\n" +
+                                    "B00013,2017-02-01 00:44:00,,,\r\n" +
+                                    "B00013,2017-02-01 00:05:00,,,\r\n" +
+                                    "B00013,2017-02-01 00:54:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:45:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:45:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:46:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:54:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:45:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:45:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:45:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:26:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:55:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:47:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:05:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:58:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:33:00,,,\r\n" +
+                                    "B00014,2017-02-01 00:45:00,,,\r\n",
+                            "fhv_tripdata_2017-02.csv",
+                            null,
+                            null,
+                            null,
+                            null
+                    );
 
-        // append different data structure to the same table
+                    // append different data structure to the same table
 
-        testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "5d\r\n" +
-                        "column count mismatch [textColumnCount=6, tableColumnCount=5, table=fhv_tripdata_2017-02.csv]\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                "POST /upload?overwrite=false HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,DropOff_datetime,PUlocationID,DOlocationID,x,y\r\n" +
-                        "B00008,,,,,\r\n" +
-                        "B00008,,,,,\r\n" +
-                        "B00009,,,,,\r\n" +
-                        "B00013,,,,,\r\n" +
-                        "B00013,,,,,\r\n" +
-                        "B00013,,,,,\r\n" +
-                        "B00013,,,,,\r\n" +
-                        "B00013,,,,,\r\n" +
-                        "B00013,,,,,\r\n" +
-                        "B00013,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "B00014,,,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--",
-                NetworkFacadeImpl.INSTANCE,
-                false,
-                1
+                    testHttpClient.assertSendMultipart(
+                            "column count mismatch [textColumnCount=6, tableColumnCount=5, table=fhv_tripdata_2017-02.csv]",
+                            "[\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"date\",\r\n" +
+                                    "    \"type\": \"DATE\",\r\n" +
+                                    "    \"pattern\": \"d MMMM y.\",\r\n" +
+                                    "    \"locale\": \"ru-RU\"\r\n" +
+                                    "  }\r\n" +
+                                    "]",
+                            "Dispatching_base_num,DropOff_datetime,PUlocationID,DOlocationID,x,y\r\n" +
+                                    "B00008,,,,,\r\n" +
+                                    "B00008,,,,,\r\n" +
+                                    "B00009,,,,,\r\n" +
+                                    "B00013,,,,,\r\n" +
+                                    "B00013,,,,,\r\n" +
+                                    "B00013,,,,,\r\n" +
+                                    "B00013,,,,,\r\n" +
+                                    "B00013,,,,,\r\n" +
+                                    "B00013,,,,,\r\n" +
+                                    "B00013,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n" +
+                                    "B00014,,,,,\r\n",
+                            "fhv_tripdata_2017-02.csv",
+                            null,
+                            null,
+                            null,
+                            null
+                    );
+                }
         );
     }
 
@@ -1410,7 +1382,6 @@ public class IODispatcherTest extends AbstractTest {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
                         "not enough lines [table=fhv_tripdata_2017-02.csv]",
-                        "/upload",
                         null,
                         "9988",
                         "fhv_tripdata_2017-02.csv",
@@ -1435,7 +1406,6 @@ public class IODispatcherTest extends AbstractTest {
                                 "|  Rows imported  |                                                 0  |                 |         |              |\r\n" +
                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n",
-                        "/upload",
                         null,
                         "",
                         "fhv_tripdata_2017-02.csv",
@@ -2405,7 +2375,6 @@ public class IODispatcherTest extends AbstractTest {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
                         "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":1,\"header\":true,\"partitionBy\":\"MONTH\",\"timestamp\":\"ts\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"a\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]}",
-                        "/upload",
                         null,
                         "ts,a\r\n" +
                                 "2022-11-01T22:34:49.273814+0000,\"a\"\r\n",
@@ -5142,7 +5111,6 @@ public class IODispatcherTest extends AbstractTest {
                 engine -> {
                     testHttpClient.assertSendMultipart(
                             "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":5,\"header\":false,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"f0\",\"type\":\"LONG256\",\"size\":32,\"errors\":0},{\"name\":\"f1\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]}",
-                            "/upload",
                             null,
                             "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a\n" +
                                     "0x19f1df2c7ee6b464720ad28e903aeda1a5ad8780afc22f0b960827bd4fcf656d,b\n" +

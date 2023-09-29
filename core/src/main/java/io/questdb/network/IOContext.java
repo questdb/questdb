@@ -33,6 +33,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     protected final Socket socket;
     protected IODispatcher<T> dispatcher;
     protected long heartbeatId = -1;
+    private boolean disconnectPending = false;
 
     protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
         this.socket = socketFactory.newInstance(nf, log);
@@ -81,6 +82,11 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         // no-op
     }
 
+    public void disconnectPending() {
+        assert !disconnectPending;
+        disconnectPending = true;
+    }
+
     public boolean invalid() {
         return socket.getFd() == -1;
     }
@@ -100,6 +106,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         heartbeatId = -1;
         socket.close();
         dispatcher = null;
+        disconnectPending = false;
         clearSuspendEvent();
     }
 }
