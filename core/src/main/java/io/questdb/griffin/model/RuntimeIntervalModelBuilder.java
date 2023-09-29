@@ -81,7 +81,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersect(long lo, Function hi, short adjustment) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
 
         IntervalUtils.addHiLoInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(hi);
@@ -89,7 +91,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersect(Function lo, long hi, short adjustment) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
 
         IntervalUtils.addHiLoInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(lo);
@@ -97,7 +101,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersect(long lo, long hi) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
+
         if (dynamicRangeList.size() == 0) {
             staticIntervals.add(lo, hi);
             if (intervalApplied) {
@@ -111,7 +118,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectDynamicInterval(Function intervalStrFunction) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
+
         IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
         dynamicRangeList.add(intervalStrFunction);
         intervalApplied = true;
@@ -123,7 +133,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectEquals(Function function) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
 
         IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(function);
@@ -131,7 +143,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
+
         int size = staticIntervals.size();
         IntervalUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
         if (dynamicRangeList.size() == 0) {
@@ -147,7 +162,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
+
         int size = staticIntervals.size();
         IntervalUtils.parseSingleTimestamp(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
         if (dynamicRangeList.size() == 0) {
@@ -217,7 +235,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void subtractEquals(Function function) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
 
         IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
         dynamicRangeList.add(function);
@@ -225,7 +245,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void subtractInterval(long lo, long hi) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
+
         if (dynamicRangeList.size() == 0) {
             int size = staticIntervals.size();
             staticIntervals.add(lo, hi);
@@ -241,7 +264,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
+
         int size = staticIntervals.size();
         IntervalUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
         if (dynamicRangeList.size() == 0) {
@@ -258,14 +284,20 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void subtractRuntimeInterval(Function intervalStrFunction) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
+
         IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
         dynamicRangeList.add(intervalStrFunction);
         intervalApplied = true;
     }
 
     public void union(long lo, long hi) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
+
         if (dynamicRangeList.size() == 0) {
             staticIntervals.add(lo, hi);
             if (intervalApplied) {
@@ -278,7 +310,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
@@ -301,7 +335,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        if (isEmptySet()) return;
+        if (isEmptySet()) {
+            return;
+        }
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.addHiLoInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);

@@ -127,8 +127,8 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
         }
         // this is an optimisation to release TableReader in case "this"
         // cursor lingers around. If there is exception or circuit breaker fault
-        // we will rely on close() method to release reader.
-        this.cursorB = Misc.free(this.cursorB);
+        // we will rely on close() method to release the reader.
+        cursorB = Misc.free(cursorB);
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {

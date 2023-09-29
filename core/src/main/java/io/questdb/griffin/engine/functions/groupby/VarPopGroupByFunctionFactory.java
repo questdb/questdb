@@ -31,10 +31,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class StdDevPopDoubleGroupByFunctionFactory implements FunctionFactory {
+public class VarPopGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "stddev_pop(D)";
+        return "var_pop(D)";
     }
 
     @Override
@@ -44,6 +44,6 @@ public class StdDevPopDoubleGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new StdDevPopDoubleGroupByFunction(args.getQuick(0));
+        return new VarPopGroupByFunction(args.getQuick(0));
     }
 }

@@ -899,7 +899,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
         assertSql(expected, tableName);
 
         workerPool = new TestWorkerPool(1);
-        O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
+        O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1);
         workerPool.assign(partitionPurgeJob);
         workerPool.freeOnExit(partitionPurgeJob);
         workerPool.start(); // closed by assertTableX
