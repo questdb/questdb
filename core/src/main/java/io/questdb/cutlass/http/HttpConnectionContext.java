@@ -690,6 +690,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 suspendEvent = e.getEvent();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
                 busyRecv = false;
+            } catch (NotEnoughLinesException e) {
+                failProcessor(processor, e, DISCONNECT_REASON_KICKED_TXT_NOT_ENOUGH_LINES);
+                busyRecv = false;
             }
         } catch (HttpException e) {
             LOG.error().$("http error [fd=").$(getFd()).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
@@ -733,16 +736,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             HttpMultipartContentListener multipartListener,
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, TooFewBytesReceivedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, TooFewBytesReceivedException, NotEnoughLinesException {
         boolean parseResult;
         try {
             parseResult = multipartContentParser.parse(lo, hi, multipartListener);
         } catch (RetryOperationException e) {
             this.multipartParserState.saveBufferState(multipartContentParser.getResumePtr(), hi, recvBufRemaining);
             throw e;
-        } catch (NotEnoughLinesException e) {
-            failProcessor(processor, e, DISCONNECT_REASON_KICKED_TXT_NOT_ENOUGH_LINES);
-            parseResult = false;
         }
 
         if (parseResult) {
