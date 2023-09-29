@@ -176,11 +176,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public long getTablePermissionsTimeout() {
-        return 10 * 60 * 1000;
-    }
-
-    @Override
     public LineProtoTimestampAdapter getTimestampAdapter() {
         return LineProtoNanoTimestampAdapter.INSTANCE;
     }

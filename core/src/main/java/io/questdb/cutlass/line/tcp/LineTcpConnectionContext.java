@@ -28,25 +28,20 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.YieldException;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
-import io.questdb.cutlass.line.AuthorizationFailedException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
-import io.questdb.network.YieldEvent;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
-
-import static io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult.MEASUREMENT_COMPLETE;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -62,7 +57,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
-    private final long permissionsTimeoutMs;
     private final LineTcpMeasurementScheduler scheduler;
     private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
     protected boolean peerDisconnected;
@@ -73,12 +67,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected SecurityContext securityContext = DenyAllSecurityContext.INSTANCE;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
-    private boolean measurementPending;
     private long nextCheckIdleTime;
     private long nextCommitTime;
-    private long permissionsTxn = -1;
-    private long permissionsTxnDeadlineMs = Long.MAX_VALUE;
-    private YieldEvent yieldEvent;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         this.configuration = configuration;
@@ -98,7 +88,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.nextCheckIdleTime = now + checkIdleInterval;
         this.nextCommitTime = now + commitInterval;
         this.idleTimeout = configuration.getWriterIdleTimeout();
-        this.permissionsTimeoutMs = configuration.getTablePermissionsTimeout();
     }
 
     public void checkIdle(long millis) {
@@ -118,9 +107,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         authenticator.clear();
         recvBufPos = recvBufStart;
         peerDisconnected = false;
-        measurementPending = false;
-        permissionsTxn = -1;
-        permissionsTxnDeadlineMs = Long.MAX_VALUE;
         clearYieldEvent();
         resetParser();
         ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
@@ -133,11 +119,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    public void clearYieldEvent() {
-        yieldEvent = Misc.free(yieldEvent);
-    }
-
-    @Override
     public void close() {
         this.fd = -1;
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
@@ -145,7 +126,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         clear();
     }
 
-    public long commitWalTables(long wallClockMillis) throws AuthorizationFailedException {
+    public long commitWalTables(long wallClockMillis) {
         long minTableNextCommitTime = Long.MAX_VALUE;
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
@@ -161,8 +142,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         // taking the earliest commit time
                         minTableNextCommitTime = tableNextCommitTime;
                     }
-                } catch (AuthorizationFailedException ex) {
-                    throw ex;
                 } catch (CommitFailedException ex) {
                     if (ex.isTableDropped()) {
                         // table dropped, nothing to worry about
@@ -181,7 +160,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitInterval;
     }
 
-    public void doMaintenance(long now) throws AuthorizationFailedException {
+    public void doMaintenance(long now) {
         if (now > nextCommitTime) {
             nextCommitTime = commitWalTables(now);
         }
@@ -192,17 +171,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
-    public long getPermissionsTxn() {
-        return permissionsTxn;
-    }
-
     public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
         return tableUpdateDetailsUtf8.get(tableName);
-    }
-
-    @Override
-    public YieldEvent getYieldEvent() {
-        return yieldEvent;
     }
 
     public IOContextResult handleIO(NetworkIOJob netIoJob) {
@@ -212,9 +182,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 IOContextResult parseResult = parseMeasurements(netIoJob);
                 doMaintenance(milliClock.getTicks());
                 return parseResult;
-            } catch (AuthorizationFailedException ex) {
-                LOG.info().$("authorization failed [ex=").$(ex).I$();
-                return IOContextResult.NEEDS_DISCONNECT;
             } finally {
                 netIoJob.releaseWalTableDetails();
             }
@@ -233,16 +200,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, SecurityContextFactory.ILP);
         }
         return super.of(fd, dispatcher);
-    }
-
-    public void startWaitingForPermissions(long tablePermissionsTxn) {
-        this.permissionsTxn = tablePermissionsTxn;
-        this.permissionsTxnDeadlineMs = milliClock.getTicks() + permissionsTimeoutMs;
-    }
-
-    public void stopWaitingForPermissions() {
-        this.permissionsTxn = -1;
-        this.permissionsTxnDeadlineMs = Long.MAX_VALUE;
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -361,19 +318,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
-                final ParseResult rc;
-                if (measurementPending) {
-                    if (milliClock.getTicks() >= permissionsTxnDeadlineMs) {
-                        LOG.error()
-                                .$('[').$(fd).$("] timed out while waiting for table permissions [table=").$(parser.getMeasurementName())
-                                .I$();
-                        return IOContextResult.NEEDS_DISCONNECT;
-                    }
-                    measurementPending = false;
-                    rc = MEASUREMENT_COMPLETE;
-                } else {
-                    rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
-                }
+                final ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
@@ -412,17 +357,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         return IOContextResult.NEEDS_READ;
                     }
                 }
-            } catch (YieldException ex) {
-                measurementPending = true;
-                yieldEvent = ex.getEvent();
-                // We don't want client disconnect checks to happen in the I/O dispatcher.
-                // That's to avoid ILP message loss in case if the client sent a row
-                // for a new table and immediately disconnected.
-                yieldEvent.setCheckDisconnectWhileYielded(false);
-                yieldEvent.setDeadline(permissionsTxnDeadlineMs);
-                // We request write here while we know that we won't be writing into the socket
-                // to make sure that epoll/kqueue/poll will call us back.
-                return IOContextResult.NEEDS_WRITE;
             } catch (CairoException ex) {
                 LOG.error()
                         .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
@@ -430,7 +364,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 // Disconnect on parse error (if configured) or on authz error.
-                if (disconnectOnError || ex.isAuthorizationError()) {
+                if (disconnectOnError) {
                     if (!ex.isAuthorizationError()) {
                         logParseError();
                     }

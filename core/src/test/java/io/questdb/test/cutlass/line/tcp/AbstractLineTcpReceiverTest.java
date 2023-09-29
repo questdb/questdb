@@ -121,7 +121,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     };
     protected boolean symbolAsFieldSupported;
-    protected long tablePermissionsTimeout = -1;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public boolean getAutoCreateNewColumns() {
@@ -193,11 +192,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getTablePermissionsTimeout() {
-            return tablePermissionsTimeout != -1 ? tablePermissionsTimeout : super.getTablePermissionsTimeout();
-        }
-
-        @Override
         public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
         }
@@ -258,7 +252,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         disconnectOnError = false;
         symbolAsFieldSupported = false;
         securityContextFactory = null;
-        tablePermissionsTimeout = -1;
         nf = NetworkFacadeImpl.INSTANCE;
     }
 

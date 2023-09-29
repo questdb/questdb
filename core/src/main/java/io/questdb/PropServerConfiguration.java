@@ -363,7 +363,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
     private String keepAliveHeader;
-    private long lineTablePermissionsTimeout;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -1076,7 +1075,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpDefaultPartitionBy = PartitionBy.DAY;
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, PropertyKey.LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE, 500);
-                this.lineTablePermissionsTimeout = getLong(properties, env, PropertyKey.LINE_TCP_TABLE_PERMISSIONS_TIMEOUT_MS, 10 * 60 * 1000);
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_DISCONNECT_ON_ERROR, true);
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
                 this.symbolAsFieldSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED, false);
@@ -1842,6 +1840,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getExplainPoolCapacity() {
             return sqlExplainModelPoolCapacity;
         }
@@ -1909,6 +1912,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInsertPoolCapacity() {
             return sqlInsertModelPoolCapacity;
+        }
+
+        @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -3175,11 +3183,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return symbolCacheWaitUsBeforeReload;
-        }
-
-        @Override
-        public long getTablePermissionsTimeout() {
-            return lineTablePermissionsTimeout;
         }
 
         @Override

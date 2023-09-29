@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.MetadataService;
-import io.questdb.cutlass.line.AuthorizationFailedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -112,10 +111,6 @@ public class TableUpdateDetails implements Closeable {
         this.tableNameUtf8 = tableNameUtf8;
     }
 
-    CairoEngine getEngine() {
-        return engine;
-    }
-
     public void addReference(int workerId) {
         if (!isWal()) {
             networkIOOwnerCount++;
@@ -165,7 +160,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    public void commit(boolean withLag) throws AuthorizationFailedException, CommitFailedException {
+    public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
                 LOG.debug()
@@ -180,9 +175,6 @@ public class TableUpdateDetails implements Closeable {
                     writerAPI.commit();
                 }
             } catch (CairoException ex) {
-                if (ex.isAuthorizationError()) {
-                    throw AuthorizationFailedException.instance(ex);
-                }
                 if (!ex.isTableDropped()) {
                     handleCommitException(ex);
                 }
@@ -294,7 +286,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    long commitIfIntervalElapsed(long wallClockMillis) throws AuthorizationFailedException, CommitFailedException {
+    long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
@@ -308,7 +300,7 @@ public class TableUpdateDetails implements Closeable {
         return nextCommitTime;
     }
 
-    void commitIfMaxUncommittedRowsCountReached() throws AuthorizationFailedException, CommitFailedException {
+    void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
         final long rowsSinceCommit = writerAPI.getUncommittedRowCount();
         if (rowsSinceCommit < getMetaMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
@@ -322,7 +314,7 @@ public class TableUpdateDetails implements Closeable {
 
         try {
             commit(true);
-        } catch (AuthorizationFailedException | CommitFailedException ex) {
+        } catch (CommitFailedException ex) {
             throw ex;
         } catch (Throwable th) {
             LOG.error()
@@ -336,6 +328,10 @@ public class TableUpdateDetails implements Closeable {
 
         // Tick after commit.
         tick();
+    }
+
+    CairoEngine getEngine() {
+        return engine;
     }
 
     ThreadLocalDetails getThreadLocalDetails(int workerId) {

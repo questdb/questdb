@@ -31,7 +31,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.AuthorizationFailedException;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -286,9 +285,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     .$("`]")
                     .$();
             return true;
-        } catch (YieldException ex) {
-            // We're waiting for the newly created table permissions.
-            throw ex;
         } catch (CairoException ex) {
             // Table could not be created
             LOG.error().$("could not create table [tableName=").$(measurementName)
@@ -312,8 +308,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         // and all the resolved column indexes have been invalidated
                     }
                 }
-            } catch (AuthorizationFailedException ex) {
-                throw CairoException.authorization().put(ex.getMessage());
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -350,7 +344,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob,
             LineTcpParser parser,
             TableUpdateDetails tud
-    ) throws AuthorizationFailedException, CommitFailedException, MetadataChangedException {
+    ) throws CommitFailedException, MetadataChangedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
@@ -668,7 +662,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             }
             r.append();
             tud.commitIfMaxUncommittedRowsCountReached();
-        } catch (AuthorizationFailedException | CommitFailedException ex) {
+        } catch (CommitFailedException ex) {
             throw ex;
         } catch (CairoException ex) {
             LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(ex.getFlyweightMessage()).I$();
@@ -756,20 +750,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     securityContext.authorizeLineTableCreate();
-                    tableToken = engine.createTableInsecure(ddlMem, path, true, tsa, false, false);
-                    final long txn = engine.onTableCreated(securityContext, tableToken);
-                    if (txn != -1) {
-                        ctx.startWaitingForPermissions(txn);
-                    }
+                    engine.createTableInsecure(ddlMem, path, true, tsa, false, false);
                     LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
-                }
-
-                final long tablePermissionsTxn = ctx.getPermissionsTxn();
-                if (tablePermissionsTxn != -1) {
-                    // Wait until table permissions are applied to the end table.
-                    // This method throws YieldException on failed check.
-                    securityContext.yieldUntilTxn(tablePermissionsTxn);
-                    ctx.stopWaitingForPermissions();
                 }
 
                 // by the time we get here, definitely exists on disk

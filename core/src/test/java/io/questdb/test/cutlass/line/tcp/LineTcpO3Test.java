@@ -27,8 +27,8 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.FreeOnExit;
 import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.griffin.FunctionFactory;
@@ -47,7 +47,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.TestCairoEngine;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.runner.RunWith;
@@ -128,7 +127,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
         metrics = Metrics.enabled();
-        engine = new TestCairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics);
+        engine = new CairoEngine(configuration, metrics);
         serverConf.init(
                 engine,
                 new FunctionFactoryCache(

@@ -24,12 +24,13 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.Os;
 
 public class YieldEventFactoryImpl implements YieldEventFactory {
-    private final IODispatcherConfiguration configuration;
+    private final CairoConfiguration configuration;
 
-    public YieldEventFactoryImpl(IODispatcherConfiguration configuration) {
+    public YieldEventFactoryImpl(CairoConfiguration configuration) {
         this.configuration = configuration;
     }
 

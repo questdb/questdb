@@ -34,7 +34,10 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.WalListener;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalTxnYieldEvents;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -45,6 +48,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.network.YieldEventFactory;
+import io.questdb.network.YieldEventFactoryImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -80,20 +85,19 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryWalTask> telemetryWal;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
+    private final WalTxnYieldEvents walTxnYieldEvents;
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull WalListener walListener;
-    private WalTxnYieldEvents walTxnYieldEvents;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(@NotNull CairoConfiguration configuration) {
-        this(configuration, NoOpWalTxnYieldEvents.INSTANCE, Metrics.disabled());
+        this(configuration, Metrics.disabled());
     }
 
     public CairoEngine(
             @NotNull CairoConfiguration configuration,
-            @NotNull WalTxnYieldEvents walTxnYieldEvents,
             @NotNull Metrics metrics
     ) {
         ffCache = new FunctionFactoryCache(
@@ -101,10 +105,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
         this.configuration = configuration;
-        this.walTxnYieldEvents = walTxnYieldEvents;
         this.copyContext = new CopyContext(configuration);
         this.metrics = metrics;
         this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
+        final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(configuration);
+        this.walTxnYieldEvents = new WalTxnYieldEvents(tableSequencerAPI, yieldEventFactory);
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
@@ -146,8 +151,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         try {
-            tableNameRegistry = configuration.isReadOnlyInstance() ?
-                    new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
+            tableNameRegistry = configuration.isReadOnlyInstance()
+                    ? new TableNameRegistryRO(configuration)
+                    : new TableNameRegistryRW(configuration);
             tableNameRegistry.reloadTableNameCache(convertedTables);
         } catch (Throwable e) {
             close();
@@ -191,6 +197,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(telemetry);
         Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
+        Misc.free(walTxnYieldEvents);
     }
 
     @TestOnly
@@ -207,9 +214,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        final TableToken tableToken = createTableInsecure(mem, path, ifNotExists, struct, keepLock, false);
-        onTableCreated(securityContext, tableToken);
-        return tableToken;
+        return createTableInsecure(mem, path, ifNotExists, struct, keepLock, false);
     }
 
     public @NotNull TableToken createTableInVolume(
@@ -221,9 +226,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        final TableToken tableToken = createTableInsecure(mem, path, ifNotExists, struct, keepLock, true);
-        onTableCreated(securityContext, tableToken);
-        return tableToken;
+        return createTableInsecure(mem, path, ifNotExists, struct, keepLock, true);
     }
 
     public @NotNull TableToken createTableInsecure(
@@ -653,11 +656,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
     }
 
-    // returns txn number to wait for
-    public long onTableCreated(SecurityContext securityContext, TableToken tableToken) {
-        return -1;
-    }
-
     public void registerTableToken(TableToken tableToken) {
         tableNameRegistry.registerName(tableToken);
     }
@@ -824,11 +822,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setWalListener(@NotNull WalListener walListener) {
         this.walListener = walListener;
-    }
-
-    @TestOnly
-    public void setWalTxnYieldEvents(WalTxnYieldEvents walTxnYieldEvents) {
-        this.walTxnYieldEvents = walTxnYieldEvents;
     }
 
     public void unlock(

@@ -30,6 +30,8 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.KqueueFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -133,6 +135,8 @@ public interface CairoConfiguration {
 
     int getDoubleToStrCastScale();
 
+    EpollFacade getEpollFacade();
+
     int getExplainPoolCapacity();
 
     FactoryProvider getFactoryProvider();
@@ -164,6 +168,8 @@ public interface CairoConfiguration {
     int getIndexValueBlockSize();
 
     int getInsertPoolCapacity();
+
+    KqueueFacade getKqueueFacade();
 
     int getLatestByQueueCapacity();
 

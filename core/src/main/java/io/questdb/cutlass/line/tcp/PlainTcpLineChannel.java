@@ -112,11 +112,6 @@ public final class PlainTcpLineChannel implements LineChannel {
         }
     }
 
-    @Override
-    public boolean testConnection(long ptr, int len) {
-        return nf.testConnection(fd, ptr, len);
-    }
-
     private void configureBuffers(NetworkFacade nf, int sndBufferSize) {
         int orgSndBufSz = nf.getSndBuf(fd);
         nf.setSndBuf(fd, sndBufferSize);

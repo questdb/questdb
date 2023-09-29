@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.line;
 
-import org.jetbrains.annotations.TestOnly;
-
 import java.io.Closeable;
 
 public interface LineChannel extends Closeable {
@@ -36,12 +34,4 @@ public interface LineChannel extends Closeable {
     int receive(long ptr, int len);
 
     void send(long ptr, int len);
-
-    /**
-     * Returns true if a disconnect happened, false otherwise. Implemented only for plain TCP channel.
-     */
-    @TestOnly
-    default boolean testConnection(long ptr, int len) {
-        return false;
-    }
 }

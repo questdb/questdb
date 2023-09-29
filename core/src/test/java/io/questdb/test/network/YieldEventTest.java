@@ -24,7 +24,9 @@
 
 package io.questdb.test.network;
 
-import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.YieldEvent;
 import io.questdb.network.YieldEventFactory;
 import io.questdb.network.YieldEventFactoryImpl;
@@ -34,11 +36,13 @@ import org.junit.Test;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class YieldEventTest {
+    private final static Log LOG = LogFactory.getLog(YieldEventTest.class);
 
     @Test
     public void testExtraCloseCalls() throws Exception {
+        LOG.info().$("testExtraCloseCalls").$();
         assertMemoryLeak(() -> {
-            final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultIODispatcherConfiguration());
+            final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultCairoConfiguration(""));
             YieldEvent event = yieldEventFactory.newInstance();
             // We simply expect no fd leaks and no exceptions as a result of extra close() calls.
             for (int i = 0; i < 100; i++) {
@@ -49,8 +53,9 @@ public class YieldEventTest {
 
     @Test
     public void testSmoke() throws Exception {
+        LOG.info().$("testSmoke").$();
         assertMemoryLeak(() -> {
-            final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultIODispatcherConfiguration());
+            final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultCairoConfiguration(""));
             YieldEvent event = yieldEventFactory.newInstance();
             Assert.assertFalse(event.checkTriggered());
             event.trigger();

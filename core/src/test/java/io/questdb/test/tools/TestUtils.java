@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
@@ -967,7 +966,7 @@ public final class TestUtils {
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration, NoOpWalTxnYieldEvents.INSTANCE, metrics);
+                final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
         ) {
@@ -976,7 +975,6 @@ public final class TestUtils {
                     setupWorkerPool(pool, engine);
                     pool.start(log);
                 }
-
                 runnable.run(engine, compiler, sqlExecutionContext);
             } finally {
                 if (pool != null) {

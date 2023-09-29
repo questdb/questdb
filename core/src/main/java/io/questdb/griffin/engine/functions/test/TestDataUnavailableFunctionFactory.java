@@ -32,7 +32,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.YieldEvent;
 import io.questdb.network.YieldEventFactory;
 import io.questdb.network.YieldEventFactoryImpl;
@@ -58,7 +57,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);
-        return new CursorFunction(new DataUnavailableRecordCursorFactory(totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
+        return new CursorFunction(new DataUnavailableRecordCursorFactory(configuration, totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
     }
 
     @FunctionalInterface
@@ -68,15 +67,21 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
 
     private static class DataUnavailableRecordCursor implements NoRandomAccessRecordCursor {
 
-        private static final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultIODispatcherConfiguration());
         private final long backoffCount;
         private final SqlExecutionCircuitBreaker circuitBreaker;
         private final LongConstRecord record = new LongConstRecord();
         private final long totalRows;
+        private final YieldEventFactory yieldEventFactory;
         private long attempts;
         private long rows;
 
-        public DataUnavailableRecordCursor(long totalRows, long backoffCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        public DataUnavailableRecordCursor(
+                CairoConfiguration configuration,
+                long totalRows,
+                long backoffCount,
+                SqlExecutionCircuitBreaker circuitBreaker
+        ) {
+            yieldEventFactory = new YieldEventFactoryImpl(configuration);
             this.totalRows = totalRows;
             this.backoffCount = backoffCount;
             this.circuitBreaker = circuitBreaker;
@@ -131,9 +136,14 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         private static final RecordMetadata METADATA;
         private final DataUnavailableRecordCursor cursor;
 
-        public DataUnavailableRecordCursorFactory(long totalRows, long backoffCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        public DataUnavailableRecordCursorFactory(
+                CairoConfiguration configuration,
+                long totalRows,
+                long backoffCount,
+                SqlExecutionCircuitBreaker circuitBreaker
+        ) {
             super(METADATA);
-            cursor = new DataUnavailableRecordCursor(totalRows, backoffCount, circuitBreaker);
+            cursor = new DataUnavailableRecordCursor(configuration, totalRows, backoffCount, circuitBreaker);
         }
 
         @Override

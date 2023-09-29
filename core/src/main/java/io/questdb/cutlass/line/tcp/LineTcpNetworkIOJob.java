@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.AuthorizationFailedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IODispatcher;
@@ -154,13 +153,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
     private boolean onRequest(int operation, LineTcpConnectionContext context) {
         if (operation == IOOperation.HEARTBEAT) {
-            try {
-                context.doMaintenance(millisecondClock.getTicks());
-            } catch (AuthorizationFailedException ex) {
-                LOG.info().$("authorization failed [ex=").$(ex).I$();
-                context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
-                return false;
-            }
+            context.doMaintenance(millisecondClock.getTicks());
             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
             return false;
         }

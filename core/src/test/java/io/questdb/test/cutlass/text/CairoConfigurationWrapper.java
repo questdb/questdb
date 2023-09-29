@@ -31,6 +31,8 @@ import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.KqueueFacade;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -232,6 +234,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public EpollFacade getEpollFacade() {
+        return conf.getEpollFacade();
+    }
+
+    @Override
     public int getExplainPoolCapacity() {
         return conf.getExplainPoolCapacity();
     }
@@ -299,6 +306,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getInsertPoolCapacity() {
         return conf.getInsertPoolCapacity();
+    }
+
+    @Override
+    public KqueueFacade getKqueueFacade() {
+        return conf.getKqueueFacade();
     }
 
     @Override

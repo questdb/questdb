@@ -27,7 +27,9 @@ package io.questdb;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
@@ -46,8 +48,6 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.YieldEventFactory;
-import io.questdb.network.YieldEventFactoryImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import org.jetbrains.annotations.Nullable;
 
@@ -81,9 +81,7 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(config.getLineTcpReceiverConfiguration().getDispatcherConfiguration());
-        final WalTxnYieldEvents walTxnYieldEvents = new WalTxnYieldEventsImpl(cairoConfig, yieldEventFactory);
-        engine = freeOnExit.register(cairoEngineFactory.createInstance(cairoConfig, walTxnYieldEvents, metrics));
+        engine = freeOnExit.register(cairoEngineFactory.createInstance(cairoConfig, metrics));
 
         // obtain function factory cache
         FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
@@ -215,9 +213,6 @@ public class ServerMain implements Closeable {
                     workerPoolManager
             ));
         }
-
-        // Yield events should be cleared after I/O dispatchers and WAL apply job.
-        freeOnExit.register(walTxnYieldEvents);
 
         System.gc(); // GC 1
         log.advisoryW().$("server is ready to be started").$();

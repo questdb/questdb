@@ -30,7 +30,6 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.security.*;
@@ -297,15 +296,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
         hasSymbols = true;
         return this;
-    }
-
-    /**
-     * Returns true if a disconnect happened, false otherwise.
-     */
-    @TestOnly
-    public boolean testConnection() {
-        long unusedBuf = lo == bufA ? bufB : bufA;
-        return lineChannel.testConnection(unusedBuf, 1);
     }
 
     @Override

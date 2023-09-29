@@ -31,7 +31,9 @@ import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
+import io.questdb.network.YieldEvent;
+import io.questdb.network.YieldEventFactory;
+import io.questdb.network.YieldEventFactoryImpl;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -57,7 +59,6 @@ import java.sql.ResultSet;
 public class PGQueryYieldTest extends BasePGTest {
 
     private static final Log LOG = LogFactory.getLog(PGQueryYieldTest.class);
-    private static final IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration();
     private static final StringSink sinkB = new StringSink();
     private static final ObjList<TestCase> testCases = new ObjList<>();
 
@@ -416,7 +417,7 @@ public class PGQueryYieldTest extends BasePGTest {
      */
     private static class YieldingReaderListener implements ReaderPool.ReaderListener, QuietCloseable {
 
-        private final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(ioDispatcherConfig);
+        private final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(configuration);
         private final ConcurrentHashMap<YieldEvent> yieldedPartitions = new ConcurrentHashMap<>();
 
         @Override

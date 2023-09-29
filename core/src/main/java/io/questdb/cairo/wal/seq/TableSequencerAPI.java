@@ -205,9 +205,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public SeqTxnTracker getSeqTxnTracker(TableToken tt) {
-        return seqTxnTrackers.computeIfAbsent(tt.getDirName(), dir -> {
-            return new SeqTxnTracker();
-        });
+        return seqTxnTrackers.computeIfAbsent(tt.getDirName(), dir -> new SeqTxnTracker());
     }
 
     public long getTableMetadata(final TableToken tableToken, final TableRecordMetadataSink sink) {

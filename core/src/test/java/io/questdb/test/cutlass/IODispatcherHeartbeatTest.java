@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass;
 
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -225,7 +226,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatInterval;
                 }
             };
-            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(ioDispatcherConfig);
+            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultCairoConfiguration(""));
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {
@@ -296,7 +297,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatInterval;
                 }
             };
-            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(ioDispatcherConfig);
+            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultCairoConfiguration(""));
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {
@@ -378,7 +379,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatToIdleRatio * heartbeatInterval;
                 }
             };
-            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(ioDispatcherConfig);
+            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultCairoConfiguration(""));
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {

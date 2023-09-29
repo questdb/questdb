@@ -323,7 +323,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getDisconnectOnError());
-        Assert.assertEquals(600_000, configuration.getLineTcpReceiverConfiguration().getTablePermissionsTimeout());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
@@ -1130,7 +1129,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(ColumnType.FLOAT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
             Assert.assertEquals(ColumnType.INT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getDisconnectOnError());
-            Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getTablePermissionsTimeout());
 
             Assert.assertTrue(configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled());
             Assert.assertEquals(512, configuration.getCairoConfiguration().getTelemetryConfiguration().getQueueCapacity());

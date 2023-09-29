@@ -86,8 +86,6 @@ public interface LineTcpReceiverConfiguration {
 
     long getSymbolCacheWaitUsBeforeReload();
 
-    long getTablePermissionsTimeout();
-
     LineProtoTimestampAdapter getTimestampAdapter();
 
     long getWriterIdleTimeout();

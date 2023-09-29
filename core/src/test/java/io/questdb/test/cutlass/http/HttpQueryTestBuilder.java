@@ -32,7 +32,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cairo.wal.NoOpWalTxnYieldEvents;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.cutlass.text.CopyRequestJob;
@@ -162,7 +161,7 @@ public class HttpQueryTestBuilder {
                 };
             }
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, NoOpWalTxnYieldEvents.INSTANCE, metrics);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 TelemetryJob telemetryJob = null;
