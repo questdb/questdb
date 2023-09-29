@@ -30,7 +30,10 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.http.ex.*;
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
+import io.questdb.cutlass.http.ex.RetryFailedOperationException;
+import io.questdb.cutlass.http.ex.RetryOperationException;
+import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -52,7 +55,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final Metrics metrics;
     private final HttpHeaderParser multipartContentHeaderParser;
     private final HttpMultipartContentParser multipartContentParser;
-    private final long multipartIdleSpinCount;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
     private final int recvBufferSize;
@@ -87,7 +89,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.responseSink = new HttpResponseSink(contextConfiguration);
         this.recvBufferSize = contextConfiguration.getRecvBufferSize();
-        this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
         // This is default behaviour until the security context is overridden with correct principal.
         this.securityContext = DenyAllSecurityContext.INSTANCE;
@@ -320,9 +321,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 if (multipartParserState.multipartRetry) {
                     if (continueConsumeMultipart(
                             socket,
-                            multipartParserState.start,
-                            multipartParserState.buf,
-                            multipartParserState.bufRemaining,
+                            multipartParserState.lo,
+                            multipartParserState.hi,
+                            multipartParserState.recvBufRemaining,
                             (HttpMultipartContentListener) processor,
                             processor,
                             retryRescheduleContext
@@ -422,52 +423,52 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.debug().$("multipart").$();
 
         // read socket into buffer until there is nothing to read
-        long start;
-        long buf;
-        int bufRemaining;
+        long lo;
+        long hi;
+        int recvBufRemaining;
 
         if (headerEnd < bufferEnd) {
-            start = headerEnd;
-            buf = bufferEnd;
-            bufRemaining = (int) (recvBufferSize - (bufferEnd - recvBuffer));
+            lo = headerEnd;
+            hi = bufferEnd;
+            recvBufRemaining = (int) (recvBufferSize - (bufferEnd - recvBuffer));
         } else {
-            start = recvBuffer;
-            buf = start + receivedBytes;
-            bufRemaining = recvBufferSize - receivedBytes;
+            lo = recvBuffer;
+            hi = lo + receivedBytes;
+            recvBufRemaining = recvBufferSize - receivedBytes;
             receivedBytes = 0;
         }
 
-        return continueConsumeMultipart(socket, start, buf, bufRemaining, multipartListener, processor, rescheduleContext);
+        return continueConsumeMultipart(socket, lo, hi, recvBufRemaining, multipartListener, processor, rescheduleContext);
     }
 
     private boolean continueConsumeMultipart(
             Socket socket,
-            long start,
-            long buf,
-            int bufRemaining,
+            long lo,
+            long hi,
+            int recvBufRemaining,
             HttpMultipartContentListener multipartListener,
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         boolean keepGoing = false;
 
-        if (buf > start) {
+        if (hi > lo) {
             try {
-                if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                if (parseMultipartResult(lo, hi, recvBufRemaining, multipartListener, processor, rescheduleContext)) {
                     return true;
                 }
 
-                buf = start = recvBuffer;
-                bufRemaining = recvBufferSize;
+                hi = lo = recvBuffer;
+                recvBufRemaining = recvBufferSize;
             } catch (TooFewBytesReceivedException e) {
-                start = multipartContentParser.getResumePtr();
+                lo = multipartContentParser.getResumePtr();
             }
         }
 
-        long spinsRemaining = multipartIdleSpinCount;
+        long spinsRemaining = 0;
 
         while (true) {
-            final int n = socket.recv(buf, bufRemaining);
+            final int n = socket.recv(hi, recvBufRemaining);
             if (n < 0) {
                 dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_MULTIPART_RECV);
                 break;
@@ -485,19 +486,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 // do we have anything in the buffer?
-                if (buf > start) {
+                if (hi > lo) {
                     try {
-                        if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                        if (parseMultipartResult(lo, hi, recvBufRemaining, multipartListener, processor, rescheduleContext)) {
                             keepGoing = true;
                             break;
                         }
 
-                        buf = start = recvBuffer;
-                        bufRemaining = recvBufferSize;
+                        hi = lo = recvBuffer;
+                        recvBufRemaining = recvBufferSize;
                         continue;
                     } catch (TooFewBytesReceivedException e) {
-                        start = multipartContentParser.getResumePtr();
-                        shiftReceiveBufferUnprocessedBytes(start, (int) (buf - start));
+                        lo = multipartContentParser.getResumePtr();
+                        shiftReceiveBufferUnprocessedBytes(lo, (int) (hi - lo));
                         dispatcher.registerChannel(this, IOOperation.READ);
                         break;
                     }
@@ -510,34 +511,27 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             LOG.debug().$("multipart recv [len=").$(n).I$();
 
-            dumpBuffer(buf, n);
+            dumpBuffer(hi, n);
 
-            bufRemaining -= n;
-            buf += n;
+            recvBufRemaining -= n;
+            hi += n;
 
-            if (bufRemaining == 0) {
+            if (recvBufRemaining == 0) {
                 try {
-                    if (buf - start > 1) {
-                        if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                    if (hi - lo > 1) {
+                        if (parseMultipartResult(lo, hi, recvBufRemaining, multipartListener, processor, rescheduleContext)) {
                             keepGoing = true;
                             break;
                         }
                     }
 
-                    buf = start = recvBuffer;
-                    bufRemaining = recvBufferSize;
+                    hi = lo = recvBuffer;
+                    recvBufRemaining = recvBufferSize;
                 } catch (TooFewBytesReceivedException e) {
-                    start = multipartContentParser.getResumePtr();
-                    int unprocessedSize = (int) (buf - start);
-                    // Shift to start
-                    if (unprocessedSize < recvBufferSize) {
-                        start = multipartContentParser.getResumePtr();
-                        shiftReceiveBufferUnprocessedBytes(start, unprocessedSize);
-                        dispatcher.registerChannel(this, IOOperation.READ);
-                    } else {
-                        // Header does not fit receive buffer
-                        failProcessor(processor, BufferOverflowException.INSTANCE, DISCONNECT_REASON_MULTIPART_HEADER_TOO_BIG);
-                    }
+                    lo = multipartContentParser.getResumePtr();
+                    int unprocessedSize = (int) (hi - lo);
+                    shiftReceiveBufferUnprocessedBytes(lo, unprocessedSize);
+                    dispatcher.registerChannel(this, IOOperation.READ);
                     break;
                 }
             }
@@ -733,18 +727,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean parseMultipartResult(
-            long start,
-            long buf,
-            int bufRemaining,
+            long lo,
+            long hi,
+            int recvBufRemaining,
             HttpMultipartContentListener multipartListener,
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, TooFewBytesReceivedException {
         boolean parseResult;
         try {
-            parseResult = multipartContentParser.parse(start, buf, multipartListener);
+            parseResult = multipartContentParser.parse(lo, hi, multipartListener);
         } catch (RetryOperationException e) {
-            this.multipartParserState.saveFdBufferPosition(multipartContentParser.getResumePtr(), buf, bufRemaining);
+            this.multipartParserState.saveBufferState(multipartContentParser.getResumePtr(), hi, recvBufRemaining);
             throw e;
         } catch (NotEnoughLinesException e) {
             failProcessor(processor, e, DISCONNECT_REASON_KICKED_TXT_NOT_ENOUGH_LINES);
@@ -778,7 +772,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
         // Shift to start
         this.receivedBytes = receivedBytes;
-        Vect.memcpy(recvBuffer, start, receivedBytes);
+        Vect.memmove(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
 }

@@ -109,6 +109,7 @@ public class IODispatcherHeartbeatTest {
                             Assert.assertEquals(1, Net.send(fds[idx], buf, 1));
                         }
                         dispatcher.run(0);
+                        //noinspection StatementWithEmptyBody
                         while (dispatcher.processIOQueue(processor)) ;
                     }
                 } finally {
@@ -149,7 +150,7 @@ public class IODispatcherHeartbeatTest {
                         }
 
                         @Override
-                        public long getTimeout() {
+                        public long getIdleConnectionTimeout() {
                             return heartbeatToIdleRatio * heartbeatInterval;
                         }
                     },
@@ -181,6 +182,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
+                        //noinspection StatementWithEmptyBody
                         while (dispatcher.processIOQueue(processor)) ;
                     }
 
@@ -257,6 +259,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
+                        //noinspection StatementWithEmptyBody
                         while (dispatcher.processIOQueue(processor)) ;
                     }
 
@@ -327,6 +330,7 @@ public class IODispatcherHeartbeatTest {
                     for (; tick.get() < tickCount; tick.incrementAndGet()) {
                         clock.setCurrent(tick.get());
                         dispatcher.run(0);
+                        //noinspection StatementWithEmptyBody
                         while (dispatcher.processIOQueue(processor)) ;
                     }
 
@@ -335,6 +339,7 @@ public class IODispatcherHeartbeatTest {
                     TestUtils.assertEventually(() -> {
                         clock.setCurrent(tick.incrementAndGet());
                         dispatcher.run(0);
+                        //noinspection StatementWithEmptyBody
                         while (dispatcher.processIOQueue(processor)) ;
                         Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
                     }, 10);
@@ -372,7 +377,7 @@ public class IODispatcherHeartbeatTest {
                 }
 
                 @Override
-                public long getTimeout() {
+                public long getIdleConnectionTimeout() {
                     return heartbeatToIdleRatio * heartbeatInterval;
                 }
             };
@@ -407,6 +412,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
+                        //noinspection StatementWithEmptyBody
                         while (dispatcher.processIOQueue(processor)) ;
                     }
 

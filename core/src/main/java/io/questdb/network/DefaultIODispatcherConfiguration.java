@@ -63,7 +63,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getLimit() {
+    public int getConcurrentConnectionLimit() {
         return 64;
     }
 
@@ -98,7 +98,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public long getTimeout() {
+    public long getIdleConnectionTimeout() {
         return 5 * 60 * 1000L;
     }
 }

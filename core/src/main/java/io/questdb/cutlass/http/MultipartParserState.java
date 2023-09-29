@@ -25,15 +25,15 @@
 package io.questdb.cutlass.http;
 
 public class MultipartParserState {
-    public long buf;
-    public int bufRemaining;
+    public long hi;
+    public int recvBufRemaining;
     public boolean multipartRetry;
-    public long start;
+    public long lo;
 
-    public void saveFdBufferPosition(long start, long buf, int bufRemaining) {
+    public void saveBufferState(long lo, long hi, int recvBufRemaining) {
         this.multipartRetry = true;
-        this.start = start;
-        this.buf = buf;
-        this.bufRemaining = bufRemaining;
+        this.lo = lo;
+        this.hi = hi;
+        this.recvBufRemaining = recvBufRemaining;
     }
 }

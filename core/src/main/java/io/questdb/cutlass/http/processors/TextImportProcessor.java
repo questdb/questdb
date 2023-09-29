@@ -115,25 +115,28 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
             final HttpRequestHeader rh = transientContext.getRequestHeader();
             CharSequence name = rh.getUrlParam("name");
-            if (name == null) {
+            if (Chars.isBlank(name)) {
                 name = partHeader.getContentDispositionFilename();
+
+                if (Chars.isBlank(name)) {
+                    sendErrorAndThrowDisconnect("no file name given");
+                }
             }
 
-            if (name == null) {
-                sendErrorAndThrowDisconnect("no file name given");
+            final CharSequence partitionByColumnName = rh.getUrlParam("partitionBy");
+            final int partitionBy;
+            if (Chars.isBlank(partitionByColumnName)) {
+                partitionBy = PartitionBy.NONE;
+            } else {
+                partitionBy = PartitionBy.fromString(partitionByColumnName);
+                if (partitionBy == -1) {
+                    sendErrorAndThrowDisconnect("invalid partitionBy");
+                }
             }
 
-            CharSequence partitionedBy = rh.getUrlParam("partitionBy");
-            if (partitionedBy == null) {
-                partitionedBy = "NONE";
-            }
-            int partitionBy = PartitionBy.fromString(partitionedBy);
-            if (partitionBy == -1) {
-                sendErrorAndThrowDisconnect("invalid partitionBy");
-            }
-
-            CharSequence timestampColumn = rh.getUrlParam("timestamp");
-            if (PartitionBy.isPartitioned(partitionBy) && timestampColumn == null) {
+            final CharSequence timestampColumnName = rh.getUrlParam("timestamp");
+            final boolean isTimestampColumnNameBlank = Chars.isBlank(timestampColumnName);
+            if (PartitionBy.isPartitioned(partitionBy) && isTimestampColumnNameBlank) {
                 sendErrorAndThrowDisconnect("when specifying partitionBy you must also specify timestamp");
             }
 
@@ -143,7 +146,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     Chars.equalsNc("true", rh.getUrlParam("overwrite")),
                     getAtomicity(rh.getUrlParam("atomicity")),
                     partitionBy,
-                    timestampColumn,
+                    isTimestampColumnNameBlank ? null : timestampColumnName,
                     null
             );
 

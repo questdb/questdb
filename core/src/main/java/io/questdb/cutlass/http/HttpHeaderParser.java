@@ -593,6 +593,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
         private void of0(CharSequence value) {
             int len = value.length();
+            assert _wptr + len < lo + lim;
             Chars.asciiStrCpy(value, len, _wptr);
             _wptr += len;
         }
@@ -604,5 +605,4 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
             of0(BOUNDARY_PREFIX);
         }
     }
-
 }

@@ -124,6 +124,36 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertSendMultipart(
+            CharSequence expectedResponse,
+            CharSequence url,
+            @Nullable CharSequence json,
+            CharSequence csv,
+            CharSequence fileName,
+            @Nullable CharSequence tableName,
+            @Nullable CharSequence responseFormat,
+            @Nullable CharSequence timestampColumnName,
+            @Nullable CharSequence partitionBy
+    ) {
+        sink.clear();
+        try {
+            toSinkImport0(
+                    url,
+                    tableName,
+                    json,
+                    csv,
+                    fileName,
+                    responseFormat,
+                    timestampColumnName,
+                    partitionBy,
+                    sink
+            );
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            httpClient.disconnect();
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(httpClient);
@@ -174,31 +204,42 @@ public class TestHttpClient implements QuietCloseable {
     private void toSinkImport0(
             CharSequence url,
             CharSequence tableName,
+            CharSequence json,
             CharSequence csv,
-            CharSink sink,
-            @Nullable CharSequence username,
-            @Nullable CharSequence password
+            CharSequence fileName,
+            CharSequence responseFormat,
+            CharSequence timestampColumnName,
+            CharSequence partitionBy,
+            CharSink sink
     ) {
         HttpClient.Request req = httpClient.newRequest();
         req
                 .POST("localhost", 9001)
                 .url(url)
                 .query("name", tableName)
-                .query("partitionBy", "NONE")
-                .query("overwrite", "false")
-                .query("skipLev", "false")
-                .query("delimiter", "")
-                .query("atomicitiy", "skipCol")
+                .query("fmt", responseFormat)
+                .query("timestamp", timestampColumnName)
+                .query("partitionBy", partitionBy)
+//                .query("overwrite", "false")
+//                .query("skipLev", "false")
+//                .query("delimiter", "")
+//                .query("atomicitiy", "skipCol")
         ;
 
-        if (username != null && password != null) {
-            req.authBasic(username, password);
-        }
         HttpClient.MultipartRequest multipart = req.multipart();
-        HttpClient.FormData data = multipart.formData("data");
-        data.put(csv);
-        HttpClient.Response rsp = multipart.send();
+        HttpClient.FormData data;
 
+        // csv schema part has to be consumed before the csv itself
+        // this part is optional
+        if (json != null) {
+            data = multipart.formData("schema");
+            data.put(json);
+        }
+
+        data = multipart.formData("data", fileName);
+        data.put(csv);
+
+        HttpClient.Response rsp = multipart.send();
         rsp.await();
         ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
         Chunk chunk;

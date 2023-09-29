@@ -210,9 +210,9 @@ public abstract class HttpClient implements QuietCloseable {
             request.eol();
             request.put("--").put(Request.BOUNDARY_PREFIX).put(request.boundary);
             request.eol();
-            request.put("Content-Disposition: form-data; fieldName=\"").put(fieldName).put('\"');
+            request.put("Content-Disposition: form-data; name=\"").put(fieldName).put('\"');
             if (fileName != null) {
-                request.put("; fileName=\"").put(fieldName).put('\"');
+                request.put("; filename=\"").put(fileName).put('\"');
             }
             request.eol();
             if (contentType != null) {
@@ -220,11 +220,13 @@ public abstract class HttpClient implements QuietCloseable {
                 request.eol();
             }
 
+            request.eol();
             return formData;
         }
 
         @Override
         public Response send() {
+            request.eol();
             request.put("--").put(Request.BOUNDARY_PREFIX).put(request.boundary).put("--");
             request.eol();
             return request.send();
@@ -335,7 +337,10 @@ public abstract class HttpClient implements QuietCloseable {
             state = STATE_QUERY;
             urlEncode = true;
             try {
-                encodeUtf8(name).put('=').encodeUtf8(value);
+                encodeUtf8(name).put('=');
+                if (value != null) {
+                    encodeUtf8(value);
+                }
             } finally {
                 urlEncode = false;
             }

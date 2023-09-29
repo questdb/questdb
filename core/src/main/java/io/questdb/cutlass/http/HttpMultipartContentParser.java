@@ -98,11 +98,8 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         this.boundaryByte = (byte) boundary.charAt(0);
     }
 
-    public boolean parse(
-            long lo,
-            long hi,
-            HttpMultipartContentListener listener
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         long _lo = lo;
         long ptr = lo;
         while (ptr < hi) {
