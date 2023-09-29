@@ -645,7 +645,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(TableToken tableToken, @Nullable String lockReason) {
+    public TableWriterAPI getTableWriterAPI(TableToken tableToken, @NotNull String lockReason) {
         verifyTableToken(tableToken);
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
@@ -654,7 +654,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(CharSequence tableName, @NotNull String lockReason) {
         return getTableWriterAPI(verifyTableNameForRead(tableName), lockReason);
     }
 
@@ -702,7 +702,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.get(tableToken);
     }
 
-    public TableWriter getWriter(TableToken tableToken, String lockReason) {
+    public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {
         verifyTableToken(tableToken);
         return writerPool.get(tableToken, lockReason);
     }
@@ -716,7 +716,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.entries();
     }
 
-    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
+    public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
         return writerPool.get(tableToken, lockReason);
     }
 
@@ -1178,16 +1178,24 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private void tryRepairTable(TableToken tableToken, RuntimeException rethrow) {
+    private void tryRepairTable(TableToken tableToken, CairoException rethrow) {
+        LOG.info()
+                .$("starting table repair [table=").$(tableToken)
+                .$(", dirName=").utf8(tableToken.getDirName())
+                .$(", cause=").$(rethrow.getFlyweightMessage())
+                .I$();
         try {
             writerPool.get(tableToken, "repair").close();
+            LOG.info().$("table repair succeeded [table=").$(tableToken).I$();
         } catch (EntryUnavailableException e) {
             // This is fine, writer is busy. Throw back origin error.
+            LOG.info().$("writer is busy, skipping repair [table=").$(tableToken).I$();
             throw rethrow;
         } catch (Throwable th) {
             LOG.critical()
-                    .$("could not repair before reading [dirName=").utf8(tableToken.getDirName())
-                    .$(" ,error=").$(th.getMessage()).I$();
+                    .$("table repair failed [dirName=").utf8(tableToken.getDirName())
+                    .$(", error=").$(th.getMessage())
+                    .I$();
             throw rethrow;
         }
     }
