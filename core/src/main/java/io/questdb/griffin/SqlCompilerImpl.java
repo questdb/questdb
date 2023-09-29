@@ -1253,13 +1253,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         }
     }
 
-    private void compileBegin(SqlExecutionContext executionContext) {
-        compiledQuery.ofBegin();
-    }
-
-    private void compileCommit(SqlExecutionContext executionContext) {
-        compiledQuery.ofCommit();
-    }
 
     private CharSequence authorizeInsertForCopy(SecurityContext securityContext, CopyModel model) {
         final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
@@ -1270,6 +1263,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             securityContext.authorizeInsert(tt);
         }
         return tableName;
+    }
+
+    private void compileBegin(SqlExecutionContext executionContext) {
+        compiledQuery.ofBegin();
+    }
+
+    private void compileCommit(SqlExecutionContext executionContext) {
+        compiledQuery.ofCommit();
     }
 
     private RecordCursorFactory compileCopy(SecurityContext securityContext, CopyModel model) throws SqlException {
