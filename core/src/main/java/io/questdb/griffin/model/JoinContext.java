@@ -29,7 +29,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.std.*;
 
 
-//Metadata describing join conditions
+// Metadata describing join conditions
 public class JoinContext implements Mutable, Plannable {
     public static final ObjectFactory<JoinContext> FACTORY = JoinContext::new;
     private static final int TYPICAL_NUMBER_OF_JOIN_COLUMNS = 4;

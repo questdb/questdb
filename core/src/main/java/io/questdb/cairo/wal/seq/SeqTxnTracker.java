@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
     private static final long SEQ_TXN_OFFSET;
@@ -38,21 +39,36 @@ public class SeqTxnTracker {
     private volatile int suspendedState = 0;
     private volatile long writerTxn = -1;
 
+    @TestOnly
+    public long getSeqTxn() {
+        return seqTxn;
+    }
+
+    @TestOnly
+    public long getWriterTxn() {
+        return writerTxn;
+    }
+
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
         Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1);
-        long seqTxn = this.seqTxn;
-        while (seqTxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, seqTxn, newSeqTxn)) {
-            seqTxn = this.seqTxn;
+        long stxn = seqTxn;
+        while (stxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+            stxn = seqTxn;
         }
-        long writerTxn = this.writerTxn;
-        while (newWriterTxn > writerTxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, writerTxn, newWriterTxn)) {
-            writerTxn = this.writerTxn;
+        long wtxn = writerTxn;
+        while (newWriterTxn > wtxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, wtxn, newWriterTxn)) {
+            wtxn = writerTxn;
         }
-        return this.suspendedState > 0 && this.seqTxn > 0 && this.seqTxn > this.writerTxn;
+        return suspendedState > 0 && seqTxn > 0 && seqTxn > writerTxn;
     }
 
     public boolean isInitialised() {
         return writerTxn != -1;
+    }
+
+    @TestOnly
+    public boolean isSuspended() {
+        return suspendedState < 0;
     }
 
     public boolean notifyCommitReadable(long newWriterTxn) {
@@ -79,16 +95,15 @@ public class SeqTxnTracker {
         // Updates seqTxn and returns true if the commit should post notification
         // to run ApplyWal2TableJob for the table
         long stxn = seqTxn;
-
         while (newSeqTxn > stxn) {
             if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
-                // Return that Apply job notification is needed
-                // when there is some new work for ApplyWal2Table job
-                return (stxn == -1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
+                break;
             }
             stxn = seqTxn;
         }
-        return false;
+        // Return that Apply job notification is needed
+        // when there is some new work for ApplyWal2Table job
+        return (stxn == -1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
     public void setSuspended() {

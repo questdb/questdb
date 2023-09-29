@@ -51,7 +51,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     public RuntimeIntervalModel(LongList staticIntervals, ObjList<Function> dynamicRangeList) {
         this.intervals = staticIntervals;
-
         this.dynamicRangeList = dynamicRangeList;
     }
 
@@ -102,7 +101,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     valTs(sink, intervals.getQuick(i + 1));
                     sink.val("\")");
                 }
-
             } catch (SqlException e) {
                 LOG.error().$("Can't calculate intervals: ").$(e.getMessage()).$();
             }

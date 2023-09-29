@@ -493,7 +493,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (tableBusy.getReason() != NO_LOCK_REASON
                         && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
                         && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
-                    LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
+                    LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lockReason=").$(tableBusy.getReason()).I$();
                     // This is abnormal termination but table is not set to suspended state.
                     // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
                     engine.notifyWalTxnRepublisher(tableToken);
