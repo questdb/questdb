@@ -67,8 +67,6 @@ public interface SecurityContext {
 
     void authorizeAssignServiceAccount(CharSequence serviceAccountName);
 
-    void authorizeCopy();
-
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeCreateGroup();
