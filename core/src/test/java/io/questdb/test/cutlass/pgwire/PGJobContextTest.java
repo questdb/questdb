@@ -48,6 +48,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -91,7 +92,6 @@ import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.*;
 
-
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
@@ -127,6 +127,7 @@ public class PGJobContextTest extends BasePGTest {
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
+    private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
     public PGJobContextTest(WalMode walMode) {
@@ -142,7 +143,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        BasePGTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -154,8 +155,19 @@ public class PGJobContextTest extends BasePGTest {
 
     @Before
     public void setUp() {
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
+        sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
+        forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
+
+        recvBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
+        forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
+
+        LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize)
+                .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
+                .$(", recvBufferSize=").$(recvBufferSize)
+                .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
+                .I$();
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
     }
 
     @After
@@ -1304,6 +1316,443 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBasicFetchIPv4() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
+            IntIntHashMap map = new IntIntHashMap();
+            map.put(1, ColumnType.IPv4);
+
+            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4)");
+            tbl.execute();
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
+            for (int i = 0; i < totalRows; i++) {
+                insert.setString(1, "1.1.1.1");
+                insert.execute();
+            }
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+            int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
+            for (int testSize : testSizes) {
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
+
+                ResultSet rs = stmt.executeQuery();
+                assertEquals(testSize, rs.getFetchSize());
+                sink.clear();
+                assertResultSet(
+                        "a[IPv4]\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n" +
+                                "1.1.1.1\n",
+                        sink,
+                        rs,
+                        map
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBasicFetchIPv4MultiCol() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
+            IntIntHashMap map = new IntIntHashMap();
+            map.put(1, ColumnType.IPv4);
+            map.put(3, ColumnType.IPv4);
+
+            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4, b int, c ipv4, d int)");
+            tbl.execute();
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(a, b, c, d) values(?, ?, ?, ?)");
+            for (int i = 0; i < totalRows; i++) {
+                insert.setString(1, "12.2.65.90");
+                insert.setInt(2, 5);
+                insert.setString(3, "65.34.123.99");
+                insert.setInt(4, 22);
+                insert.execute();
+            }
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+            int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
+            for (int testSize : testSizes) {
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
+
+                ResultSet rs = stmt.executeQuery();
+                assertEquals(testSize, rs.getFetchSize());
+                sink.clear();
+                assertResultSet(
+                        "a[IPv4],b[INTEGER],c[IPv4],d[INTEGER]\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n" +
+                                "12.2.65.90,5,65.34.123.99,22\n",
+                        sink,
+                        rs,
+                        map
+                );
+            }
+        });
+    }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
+
+    @Test
+    public void testBasicFetchIPv4Null() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
+            IntIntHashMap map = new IntIntHashMap();
+            map.put(1, ColumnType.IPv4);
+
+            PreparedStatement tbl = connection.prepareStatement("create table x (a ipv4)");
+            tbl.execute();
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
+            for (int i = 0; i < totalRows; i++) {
+                insert.setString(1, null);
+                insert.execute();
+            }
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+            int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
+            for (int testSize : testSizes) {
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
+
+                ResultSet rs = stmt.executeQuery();
+                assertEquals(testSize, rs.getFetchSize());
+                sink.clear();
+                assertResultSet(
+                        "a[IPv4]\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n" +
+                                "null\n",
+                        sink,
+                        rs,
+                        map
+                );
+            }
+        });
+    }
+
+    @Test
     public void testBatchInsertWithTransaction() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -1779,7 +2228,7 @@ if __name__ == "__main__":
     @Test
     public void testCancelOneQueryOutOfMultipleRunningOnes() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             final int THREADS = 5;
@@ -1841,7 +2290,7 @@ if __name__ == "__main__":
     @Test
     public void testCancelQueryThatReusesCircuitBreakerFromPreviousConnection() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             try (
@@ -1898,9 +2347,9 @@ if __name__ == "__main__":
         };
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
-            compiler.compile("create table if not exists tab as " +
-                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
-            compiler.compile("create table if not exists dest as (select x l from long_sequence(10000))", sqlExecutionContext);
+            ddl("create table if not exists tab as " +
+                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+            ddl("create table if not exists dest as (select x l from long_sequence(10000))");
             mayDrainWalQueue();
 
             for (String query : queries) {
@@ -2121,9 +2570,42 @@ if __name__ == "__main__":
                 "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
                 ">430000000951535f31005300000004\n" +
                 "<!!";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
+    }
+
+    @Test
+    public void testContextClearsTransactionFlag() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2, 60);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), true, -2)) {
+                    connection.setAutoCommit(true);
+                    try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                            "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
+                        pstmt.execute();
+                    }
+                    connection.prepareStatement("BEGIN").execute();
+                }
+
+                for (int i = 0; i < 100; i++) {
+                    try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                        connection.prepareStatement("insert into t values (1, 1)").execute();
+                    }
+                }
+
+                assertSql("count\n" +
+                        "100\n", "select count(*) from t");
+            }
+        });
     }
 
     @Test
@@ -2161,11 +2643,8 @@ if __name__ == "__main__":
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
                 pstmt.execute();
             }
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "t",
-                    sink,
+
+            assertSql(
                     "a\tb\n" +
                             "2\t1970-01-01T00:00:00.000001Z\n" +
                             "3\t1970-01-01T00:00:00.000002Z\n" +
@@ -2176,7 +2655,7 @@ if __name__ == "__main__":
                             "8\t1970-01-01T00:00:00.000007Z\n" +
                             "9\t1970-01-01T00:00:00.000008Z\n" +
                             "10\t1970-01-01T00:00:00.000009Z\n" +
-                            "11\t1970-01-01T00:00:00.000010Z\n"
+                            "11\t1970-01-01T00:00:00.000010Z\n", "t"
             );
 
             // Drop the table and create it once again with the same contents to verify
@@ -2188,11 +2667,7 @@ if __name__ == "__main__":
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
                 pstmt.execute();
             }
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "t",
-                    sink,
+            assertSql(
                     "a\tb\n" +
                             "2\t1970-01-01T00:00:00.000001Z\n" +
                             "3\t1970-01-01T00:00:00.000002Z\n" +
@@ -2203,7 +2678,7 @@ if __name__ == "__main__":
                             "8\t1970-01-01T00:00:00.000007Z\n" +
                             "9\t1970-01-01T00:00:00.000008Z\n" +
                             "10\t1970-01-01T00:00:00.000009Z\n" +
-                            "11\t1970-01-01T00:00:00.000010Z\n"
+                            "11\t1970-01-01T00:00:00.000010Z\n", "t"
             );
         });
     }
@@ -2268,12 +2743,8 @@ if __name__ == "__main__":
                     "    timestamp(b)")) {
                 pstmt.execute();
             }
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "t",
-                    sink,
-                    "a\tb\n"
+            assertSql(
+                    "a\tb\n", "t"
             );
         });
     }
@@ -2343,6 +2814,37 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDiscardClearsTransactionFlag() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2, 60);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                    try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                            "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
+                        pstmt.execute();
+                    }
+                    connection.prepareStatement("insert into t values (1, 1)").execute();
+                    connection.prepareStatement("COMMIT").execute();
+                    connection.prepareStatement("DISCARD ALL").execute();
+
+                    try (final Connection conn2 = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                        for (int i = 0; i < 100; i++) {
+                            conn2.prepareStatement("insert into t values (1, 1)").execute();
+                        }
+                    }
+                }
+                assertSql("count\n" +
+                        "101\n", "select count(*) from t");
+            }
+        });
+    }
+
+    @Test
     public void testDisconnectDuringAuth() throws Exception {
         skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
         for (int i = 0; i < 3; i++) {
@@ -2383,12 +2885,12 @@ if __name__ == "__main__":
                 {"drop doesnt", "ERROR: 'table' or 'all tables' expected"},
                 {"drop", "ERROR: 'table' or 'all tables' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
-                {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
+                {"drop table exists doesnt", "ERROR: table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
-                {"drop all table if exists;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop all table if exists;", "ERROR: 'tables' expected"},
                 {"drop all tables if exists;", "ERROR: expected [;]"},
-                {"drop all ;", "ERROR: 'table' or 'all tables' expected"},
+                {"drop all ;", "ERROR: 'tables' expected"},
                 {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -2396,7 +2898,7 @@ if __name__ == "__main__":
                 String[] testData = sqlExpectedErrMsg[i];
                 try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
                     statement.execute();
-                    Assert.fail();
+                    Assert.fail(testData[0]);
                 } catch (PSQLException e) {
                     assertContains(e.getMessage(), testData[1]);
                 }
@@ -2421,6 +2923,54 @@ if __name__ == "__main__":
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
             }
+        });
+    }
+
+    @Test
+    public void testExecuteSameQueryManyTimesWithMaxRowsReturnsCorrectResult() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
+
+            try (Statement stmt = connection.createStatement()) {
+                stmt.executeUpdate("create table if not exists tab ( a int, b long, ts timestamp)");
+            }
+
+            //max rows bigger than result set sie (empty result set)
+            assertResultNTimes(connection,
+                    "select * from tab",
+                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5, 10
+            );
+
+            //max rows bigger than result set sie (non-empty result set)
+            assertResultNTimes(connection,
+                    "select 1 as x",
+                    "x[INTEGER]\n" +
+                            "1\n", 5, 10
+            );
+
+            //max rows smaller than result set size
+            assertResultNTimes(connection,
+                    "select x from long_sequence(5)",
+                    "x[BIGINT]\n" +
+                            "1\n2\n3\n", 3, 10
+            );
+
+            // max rows smaller than cursor size, cursor does not return size
+            assertResultNTimes(connection,
+                    "show columns from tab",
+                    "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
+                            "a,INT,false,0,false,0,false,false\n" +
+                            "b,LONG,false,0,false,0,false,false\n", 2, 10
+            );
+
+            // max rows bigger than cursor size, cursor does not return size
+            assertResultNTimes(connection,
+                    "show columns from tab",
+                    "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
+                            "a,INT,false,0,false,0,false,false\n" +
+                            "b,LONG,false,0,false,0,false,false\n" +
+                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6, 10
+            );
         });
     }
 
@@ -2470,10 +3020,9 @@ if __name__ == "__main__":
                     try (ResultSet rs = statement.getResultSet()) {
                         assertResultSet(
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Async Filter\n" +
+                                        "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
                                         "  filter: ($0::long<x and x<$1::double)\n" +
-                                        "  workers: 2\n" +
                                         "    DataFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n",
@@ -2517,9 +3066,8 @@ if __name__ == "__main__":
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Sort light lo: 10\n" +
                                     "  keys: [str, x]\n" +
-                                    "    Async Filter\n" +
+                                    "    Async Filter workers: 2\n" +
                                     "      filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
-                                    "      workers: 2\n" +
                                     "        DataFrame\n" +
                                     "            Row forward scan\n" +
                                     "            Frame forward scan on: xx\n",
@@ -2534,7 +3082,7 @@ if __name__ == "__main__":
     @Test
     public void testExtendedQueryTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select s, count(*) from t1 group by s ")) {
                 statement.execute();
                 Assert.fail();
@@ -2667,35 +3215,35 @@ if __name__ == "__main__":
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderHashJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from crj join xx on x = p0 ";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftHashJoin() throws Exception {//slave - cross join
         final String query = "with crj as (select first(x) as p0 from xx)  select x / p0 from crj left join (select * from xx x1 cross join xx x2) on x = p0 and x <= 1";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftHashJoinLight() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx)  select x / p0 from crj left join xx on x = p0 and x <= 1";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
     public void testFetchDisconnectReleasesReaderLeftNLJoin() throws Exception {
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx left join crj on x <= p0";
 
-        testFetchDisconnnectReleasesReader(query);
+        testFetchDisconnectReleasesReader(query);
     }
 
     @Test
@@ -2899,7 +3447,7 @@ if __name__ == "__main__":
     @Test
     public void testGroupByExpressionNotAppearingInSelectClause() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
                 try (ResultSet rs = statement.executeQuery()) {
                     sink.clear();
@@ -2912,7 +3460,7 @@ if __name__ == "__main__":
     @Test
     public void testGroupByExpressionNotAppearingInSelectClauseWhenTableIsEmpty() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            compiler.compile("create table t1 ( s string );", sqlExecutionContext);
+            ddl("create table t1 ( s string );");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
                 try (ResultSet rs = statement.executeQuery()) {
                     sink.clear();
@@ -2925,7 +3473,7 @@ if __name__ == "__main__":
     @Test
     public void testGroupByExpressionWithBindVariableNotAppearingInSelectClause() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+?")) {
                 statement.setLong(1, 1);
                 try (ResultSet rs = statement.executeQuery()) {
@@ -3086,6 +3634,43 @@ if __name__ == "__main__":
                 "<310000000432000000045400000128000d730000000000000100000413ffffffffffff00006900000000000002000000170004ffffffff00006400000000000003000002bd0008ffffffff000074000000000000040000045a0008ffffffff00006600000000000005000002bc0004ffffffff00005f73686f727400000000000006000000150002ffffffff00006c00000000000007000000140008ffffffff0000747332000000000000080000045a0008ffffffff0000626200000000000009000000150001ffffffff0000620000000000000a000000100001ffffffff0000726e645f73796d626f6c0000000000000b00000413ffffffffffff0000726e645f646174650000000000000c0000045a0008ffffffff0000726e645f62696e0000000000000d00000011ffffffffffff000144000000a6000dffffffff00000002353700000012302e363235343032313534323431323031380000001a313937302d30312d30312030303a30303a30302e30303030303000000005302e343632000000052d313539330000000733343235323332ffffffff000000033132310000000166000000045045484e00000017323031352d30332d31372030343a32353a35322e3736350000000e19c49594365349b4597e3b08a11e44000000c8000d00000004585953420000000331343200000012302e353739333436363332363836323231310000001a313937302d30312d30312030303a30303a30302e30313030303000000005302e39363900000005323030383800000007313531373439300000001a323031352d30312d31372032303a34313a31392e343830363835000000033130300000000174000000045045484e00000017323031352d30362d32302030313a31303a35382e35393900000011795f8b812b934d1a8e78b5b91153d0fb6444000000c2000d000000044f5a5a560000000332313900000013302e31363338313337343737333734383531340000001a313937302d30312d30312030303a30303a30302e30323030303000000005302e363539000000062d313233303300000007393438393530380000001a323031352d30382d31332031373a31303a31392e37353235323100000001360000000166ffffffff00000017323031352d30352d32302030313a34383a33372e3431380000000f2b4d5ff64690c3b3598ee5612f640e44000000b1000d000000044f4c595800000002333000000012302e373133333931303237313535353834330000001a313937302d30312d30312030303a30303a30302e30333030303000000005302e363535000000043636313000000007363530343432380000001a323031352d30382d30382030303a34323a32342e353435363339000000033132330000000166ffffffff00000017323031352d30312d30332031333a35333a30332e313635ffffffff44000000ac000d000000045449514200000002343200000012302e363830363837333133343632363431380000001a313937302d30312d30312030303a30303a30302e30343030303000000005302e363236000000052d3136303500000007383831343038360000001a323031352d30372d32382031353a30383a35332e34363234393500000002323800000001740000000443505357ffffffff0000000e3ba6dc3b7d2be392fe6938e1779a44000000af000d000000044c544f560000000331333700000012302e373633323631353030343332343530330000001a313937302d30312d30312030303a30303a30302e30353030303000000005302e3838320000000439303534ffffffff0000001a323031352d30342d32302030353a30393a30332e353830353734000000033130360000000166000000045045484e00000017323031352d30312d30392030363a35373a31372e353132ffffffff44000000a0000d000000045a494d4e00000003313235ffffffff0000001a313937302d30312d30312030303a30303a30302e303630303030ffffffff00000005313135323400000007383333353236310000001a323031352d31302d32362030323a31303a35302e363838333934000000033131310000000174000000045045484e00000017323031352d30382d32312031353a34363a33322e363234ffffffff44000000a1000d000000044f504a4f0000000331363800000013302e31303435393335323331323333313138330000001a313937302d30312d30312030303a30303a30302e30373030303000000005302e353335000000052d3539323000000007373038303730340000001a323031352d30372d31312030393a31353a33382e3334323731370000000331303300000001660000000456544a57ffffffffffffffff44000000b6000d00000004474c554f0000000331343500000012302e353339313632363632313739343637330000001a313937302d30312d30312030303a30303a30302e30383030303000000005302e37363700000005313432343200000007323439393932320000001a323031352d31312d30322030393a30313a33312e3331323830340000000238340000000166000000045045484e00000017323031352d31312d31342031373a33373a33362e303433ffffffff44000000c3000d000000045a5651450000000331303300000012302e363732393430353539303737333633380000001a313937302d30312d30312030303a30303a30302e303930303030ffffffff00000005313337323700000007373837353834360000001a323031352d31322d31322031333a31363a32362e3133343536320000000232320000000174000000045045484e00000017323031352d30312d32302030343a35303a33342e30393800000012143380c9eba3677a1a79e435e43adc5c65ff44000000a7000d000000044c4947590000000331393900000012302e323833363334373133393438313436390000001a313937302d30312d30312030303a30303a30302e313030303030ffffffff00000005333034323600000007333231353536320000001a323031352d30382d32312031343a35353a30372e30353537323200000002313100000001660000000456544a57ffffffff0000000dff703ac78ab314cd470b0c391244000000a7000d000000044d514e5400000002343300000012302e353835393333323338383539393633380000001a313937302d30312d30312030303a30303a30302e31313030303000000005302e333335000000053237303139ffffffffffffffff0000000232370000000174000000045045484e00000017323031352d30372d31322031323a35393a34372e3636350000001326fb2e42faf56e8f80e354b807b13257ff9aef44000000c8000d00000004575743430000000332313300000012302e373636353032393931343337363935320000001a313937302d30312d30312030303a30303a30302e31323030303000000005302e35383000000005313336343000000007343132313932330000001a323031352d30382d30362030323a32373a33302e3436393736320000000237330000000166000000045045484e00000017323031352d30342d33302030383a31383a31302e3435330000001271a7d5af11963708dd98ef54882aa2ade7d444000000af000d00000004564647500000000331323000000012302e383430323936343730383132393534360000001a313937302d30312d30312030303a30303a30302e31333030303000000005302e373733000000043732323300000007373234313432330000001a323031352d31322d31382030373a33323a31382e34353630323500000002343300000001660000000456544a57ffffffff00000011244e44a80dfe27ec53135db215e7b8356744000000b7000d00000004524d44470000000331333400000013302e31313034373331353231343739333639360000001a313937302d30312d30312030303a30303a30302e31343030303000000005302e30343300000005323132323700000007373135353730380000001a323031352d30372d30332030343a31323a34352e3737343238310000000234320000000174000000044350535700000017323031352d30322d32342031323a31303a34332e313939ffffffff44000000a5000d0000000457464f5100000003323535ffffffff0000001a313937302d30312d30312030303a30303a30302e31353030303000000005302e31313600000005333135363900000007363638383237370000001a323031352d30352d31392030333a33303a34352e373739393939000000033132360000000174000000045045484e00000017323031352d31322d30392030393a35373a31372e303738ffffffff4400000098000d000000044d58444b00000002353600000012302e393939373739373233343033313638380000001a313937302d30312d30312030303a30303a30302e31363030303000000005302e353233000000062d33323337320000000736383834313332ffffffff0000000235380000000166ffffffff00000017323031352d30312d32302030363a31383a31382e353833ffffffff44000000bb000d00000004584d4b4a0000000331333900000012302e383430353831353439333536373431370000001a313937302d30312d30312030303a30303a30302e31373030303000000005302e333036000000053235383536ffffffff0000001a323031352d30352d31382030333a35303a32322e373331343337000000013200000001740000000456544a5700000017323031352d30362d32352031303a34353a30312e3031340000000d007cfb0119caf2bf845a6f383544000000af000d0000000456494844ffffffffffffffff0000001a313937302d30312d30312030303a30303a30302e31383030303000000005302e35353000000005323232383000000007393130393834320000001a323031352d30312d32352031333a35313a33382e3237303538330000000239340000000166000000044350535700000017323031352d31302d32372030323a35323a31392e3933350000000e2d16f389a38364ded6fdc45bc4e944000000bd000d0000000457504e58ffffffff00000012302e393436393730303831333932363930370000001a313937302d30312d30312030303a30303a30302e31393030303000000005302e343135000000062d3137393333000000063637343236310000001a323031352d30332d30342031353a34333a31352e3231333638360000000234330000000174000000044859525800000017323031352d31322d31382032313a32383a32352e3332350000000ab34c0e8ff10cc560b7d144000000bd000d0000000459504f5600000002333600000012302e363734313234383434383732383832340000001a313937302d30312d30312030303a30303a30302e32303030303000000005302e303331000000052d3538383800000007313337353432330000001a323031352d31322d31302032303a35303a33352e38363636313400000001330000000174ffffffff00000017323031352d30372d32332032303a31373a30342e3233360000000dd4abbe30fa8dac3d98a0ad9a5d44000000c6000d000000044e55484effffffff00000012302e363934303931373932353134383333320000001a313937302d30312d30312030303a30303a30302e32313030303000000005302e333339000000062d323532323600000007333532343734380000001a323031352d30352d30372030343a30373a31382e31353239363800000002333900000001740000000456544a5700000017323031352d30342d30342031353a32333a33342e31333000000012b8bef8a146872892a39be3cbc2648ab035d8440000009c000d00000004424f53450000000332343000000013302e30363030313832373732313535363031390000001a313937302d30312d30312030303a30303a30302e32323030303000000005302e33373900000005323339303400000007393036393333390000001a323031352d30332d32312030333a34323a34322e3634333138360000000238340000000174ffffffffffffffffffffffff44000000c5000d00000004494e4b470000000331323400000012302e383631353834313632373730323735330000001a313937302d30312d30312030303a30303a30302e32333030303000000005302e343034000000062d333033383300000007373233333534320000001a323031352d30372d32312031363a34323a34372e3031323134380000000239390000000166ffffffff00000017323031352d30382d32372031373a32353a33352e3330380000001287fc9283fc88f3322770c801b0dcc93a5b7e44000000b1000d000000044655584300000002353200000012302e373433303130313939343531313531370000001a313937302d30312d30312030303a30303a30302e323430303030ffffffff000000062d313437323900000007313034323036340000001a323031352d30382d32312030323a31303a35382e3934393637340000000232380000000174000000044350535700000017323031352d30382d32392032303a31353a35312e383335ffffffff44000000bd000d00000004554e595100000002373100000011302e3434323039353431303238313933380000001a313937302d30312d30312030303a30303a30302e32353030303000000005302e353339000000062d3232363131ffffffff0000001a323031352d31322d32332031383a34313a34322e3331393835390000000239380000000174000000045045484e00000017323031352d30312d32362030303a35353a35302e3230320000000f28ed9799d877333fb267da984747bf44000000b1000d000000044b424d51ffffffff00000013302e32383031393231383832353035313339350000001a313937302d30312d30312030303a30303a30302e323630303030ffffffff000000053132323430ffffffff0000001a323031352d30382d31362030313a30323a35352e3736363632320000000232310000000166ffffffff00000017323031352d30352d31392030303a34373a31382e3639380000000d6ade4604d381e7a21622353b1c4400000091000d000000044a534f4c00000003323433ffffffff0000001a313937302d30312d30312030303a30303a30302e32373030303000000005302e303638000000062d3137343638ffffffffffffffff0000000232300000000174ffffffff00000017323031352d30362d31392031303a33383a35342e343833000000113de02d0486e7ca29980769ca5bd6cf0969440000007f000d00000004484e535300000003313530ffffffff0000001a313937302d30312d30312030303a30303a30302e32383030303000000005302e3134380000000531343834310000000735393932343433ffffffff0000000232350000000166000000045045484effffffff0000000c14d6fcee032281b806c406af44000000c3000d00000004505a50420000000331303100000014302e3036313634363731373738363135383034350000001a313937302d30312d30312030303a30303a30302e323930303030ffffffff00000005313232333700000007393837383137390000001a323031352d30392d30332032323a31333a31382e38353234363500000002373900000001660000000456544a5700000017323031352d31322d31372031353a31323a35342e3935380000001012613a9aad982e7552ad62878845b99d44000000c3000d000000044f594e4e00000002323500000012302e333339333530393531343030303234370000001a313937302d30312d30312030303a30303a30302e33303030303000000005302e36323800000005323234313200000007343733363337380000001a323031352d31302d31302031323a31393a34322e353238323234000000033130360000000174000000044350535700000017323031352d30372d30312030303a32333a34392e3738390000000d54133fffb67ecd0427669489db4400000083000dffffffff0000000331313700000012302e353633383430343737353636333136310000001a313937302d30312d30312030303a30303a30302e333130303030ffffffff000000052d353630340000000736333533303138ffffffff0000000238340000000166ffffffffffffffff0000000b2bad2507db6244336e008e4400000099000d00000004485652490000000332333300000013302e32323430373636353739303730353737370000001a313937302d30312d30312030303a30303a30302e33323030303000000005302e3432350000000531303436390000000731373135323133ffffffff0000000238360000000166ffffffff00000017323031352d30322d30322030353a34383a31372e333733ffffffff44000000b6000d000000044f59544f00000002393600000012302e373430373538313631363931363336340000001a313937302d30312d30312030303a30303a30302e33333030303000000005302e353238000000062d313232333900000007333439393632300000001a323031352d30322d30372032323a33353a30332e3231323236380000000231370000000166000000045045484e00000017323031352d30332d32392031323a35353a31312e363832ffffffff44000000a5000d000000044c46435900000002363300000012302e373231373331353732393739303732320000001a313937302d30312d30312030303a30303a30302e333430303030ffffffff0000000532333334340000000739353233393832ffffffff000000033132330000000166000000044350535700000017323031352d30352d31382030343a33353a32372e3232380000000e05e5c04eccd6e37b34cd1535bba444000000c1000d0000000447484c580000000331343800000012302e333035373933373730343936343237320000001a313937302d30312d30312030303a30303a30302e33353030303000000005302e363336000000062d333134353700000007323332323333370000001a323031352d31302d32322031323a30363a30352e3534343730310000000239310000000174000000044859525800000017323031352d30352d32312030393a33333a31382e3135380000000a571d91723004b702cb0344000000a4000d000000045954535a00000003313233ffffffff0000001a313937302d30312d30312030303a30303a30302e33363030303000000005302e35313900000005323235333400000007343434363233360000001a323031352d30372d32372030373a32333a33372e3233333731310000000235330000000166000000044350535700000017323031352d30312d31332030343a33373a31302e303336ffffffff44000000a3000d0000000453574c5500000003323531ffffffff0000001a313937302d30312d30312030303a30303a30302e33373030303000000005302e313739000000043737333400000007343038323437350000001a323031352d31302d32312031383a32343a33342e3430303334350000000236390000000166000000045045484e00000017323031352d30342d30312031343a33333a34322e303035ffffffff44000000b1000d0000000454514a4c00000003323435ffffffff0000001a313937302d30312d30312030303a30303a30302e33383030303000000005302e3836350000000439353136000000063932393334300000001a323031352d30352d32382030343a31383a31382e36343035363700000002363900000001660000000456544a5700000017323031352d30362d31322032303a31323a32382e3838310000000f6c3e51d7ebb10771321faf404e8c47440000009e000d000000045245494a000000023934ffffffff0000001a313937302d30312d30312030303a30303a30302e33393030303000000005302e313330000000062d3239393234ffffffff0000001a323031352d30332d32302032323a31343a34362e323034373138000000033131330000000174000000044859525800000017323031352d31322d31392031333a35383a34312e383139ffffffff44000000c2000d000000044844485100000002393400000012302e373233343138313737333430373533360000001a313937302d30312d30312030303a30303a30302e34303030303000000005302e373330000000053139393730000000063635343133310000001a323031352d30312d31302032323a35363a30382e3438303435300000000238340000000174ffffffff00000017323031352d30332d30352031373a31343a34382e323735000000124f566b65a45338e9cdc1a7ee8675ada52d4944000000b8000d00000004554d455500000002343000000014302e3030383434343033333233303538303733390000001a313937302d30312d30312030303a30303a30302e34313030303000000005302e383035000000062d313136323300000007343539393836320000001a323031352d31312d32302030343a30323a34342e3333353934370000000237360000000166000000045045484e00000017323031352d30352d31372031373a33333a32302e393232ffffffff44000000ad000d00000004594a494800000003313834ffffffff0000001a313937302d30312d30312030303a30303a30302e34323030303000000005302e33383300000005313736313400000007333130313637310000001a323031352d30312d32382031323a30353a34362e363833303031000000033130350000000174ffffffff00000017323031352d31322d30372031393a32343a33362e3833380000000cec69cd73bb9bc595db6191ce44000000a3000d000000044359584700000002323700000012302e323931373739363035333034353734370000001a313937302d30312d30312030303a30303a30302e34333030303000000005302e393533000000043339343400000006323439313635ffffffff0000000236370000000174ffffffff00000017323031352d30332d30322030383a31393a34342e3536360000000e0148153e0c7f3f8fe4b5ab34212944000000b4000d000000044d5254470000000331343300000013302e30323633323533313336313439393131330000001a313937302d30312d30312030303a30303a30302e34343030303000000005302e393433000000062d323733323000000007313636373834320000001a323031352d30312d32342031393a35363a31352e3937333130390000000231310000000166ffffffff00000017323031352d30312d32342030373a31353a30322e373732ffffffff44000000c3000d00000004444f4e500000000332343600000011302e3635343232363234383734303434370000001a313937302d30312d30312030303a30303a30302e34353030303000000005302e35353600000005323734373700000007343136303031380000001a323031352d31322d31342030333a34303a30352e3931313833390000000232300000000174000000045045484e00000017323031352d31302d32392031343a33353a31302e3136370000000e079201f56aa131cdcbc2a2b48e9944000000c4000d00000004495158530000000332333200000013302e32333037353730303231383033383835330000001a313937302d30312d30312030303a30303a30302e34363030303000000005302e303439000000062d313831313300000007343030353232380000001a323031352d30362d31312031333a30303a30372e32343831383800000001380000000174000000044350535700000017323031352d30382d31362031313a30393a32342e3331310000000dfa1f9224b1b8676508b7f8410044000000b1000dffffffff00000003313738ffffffff0000001a313937302d30312d30312030303a30303a30302e34373030303000000005302e393033000000062d313436323600000007323933343537300000001a323031352d30342d30342030383a35313a35342e3036383135340000000238380000000174ffffffff00000017323031352d30372d30312030343a33323a32332e30383300000014843625632b6361431c477db646babb98ca08bea444000000b0000d000000044855575a00000002393400000011302e3131303430313337343937393631330000001a313937302d30312d30312030303a30303a30302e34383030303000000005302e343230000000052d3337333600000007353638373531340000001a323031352d30312d30322031373a31383a30352e3632373633330000000237340000000166ffffffff00000017323031352d30332d32392030363a33393a31312e363432ffffffff44000000ab000d000000045352454400000002363600000013302e31313237343636373134303931353932380000001a313937302d30312d30312030303a30303a30302e34393030303000000005302e303630000000062d313035343300000007333636393337370000001a323031352d31302d32322030323a35333a30322e3338313335310000000237370000000174000000045045484effffffff0000000b7c3fd6883a93ef24a5e2bc430000000e53454c454354203530005a0000000549\n";
 
         assertHexScript(script);
+    }
+
+    @Test
+    public void testImplicitStringAndCharConversions() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+
+            try (PreparedStatement stmt = connection.prepareStatement("select ? > 'a'")) {
+                stmt.setString(1, "ab");
+                ResultSet resultSet = stmt.executeQuery();
+
+                sink.clear();
+                assertResultSet("column[BIT]\n" +
+                        "true\n", sink, resultSet);
+
+                stmt.setString(1, "a");
+                resultSet = stmt.executeQuery();
+
+                sink.clear();
+                assertResultSet("column[BIT]\n" +
+                        "false\n", sink, resultSet);
+
+                stmt.setString(1, "");
+                resultSet = stmt.executeQuery();
+                sink.clear();
+                assertResultSet("column[BIT]\n" +
+                        "false\n", sink, resultSet);
+
+
+                stmt.setString(1, null);
+                resultSet = stmt.executeQuery();
+                sink.clear();
+                assertResultSet("column[BIT]\n" +
+                        "false\n", sink, resultSet);
+            }
+        });
     }
 
     @Test
@@ -3274,7 +3859,7 @@ if __name__ == "__main__":
     @Test
     public void testInsertAsSelectTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
-            compiler.compile("create table tab (d double)", sqlExecutionContext);
+            ddl("create table tab (d double)");
             try (final PreparedStatement statement = connection.prepareStatement(
                     "insert into tab select rnd_double() from long_sequence(1000);")) {
                 statement.execute();
@@ -3296,22 +3881,43 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore // TODO: support big binary parameter buffers (epic)
-    public void testInsertBinaryOver1Mb() throws Exception {
-        final int maxLength = 1024 * 1024;
-        testBinaryInsert(maxLength, false);
-    }
-
-    @Test
     public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
-        testBinaryInsert(maxLength, true);
+        testBinaryInsert(maxLength, true, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
     @Test
     public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
-        testBinaryInsert(maxLength, false);
+        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
+    }
+
+    @Test
+    public void testInsertBinaryOverHalfMb() throws Exception {
+        final int maxLength = 524287;
+        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
+    }
+
+    @Test
+    public void testInsertBinaryOverRecvOverflow() throws Exception {
+        final int maxLength = 524287;
+        try {
+            testBinaryInsert(maxLength, true, 2048, 1024 * 1024 + 100);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
+        }
+    }
+
+    @Test
+    public void testInsertBinarySendRecvOverflow() throws Exception {
+        final int maxLength = 524287;
+        try {
+            testBinaryInsert(maxLength, true, 1024 * 1024 + 100, 2048);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "server configuration error: not enough space in send buffer for row data");
+        }
     }
 
     @Test
@@ -3379,7 +3985,8 @@ if __name__ == "__main__":
                                         "false,2022-04-19 18:50:28.998\n" +
                                         "false,2022-04-19 18:50:29.998\n",
                                 sink,
-                                resultSet);
+                                resultSet
+                        );
                     }
                 }
             }
@@ -3960,9 +4567,9 @@ nodejs code:
                         Assert.assertEquals(1, a[2]);
 
 
-                        compiler.compile("create table spot1 as (select * from test_batch)", sqlExecutionContext);
-                        compiler.compile("drop table test_batch", sqlExecutionContext);
-                        compiler.compile("rename table spot1 to test_batch", sqlExecutionContext);
+                        ddl("create table spot1 as (select * from test_batch)");
+                        drop("drop table test_batch");
+                        ddl("rename table spot1 to test_batch");
 
                         batchInsert.setLong(1, 0L);
                         batchInsert.setInt(2, 1);
@@ -4068,6 +4675,10 @@ nodejs code:
     @Test
     public void testLargeBatchInsertMethod() throws Exception {
         skipOnWalRun(); // non-partitioned table
+
+        // Small fragmentation chunk makes this test very slow. Set the fragmentation to be near the send buffer size.
+        forceSendFragmentationChunkSize = Math.max(1024, forceSendFragmentationChunkSize);
+
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(4);
@@ -4295,6 +4906,8 @@ nodejs code:
     @Test
     public void testLargeSelect() throws Exception {
         assertMemoryLeak(() -> {
+            sendBufferSize = Math.max(sendBufferSize, 2048);
+            recvBufferSize = Math.max(recvBufferSize, 5000);
             try (
                     final PGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4419,23 +5032,29 @@ nodejs code:
 
             mayDrainWalQueue();
 
-            testExecuteWithDifferentBindVariables(connection,
+            testExecuteWithDifferentBindVariables(
+                    connection,
                     "select h, isym from " +// LatestByValueFilteredRecordCursor
                             "(select h, stat, isym from tab " +
                             "where sym = ? and type = 'X' latest on ts partition by sym " +
-                            ") where stat='Y'");
+                            ") where stat='Y'"
+            );
 
-            testExecuteWithDifferentBindVariables(connection,
-                    "select h, isym from " + // LatestByValueRecordCursor 
+            testExecuteWithDifferentBindVariables(
+                    connection,
+                    "select h, isym from " + // LatestByValueRecordCursor
                             "(select h, stat, isym from tab " +
                             "where sym = ? latest on ts partition by sym " +
-                            ") where stat='Y'");
+                            ") where stat='Y'"
+            );
 
-            testExecuteWithDifferentBindVariables(connection,
-                    "select h, isym from " + // LatestByValueIndexedFilteredRecordCursor 
+            testExecuteWithDifferentBindVariables(
+                    connection,
+                    "select h, isym from " + // LatestByValueIndexedFilteredRecordCursor
                             "(select h, stat, isym from tab " +
                             "where isym = ? and type = 'X' latest on ts partition by isym" +
-                            ") where stat='Y'");
+                            ") where stat='Y'"
+            );
         });
     }
 
@@ -4615,6 +5234,7 @@ nodejs code:
 
     @Test
     public void testMetadata() throws Exception {
+        recvBufferSize = 2048;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
@@ -4847,14 +5467,16 @@ nodejs code:
                 "<310000000432000000044300000008534554005a0000000549\n" +
                 ">500000000800000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
                 "<310000000432000000046e0000000449000000045a0000000549\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
     public void testNoDataAndEmptyQueryResponsesHex_simpleTextProtocol() throws Exception {
-        /**
+        /*
          * go.mod:
          * module testquestpg
          *
@@ -4919,6 +5541,7 @@ nodejs code:
     public void testNullTypeSerialization() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            recvBufferSize = 2048;
             try (final PGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
@@ -4971,7 +5594,7 @@ nodejs code:
                 ">5800000004\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table x00 as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -4981,8 +5604,7 @@ nodejs code:
                             " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                             " rnd_double(2) d" +
                             " from long_sequence(10)" +
-                            ") timestamp (timestamp)",
-                    sqlExecutionContext
+                            ") timestamp (timestamp)"
             );
             try (
                     final PGWireServer server = createPGServer(new Port0PGWireConfiguration());
@@ -5007,9 +5629,11 @@ nodejs code:
                 "<310000000432000000044300000008534554005a0000000549\n" +
                 ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000200000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
                 "<!!";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     //checks that function parser error doesn't persist and affect later queries issued through the same connection
@@ -5284,7 +5908,7 @@ nodejs code:
                     insert.setNull(2, Types.NULL);
                     try {
                         insert.executeUpdate();
-                        fail("cannot insert null when the column is designated");
+                        assertException("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
                         Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
                                 "  Position: 1", expected.getMessage());
@@ -5431,9 +6055,7 @@ nodejs code:
             try (final PGWireServer server = createPGWireServer(
                     conf,
                     engine,
-                    workerPool,
-                    compiler.getFunctionFactoryCache(),
-                    snapshotAgent
+                    workerPool
             )) {
                 workerPool.start(LOG);
                 try {
@@ -5475,7 +6097,6 @@ nodejs code:
                     statement.setTimestamp(20, new PGTimestamp(300011));
                     statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
                     statement.setTimestamp(22, null);
-
 
                     final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR],$22[VARCHAR]\n" +
                             "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
@@ -5531,6 +6152,7 @@ nodejs code:
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            sendBufferSize = 1024;
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5789,7 +6411,8 @@ nodejs code:
                 "<430000000a424547494e005a0000000554\n" +
                 ">510000001a53454c454354202a2046524f4d207472616465733b00\n" +
                 "<540000006100047473000000000000010000045a0008ffffffff000064617465000000000000020000045a0008ffffffff00006e616d650000000000000300000413ffffffffffff000076616c756500000000000004000000170004ffffffff0000440000005d00040000001a323032312d30312d32362031333a34333a34302e32323030383900000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000130440000005d00040000001a323032312d30312d32362031333a34333a34302e32333130323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000131440000005d00040000001a323032312d30312d32362031333a34333a34302e32333230323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000132440000005d00040000001a323032312d30312d32362031333a34333a34302e32333230323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000133440000005d00040000001a323032312d30312d32362031333a34333a34302e32333330323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000134440000005d00040000001a323032312d30312d32362031333a34333a34302e32333330323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000135440000005d00040000001a323032312d30312d32362031333a34333a34302e32333430323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000136440000005d00040000001a323032312d30312d32362031333a34333a34302e32333430323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000137440000005d00040000001a323032312d30312d32362031333a34333a34302e32333530373800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000138440000005d00040000001a323032312d30312d32362031333a34333a34302e32333530373800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000139430000000e53454c454354203130005a0000000554\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
                 new Port0PGWireConfiguration()
         );
@@ -5837,7 +6460,8 @@ nodejs code:
                 ">510000001a53454c454354202a2046524f4d207472616465733b00\n" +
                 "<540000004a00037473000000000000010000045a0008ffffffff00006e616d650000000000000200000413ffffffffffff000076616c756500000000000003000000170004ffffffff0000440000003500030000001a323032312d30312d32342030353a30313a31312e3833353834390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834313438370000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323130350000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323531340000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323934390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834333337390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834333832370000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834343331380000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834343738330000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834353238330000000670792d61626300000003313233430000000e53454c454354203130005a0000000554\n" +
                 ">5800000004\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
                 new Port0PGWireConfiguration()
         );
@@ -5861,9 +6485,9 @@ nodejs code:
 
         for (String tsOption : tsOptions) {
             assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
-                compiler.compile("drop table if exists tab", sqlExecutionContext);
-                compiler.compile("create table tab (s symbol index, ts timestamp) " + tsOption, sqlExecutionContext);
-                compiler.compile("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ", sqlExecutionContext);
+                drop("drop table if exists tab");
+                ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
+                insert("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ");
                 drainWalQueue();
 
                 ResultProducer sameVal =
@@ -5971,20 +6595,24 @@ nodejs code:
     @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
-            compiler.compile("create table table (" +
-                    "id symbol, " +
-                    "timestamp timestamp) " +
-                    "timestamp(timestamp) partition by day", sqlExecutionContext);
-            compiler.compile("insert into table " +
-                    " select rnd_symbol(16, 10,10,0), dateadd('s', x::int, '2023-03-23T00:00:00.000000Z') " +
-                    " from long_sequence(10000)", sqlExecutionContext);
+            ddl(
+                    "create table \"table\" (" +
+                            "id symbol, " +
+                            "timestamp timestamp) " +
+                            "timestamp(timestamp) partition by day"
+            );
+            insert(
+                    "insert into \"table\" " +
+                            " select rnd_symbol(16, 10,10,0), dateadd('s', x::int, '2023-03-23T00:00:00.000000Z') " +
+                            " from long_sequence(10000)"
+            );
 
             conn.setAutoCommit(false);
-            String queryBase = "select * from table "
+            String queryBase = "select * from \"table\" "
                     + " WHERE timestamp >= '2023-03-23T00:00:00.000000Z'"
                     + " ORDER BY timestamp ";
 
-            int countStar = getCountStar("SELECT COUNT(*) FROM table", conn);
+            int countStar = getCountStar(conn);
             int ascCount = getRowCount(queryBase + "ASC", conn);
             int ascLimitCount = getRowCount(queryBase + "ASC LIMIT 100000", conn);
             int descCount = getRowCount(queryBase + "DESC", conn);
@@ -6215,7 +6843,7 @@ nodejs code:
     public void testQueryTimeout() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
+            ddl("create table tab as (select rnd_double() d from long_sequence(10000000))");
             try (
                     final PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6240,6 +6868,7 @@ nodejs code:
     public void testRegProcedure() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            recvBufferSize = Math.max(2048, recvBufferSize);
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6617,7 +7246,7 @@ nodejs code:
     @Test
     public void testRunQueryAfterCancellingPreviousInTheSameConnection() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             try (
@@ -6732,9 +7361,11 @@ nodejs code:
                 ">4300000008537331005300000004\n" +
                 "<33000000045a0000000549\n" +
                 ">5800000004\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                new Port0PGWireConfiguration());
+                new Port0PGWireConfiguration()
+        );
     }
 
     @Test
@@ -6743,6 +7374,7 @@ nodejs code:
         assertMemoryLeak(() -> {
 
             sink.clear();
+            recvBufferSize = 2048;
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6762,7 +7394,8 @@ nodejs code:
                                 "TABLE_CAT[VARCHAR]\n" +
                                         "qdb\n",
                                 sink,
-                                rs);
+                                rs
+                        );
                     }
 
                     sink.clear();
@@ -6866,7 +7499,7 @@ create table tab as (
      */
     public void testSelectAllTypesFromAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        compiler.compile("create table tab as (\n" +
+        ddl("create table tab as (\n" +
                 "    select\n" +
                 "        rnd_byte() b,\n" +
                 "        rnd_short() sh,\n" +
@@ -6883,7 +7516,7 @@ create table tab as (
                 "        rnd_timestamp(0, 1000, 0) ts,\n" +
                 "        rnd_bin() bin\n" +
                 "    from long_sequence(10)\n" +
-                ");\n", sqlExecutionContext
+                ");\n"
         );
 
         engine.releaseAllWriters();
@@ -7016,9 +7649,9 @@ create table tab as (
     public void testSelectBindVarsAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
-        compiler.compile("create table tab2 (a double);", sqlExecutionContext);
-        executeInsert("insert into 'tab2' values (0.7);");
-        executeInsert("insert into 'tab2' values (0.2);");
+        ddl("create table tab2 (a double);");
+        insert("insert into 'tab2' values (0.7);");
+        insert("insert into 'tab2' values (0.2);");
         engine.clear();
 
         final String script = ">0000000804d2162f\n" +
@@ -7060,9 +7693,9 @@ create table tab as (
     public void testSelectBindVarsInSelectAndWhereAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
-        compiler.compile("create table tab2 (a double);", sqlExecutionContext);
-        executeInsert("insert into 'tab2' values (0.7);");
-        executeInsert("insert into 'tab2' values (0.2);");
+        ddl("create table tab2 (a double);");
+        insert("insert into 'tab2' values (0.7);");
+        insert("insert into 'tab2' values (0.2);");
         engine.clear();
 
         final String script = ">0000000804d2162f\n" +
@@ -7099,9 +7732,8 @@ create table tab as (
                     sink.clear();
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
-                                    "Async Filter\n" +
+                                    "Async Filter workers: 2\n" +
                                     "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::string,$1::string])\n" +
-                                    "  workers: 2\n" +
                                     "    DataFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: tab\n",
@@ -7168,6 +7800,40 @@ create table tab as (
     }
 
     @Test
+    public void testSendBufferFull() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        sendBufferSize = 512;
+        forceSendFragmentationChunkSize = 10;
+
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+
+            connection.setAutoCommit(false);
+            try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                    "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
+                pstmt.execute();
+            }
+
+
+            for (int i = 20; i < 100; i++) {
+                try (PreparedStatement select = connection.prepareStatement(
+                        "select x from long_sequence(" + i + ")")) {
+
+                    try (ResultSet resultSet = select.executeQuery()) {
+                        int r = 1;
+                        while (resultSet.next()) {
+                            Assert.assertEquals(r++, resultSet.getLong(1));
+                        }
+                    }
+                }
+
+                try (PreparedStatement pstmt = connection.prepareStatement("insert into t values (1, " + i + ")")) {
+                    pstmt.execute();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
         skipOnWalRun(); // non-partitioned table
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
@@ -7219,7 +7885,7 @@ create table tab as (
     @Test
     public void testSimpleCountQueryTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select count(*) from t1 where s = 's10'");
                 Assert.fail();
@@ -7232,7 +7898,7 @@ create table tab as (
     @Test
     public void testSimpleGroupByQueryTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select s, count(*) from t1 group by s ");
                 Assert.fail();
@@ -7292,8 +7958,8 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement statement = connection.createStatement()) {
-                ResultSet rs = statement.executeQuery(
-                        "select " +
+                statement.execute(
+                        "create table x as (select " +
                                 "rnd_str(4,4,4) s, " +
                                 "rnd_int(0, 256, 4) i, " +
                                 "rnd_double(4) d, " +
@@ -7307,7 +7973,8 @@ create table tab as (
                                 "rnd_symbol(4,4,4,2), " +
                                 "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
                                 "rnd_bin(10,20,2) " +
-                                "from long_sequence(50)");
+                                "from long_sequence(50))");
+                ResultSet rs = statement.executeQuery("select * from x");
 
                 final String expected = "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY]\n" +
                         "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.462,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\n" +
@@ -7784,18 +8451,19 @@ create table tab as (
 
     @Test
     public void testSquashPartitionsReturnsOk() throws Exception {
-        final ConnectionAwareRunnable runnable = (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
-            connection.commit();
-            mayDrainWalQueue();
-            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
-                Assert.assertFalse(dropPartition.execute());
-            }
-        };
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+                    connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+                    connection.commit();
+                    mayDrainWalQueue();
+                    try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x SQUASH partitions;")) {
+                        Assert.assertFalse(dropPartition.execute());
+                    }
+                }
+        );
     }
 
     @Test
@@ -7847,12 +8515,12 @@ create table tab as (
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary1) -> {
             // create and initialize table outside of PG wire
             // to ensure we do not collaterally initialize execution context on function parser
-            compiler.compile("CREATE TABLE x (\n" +
+            ddl("CREATE TABLE x (\n" +
                     "    ticker symbol index,\n" +
                     "    sample_time timestamp,\n" +
                     "    value int\n" +
-                    ") timestamp (sample_time) partition by YEAR", sqlExecutionContext);
-            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
+                    ") timestamp (sample_time) partition by YEAR");
+            insert("INSERT INTO x VALUES ('ABC',0,0)");
             mayDrainWalQueue();
 
             sink.clear();
@@ -7974,7 +8642,7 @@ create table tab as (
     @Test
     public void testTimeoutIsPerPreparedStatement() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, 1000, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
                 statement.execute();
             }
@@ -7988,7 +8656,7 @@ create table tab as (
     @Test
     public void testTimeoutIsPerSimpleStatement() throws Exception {
         assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 200, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("insert into t1 select 's' || x from long_sequence(100)");
             }
@@ -8079,11 +8747,11 @@ create table tab as (
 
                     mayDrainWalQueue();
 
-                    try (PreparedStatement statement = connection.prepareStatement("SELECT id as Case, ts FROM ts ORDER BY id ASC")) {
+                    try (PreparedStatement statement = connection.prepareStatement("SELECT id, ts FROM ts ORDER BY id ASC")) {
                         sink.clear();
                         try (ResultSet rs = statement.executeQuery()) {
                             assertResultSet(
-                                    "Case[INTEGER],ts[TIMESTAMP]\n" +
+                                    "id[INTEGER],ts[TIMESTAMP]\n" +
                                             "0,2021-09-27 16:45:03.202345\n" +
                                             "1,2021-09-27 16:45:03.202345\n" +
                                             "2,2021-09-27 16:45:03.202345\n" +
@@ -8354,10 +9022,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8395,6 +9059,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8421,7 +9089,7 @@ create table tab as (
                     try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
                         stmt.setLong(1, 42);
                         stmt.executeUpdate();
-                        fail("id column was dropped, the UPDATE should have failed");
+                        assertException("id column was dropped, the UPDATE should have failed");
                     } catch (PSQLException e) {
                         TestUtils.assertContains(e.getMessage(), "Invalid column: id");
                     }
@@ -8430,10 +9098,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAsync() throws Exception {
         testUpdateAsync(null, writer -> {
@@ -8441,7 +9105,8 @@ create table tab as (
                 "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
                         "1,2.0,2020-06-01 00:00:02.0\n" +
                         "9,2.6,2020-06-01 00:00:06.0\n" +
-                        "9,3.0,2020-06-01 00:00:12.0\n");
+                        "9,3.0,2020-06-01 00:00:12.0\n"
+        );
     }
 
     //
@@ -8470,8 +9135,13 @@ create table tab as (
                 "a[BIGINT],b[DOUBLE],ts[TIMESTAMP],newCol[INTEGER]\n" +
                         "1,2.0,2020-06-01 00:00:02.0,null\n" +
                         "9,2.6,2020-06-01 00:00:06.0,null\n" +
-                        "9,3.0,2020-06-01 00:00:12.0,null\n");
+                        "9,3.0,2020-06-01 00:00:12.0,null\n"
+        );
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateBatch() throws Exception {
@@ -8818,7 +9488,7 @@ create table tab as (
     }
 
     @Test
-    public void testUuidType_update() throws Exception {
+    public void testUuidType_update_nonPartitionedTable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (u1 uuid)")) {
                 statement.execute();
@@ -8834,6 +9504,33 @@ create table tab as (
                     sink.clear();
                     String expected = "u1[OTHER]\n" +
                             "22222222-2222-2222-2222-222222222222\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUuidType_update_partitionedTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (ts timestamp, u1 uuid) timestamp(ts) partition by DAY")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?)")) {
+                    insert.setTimestamp(1, new Timestamp(0));
+                    insert.setObject(2, UUID.fromString("11111111-1111-1111-1111-111111111111"));
+                    insert.executeUpdate();
+                }
+                try (PreparedStatement update = connection.prepareStatement("update x set u1 = ?")) {
+                    update.setObject(1, UUID.fromString("12345678-1234-5467-9876-123321001987"));
+                    update.executeUpdate();
+                }
+                if (walEnabled) {
+                    drainWalQueue();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select u1  from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "u1[OTHER]\n" +
+                            "12345678-1234-5467-9876-123321001987\n";
                     assertResultSet(expected, sink, resultSet);
                 }
             }
@@ -8873,9 +9570,9 @@ create table tab as (
         return backendPid;
     }
 
-    private static int getCountStar(String query, Connection conn) throws Exception {
+    private static int getCountStar(Connection conn) throws Exception {
         int count = -1;
-        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM \"table\"")) {
             try (ResultSet result = stmt.executeQuery()) {
                 if (result.next()) {
                     count = result.getInt(1);
@@ -9016,6 +9713,19 @@ create table tab as (
         }
     }
 
+    private void assertResultNTimes(Connection connection, String sql, String expected, int maxRows, int times) throws SQLException, IOException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setMaxRows(maxRows);
+
+            for (int i = 0; i < times; i++) {
+                sink.clear();
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(expected, sink, rs);
+                }
+            }
+        }
+    }
+
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
         assertWithPgServer(bits, Long.MAX_VALUE, runnable);
     }
@@ -9067,7 +9777,7 @@ create table tab as (
                 .$(", binary=").$(binary)
                 .$(", prepareThreshold=").$(prepareThreshold)
                 .I$();
-        setUp();
+        super.setUp();
         try {
             assertMemoryLeak(() -> {
                 try (
@@ -9081,7 +9791,7 @@ create table tab as (
                 }
             });
         } finally {
-            tearDown();
+            super.tearDown();
         }
     }
 
@@ -9116,7 +9826,8 @@ create table tab as (
                             }
                         };
                     }
-                }) {
+                }
+        ) {
         };
     }
 
@@ -9124,10 +9835,6 @@ create table tab as (
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
 
             @Override
             public int getWorkerCount() {
@@ -9142,8 +9849,6 @@ create table tab as (
                 conf,
                 engine,
                 workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent,
                 createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry),
                 registry
         );
@@ -9161,16 +9866,15 @@ create table tab as (
     private void insertAllGeoHashTypes(boolean binary) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (" +
-                            "a geohash(1b)," +
-                            "b geohash(2b)," +
-                            "c geohash(3b)," +
-                            "d geohash(1c)," +
-                            "e geohash(2c)," +
-                            "f geohash(4c)," +
-                            "g geohash(8c)" +
-                            ")",
-                    sqlExecutionContext
+            ddl("create table xyz (" +
+                    "a geohash(1b)," +
+                    "b geohash(2b)," +
+                    "c geohash(3b)," +
+                    "d geohash(1c)," +
+                    "e geohash(2c)," +
+                    "f geohash(4c)," +
+                    "g geohash(8c)" +
+                    ")"
             );
 
             try (
@@ -9205,24 +9909,25 @@ create table tab as (
                     }
                     connection.commit();
 
-                    try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            final Record record = cursor.getRecord();
-                            int count = 0;
-                            while (cursor.hasNext()) {
-                                //TODO: bits GeoHash literal
+                    try (
+                            RecordCursorFactory factory = select("xyz");
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        final Record record = cursor.getRecord();
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            //TODO: bits GeoHash literal
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("0", 0), record.getGeoByte(0));
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("01", 0), record.getGeoByte(1));
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("010", 0), record.getGeoByte(2));
-                                Assert.assertEquals(GeoHashes.fromString("x", 0, 1), record.getGeoByte(3));
-                                Assert.assertEquals(GeoHashes.fromString("xy", 0, 2), record.getGeoShort(4));
-                                Assert.assertEquals(GeoHashes.fromString("xyzw", 0, 4), record.getGeoInt(5));
-                                Assert.assertEquals(GeoHashes.fromString("xyzwzvxq", 0, 8), record.getGeoLong(6));
-                                count++;
-                            }
-
-                            Assert.assertEquals(100, count);
+                            Assert.assertEquals(GeoHashes.fromString("x", 0, 1), record.getGeoByte(3));
+                            Assert.assertEquals(GeoHashes.fromString("xy", 0, 2), record.getGeoShort(4));
+                            Assert.assertEquals(GeoHashes.fromString("xyzw", 0, 4), record.getGeoInt(5));
+                            Assert.assertEquals(GeoHashes.fromString("xyzwzvxq", 0, 8), record.getGeoLong(6));
+                            count++;
                         }
+
+                        Assert.assertEquals(100, count);
                     }
                 }
             }
@@ -9272,10 +9977,6 @@ create table tab as (
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
 
             @Override
             public int getWorkerCount() {
@@ -9290,8 +9991,6 @@ create table tab as (
                      conf,
                      engine,
                      pool,
-                     compiler.getFunctionFactoryCache(),
-                     snapshotAgent,
                      createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry),
                      registry
              )
@@ -9302,7 +10001,7 @@ create table tab as (
 
             do {
                 final String tableName = "xyz" + iteration++;
-                compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
+                ddl("create table " + tableName + " (a int)");
 
                 try (
                         final Connection connection1 = getConnection(server.getPort(), false, true);
@@ -9464,18 +10163,20 @@ create table tab as (
         });
     }
 
-    private void testBinaryInsert(int maxLength, boolean binaryProtocol) throws Exception {
+    private void testBinaryInsert(int maxLength, boolean binaryProtocol, int recvBufferSize, int sendBufferSize) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (" +
-                            "a binary" +
-                            ")",
-                    sqlExecutionContext
+            ddl("create table xyz (" +
+                    "a binary" +
+                    ")"
             );
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
+                this.recvBufferSize = recvBufferSize;
+                this.sendBufferSize = sendBufferSize;
+
                 workerPool.start(LOG);
                 try (
                         final Connection connection = getConnection(server.getPort(), false, binaryProtocol);
@@ -9492,32 +10193,43 @@ create table tab as (
                             if (maxLength == value) return -1;
                             return value++ % 255;
                         }
+
+                        @Override
+                        public void reset() {
+                            value = 0;
+                        }
                     }) {
-                        int totalCount = 1;
-                        for (int i = 0; i < totalCount; i++) {
+                        int totalCount = 10;
+                        for (int r = 0; r < totalCount; r++) {
                             insert.setBinaryStream(1, str);
                             insert.execute();
+                            str.reset();
                         }
                         connection.commit();
 
-                        try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                final Record record = cursor.getRecord();
-                                int count = 0;
-                                while (cursor.hasNext()) {
-                                    Assert.assertEquals(maxLength, record.getBinLen(0));
-                                    BinarySequence bs = record.getBin(0);
-                                    for (int i = 0; i < maxLength; i++) {
-                                        Assert.assertEquals(
-                                                i % 255,
-                                                bs.byteAt(i) & 0xff // Convert byte to unsigned int
-                                        );
-                                    }
-                                    count++;
-                                }
+                        try (
+                                PreparedStatement select = connection.prepareStatement("select a from xyz");
+                                ResultSet rs = select.executeQuery()
+                        ) {
 
-                                Assert.assertEquals(totalCount, count);
+                            int count = 0;
+                            while (rs.next()) {
+                                InputStream bs = rs.getBinaryStream(1);
+                                int len = 0;
+                                int i = bs.read();
+                                while (i > -1) {
+                                    Assert.assertEquals(
+                                            len % 255,
+                                            i & 0xff // Convert byte to unsigned int
+                                    );
+                                    len++;
+                                    i = bs.read();
+                                }
+                                Assert.assertEquals(maxLength, len);
+                                count++;
                             }
+
+                            Assert.assertEquals(totalCount, count);
                         }
                     }
                 }
@@ -9847,8 +10559,8 @@ create table tab as (
             ) {
                 workerPool.start(LOG);
                 for (int i = 0; i < clientCount; i++) {
-                    try (Connection connection = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
-                        fail("Connection should not be established when server disconnects during authentication");
+                    try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
+                        assertException("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
 
                     }
@@ -9890,9 +10602,13 @@ create table tab as (
         }
     }
 
-    private void testFetchDisconnnectReleasesReader(String query) throws Exception {
+    private void testFetchDisconnectReleasesReader(String query) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
+            // Circuit breaker does not work with fragmented buffer
+            // TODO: find a solution, Net.peek() always return a byte when the incoming buffer not read fully
+            // when executing 'E' (execute) postgres protocol command
+            forceRecvFragmentationChunkSize = recvBufferSize;
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -9936,8 +10652,11 @@ create table tab as (
                 workerPool.start(LOG);
                 try (final Connection connection = getConnection(server.getPort(), simple, binary)) {
                     Statement statement = connection.createStatement();
-                    ResultSet rs = statement.executeQuery(
-                            "select " +
+
+                    // Create table with random values. Selecting it without materializing
+                    // will result in unstable select due to network fragmentation and line re-sending
+                    statement.execute(
+                            "create table x as (select " +
                                     "rnd_geohash(1) hash1b, " +
                                     "rnd_geohash(2) hash2b, " +
                                     "rnd_geohash(3) hash3b, " +
@@ -9945,7 +10664,9 @@ create table tab as (
                                     "rnd_geohash(10) hash2c, " +
                                     "rnd_geohash(20) hash4c, " +
                                     "rnd_geohash(40) hash8c " +
-                                    "from long_sequence(10)");
+                                    "from long_sequence(10))");
+
+                    ResultSet rs = statement.executeQuery("select * from x");
 
                     final String expected = "hash1b[VARCHAR],hash2b[VARCHAR],hash3b[VARCHAR],hash1c[VARCHAR],hash2c[VARCHAR],hash4c[VARCHAR],hash8c[VARCHAR]\n" +
                             "0,00,100,z,hp,wh4b,s2z2fyds\n" +
@@ -10137,20 +10858,19 @@ create table tab as (
     private void testInsertAllTypes(boolean binary) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (" +
-                            "a byte," +
-                            "b char," +
-                            "c short," +
-                            "d int," +
-                            "e long," +
-                            "f float," +
-                            "g double," +
-                            "h string," +
-                            "i symbol," +
-                            "j boolean," +
-                            "k long256" +
-                            ")",
-                    sqlExecutionContext
+            ddl("create table xyz (" +
+                    "a byte," +
+                    "b char," +
+                    "c short," +
+                    "d int," +
+                    "e long," +
+                    "f float," +
+                    "g double," +
+                    "h string," +
+                    "i symbol," +
+                    "j boolean," +
+                    "k long256" +
+                    ")"
             );
             try (
                     final PGWireServer server = createPGServer(2);
@@ -10237,7 +10957,7 @@ create table tab as (
                     connection.commit();
 
                     rnd.reset();
-                    try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = select("xyz")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             int count = 0;
@@ -10325,10 +11045,9 @@ create table tab as (
     private void testInsertBinaryBindVariable(boolean binaryProtocol) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (" +
-                            "a binary" +
-                            ")",
-                    sqlExecutionContext
+            ddl("create table xyz (" +
+                    "a binary" +
+                    ")"
             );
             try (
                     final PGWireServer server = createPGServer(2);
@@ -10349,7 +11068,7 @@ create table tab as (
                     }
                     connection.commit();
 
-                    try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = select("xyz")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             int count = 0;
@@ -10459,24 +11178,27 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement statement = connection.createStatement()) {
-                ResultSet rs = statement.executeQuery(
+                statement.execute("create table x as (" +
                         "select " +
-                                "rnd_str(4,4,4) s, " +
-                                "rnd_int(0, 256, 4) i, " +
-                                s +
-                                "timestamp_sequence(0,10000) t, " +
-                                "rnd_float(4) f, " +
-                                "rnd_short() _short, " +
-                                "rnd_long(0, 10000000, 5) l, " +
-                                "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
-                                "rnd_byte(0,127) bb, " +
-                                "rnd_boolean() b, " +
-                                "rnd_symbol(4,4,4,2), " +
-                                "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                                "rnd_bin(10,20,2), " +
-                                "rnd_char(), " +
-                                "rnd_long256() " +
-                                "from long_sequence(50)");
+                        "rnd_str(4,4,4) s, " +
+                        "rnd_int(0, 256, 4) i, " +
+                        s +
+                        "timestamp_sequence(0,10000) t, " +
+                        "rnd_float(4) f, " +
+                        "rnd_short() _short, " +
+                        "rnd_long(0, 10000000, 5) l, " +
+                        "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
+                        "rnd_byte(0,127) bb, " +
+                        "rnd_boolean() b, " +
+                        "rnd_symbol(4,4,4,2), " +
+                        "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
+                        "rnd_bin(10,20,2), " +
+                        "rnd_char(), " +
+                        "rnd_long256() " +
+                        "from long_sequence(50)" +
+                        ")");
+
+                ResultSet rs = statement.executeQuery("select * from x");
 
                 final String expected = s2 +
                         "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.462,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e,D,0x5f20a35e80e154f458dfd08eeb9cc39ecec82869edec121bc2593f82b430328d\n" +
@@ -10639,9 +11361,9 @@ create table tab as (
         private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
-        public int send(int fd, long buffer, int bufferLen) {
+        public int sendRaw(int fd, long buffer, int bufferLen) {
             if (!delaying.get()) {
-                return super.send(fd, buffer, bufferLen);
+                return super.sendRaw(fd, buffer, bufferLen);
             }
 
             if (delayedAttemptsCounter.decrementAndGet() < 0) {
@@ -10660,11 +11382,11 @@ create table tab as (
         private final int initialAllowedSendCalls;
         // the state is only mutated from QuestDB threads and QuestDB calls it from a single thread only -> no need for AtomicInt
         // we also *read* it from a test thread -> volatile is needed
-        private volatile int remainingAllowedSendCalls;
+        private final AtomicInteger remainingAllowedSendCalls = new AtomicInteger();
         private volatile boolean socketClosed = false;
 
         private DisconnectOnSendNetworkFacade(int allowedSendCount) {
-            this.remainingAllowedSendCalls = allowedSendCount;
+            this.remainingAllowedSendCalls.set(allowedSendCount);
             this.initialAllowedSendCalls = allowedSendCount;
         }
 
@@ -10675,28 +11397,27 @@ create table tab as (
         }
 
         @Override
-        public int recv(int fd, long buffer, int bufferLen) {
-            if (remainingAllowedSendCalls < 0) {
-                remainingAllowedSendCalls--;
+        public int recvRaw(int fd, long buffer, int bufferLen) {
+            if (remainingAllowedSendCalls.get() < 0) {
+                remainingAllowedSendCalls.decrementAndGet();
                 return -1;
             }
-            return super.recv(fd, buffer, bufferLen);
+            return super.recvRaw(fd, buffer, bufferLen);
         }
 
         @Override
-        public int send(int fd, long buffer, int bufferLen) {
-            remainingAllowedSendCalls--;
-            if (remainingAllowedSendCalls < 0) {
+        public int sendRaw(int fd, long buffer, int bufferLen) {
+            if (remainingAllowedSendCalls.decrementAndGet() < 0) {
                 return -1;
             }
-            return super.send(fd, buffer, bufferLen);
+            return super.sendRaw(fd, buffer, bufferLen);
         }
 
         int getAfterDisconnectInteractions() {
-            if (remainingAllowedSendCalls >= 0) {
+            if (remainingAllowedSendCalls.get() >= 0) {
                 return 0;
             }
-            return -(remainingAllowedSendCalls + 1);
+            return -(remainingAllowedSendCalls.incrementAndGet());
         }
 
         boolean isSocketClosed() {
@@ -10704,7 +11425,7 @@ create table tab as (
         }
 
         void reset() {
-            remainingAllowedSendCalls = initialAllowedSendCalls;
+            remainingAllowedSendCalls.set(initialAllowedSendCalls);
             socketClosed = false;
         }
     }

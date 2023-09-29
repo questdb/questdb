@@ -28,9 +28,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecordSink;
-
-import static io.questdb.log.LogRecordSink.EOL_LENGTH;
-
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -42,6 +39,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.Closeable;
+
+import static io.questdb.log.LogRecordSink.EOL_LENGTH;
 
 public class LogRecordSinkTest {
 
@@ -308,7 +307,7 @@ public class LogRecordSinkTest {
 
     @FunctionalInterface
     interface ScenarioConsumer {
-        void accept(String msg, int utf8ByteLen, long sinkMaxLen, long expectedLen) throws Exception;
+        void accept(String msg, int utf8ByteLen, long sinkMaxLen, long expectedLen);
     }
 
     /**

@@ -69,7 +69,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @return true if more records may be accessed, otherwise false
      * @throws YieldException when the queried partition is in cold storage
      */
-    boolean hasNext();
+    boolean hasNext() throws YieldException;
 
     /**
      * Returns true if the cursor is using an index, false otherwise
@@ -104,8 +104,9 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * indicated there are no more records to access.
      *
      * @return size of records available to the cursor
+     * @throws YieldException when the queried partition is in cold storage
      */
-    long size();
+    long size() throws YieldException;
 
     /**
      * Tries to position the record at the given row count to skip in an efficient way.
@@ -118,7 +119,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @return true if a fast skip is supported by the cursor and was executed, false otherwise
      * @throws YieldException when the queried partition is in cold storage
      */
-    default boolean skipTo(long rowCount) {
+    default boolean skipTo(long rowCount) throws YieldException {
         return false;
     }
 

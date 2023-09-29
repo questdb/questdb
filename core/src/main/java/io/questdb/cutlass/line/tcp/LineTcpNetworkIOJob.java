@@ -164,5 +164,4 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         }
         return true;
     }
-
 }

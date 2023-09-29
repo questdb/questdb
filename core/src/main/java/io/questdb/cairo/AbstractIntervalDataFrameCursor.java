@@ -95,9 +95,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     public AbstractIntervalDataFrameCursor of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
-        this.reader = reader;
         this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
-        calculateRanges(intervals);
+        calculateRanges(reader, intervals);
+        this.reader = reader;
         return this;
     }
 
@@ -105,7 +105,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     @Override
     public boolean reload() {
         if (reader != null && reader.reload()) {
-            calculateRanges(intervals);
+            calculateRanges(reader, intervals);
             return true;
         }
         return false;
@@ -125,13 +125,13 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         sizeSoFar = 0;
     }
 
-    private void calculateRanges(LongList intervals) {
+    private void calculateRanges(TableReader reader, LongList intervals) {
         size = -1;
         if (intervals.size() > 0) {
             if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
-                cullIntervals(intervals);
+                cullIntervals(reader, intervals);
                 if (initialIntervalsLo < initialIntervalsHi) {
-                    cullPartitions(intervals);
+                    cullPartitions(reader, intervals);
                 }
             } else {
                 initialIntervalsLo = 0;
@@ -234,7 +234,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return this.size = size;
     }
 
-    private void cullIntervals(LongList intervals) {
+    private void cullIntervals(TableReader reader, LongList intervals) {
         int intervalsLo = intervals.binarySearch(reader.getMinTimestamp(), BinarySearch.SCAN_UP);
 
         // not a direct hit
@@ -267,7 +267,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         }
     }
 
-    private void cullPartitions(LongList intervals) {
+    private void cullPartitions(TableReader reader, LongList intervals) {
         final long lo = intervals.getQuick(initialIntervalsLo * 2);
         long intervalLo;
         if (lo == Long.MIN_VALUE) {

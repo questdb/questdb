@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SecondOfMinuteFunctionFactoryTest extends AbstractGriffinTest {
+public class SecondOfMinuteFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
         assertQuery(

@@ -32,11 +32,11 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
-import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.PlainSocketFactory;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.rules.TemporaryFolder;
@@ -62,7 +62,7 @@ public class HttpMinTestBuilder {
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -75,8 +75,6 @@ public class HttpMinTestBuilder {
                         return new PrometheusMetricsProcessor(scrapable, httpConfiguration);
                     }
                 });
-
-                QueryCache.configure(httpConfiguration, Metrics.disabled());
 
                 workerPool.start(LOG);
 

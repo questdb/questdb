@@ -29,8 +29,6 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -63,15 +61,10 @@ public class PGWireServer implements Closeable {
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
-        this.dispatcher = IODispatchers.create(
-                configuration.getDispatcherConfiguration(),
-                contextFactory
-        );
+        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
         this.metrics = engine.getMetrics();
         this.workerPool = workerPool;
         this.registry = registry;
@@ -79,8 +72,6 @@ public class PGWireServer implements Closeable {
         workerPool.assign(dispatcher);
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            final PGJobContext jobContext = new PGJobContext(configuration, engine, functionFactoryCache, snapshotAgent);
-
             final SCSequence queryCacheEventSubSeq = new SCSequence();
             final FanOut queryCacheEventFanOut = engine.getMessageBus().getQueryCacheEventFanOut();
             queryCacheEventFanOut.and(queryCacheEventSubSeq);
@@ -92,7 +83,7 @@ public class PGWireServer implements Closeable {
                             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
                             return false;
                         }
-                        jobContext.handleClientOperation(context, operation);
+                        context.handleClientOperation(operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
                         return true;
                     } catch (PeerIsSlowToWriteException e) {
@@ -126,7 +117,8 @@ public class PGWireServer implements Closeable {
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.
                         LOG.info().$("flushing PG Wire query cache [worker=").$(workerId).$(']').$();
-                        jobContext.flushQueryCache();
+                        // TODO
+                        //jobContext.flushQueryCache();
                         queryCacheEventSubSeq.done(seq);
                     }
                     return dispatcher.processIOQueue(processor);
@@ -137,7 +129,6 @@ public class PGWireServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             workerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
             workerPool.freeOnExit((QuietCloseable) () -> {
-                Misc.free(jobContext);
                 engine.getMessageBus().getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
                 queryCacheEventSubSeq.clear();
             });
@@ -167,20 +158,30 @@ public class PGWireServer implements Closeable {
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
         ) {
-            super(() -> {
-                NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
-                PGConnectionContext pgConnectionContext = new PGConnectionContext(
-                        engine,
-                        configuration,
-                        executionContextObjectFactory.newInstance(),
-                        circuitBreaker
-                );
-                FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                NetworkFacade nf = configuration.getNetworkFacade();
-                Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(nf, configuration, circuitBreaker, registry, pgConnectionContext);
-                pgConnectionContext.setAuthenticator(authenticator);
-                return pgConnectionContext;
-            }, configuration.getConnectionPoolInitialCapacity());
+            super(
+                    () -> {
+                        NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                                configuration.getCircuitBreakerConfiguration(),
+                                MemoryTag.NATIVE_CB5
+                        );
+                        PGConnectionContext pgConnectionContext = new PGConnectionContext(
+                                engine,
+                                configuration,
+                                executionContextObjectFactory.newInstance(),
+                                circuitBreaker
+                        );
+                        FactoryProvider factoryProvider = configuration.getFactoryProvider();
+                        Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
+                                configuration,
+                                circuitBreaker,
+                                registry,
+                                pgConnectionContext
+                        );
+                        pgConnectionContext.setAuthenticator(authenticator);
+                        return pgConnectionContext;
+                    },
+                    configuration.getConnectionPoolInitialCapacity()
+            );
         }
     }
 }

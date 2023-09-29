@@ -26,7 +26,6 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.network.YieldEvent;
 import io.questdb.network.YieldEventFactory;
@@ -76,7 +75,7 @@ public class WalTxnYieldEvents implements QuietCloseable {
      * @return event to be used in {@link io.questdb.network.IODispatcher} or {@code null}.
      */
     public @Nullable YieldEvent register(TableToken tableToken, long txn) {
-        long currentTxn = readSeqTxn(tableToken);
+        long currentTxn = tableSequencerAPI.getWriterTxn(tableToken);
         if (currentTxn >= txn) {
             // The txn is already visible.
             return null;
@@ -92,7 +91,7 @@ public class WalTxnYieldEvents implements QuietCloseable {
 
         // Read the txn once again to make sure ApplyWal2TableJob sees our changes.
         try {
-            currentTxn = readSeqTxn(tableToken);
+            currentTxn = tableSequencerAPI.getWriterTxn(tableToken);
         } catch (CairoException e) {
             yieldEvent.close();
             throw e;
@@ -121,11 +120,6 @@ public class WalTxnYieldEvents implements QuietCloseable {
         } finally {
             tlList.set(null);
         }
-    }
-
-    private long readSeqTxn(TableToken tableToken) {
-        final SeqTxnTracker seqTxnTracker = tableSequencerAPI.getSeqTxnTracker(tableToken);
-        return seqTxnTracker.getAppliedTxn();
     }
 
     private ObjList<YieldEvent> registerCompute(CharSequence dir, ObjList<YieldEvent> list) {

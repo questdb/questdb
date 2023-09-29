@@ -68,13 +68,17 @@
     #define MM_PREFETCH_NTA(address) _mm_prefetch((address), _MM_HINT_NTA)
 #endif
 
+#ifdef __APPLE__
+#define __JLONG_REINTERPRET_CAST__(type, var)  (type)var
+#else
+#define __JLONG_REINTERPRET_CAST__(type, var)  reinterpret_cast<type>(var)
+#endif
+
 constexpr jdouble D_MAX = std::numeric_limits<jdouble>::infinity();
 constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
-constexpr jint I_MAX = std::numeric_limits<jint>::max();
 constexpr jint I_MIN = std::numeric_limits<jint>::min();
 constexpr jlong L_MIN = std::numeric_limits<jlong>::min();
 constexpr jlong L_MAX = std::numeric_limits<jlong>::max();
-constexpr uint64_t UL_MIN = std::numeric_limits<uint64_t>::min();
 constexpr uint64_t UL_MAX = std::numeric_limits<uint64_t>::max();
 constexpr jdouble D_NAN = std::numeric_limits<jdouble>::quiet_NaN();
 

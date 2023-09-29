@@ -132,6 +132,8 @@ public class TypeManager implements Mutable {
                 return Long256Adapter.INSTANCE;
             case ColumnType.UUID:
                 return UuidAdapter.INSTANCE;
+            case ColumnType.IPv4:
+                return IPv4Adapter.INSTANCE;
             case ColumnType.GEOBYTE:
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
@@ -173,5 +175,6 @@ public class TypeManager implements Mutable {
         probes.add(getTypeAdapter(ColumnType.BOOLEAN));
         probes.add(getTypeAdapter(ColumnType.LONG256));
         probes.add(getTypeAdapter(ColumnType.UUID));
+        probes.add(getTypeAdapter(ColumnType.IPv4));
     }
 }

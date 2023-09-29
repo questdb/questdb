@@ -26,13 +26,19 @@ package io.questdb.test.tools;
 
 import io.questdb.Bootstrap;
 import io.questdb.Metrics;
+import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
@@ -58,6 +64,7 @@ import org.junit.Assert;
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Paths;
 import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.Map;
@@ -66,6 +73,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.std.Numbers.IPv4_NULL;
+import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
 
@@ -167,11 +176,13 @@ public final class TestUtils {
                 if (tsL != tsR) {
                     throw new AssertionError(
                             String.format(
-                                    "Row %d column %s[%s] %s",
+                                    "Row %d column %s[%s] %s. Expected %s but found %s",
                                     rowIndex,
                                     metadataActual.getColumnName(timestampIndex),
                                     ColumnType.TIMESTAMP,
-                                    "timestamp mismatch"
+                                    "timestamp mismatch",
+                                    Timestamps.toUSecString(tsL),
+                                    Timestamps.toUSecString(tsR)
                             )
                     );
                 }
@@ -562,16 +573,23 @@ public final class TestUtils {
 
         // Checks that the same tag used for allocation and freeing native memory
         long memAfter = Unsafe.getMemUsed();
+        long memNativeSqlCompilerDiff = 0;
         Assert.assertTrue(memAfter > -1);
         if (mem != memAfter) {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
-                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
-                    Assert.assertTrue(actualMemByTag > -1);
+                    if (i != MemoryTag.NATIVE_SQL_COMPILER) {
+                        Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
+                        Assert.assertTrue(actualMemByTag > -1);
+                    } else {
+                        // SqlCompiler memory is not released immediately as compilers are pooled
+                        Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
+                        memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
+                    }
                 }
             }
-            Assert.assertEquals(mem, memAfter);
+            Assert.assertEquals(mem + memNativeSqlCompilerDiff, memAfter);
         }
 
         int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
@@ -598,6 +616,18 @@ public final class TestUtils {
     }
 
     public static void assertSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+        }
+    }
+
+    public static void assertSql(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
@@ -611,6 +641,18 @@ public final class TestUtils {
                 sink
         );
         assertEquals(expected, sink);
+    }
+
+    public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log);
+        }
+    }
+
+    public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean symbolsAsStrings) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, symbolsAsStrings);
+        }
     }
 
     public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
@@ -651,10 +693,16 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
-        try (RecordCursorFactory factory = node.getSqlCompiler().compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
+        try (
+                SqlCompiler compiler = node.getEngine().getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()
+        ) {
             for (int i = 0, n = nodes.size(); i < n; i++) {
                 final QuestDBTestNode dbNode = nodes.get(i);
-                try (RecordCursorFactory factory2 = dbNode.getSqlCompiler().compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
+                try (
+                        SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
+                        RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()
+                ) {
                     try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
                         try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
                             assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
@@ -869,6 +917,9 @@ public final class TestUtils {
                 case ColumnType.SHORT:
                     sql.append("CAST(x AS SHORT) ").append(colName);
                     break;
+                case ColumnType.IPv4:
+                    sql.append("CAST(x AS IPv4) ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }
@@ -931,8 +982,17 @@ public final class TestUtils {
     }
 
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1, null)) {
+        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
             copyRequestJob.drain(0);
+        }
+    }
+
+    public static void drainWalQueue(CairoEngine engine) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+            walApplyJob.drain(0);
+            new CheckWalTransactionsJob(engine).run(0);
+            // run once again as there might be notifications to handle now
+            walApplyJob.drain(0);
         }
     }
 
@@ -967,7 +1027,7 @@ public final class TestUtils {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
-                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
         ) {
             try {
@@ -1010,13 +1070,7 @@ public final class TestUtils {
     }
 
     public static String getCsvRoot() {
-        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
-        try {
-            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
-            return new File(rootSource.toURI()).getParent();
-        } catch (URISyntaxException e) {
-            throw new AssertionError("missing test-import.csv", e);
-        }
+        return getTestResourcePath("/csv");
     }
 
     public static int getJavaVersion() {
@@ -1032,15 +1086,26 @@ public final class TestUtils {
         return Integer.parseInt(version);
     }
 
+    public static String getResourcePath(String resourceName) {
+        URL resource = ServerMain.class.getResource(resourceName);
+        assertNotNull("Someone accidentally deleted resource " + resourceName + "?", resource);
+        try {
+            // normalize the path to use '/' on all OSes
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath().replace('\\', '/');
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Could not determine resource path", e);
+        }
+    }
+
     @NotNull
     public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
         return new NetworkFacadeImpl() {
             final AtomicInteger totalSent = new AtomicInteger();
 
             @Override
-            public int send(int fd, long buffer, int bufferLen) {
+            public int sendRaw(int fd, long buffer, int bufferLen) {
                 if (startDelayDelayAfter == 0) {
-                    return super.send(fd, buffer, bufferLen);
+                    return super.sendRaw(fd, buffer, bufferLen);
                 }
 
                 int sentNow = totalSent.get();
@@ -1050,7 +1115,7 @@ public final class TestUtils {
                         return 0;
                     }
 
-                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
+                    int result = super.sendRaw(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
                     totalSent.addAndGet(result);
                     return result;
                 }
@@ -1067,6 +1132,17 @@ public final class TestUtils {
         };
     }
 
+    public static String getTestResourcePath(String resourceName) {
+        URL resource = TestUtils.class.getResource(resourceName);
+        assertNotNull("Someone accidentally deleted test resource " + resourceName + "?", resource);
+        try {
+            // normalize the path to use '/' on all OSes
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath().replace('\\', '/');
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Could not determine resource path", e);
+        }
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
         return getWriter(engine, engine.verifyTableName(tableName));
     }
@@ -1075,17 +1151,7 @@ public final class TestUtils {
         return engine.getWriter(tableToken, "test");
     }
 
-    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
-        CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
-        Assert.assertNotNull(compiledQuery.getInsertOperation());
-        final InsertOperation insertOperation = compiledQuery.getInsertOperation();
-        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
-    }
-
-    public static CharSequence insertFromSelectPopulateTableStmt(
+    public static String insertFromSelectPopulateTableStmt(
             TableModel tableModel,
             int totalRows,
             String startDate,
@@ -1144,6 +1210,9 @@ public final class TestUtils {
                 case ColumnType.LONG128:
                     insertFromSelect.append("to_long128(x, 0) ").append(colName);
                     break;
+                case ColumnType.IPv4:
+                    insertFromSelect.append("CAST(x as IPv4) ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }
@@ -1153,7 +1222,21 @@ public final class TestUtils {
         }
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
-        return insertFromSelect;
+        return insertFromSelect.toString();
+    }
+
+    public static String ipv4ToString(int ip) {
+        StringSink sink = new StringSink();
+        Numbers.intToIPv4Sink(sink, ip);
+        return sink.toString();
+    }
+
+    public static String ipv4ToString2(long ipAndBroadcast) {
+        StringSink sink = new StringSink();
+        Numbers.intToIPv4Sink(sink, (int) (ipAndBroadcast >> 32));
+        sink.put('/');
+        Numbers.intToIPv4Sink(sink, (int) (ipAndBroadcast));
+        return sink.toString();
     }
 
     public static int maxDayOfMonth(int month) {
@@ -1209,6 +1292,10 @@ public final class TestUtils {
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes) {
+        printColumn(r, m, i, sink, symbolAsString, printTypes, null);
+    }
+
+    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = m.getColumnType(i);
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
@@ -1230,14 +1317,13 @@ public final class TestUtils {
                 sink.put("null");
                 break;
             case ColumnType.STRING:
-                if (symbolAsString && m.getColumnType(i) == ColumnType.SYMBOL) {
-                    sink.put(r.getSym(i));
-                } else {
+                if (!symbolAsString | m.getColumnType(i) != ColumnType.SYMBOL) {
                     sink.put(r.getStr(i));
-                }
-                break;
+                    break;
+                } // Fall down to SYMBOL
             case ColumnType.SYMBOL:
-                sink.put(r.getSym(i));
+                CharSequence sym = r.getSym(i);
+                sink.put(sym == null ? nullStringValue : sym);
                 break;
             case ColumnType.SHORT:
                 sink.put(r.getShort(i));
@@ -1285,6 +1371,13 @@ public final class TestUtils {
                     uuid.toSink(sink);
                 }
                 break;
+            case ColumnType.IPv4: {
+                final int val = r.getIPv4(i);
+                if (val != IPv4_NULL) {
+                    Numbers.intToIPv4Sink(sink, val);
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -1297,6 +1390,17 @@ public final class TestUtils {
     public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink, RecordCursorPrinter printer) {
         sink.clear();
         printer.print(cursor, metadata, header, sink);
+    }
+
+    public static void printSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            printSql(compiler, sqlExecutionContext, sql, sink);
+        }
     }
 
     public static void printSql(
@@ -1374,12 +1478,13 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         final Path path = Path.getThreadLocal(root);
-        final int rc = TestFilesFacadeImpl.INSTANCE.rmdir(path.slash$());
-        Assert.assertTrue("Test dir cleanup error, rc=" + rc, rc <= 0);
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        path.slash$();
+        Assert.assertTrue("Test dir cleanup error", !ff.exists(path) || ff.rmdir(path.slash$()));
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null);
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -1463,6 +1568,7 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-4);
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
                         break;
                     case ColumnType.GEOINT:

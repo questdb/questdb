@@ -65,13 +65,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long partitionTimestamp,
             long maxTimestamp,
             long srcDataMax,
-            long srcDataTxn,
+            long srcNameTxn,
             boolean last,
             long txn,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
+            final long newPartitionSize,
+            final long oldPartitionSize,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr
     ) {
@@ -87,6 +89,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long dataTimestampHi;
         final FilesFacade ff = tableWriter.getFilesFacade();
         long oldPartitionTimestamp;
+
+        // partition might be subject to split
+        // if this happens the size of the original (srcDataPartition) partition will decrease
+        // and the size of new (o3Partition) will be non-zero
+        long srcDataNewPartitionSize = newPartitionSize;
+
+        long o3SplitPartitionSize = 0;
 
         if (srcDataMax < 1) {
 
@@ -112,7 +121,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
 
-            final long newPartitionSize = srcOooHi - srcOooLo + 1;
+            assert oldPartitionSize == 0;
+
             publishOpenColumnTasks(
                     txn,
                     columns,
@@ -138,7 +148,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     0,
                     0,
                     0,
-                    srcDataTxn,
+                    srcNameTxn,
                     OPEN_NEW_PARTITION_FOR_APPEND,
                     0,  // timestamp fd
                     0,
@@ -146,7 +156,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampIndex,
                     sortedTimestampsAddr,
                     newPartitionSize,
-                    newPartitionSize,
+                    oldPartitionSize,
+                    0,
                     tableWriter,
                     columnCounter,
                     o3Basket,
@@ -167,8 +178,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int suffixType;
             long suffixLo;
             long suffixHi;
-            long newPartitionSize;
-            long oldPartitionSize;
             final int openColumnMode;
 
             try {
@@ -187,7 +196,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                     // and "high" being newest
 
-                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, srcDataTxn);
+                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, srcNameTxn);
                     dFile(path, metadata.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE);
 
                     // also track the fd that we need to eventually close
@@ -324,12 +333,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             //          +-----+
 
                             branch = 3;
+                            // When deduplication is enabled, take in to the merge
+                            // all OOO rows that are equal to the last row in the data
                             mergeO3Hi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
                                     dataTimestampHi,
                                     srcOooLo,
                                     srcOooHi,
-                                    BinarySearch.SCAN_UP
+                                    tableWriter.isDeduplicationEnabled() ? BinarySearch.SCAN_DOWN : BinarySearch.SCAN_UP
                             );
 
                             mergeDataHi = srcDataMax - 1;
@@ -400,10 +411,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // should go into the merge section.
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
                                     srcTimestampAddr,
-                                    o3TimestampMax,
+                                    o3TimestampMax + 1,
                                     0,
                                     srcDataMax - 1,
-                                    BinarySearch.SCAN_DOWN
+                                    BinarySearch.SCAN_UP
                             );
 
                             suffixLo = mergeDataHi + 1;
@@ -492,10 +503,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", table=").$(pathToTable)
                         .I$();
 
-                final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
-
-                newPartitionSize = partitionSize;
-                oldPartitionSize = partitionSize;
                 oldPartitionTimestamp = partitionTimestamp;
                 boolean partitionSplit = false;
 
@@ -544,15 +551,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         partitionSplit = true;
                         partitionTimestamp = maxSourceTimestamp + 1;
                         prefixType = O3_BLOCK_NONE;
-                        newPartitionSize -= prefixHi + 1;
-                        oldPartitionSize = prefixHi + 1;
+
+                        // we are splitting existing partition along the "prefix" line
+                        // this action creates two partitions:
+                        // 1. Prefix of the srcDataPartition
+                        // 2. Merge and suffix of srcDataPartition
+
+                        // size of old data partition will be reduced
+                        srcDataNewPartitionSize = prefixHi + 1;
+
+                        // size of the new partition, old (0) and new
+                        o3SplitPartitionSize = newPartitionSize - srcDataNewPartitionSize;
 
                         // large prefix copy, better to split the partition
                         LOG.info().$("o3 split partition [table=").$(tableWriter.getTableToken())
                                 .$(", timestamp=").$ts(oldPartitionTimestamp)
-                                .$(", nameTxn=").$(srcDataTxn)
-                                .$(", partitionSize=").$(partitionSize)
-                                .$(", partitionNewSize=").$(oldPartitionSize)
+                                .$(", nameTxn=").$(srcNameTxn)
+                                .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
+                                .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
                                 .$(", newPartitionTimestamp=").$ts(partitionTimestamp)
                                 .$(", nameTxn=").$(txn)
                                 .I$();
@@ -613,15 +629,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     suffixLo,
                     suffixHi,
                     srcDataMax,
-                    srcDataTxn,
+                    srcNameTxn,
                     openColumnMode,
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
                     timestampIndex,
                     sortedTimestampsAddr,
-                    newPartitionSize,
+                    srcDataNewPartitionSize,
                     oldPartitionSize,
+                    o3SplitPartitionSize,
                     tableWriter,
                     columnCounter,
                     o3Basket,
@@ -651,13 +668,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionTimestamp = task.getPartitionTimestamp();
         final long maxTimestamp = task.getMaxTimestamp();
         final long srcDataMax = task.getSrcDataMax();
-        final long srcDataTxn = task.getSrcNameTxn();
+        final long srcNameTxn = task.getSrcNameTxn();
         final boolean last = task.isLast();
         final long txn = task.getTxn();
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
         final TableWriter tableWriter = task.getTableWriter();
         final AtomicInteger columnCounter = task.getColumnCounter();
         final O3Basket o3Basket = task.getO3Basket();
+        final long newPartitionSize = task.getNewPartitionSize();
+        final long oldPartitionSize = task.getOldPartitionSize();
         final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
         final long dedupColSinkAddr = task.getDedupColSinkAddr();
 
@@ -676,13 +695,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 partitionTimestamp,
                 maxTimestamp,
                 srcDataMax,
-                srcDataTxn,
+                srcNameTxn,
                 last,
                 txn,
                 sortedTimestampsAddr,
                 tableWriter,
                 columnCounter,
                 o3Basket,
+                newPartitionSize,
+                oldPartitionSize,
                 partitionUpdateSinkAddr,
                 dedupColSinkAddr
         );
@@ -711,6 +732,155 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return timestampIndexAddr;
     }
 
+    private static long getDedupRows(
+            long partitionTimestamp,
+            long srcNameTxn,
+            long srcTimestampAddr,
+            long mergeDataLo,
+            long mergeDataHi,
+            long sortedTimestampsAddr,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            DedupColumnCommitAddresses dedupCommitAddresses,
+            long dedupColSinkAddr,
+            TableWriter tableWriter,
+            Path tableRootPath,
+            long tempIndexAddr
+    ) {
+        if (dedupCommitAddresses == null || dedupCommitAddresses.getColumnCount() == 0) {
+            return Vect.mergeDedupTimestampWithLongIndexAsc(
+                    srcTimestampAddr,
+                    mergeDataLo,
+                    mergeDataHi,
+                    sortedTimestampsAddr,
+                    mergeOOOLo,
+                    mergeOOOHi,
+                    tempIndexAddr
+            );
+        } else {
+            return getDedupRowsWithAdditionalKeys(
+                    partitionTimestamp,
+                    srcNameTxn,
+                    srcTimestampAddr,
+                    mergeDataLo,
+                    mergeDataHi,
+                    sortedTimestampsAddr,
+                    mergeOOOLo,
+                    mergeOOOHi,
+                    oooColumns,
+                    dedupCommitAddresses,
+                    dedupColSinkAddr,
+                    tableWriter,
+                    tableRootPath,
+                    tempIndexAddr
+            );
+        }
+    }
+
+    private static long getDedupRowsWithAdditionalKeys(
+            long partitionTimestamp,
+            long srcNameTxn,
+            long srcTimestampAddr,
+            long mergeDataLo,
+            long mergeDataHi,
+            long sortedTimestampsAddr,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            DedupColumnCommitAddresses dedupCommitAddresses,
+            long dedupColSinkAddr,
+            TableWriter tableWriter,
+            Path tableRootPath,
+            long tempIndexAddr
+    ) {
+        LOG.info().$("merge dedup with additional keys [table=").$(tableWriter.getTableToken())
+                .$(", columnRowCount=").$(mergeDataHi - mergeDataLo + 1)
+                .$(", o3RowCount=").$(mergeOOOHi - mergeOOOLo + 1)
+                .I$();
+        TableRecordMetadata metadata = tableWriter.getMetadata();
+        int dedupColumnIndex = 0;
+        int tableRootPathLen = tableRootPath.length();
+        FilesFacade ff = tableWriter.getFilesFacade();
+
+        int mapMemTag = MemoryTag.MMAP_O3;
+        try {
+            dedupCommitAddresses.clear(dedupColSinkAddr);
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                int columnType = metadata.getColumnType(i);
+                if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
+                    final int columnSize = ColumnType.sizeOf(columnType);
+
+                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+                    final int fd;
+                    final long mapSize, mappedAddress;
+
+                    if (columnTop < mergeDataLo + 1) {
+                        CharSequence columnName = metadata.getColumnName(i);
+                        long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
+                        TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                        TableUtils.dFile(tableRootPath, columnName, columnNameTxn);
+                        fd = TableUtils.openRO(ff, tableRootPath.$(), LOG);
+
+                        mapSize = (mergeDataHi + 1 - columnTop) * columnSize;
+                        mappedAddress = TableUtils.mapAppendColumnBuffer(
+                                ff,
+                                fd,
+                                0,
+                                mapSize,
+                                false,
+                                mapMemTag
+                        );
+                    } else {
+                        // column is all nulls because of column top
+                        fd = -1;
+                        mapSize = 0;
+                        mappedAddress = 0;
+                    }
+
+                    final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                    dedupCommitAddresses.setArrayValues(
+                            dedupColSinkAddr,
+                            dedupColumnIndex,
+                            columnType,
+                            columnSize,
+                            columnTop,
+                            Math.abs(mappedAddress) - columnTop * columnSize,
+                            oooColAddress,
+                            mappedAddress,
+                            mapSize,
+                            fd
+                    );
+                    dedupColumnIndex++;
+                }
+            }
+
+            return Vect.mergeDedupTimestampWithLongIndexIntKeys(
+                    srcTimestampAddr,
+                    mergeDataLo,
+                    mergeDataHi,
+                    sortedTimestampsAddr,
+                    mergeOOOLo,
+                    mergeOOOHi,
+                    tempIndexAddr,
+                    dedupCommitAddresses.getColumnCount(),
+                    dedupCommitAddresses.getAddress(dedupColSinkAddr)
+            );
+        } finally {
+            for (int i = 0, n = dedupCommitAddresses.getColumnCount(); i < n; i++) {
+                final long mappedAddress = dedupCommitAddresses.getColReserved1(dedupColSinkAddr, i);
+                final long mappedAddressSize = dedupCommitAddresses.getColReserved2(dedupColSinkAddr, i);
+                if (mappedAddressSize > 0) {
+                    TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, 0, mappedAddressSize, mapMemTag);
+                }
+                final int fd = (int) dedupCommitAddresses.getColReserved3(dedupColSinkAddr, i);
+                if (fd > 0) {
+                    ff.close(fd);
+                }
+            }
+        }
+    }
+
     private static void publishOpenColumnTaskContended(
             long cursor,
             int openColumnMode,
@@ -731,7 +901,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long oldPartitionTimestamp,
             long srcDataTop,
             long srcDataMax,
-            long srcDataTxn,
+            long srcNameTxn,
             long txn,
             int prefixType,
             long prefixLo,
@@ -750,8 +920,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int indexBlockCapacity,
             int activeFixFd,
             int activeVarFd,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
@@ -783,7 +954,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     oldPartitionTimestamp,
                     srcDataTop,
                     srcDataMax,
-                    srcDataTxn,
+                    srcNameTxn,
                     txn,
                     prefixType,
                     prefixLo,
@@ -802,8 +973,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampSize,
                     activeFixFd,
                     activeVarFd,
-                    newPartitionSize,
-                    oldPartitionSize,
+                    srcDataNewPartitionSize,
+                    srcDataOldPartitionSize,
+                    o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
                     partitionUpdateSinkAddr,
@@ -830,7 +1002,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     oldPartitionTimestamp,
                     srcDataTop,
                     srcDataMax,
-                    srcDataTxn,
+                    srcNameTxn,
                     txn,
                     prefixType,
                     prefixLo,
@@ -849,8 +1021,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexBlockCapacity,
                     activeFixFd,
                     activeVarFd,
-                    newPartitionSize,
-                    oldPartitionSize,
+                    srcDataNewPartitionSize,
+                    srcDataOldPartitionSize,
+                    o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
                     partitionUpdateSinkAddr,
@@ -880,7 +1053,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long oldPartitionTimestamp,
             long srcDataTop,
             long srcDataMax,
-            long srcDataTxn,
+            long srcNameTxn,
             long txn,
             int prefixType,
             long prefixLo,
@@ -899,8 +1072,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcTimestampSize,
             int activeFixFd,
             int activeVarFd,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
@@ -927,7 +1101,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oldPartitionTimestamp,
                 srcDataTop,
                 srcDataMax,
-                srcDataTxn,
+                srcNameTxn,
                 txn,
                 prefixType,
                 prefixLo,
@@ -946,8 +1120,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 indexBlockCapacity,
                 activeFixFd,
                 activeVarFd,
-                newPartitionSize,
-                oldPartitionSize,
+                srcDataNewPartitionSize,
+                srcDataOldPartitionSize,
+                o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
                 partitionUpdateSinkAddr,
@@ -981,20 +1156,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long suffixLo,
             long suffixHi,
             long srcDataMax,
-            long srcDataTxn,
+            long srcNameTxn,
             int openColumnMode,
             int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             int timestampIndex,
             long sortedTimestampsAddr,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
             long partitionUpdateSinkAddr,
-            @SuppressWarnings("unused") long dedupColSinkAddr
+            long dedupColSinkAddr
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
@@ -1002,7 +1178,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         tableWriter.addPhysicallyWrittenRows(
                 isOpenColumnModeForAppend(openColumnMode)
                         ? srcOooBatchRowSize
-                        : newPartitionSize
+                        : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize
         );
 
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).I$();
@@ -1011,7 +1187,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long timestampMergeIndexSize;
         final TableRecordMetadata metadata = tableWriter.getMetadata();
         if (mergeType == O3_BLOCK_MERGE) {
-            long tempIndexSize = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+            long mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
+            long tempIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             assert tempIndexSize > 0; // avoid SIGSEGV
 
             if (!tableWriter.isDeduplicationEnabled()) {
@@ -1027,26 +1204,53 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
             } else {
                 final long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
+                final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
+                final Path tempTablePath = Path.getThreadLocal(tableWriter.getConfiguration().getRoot()).concat(tableWriter.getTableToken());
+
                 try {
-                    final long rowCount = Vect.mergeDedupTimestampWithLongIndexAsc(
+                    final long dedupRows = getDedupRows(
+                            oldPartitionTimestamp,
+                            srcNameTxn,
                             srcTimestampAddr,
                             mergeDataLo,
                             mergeDataHi,
                             sortedTimestampsAddr,
                             mergeOOOLo,
                             mergeOOOHi,
+                            oooColumns,
+                            dedupCommitAddresses,
+                            dedupColSinkAddr,
+                            tableWriter,
+                            tempTablePath,
                             tempIndexAddr
                     );
-                    timestampMergeIndexSize = rowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+                    timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                     timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                    final long duplicateRowCount = (mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1) - rowCount;
-                    newPartitionSize -= duplicateRowCount;
-                    if (oldPartitionTimestamp == partitionTimestamp) {
-                        oldPartitionSize -= duplicateRowCount;
+                    final long duplicateCount = mergeRowCount - dedupRows;
+                    if (duplicateCount > 0) {
+                        // we could be de-duping a split partition
+                        // in which case only its size will be affected
+                        if (o3SplitPartitionSize > 0) {
+                            o3SplitPartitionSize -= duplicateCount;
+                        } else {
+                            srcDataNewPartitionSize -= duplicateCount;
+                        }
+                        LOG.info()
+                                .$("dedup row reduction [table=").utf8(tableWriter.getTableToken().getTableName())
+                                .$(", partition=").$ts(partitionTimestamp)
+                                .$(", duplicateCount=").$(duplicateCount)
+                                .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
+                                .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
+                                .$(", o3SplitPartitionSize=").$(srcDataOldPartitionSize)
+                                .$(", mergeDataLo=").$(mergeDataLo)
+                                .$(", mergeDataHi=").$(mergeDataHi)
+                                .$(", mergeOOOLo=").$(mergeOOOLo)
+                                .$(", mergeOOOHi=").$(mergeOOOHi)
+                                .I$();
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
-                    LOG.critical().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     O3CopyJob.closeColumnIdleQuick(
@@ -1120,7 +1324,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 try {
                     final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
+                    final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, i);
                     if (cursor > -1) {
                         publishOpenColumnTaskHarmonized(
                                 cursor,
@@ -1142,7 +1346,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 oldPartitionTimestamp,
                                 srcDataTop,
                                 srcDataMax,
-                                srcDataTxn,
+                                srcNameTxn,
                                 txn,
                                 prefixType,
                                 prefixLo,
@@ -1161,8 +1365,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 srcTimestampSize,
                                 activeFixFd,
                                 activeVarFd,
-                                newPartitionSize,
-                                oldPartitionSize,
+                                srcDataNewPartitionSize,
+                                srcDataOldPartitionSize,
+                                o3SplitPartitionSize,
                                 tableWriter,
                                 indexWriter,
                                 partitionUpdateSinkAddr,
@@ -1190,7 +1395,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 oldPartitionTimestamp,
                                 srcDataTop,
                                 srcDataMax,
-                                srcDataTxn,
+                                srcNameTxn,
                                 txn,
                                 prefixType,
                                 prefixLo,
@@ -1209,8 +1414,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexBlockCapacity,
                                 activeFixFd,
                                 activeVarFd,
-                                newPartitionSize,
-                                oldPartitionSize,
+                                srcDataNewPartitionSize,
+                                srcDataOldPartitionSize,
+                                o3SplitPartitionSize,
                                 tableWriter,
                                 indexWriter,
                                 partitionUpdateSinkAddr,

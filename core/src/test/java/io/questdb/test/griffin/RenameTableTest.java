@@ -26,14 +26,11 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.CompiledQuery.RENAME_TABLE;
-
-public class RenameTableTest extends AbstractGriffinTest {
+public class RenameTableTest extends AbstractCairoTest {
 
     @Test
     public void testApplyRename() throws SqlException {
@@ -55,12 +52,17 @@ public class RenameTableTest extends AbstractGriffinTest {
 
     @Test
     public void testFunctionDestTableName() throws Exception {
-        assertFailure("rename table x to y()", 18);
+        assertException("rename table x to y()", 19, "function call is not allowed here");
+    }
+
+    @Test
+    public void testRenameTrailingDebris() throws Exception {
+        assertException("rename table x to y xyz", 20, "debris?");
     }
 
     @Test
     public void testFunctionSrcTableName() throws Exception {
-        assertFailure("rename table x() to y", 13);
+        assertException("rename table x() to y", 14, "function call is not allowed here");
     }
 
     @Test
@@ -80,26 +82,26 @@ public class RenameTableTest extends AbstractGriffinTest {
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
             compile("rename table " + tableName + " to " + upperCaseName);
-            compile("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
-            compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+            insert("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
+            insert("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
 
             TableToken newTableDirectoryName = engine.verifyTableName(upperCaseName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
 
-            assertSql("select * from " + upperCaseName, "x\tsym2\tts\n" +
+            assertSql("x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                     "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
-                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n", "select * from " + upperCaseName);
 
             compile("rename table " + upperCaseName + " to " + newTableName);
 
-            assertSql("select * from " + newTableName, "x\tsym2\tts\n" +
+            assertSql("x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                     "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
-                    "1\tabc\t2022-02-25T00:00:00.000000Z\n");
+                    "1\tabc\t2022-02-25T00:00:00.000000Z\n", "select * from " + newTableName);
         });
     }
 
@@ -108,7 +110,7 @@ public class RenameTableTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createX();
-                    Assert.assertEquals(RENAME_TABLE, compiler.compile("rename table 'x' to 'y'", sqlExecutionContext).getType());
+                    ddl("rename table 'x' to 'y'");
                     assertQuery("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                                     "1\tmsft\t50.938\t2018-01-01T00:12:00.000000Z\tfalse\tXYZ\t0.4621835429127854\t0.5599\t31\t2015-06-22T18:58:53.562Z\tPEHN\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
                                     "2\tgoogl\t42.281\t2018-01-01T00:24:00.000000Z\tfalse\tABC\t0.4138164748227684\t0.5522\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n" +
@@ -132,21 +134,8 @@ public class RenameTableTest extends AbstractGriffinTest {
         );
     }
 
-    private void assertFailure(String sql, int position) throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                createX();
-                compiler.compile(sql, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "literal or constant expected");
-            }
-        });
-    }
-
     private void createX() throws SqlException {
-        compiler.compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -166,8 +155,7 @@ public class RenameTableTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp);",
-                sqlExecutionContext
+                        ") timestamp (timestamp);"
         );
     }
 }

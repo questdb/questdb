@@ -24,7 +24,10 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,13 +56,12 @@ public class Bootstrap {
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    private final BuildInformation buildInformation;
     private final String banner;
+    private final BuildInformation buildInformation;
     private final ServerConfiguration config;
     private final Log log;
     private final Metrics metrics;
     private final String rootDirectory;
-    private final CairoEngineFactory cairoEngineFactory;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -70,7 +72,6 @@ public class Bootstrap {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
         banner = bootstrapConfiguration.getBanner();
-        cairoEngineFactory = bootstrapConfiguration.getCairoEngineFactory();
         buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
 
         // non /server.conf properties
@@ -138,7 +139,7 @@ public class Bootstrap {
         if (isOsSupported) {
             log.advisoryW().$(archName).$(sb).I$();
         } else {
-            log.criticalW().$(archName).$(sb).I$();
+            log.critical().$(archName).$(sb).I$();
         }
 
         try {
@@ -175,7 +176,7 @@ public class Bootstrap {
                             if (cairoConf == null) {
                                 cairoConf = new PropCairoConfiguration() {
                                     @Override
-                                    public FilesFacade getFilesFacade() {
+                                    public @NotNull FilesFacade getFilesFacade() {
                                         return ffOverride;
                                     }
                                 };
@@ -252,9 +253,9 @@ public class Bootstrap {
                             }
                         } while (counter.get() < maxFiles);
                         if (shouldRename && ff.rename(path, other) == 0) {
-                            log.criticalW().$("found crash file [path=").$(other).I$();
+                            log.critical().$("found crash file [path=").$(other).I$();
                         } else {
-                            log.criticalW().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
+                            log.critical().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
                         }
                     }
                 }
@@ -332,10 +333,6 @@ public class Bootstrap {
         return metrics;
     }
 
-    public CairoEngineFactory getCairoEngineFactory() {
-        return cairoEngineFactory;
-    }
-
     public String getRootDirectory() {
         return rootDirectory;
     }
@@ -350,6 +347,10 @@ public class Bootstrap {
             properties.load(is);
         }
         return properties;
+    }
+
+    public CairoEngine newCairoEngine() {
+        return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {

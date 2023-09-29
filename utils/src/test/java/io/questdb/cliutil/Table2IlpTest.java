@@ -34,8 +34,6 @@ import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -46,12 +44,14 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class Table2IlpTest {
     private static final int ILP_PORT = 9909;
@@ -59,14 +59,31 @@ public class Table2IlpTest {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
-    private static SqlCompiler compiler;
     private static DefaultCairoConfiguration configuration;
     private static CairoEngine engine;
     private static PGWireServer pgServer;
     private static LineTcpReceiver receiver;
-    private static DatabaseSnapshotAgent snapshotAgent;
     private static SqlExecutionContextImpl sqlExecutionContext;
     private static WorkerPool workerPool;
+
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
 
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path().of(root).$()) {
@@ -79,7 +96,7 @@ public class Table2IlpTest {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        Files.rmdir(path.slash$(), true);
     }
 
     public static void setCairoStatic() {
@@ -96,11 +113,9 @@ public class Table2IlpTest {
         engine = new CairoEngine(configuration);
     }
 
-
     @BeforeClass
     public static void setUpStatic() throws SqlException {
         setCairoStatic();
-        compiler = new SqlCompiler(engine);
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
@@ -112,6 +127,11 @@ public class Table2IlpTest {
         bindVariableService.clear();
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
             @Override
+            public int getSendBufferSize() {
+                return 512;
+            }
+
+            @Override
             public int getWorkerCount() {
                 return 3;
             }
@@ -120,13 +140,10 @@ public class Table2IlpTest {
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
 
         workerPool = new WorkerPool(conf);
-        snapshotAgent = new DatabaseSnapshotAgent(engine);
         pgServer = new PGWireServer(
                 conf,
                 engine,
                 workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         engine,
                         conf,
@@ -158,29 +175,27 @@ public class Table2IlpTest {
                 return 500;
             }
         }, engine, workerPool, workerPool);
-        O3Utils.setupWorkerPool(workerPool, engine, null, null);
+        O3Utils.setupWorkerPool(workerPool, engine, null);
         workerPool.start(LOG);
     }
 
     @AfterClass
     public static void tearDownStatic() {
         sqlExecutionContext.close();
-        compiler.close();
         workerPool.halt();
         receiver.close();
         pgServer.close();
-        snapshotAgent.close();
         engine.close();
     }
 
     @Test
     public void copyAllColumnTypes() throws SqlException, InterruptedException {
         String tableNameSrc = "src";
-        createTable(tableNameSrc, 20000);
+        createTable(tableNameSrc, 40_000);
 
         String tableNameDst = "dst";
         createTable(tableNameDst, 1);
-        compiler.compile("truncate table " + tableNameDst, sqlExecutionContext);
+        engine.ddl("truncate table " + tableNameDst, sqlExecutionContext);
 
         addColumn(tableNameSrc, tableNameDst, "nullint", "int");
         addColumn(tableNameSrc, tableNameDst, "nulllong", "long");
@@ -202,7 +217,13 @@ public class Table2IlpTest {
         new Table2IlpCopier().copyTable(params);
         done.await();
 
-        TestUtils.assertEquals(compiler, sqlExecutionContext, tableNameSrc, tableNameDst);
+        assertEventually(() -> {
+            try {
+                TestUtils.assertEquals(engine, sqlExecutionContext, tableNameSrc, tableNameDst);
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            }
+        }, 60);
     }
 
     @Test
@@ -212,7 +233,7 @@ public class Table2IlpTest {
 
         String tableNameDst = "dst";
         createTable(tableNameDst, 1);
-        compiler.compile("truncate table " + tableNameDst, sqlExecutionContext);
+        engine.ddl("truncate table " + tableNameDst, sqlExecutionContext);
 
         addColumn(tableNameSrc, tableNameDst, "nullint", "int");
         addColumn(tableNameSrc, tableNameDst, "nulllong", "long");
@@ -234,7 +255,13 @@ public class Table2IlpTest {
         Assert.assertEquals(10568 - 189, rowsSent);
         done.await();
 
-        TestUtils.assertEquals(compiler, sqlExecutionContext, sourceQuery, tableNameDst);
+        assertEventually(() -> {
+            try {
+                TestUtils.assertEquals(engine, sqlExecutionContext, sourceQuery, tableNameDst);
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            }
+        }, 60);
     }
 
     @Before
@@ -378,12 +405,12 @@ public class Table2IlpTest {
     }
 
     private static void addColumn(String tableNameSrc, String tableNameDst, String name, String type) throws SqlException {
-        compiler.compile("alter table " + tableNameSrc + " add column " + name + " " + type, sqlExecutionContext);
-        compiler.compile("alter table " + tableNameDst + " add column " + name + " " + type, sqlExecutionContext);
+        engine.ddl("alter table " + tableNameSrc + " add column " + name + " " + type, sqlExecutionContext);
+        engine.ddl("alter table " + tableNameDst + " add column " + name + " " + type, sqlExecutionContext);
     }
 
     private static void createTable(String tableName, int rows) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create table " + tableName + " as (select" +
                         " cast(x as int) kk, " +
                         " rnd_int() a," +

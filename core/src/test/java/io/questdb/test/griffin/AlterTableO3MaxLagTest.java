@@ -30,7 +30,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -38,7 +38,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
+public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     @Test
     public void setMaxUncommittedRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -48,10 +48,10 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             }
             try (TableReader rdr = getReader(tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
-                compile(alterCommand, sqlExecutionContext);
+                ddl(alterCommand, sqlExecutionContext);
 
-                assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
-                        "maxUncommittedRows\n11111\n");
+                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'"
+                );
                 rdr.reload();
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
             }
@@ -68,13 +68,13 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             }
             try (TableReader rdr = getReader(tableName)) {
                 String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 1s";
-                compile(alterCommand2, sqlExecutionContext);
+                ddl(alterCommand2, sqlExecutionContext);
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
-                compile(alterCommand, sqlExecutionContext);
+                ddl(alterCommand, sqlExecutionContext);
 
-                assertSql("SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE name = '" + tableName + "'",
-                        "maxUncommittedRows\to3MaxLag\n" +
-                                "11111\t1000000\n");
+                assertSql("maxUncommittedRows\to3MaxLag\n" +
+                        "11111\t1000000\n", "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE name = '" + tableName + "'"
+                );
                 rdr.reload();
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(1000000, rdr.getMetadata().getO3MaxLag());
@@ -87,13 +87,13 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
             try (TableReader rdr = getReader(tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 0";
-                compile(alterCommand, sqlExecutionContext);
+                ddl(alterCommand, sqlExecutionContext);
                 String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 0s";
-                compile(alterCommand2, sqlExecutionContext);
+                ddl(alterCommand2, sqlExecutionContext);
 
-                assertSql("SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE name = '" + tableName + "'",
-                        "maxUncommittedRows\to3MaxLag\n" +
-                                "0\t0\n");
+                assertSql("maxUncommittedRows\to3MaxLag\n" +
+                        "0\t0\n", "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE name = '" + tableName + "'"
+                );
                 rdr.reload();
                 Assert.assertEquals(0, rdr.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(0, rdr.getMetadata().getO3MaxLag());
@@ -126,7 +126,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             };
             String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
             try {
-                compile(alterCommand, sqlExecutionContext);
+                ddl(alterCommand, sqlExecutionContext);
                 Assert.fail("Alter table should fail");
             } catch (CairoError e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
@@ -171,7 +171,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 };
                 String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
                 try {
-                    compile(alterCommand, sqlExecutionContext);
+                    ddl(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
                 } catch (CairoException e) {
                     Assert.assertEquals(12, e.getPosition());
@@ -184,8 +184,8 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
                 // Now try with success.
                 ff = new TestFilesFacadeImpl();
-                compile(alterCommand, sqlExecutionContext);
-                assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");
+                ddl(alterCommand, sqlExecutionContext);
+                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE name = 'X'");
             }
         });
     }
@@ -211,7 +211,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 };
                 String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
                 try {
-                    compile(alterCommand, sqlExecutionContext);
+                    ddl(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
                 } catch (CairoError e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
@@ -226,8 +226,8 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 // Now try with success.
                 engine.clear();
                 ff = new TestFilesFacadeImpl();
-                compile(alterCommand, sqlExecutionContext);
-                assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");
+                ddl(alterCommand, sqlExecutionContext);
+                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE name = 'X'");
             }
         });
     }
@@ -253,7 +253,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 };
                 String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
                 try {
-                    compile(alterCommand, sqlExecutionContext);
+                    ddl(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
                 } catch (CairoError e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
@@ -278,7 +278,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                     }
                 };
                 try {
-                    compile(alterCommand, sqlExecutionContext);
+                    ddl(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (CairoException | SqlException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
@@ -289,7 +289,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
     @Test
     public void setMaxUncommittedRowsMissingEquals() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM maxUncommittedRows 100",
+        assertException("ALTER TABLE X SET PARAM maxUncommittedRows 100",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 43,
                 "'=' expected");
@@ -297,7 +297,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
     @Test
     public void setMaxUncommittedRowsNegativeValue() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM maxUncommittedRows = -1",
+        assertException("ALTER TABLE X SET PARAM maxUncommittedRows = -1",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 24,
                 "invalid value [value=-,parameter=maxUncommittedRows]");
@@ -312,10 +312,10 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             }
             try (TableReader rdr = getReader(tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 111s";
-                compile(alterCommand, sqlExecutionContext);
+                ddl(alterCommand, sqlExecutionContext);
 
-                assertSql("SELECT o3MaxLag FROM tables() WHERE name = '" + tableName + "'",
-                        "o3MaxLag\n111000000\n");
+                assertSql("o3MaxLag\n111000000\n", "SELECT o3MaxLag FROM tables() WHERE name = '" + tableName + "'"
+                );
                 rdr.reload();
                 Assert.assertEquals(111000000L, rdr.getMetadata().getO3MaxLag());
             }
@@ -325,7 +325,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
     @Test
     public void setO3MaxLagWrongSetSyntax() throws Exception {
-        assertFailure("ALTER TABLE X SET o3MaxLag = 111ms",
+        assertException("ALTER TABLE X SET o3MaxLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 18,
                 "'param' or 'type' expected");
@@ -333,7 +333,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
     @Test
     public void setO3MaxLagWrongSetSyntax2() throws Exception {
-        assertFailure("ALTER TABLE X PARAM o3MaxLag = 111ms",
+        assertException("ALTER TABLE X PARAM o3MaxLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 14,
                 "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
@@ -341,7 +341,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
     @Test
     public void setO3MaxLagWrongTimeQualifier() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM o3MaxLag = 111days",
+        assertException("ALTER TABLE X SET PARAM o3MaxLag = 111days",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 27,
                 "interval qualifier");
@@ -349,7 +349,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
     @Test
     public void setO3MaxLagWrongTimeQualifier2() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM o3MaxLag = 111ml",
+        assertException("ALTER TABLE X SET PARAM o3MaxLag = 111ml",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 29,
                 "interval qualifier");
@@ -363,7 +363,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             }
             try (TableReader ignored = getReader("X")) {
                 try {
-                    compile("alter TABLE X SET PARAM vommitLag = 111s", sqlExecutionContext);
+                    ddl("alter TABLE X SET PARAM vommitLag = 111s");
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "unknown parameter 'vommitLag'");
@@ -402,18 +402,11 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
     public void testSetMaxUncommitted() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile(
-                            "create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY",
-                            sqlExecutionContext
-                    );
-                    compile("alter table x1 set param maxUncommittedRows = 150", sqlExecutionContext);
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'",
-                            sink,
+                    ddl("create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY");
+                    ddl("alter table x1 set param maxUncommittedRows = 150", sqlExecutionContext);
+                    assertSql(
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    "1\tx1\tts\tDAY\t150\t300000000\n"
+                                    "1\tx1\tts\tDAY\t150\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'"
                     );
 
                     // test open table writer
@@ -421,13 +414,9 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                     engine.releaseAllWriters();
                     getWriter("x1").close();
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'",
-                            sink,
+                    assertSql(
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    "1\tx1\tts\tDAY\t150\t300000000\n"
+                                    "1\tx1\tts\tDAY\t150\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'"
                     );
                 }
         );
@@ -436,17 +425,11 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
     private void assertLagUnits(String sql, String expected) throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compiler.compile(
-                            "create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY",
-                            sqlExecutionContext);
-                    compile(sql, sqlExecutionContext);
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'",
-                            sink,
+                    ddl("create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY");
+                    ddl(sql, sqlExecutionContext);
+                    assertSql(
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    expected
+                                    expected, "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'"
                     );
 
                     // test open table writer
@@ -454,13 +437,9 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                     engine.releaseAllWriters();
                     getWriter("x1").close();
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'",
-                            sink,
+                    assertSql(
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    expected
+                                    expected, "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'"
                     );
                 }
         );
@@ -468,18 +447,18 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
     private void assertX(String tableName) throws SqlException {
         engine.releaseAllReaders();
-        assertSql("select * from " + tableName,
-                "ts\ti\tl\n" +
-                        "2020-01-01T02:23:59.900000Z\t1\t1\n" +
-                        "2020-01-01T04:47:59.800000Z\t2\t2\n" +
-                        "2020-01-01T07:11:59.700000Z\t3\t3\n" +
-                        "2020-01-01T09:35:59.600000Z\t4\t4\n" +
-                        "2020-01-01T11:59:59.500000Z\t5\t5\n" +
-                        "2020-01-01T14:23:59.400000Z\t6\t6\n" +
-                        "2020-01-01T16:47:59.300000Z\t7\t7\n" +
-                        "2020-01-01T19:11:59.200000Z\t8\t8\n" +
-                        "2020-01-01T21:35:59.100000Z\t9\t9\n" +
-                        "2020-01-01T23:59:59.000000Z\t10\t10\n");
+        assertSql("ts\ti\tl\n" +
+                "2020-01-01T02:23:59.900000Z\t1\t1\n" +
+                "2020-01-01T04:47:59.800000Z\t2\t2\n" +
+                "2020-01-01T07:11:59.700000Z\t3\t3\n" +
+                "2020-01-01T09:35:59.600000Z\t4\t4\n" +
+                "2020-01-01T11:59:59.500000Z\t5\t5\n" +
+                "2020-01-01T14:23:59.400000Z\t6\t6\n" +
+                "2020-01-01T16:47:59.300000Z\t7\t7\n" +
+                "2020-01-01T19:11:59.200000Z\t8\t8\n" +
+                "2020-01-01T21:35:59.100000Z\t9\t9\n" +
+                "2020-01-01T23:59:59.000000Z\t10\t10\n", "select * from " + tableName
+        );
     }
 
     private void createX(TableModel tbl) throws NumericException, SqlException {

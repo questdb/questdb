@@ -59,11 +59,6 @@ public class BinColumn extends BinFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
     }

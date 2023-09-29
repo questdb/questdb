@@ -43,21 +43,6 @@ public class AdvisoryUnlockAll implements FunctionFactory {
     }
 
     @Override
-    public boolean isBoolean() {
-        return false;
-    }
-
-    @Override
-    public boolean isCursor() {
-        return false;
-    }
-
-    @Override
-    public boolean isGroupBy() {
-        return false;
-    }
-
-    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

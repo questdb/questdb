@@ -29,7 +29,10 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -43,7 +46,7 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
             Pattern pattern = Pattern.compile(regex);
 
             while (line != null) {
-                if (line.length() > 0 && line.charAt(0) != '#') {
+                if (!line.isEmpty() && line.charAt(0) != '#') {
                     Matcher matcher = pattern.matcher(line);
                     String l = matcher.replaceAll("\t");
                     String[] tuple = l.split("\t");

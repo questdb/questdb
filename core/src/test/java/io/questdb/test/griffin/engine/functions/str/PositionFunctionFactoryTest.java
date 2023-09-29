@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class PositionFunctionFactoryTest extends AbstractGriffinTest {
+public class PositionFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCharVar() throws Exception {
         assertQuery(

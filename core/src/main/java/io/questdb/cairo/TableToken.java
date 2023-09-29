@@ -26,31 +26,29 @@ package io.questdb.cairo;
 
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.GcUtf8String;
 import org.jetbrains.annotations.NotNull;
 
 public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
+    private final boolean isProtected;
     private final boolean isWal;
     private final int tableId;
     @NotNull
     private final String tableName;
 
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal) {
-        this(tableName, new GcUtf8String(dirName), tableId, isWal);
+    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isProtected) {
+        this(tableName, new GcUtf8String(dirName), tableId, isWal, isProtected);
     }
 
-    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal) {
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isProtected) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
         this.isWal = isWal;
-    }
-
-    public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isWal);
+        this.isProtected = isProtected;
     }
 
     @Override
@@ -62,18 +60,9 @@ public class TableToken implements Sinkable {
 
         if (tableId != that.tableId) return false;
         if (isWal != that.isWal) return false;
+        if (isProtected != that.isProtected) return false;
         if (!tableName.equals(that.tableName)) return false;
         return dirName.equals(that.dirName);
-    }
-
-    @Override
-    public String toString() {
-        return "TableToken{" +
-                "tableName=" + tableName +
-                ", dirName=" + dirName +
-                ", tableId=" + tableId +
-                ", isWal=" + isWal +
-                '}';
     }
 
     /**
@@ -109,12 +98,30 @@ public class TableToken implements Sinkable {
         return tableId;
     }
 
+    public boolean isProtected() {
+        return isProtected;
+    }
+
     public boolean isWal() {
         return isWal;
+    }
+
+    public TableToken renamed(String newName) {
+        return new TableToken(newName, dirName, tableId, isWal, isProtected);
     }
 
     @Override
     public void toSink(CharSink sink) {
         sink.encodeUtf8(tableName);
+    }
+
+    @Override
+    public String toString() {
+        return "TableToken{" +
+                "tableName=" + tableName +
+                ", dirName=" + dirName +
+                ", tableId=" + tableId +
+                ", isWal=" + isWal +
+                '}';
     }
 }

@@ -25,15 +25,15 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class ExcelODBCTest extends AbstractGriffinTest {
+public class ExcelODBCTest extends AbstractCairoTest {
 
     @Test
     public void testGetTableMetaDataQ1() throws SqlException {
-        compiler.compile("create table mytab (a int, b float)", sqlExecutionContext);
-        assertQuery12(
+        ddl("create table mytab (a int, b float)");
+        assertQuery(
                 "nspname\trelname\tattname\tatttypid\ttypname\tattnum\tattlen\tatttypmod\tattnotnull\trelhasrules\trelkind\toid\tpg_get_expr\tswitch\ttyptypmod\trelhasoids\tattidentity\trelhassubclass\n" +
                         "public\tmytab\ta\t23\tint4\t1\t4\t0\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n" +
                         "public\tmytab\tb\t700\tfloat4\t2\t4\t0\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n",
@@ -84,14 +84,13 @@ public class ExcelODBCTest extends AbstractGriffinTest {
                         "  attnum;",
                 null,
                 true,
-                sqlExecutionContext,
                 false
         );
     }
 
     @Test
     public void testGetTablesIndexesQ2() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "attname\tattnum\trelname\tnspname\trelname1\n",
                 "select\n" +
                         "  ta.attname,\n" +
@@ -122,14 +121,13 @@ public class ExcelODBCTest extends AbstractGriffinTest {
                         "  ia.attnum;",
                 null,
                 true,
-                sqlExecutionContext,
                 false
         );
     }
 
     @Test
     public void testGetTablesIndexesQ3() throws SqlException {
-        assertQuery12(
+        assertQuery(
                 "attname\tattnum\trelname\tnspname\tNULL\n",
                 "select\n" +
                         " ta.attname,\n" +
@@ -157,7 +155,6 @@ public class ExcelODBCTest extends AbstractGriffinTest {
                         "  ia.attnum\n",
                 null,
                 true,
-                sqlExecutionContext,
                 false
         );
     }

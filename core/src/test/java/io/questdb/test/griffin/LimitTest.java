@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LimitTest extends AbstractGriffinTest {
+public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testBottomRange() throws Exception {
@@ -128,7 +128,7 @@ public class LimitTest extends AbstractGriffinTest {
 
     @Test
     public void testInvalidHiType() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from y limit 5,'ab'",
                 "create table y as (" +
                         "select" +
@@ -157,7 +157,7 @@ public class LimitTest extends AbstractGriffinTest {
 
     @Test
     public void testInvalidLoType() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from y limit 5 + 0.3",
                 "create table y as (" +
                         "select" +
@@ -229,11 +229,12 @@ public class LimitTest extends AbstractGriffinTest {
     @Test
     public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table t1 (ts timestamp, id symbol)", sqlExecutionContext);
-            executeInsert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
+            ddl("create table t1 (ts timestamp, id symbol)");
+            insert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
             assertQueryAndCache("ts\tid\n" +
                             "1970-01-01T00:00:00.000004Z\tabc\n",
-                    "select ts, id as id from t1 where id = 'abc' limit -1", null, true, true);
+                    "select ts, id as id from t1 where id = 'abc' limit -1", null, true, true
+            );
         });
     }
 
@@ -251,10 +252,7 @@ public class LimitTest extends AbstractGriffinTest {
     @Test
     public void testNegativeLimitEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table y (sym symbol, ts timestamp) timestamp(ts) partition by day",
-                    sqlExecutionContext
-            );
+            ddl("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
 
             assertQuery(
                     "sym\tts\n",
@@ -274,12 +272,12 @@ public class LimitTest extends AbstractGriffinTest {
         pageFrameMaxRows = 64;
         final int N = pageFrameMaxRows * 5;
 
-        compiler.compile("create table y as (" +
+        ddl("create table y as (" +
                 "select" +
                 " cast(x as int) i," +
                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
                 " from long_sequence(" + N + ")" +
-                ") timestamp(timestamp)", sqlExecutionContext);
+                ") timestamp(timestamp)");
 
         String query = "select * from y where i % 64 = 1 limit -1";
         String expected = "i\ttimestamp\n" +
@@ -310,12 +308,12 @@ public class LimitTest extends AbstractGriffinTest {
         pageFrameMaxRows = 64;
         final int N = pageFrameMaxRows * 5;
 
-        compiler.compile("create table y as (" +
+        ddl("create table y as (" +
                 "select" +
                 " cast(x as int) i," +
                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
                 " from long_sequence(" + N + ")" +
-                ") timestamp(timestamp) partition by hour", sqlExecutionContext);
+                ") timestamp(timestamp) partition by hour");
 
         String query = "select * from y where i % 64 = 1 limit -1";
         String expected = "i\ttimestamp\n" +
@@ -341,7 +339,7 @@ public class LimitTest extends AbstractGriffinTest {
     @Test
     public void testNegativeLimitOnIndexedSymbolFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table y as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -349,13 +347,12 @@ public class LimitTest extends AbstractGriffinTest {
                             " round(rnd_double(0), 3) price," +
                             " cast(x * 120000000 as timestamp) timestamp" +
                             " from long_sequence(30)" +
-                            "), index(sym) timestamp(timestamp) partition by month",
-                    sqlExecutionContext
+                            "), index(sym) timestamp(timestamp) partition by month"
             );
 
-            executeInsert("insert into y values (-3, 'googl', 1, to_timestamp('2001-01-01', 'yyyy-MM-dd'))");
-            executeInsert("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
-            executeInsert("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
+            insert("insert into y values (-3, 'googl', 1, to_timestamp('2001-01-01', 'yyyy-MM-dd'))");
+            insert("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
+            insert("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
 
             assertQuery(
                     "i\tsym\tprice\ttimestamp\n" +
@@ -391,7 +388,7 @@ public class LimitTest extends AbstractGriffinTest {
                         "12\tmsft\t0.661\t2018-01-01T00:24:00.000000Z\ttrue\tO\t0.01396079545983997\t0.8136\t345\t2015-08-18T10:31:42.373Z\tVTJW\t5045825384817367685\t1970-01-01T03:03:20.000000Z\t23\t00000000 51 9d 5d 28 ac 02 2e fe 05 3b 94 5f ec d3 dc f8\n" +
                         "00000010 43\tJCTIZKYFLUHZ\n";
 
-                compiler.compile(
+                ddl(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -411,8 +408,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)",
-                        sqlExecutionContext
+                                ") timestamp(timestamp)"
                 );
 
                 bindVariableService.setLong("lo", 4);
@@ -444,7 +440,8 @@ public class LimitTest extends AbstractGriffinTest {
             assertQuery("count\n1000\n",
                     "select count(*)\n" +
                             "from intervaltest\n" +
-                            "WHERE ts > '2023-04-06T00:09:59.000000Z'", null, false, true);
+                            "WHERE ts > '2023-04-06T00:09:59.000000Z'", null, false, true
+            );
 
             String query = "select *\n" +
                     "from intervaltest\n" +
@@ -469,7 +466,8 @@ public class LimitTest extends AbstractGriffinTest {
                             "599993\t2023-04-06T00:09:59.993000Z\n" +
                             "599992\t2023-04-06T00:09:59.992000Z\n" +
                             "599991\t2023-04-06T00:09:59.991000Z\n",
-                    query, "ts###DESC", true, false);
+                    query, "ts###DESC", true, false
+            );
         });
     }
 
@@ -622,7 +620,7 @@ public class LimitTest extends AbstractGriffinTest {
                         "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
                         "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
 
-                compiler.compile(
+                ddl(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -642,8 +640,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)",
-                        sqlExecutionContext
+                                ") timestamp(timestamp)"
                 );
 
                 bindVariableService.setLong(0, 4);
@@ -677,7 +674,7 @@ public class LimitTest extends AbstractGriffinTest {
                         "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
                         "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
 
-                compiler.compile(
+                ddl(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -697,8 +694,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)",
-                        sqlExecutionContext
+                                ") timestamp(timestamp)"
                 );
 
                 bindVariableService.setLong("lim", 4);
@@ -724,18 +720,18 @@ public class LimitTest extends AbstractGriffinTest {
     private void testInvalidNegativeLimit() throws Exception {
         int maxLimit = configuration.getSqlMaxNegativeLimit();
 
-        compiler.compile("create table y as (" +
+        ddl("create table y as (" +
                 "select" +
                 " cast(x as int) i," +
                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
                 " from long_sequence(100)" +
-                ") timestamp(timestamp)", sqlExecutionContext);
+                ") timestamp(timestamp)");
 
         String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
         int expectedPosition = 34;
 
         String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
-        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+        try (final RecordCursorFactory factory = select(query)) {
             try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
                 Assert.fail();
             }
@@ -751,7 +747,7 @@ public class LimitTest extends AbstractGriffinTest {
 
     private void testLimit(String expected1, String expected2, String query, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table y as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -771,13 +767,12 @@ public class LimitTest extends AbstractGriffinTest {
                             " rnd_bin(10, 20, 2) m," +
                             " rnd_str(5,16,2) n" +
                             " from long_sequence(30)" +
-                            ") timestamp(timestamp)",
-                    sqlExecutionContext
+                            ") timestamp(timestamp)"
             );
 
             assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
 
-            compiler.compile(
+            insert(
                     "insert into y select * from " +
                             "(select" +
                             " cast(x + 30 as int) i," +
@@ -797,8 +792,7 @@ public class LimitTest extends AbstractGriffinTest {
                             " rnd_bin(10, 20, 2) m," +
                             " rnd_str(5,16,2) n" +
                             " from long_sequence(30)" +
-                            ") timestamp(timestamp)",
-                    sqlExecutionContext
+                            ") timestamp(timestamp)"
             );
 
             assertQuery(expected2, query, "timestamp", true, expectSize);
@@ -806,7 +800,7 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     private void testLimitMinusOne() throws Exception {
-        compiler.compile("create table t1 (ts timestamp, id symbol)", sqlExecutionContext);
+        ddl("create table t1 (ts timestamp, id symbol)");
 
         String inserts = "insert into t1 values (0L, 'abc')\n" +
                 "insert into t1 values (2L, 'a1')\n" +
@@ -815,7 +809,7 @@ public class LimitTest extends AbstractGriffinTest {
                 "insert into t1 values (5L, 'a2')";
 
         for (String sql : inserts.split("\\r?\\n")) {
-            executeInsert(sql);
+            insert(sql);
         }
 
         assertQueryAndCache("ts\tid\n" +

@@ -91,14 +91,14 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private final int workerCount;
 
     public O3FailureFuzzTest(ParallelMode mode) {
-        this.workerCount = mode == ParallelMode.Contended ? 0 : 2;
+        this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.Parallel},
-                {ParallelMode.Contended}
+                {ParallelMode.PARALLEL},
+                {ParallelMode.CONTENDED}
         });
     }
 
@@ -168,12 +168,13 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     }
 
     private static void assertXCountAndMax(
+            CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence expectedMaxTimestamp
     ) throws SqlException {
         assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(compiler.getEngine(), expectedMaxTimestamp);
+        assertMaxTimestamp(engine, expectedMaxTimestamp);
     }
 
     private static void checkDistressedOrNoSpaceLeft(CairoError e) {
@@ -305,7 +306,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         reset();
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -316,7 +317,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOOPrependOODatThenRegularAppend0(
@@ -391,7 +392,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         }
 
         reset();
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
@@ -435,7 +436,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                 sqlExecutionContext,
                 engine);
 
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
@@ -511,7 +512,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         reset();
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         if (rnd.nextBoolean()) {
             engine.releaseAllWriters();
@@ -531,7 +532,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                 sqlExecutionContext,
                 engine);
 
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private void runFuzzRoutine(CustomisableRunnable routine) throws Exception {

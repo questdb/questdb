@@ -106,11 +106,6 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntMaxLongMerge(pRostiA, pRostiB, valueOffset);
     }

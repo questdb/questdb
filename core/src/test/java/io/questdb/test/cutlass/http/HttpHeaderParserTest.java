@@ -28,6 +28,7 @@ import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.test.tools.TestUtils;
@@ -65,7 +66,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 TestUtils.assertEquals("hello", hp.getContentDispositionName());
                 Assert.assertNull(hp.getContentDispositionFilename());
             } finally {
@@ -81,7 +82,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 TestUtils.assertEquals("hello", hp.getContentDispositionName());
                 TestUtils.assertEquals("xyz.dat", hp.getContentDispositionFilename());
                 TestUtils.assertEquals("form-data", hp.getContentDisposition());
@@ -98,7 +99,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 Assert.fail();
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Malformed Content-Disposition header");
@@ -115,7 +116,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 Assert.fail();
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "missing value [key=name]");
@@ -132,7 +133,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 Assert.fail();
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "unclosed quote");
@@ -149,7 +150,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 TestUtils.assertEquals("hello", hp.getContentDispositionName());
             } finally {
                 Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
@@ -164,7 +165,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 TestUtils.assertEquals("hello", hp.getContentDispositionName());
                 TestUtils.assertEquals("form-data", hp.getContentDisposition());
                 Assert.assertNull(hp.getContentDispositionFilename());
@@ -181,7 +182,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 TestUtils.assertEquals("text/html", hp.getContentType());
                 TestUtils.assertEquals("utf-8", hp.getCharset());
             } finally {
@@ -197,7 +198,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false);
+                hp.parse(p, p + v.length(), false, false);
                 Assert.fail();
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Malformed Content-Type header");
@@ -214,7 +215,7 @@ public class HttpHeaderParserTest {
                 "\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), false);
+            hp.parse(p, p + v.length(), false, false);
             TestUtils.assertEquals("text/html", hp.getContentType());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
@@ -227,7 +228,7 @@ public class HttpHeaderParserTest {
                 "\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), false);
+            hp.parse(p, p + v.length(), false, false);
             TestUtils.assertEquals("text/html", hp.getContentType());
             TestUtils.assertEquals("\r\n------WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getBoundary());
         } finally {
@@ -241,7 +242,7 @@ public class HttpHeaderParserTest {
                 "\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), false);
+            hp.parse(p, p + v.length(), false, false);
             TestUtils.assertEquals("text/html", hp.getContentType());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
@@ -256,7 +257,7 @@ public class HttpHeaderParserTest {
         try (HttpHeaderParser hp = new HttpHeaderParser(4 * 1024, pool)) {
             long p = TestUtils.toMemory(request);
             try {
-                hp.parse(p, p + request.length(), true);
+                hp.parse(p, p + request.length(), true, false);
                 Assert.assertNull(hp.getUrlParam("accept"));
             } finally {
                 Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);
@@ -271,7 +272,7 @@ public class HttpHeaderParserTest {
                 "\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(64, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             Assert.fail();
         } catch (HttpException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "header is too large");
@@ -285,10 +286,52 @@ public class HttpHeaderParserTest {
         String v = "GET /xyzadadadjlkjqeljqasdqweqeasdasdasdawqeadadsqweqeweqdadsasdadadasdadasdqadqw HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(64, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             Assert.fail();
         } catch (HttpException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "url is too long");
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testProtocolLine() {
+        String v = "HTTP/3 200 OK\r\n";
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), false, true);
+            TestUtils.assertEquals("200", hp.getStatusCode());
+            TestUtils.assertEquals("OK", hp.getStatusText());
+            TestUtils.assertEquals("HTTP/3 200 OK", hp.getProtocolLine());
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testProtocolLineFuzz() {
+        String v = "HTTP/3 200 OK\r\n";
+        long p = TestUtils.toMemory(v);
+        long s1 = System.currentTimeMillis();
+        long s2 = System.nanoTime();
+        System.out.println("s1: " + s1 + "L; s2: " + s2 + "L;");
+        Rnd rnd = new Rnd(s1, s2);
+        int steps = rnd.nextInt(v.length()) + 1;
+        int stepMax = rnd.nextInt(v.length() / steps + 1) + 1;
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            int total = 0;
+            for (int i = 0; i < steps; i++) {
+                int n = rnd.nextInt(stepMax);
+                hp.parse(p + total, p + total + n, false, true);
+                total += n;
+            }
+            if (total < v.length()) {
+                hp.parse(p + total, p + v.length(), false, true);
+            }
+            TestUtils.assertEquals("200", hp.getStatusCode());
+            TestUtils.assertEquals("OK", hp.getStatusText());
+            TestUtils.assertEquals("HTTP/3 200 OK", hp.getProtocolLine());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -301,7 +344,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), true);
+                hp.parse(p, p + v.length(), true, false);
                 Assert.fail();
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid query encoding");
@@ -318,7 +361,7 @@ public class HttpHeaderParserTest {
                     "\r\n";
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), true);
+                hp.parse(p, p + v.length(), true, false);
                 Assert.fail();
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid query encoding");
@@ -335,9 +378,9 @@ public class HttpHeaderParserTest {
             try {
                 for (int i = 0, n = request.length(); i < n; i++) {
                     hp.clear();
-                    hp.parse(p, p + i, true);
+                    hp.parse(p, p + i, true, false);
                     Assert.assertTrue(hp.isIncomplete());
-                    hp.parse(p + i, p + n, true);
+                    hp.parse(p + i, p + n, true, false);
                     assertHeaders(hp);
                 }
             } finally {
@@ -351,7 +394,7 @@ public class HttpHeaderParserTest {
         String v = "GET /xyz HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("/xyz", hp.getUrl());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
@@ -363,7 +406,7 @@ public class HttpHeaderParserTest {
         String v = "GET /ip?x=%27a%27&y==b HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("'a'", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
         } finally {
@@ -376,7 +419,7 @@ public class HttpHeaderParserTest {
         String v = "GET /test?x=a&y=b+c%26&z=ab%20ba&w=2 HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b c&", hp.getUrlParam("y"));
             TestUtils.assertEquals("ab ba", hp.getUrlParam("z"));
@@ -391,7 +434,7 @@ public class HttpHeaderParserTest {
         String v = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b c", hp.getUrlParam("y"));
             TestUtils.assertEquals("123", hp.getUrlParam("z"));
@@ -405,7 +448,7 @@ public class HttpHeaderParserTest {
         String v = "GET /xyz?x=a&y=b+c HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b c", hp.getUrlParam("y"));
         } finally {
@@ -418,7 +461,7 @@ public class HttpHeaderParserTest {
         String v = "GET /query?x=a&&y==b HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
         } finally {
@@ -431,7 +474,7 @@ public class HttpHeaderParserTest {
         String v = "GET /query?x=a&y=b HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
         } finally {
@@ -444,7 +487,7 @@ public class HttpHeaderParserTest {
         String v = "GET /ip?x=a&y=b&z= HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
             Assert.assertNull(hp.getUrlParam("z"));
@@ -453,14 +496,12 @@ public class HttpHeaderParserTest {
         }
     }
 
-    //"GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n"
-
     @Test
     public void testUrlParamsTrailingNull() {
         String v = "GET /opi?x=a&y=b& HTTP/1.1";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), true);
+            hp.parse(p, p + v.length(), true, false);
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
         } finally {
@@ -473,7 +514,7 @@ public class HttpHeaderParserTest {
         try (HttpHeaderParser hp = new HttpHeaderParser(4 * 1024, pool)) {
             long p = TestUtils.toMemory(request);
             try {
-                hp.parse(p, p + request.length(), true);
+                hp.parse(p, p + request.length(), true, false);
                 assertHeaders(hp);
             } finally {
                 Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);

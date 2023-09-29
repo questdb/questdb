@@ -39,6 +39,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import static io.questdb.cairo.wal.ApplyWal2TableJob.WAL_2_TABLE_RESUME_REASON;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -54,6 +55,7 @@ public class TableSequencerAPI implements QuietCloseable {
     private final int recreateDistressedSequencerAttempts;
     private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<SeqTxnTracker> seqTxnTrackers = new ConcurrentHashMap<>(false);
+    Function<CharSequence, SeqTxnTracker> createTxnTracker;
     private volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
@@ -62,6 +64,7 @@ public class TableSequencerAPI implements QuietCloseable {
         this.openSequencerInstanceLambda = this::openSequencerInstance;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
+        this.createTxnTracker = dir -> new SeqTxnTracker();
     }
 
     @Override
@@ -204,10 +207,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public SeqTxnTracker getSeqTxnTracker(TableToken tt) {
-        return seqTxnTrackers.computeIfAbsent(tt.getDirName(), dir -> new SeqTxnTracker());
-    }
-
     public long getTableMetadata(final TableToken tableToken, final TableRecordMetadataSink sink) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             try {
@@ -216,6 +215,10 @@ public class TableSequencerAPI implements QuietCloseable {
                 tableSequencer.unlockRead();
             }
         }
+    }
+
+    public long getWriterTxn(TableToken tableToken) {
+        return getSeqTxnTracker(tableToken).getWriterTxn();
     }
 
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {
@@ -277,12 +280,18 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public boolean notifyCommit(final TableToken tableToken, long seqTxn) {
-        return getSeqTxnTracker(tableToken).notifyCommit(seqTxn);
+    public boolean notifyCommitReadable(final TableToken tableToken, long writerTxn) {
+        return getSeqTxnTracker(tableToken).notifyCommitReadable(writerTxn);
     }
 
-    public void notifySegmentClosed(TableToken tableToken, int walId, int segmentId) {
-        engine.getWalListener().segmentClosed(tableToken, walId, segmentId);
+    public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
+        // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
+        // to run ApplyWal2TableJob for the table
+        return getSeqTxnTracker(tableToken).notifyOnCheck(seqTxn);
+    }
+
+    public void notifySegmentClosed(TableToken tableToken, long txn, int walId, int segmentId) {
+        engine.getWalListener().segmentClosed(tableToken, txn, walId, segmentId);
     }
 
     @TestOnly
@@ -294,6 +303,10 @@ public class TableSequencerAPI implements QuietCloseable {
                 sequencer.unlockWrite();
             }
         }
+    }
+
+    public void purgeTxnTracker(String dirName) {
+        seqTxnTrackers.remove(dirName);
     }
 
     public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
@@ -348,6 +361,9 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 if (!sequencer.isSuspended()) {
+                    // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
+                    // as a way to resume table which is not moving even if it's marked as not suspended.
+                    sequencer.resumeTable();
                     return;
                 }
                 final long nextTxn = sequencer.lastTxn() + 1;
@@ -371,10 +387,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public boolean setApplied(final TableToken tableToken, long writerTxn) {
-        return getSeqTxnTracker(tableToken).setApplied(writerTxn);
-    }
-
     @TestOnly
     public void setDistressed(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
@@ -395,6 +407,10 @@ public class TableSequencerAPI implements QuietCloseable {
                 sequencer.unlockWrite();
             }
         }
+    }
+
+    private SeqTxnTracker getSeqTxnTracker(TableToken tt) {
+        return seqTxnTrackers.computeIfAbsent(tt.getDirName(), createTxnTracker);
     }
 
     @NotNull
@@ -444,7 +460,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     private boolean releaseEntries(long deadline) {
-        if (seqRegistry.size() == 0) {
+        if (seqRegistry.isEmpty()) {
             // nothing to release
             return true;
         }

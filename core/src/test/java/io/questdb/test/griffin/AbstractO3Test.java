@@ -43,6 +43,7 @@ import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -50,8 +51,6 @@ import org.junit.Rule;
 import org.junit.rules.Timeout;
 
 import java.io.File;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test extends AbstractTest {
@@ -59,6 +58,8 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
+    protected static boolean mixedIOEnabled;
+    protected static boolean mixedIOEnabledFFDefault;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
 
@@ -81,11 +82,14 @@ public class AbstractO3Test extends AbstractTest {
         Path.PATH.get();
         Path.PATH2.get();
         super.setUp();
+        mixedIOEnabledFFDefault = TestFilesFacadeImpl.INSTANCE.allowMixedIO(root);
+        mixedIOEnabled = mixedIOEnabledFFDefault;
     }
 
     @After
     public void tearDown() throws Exception {
         commitMode = CommitMode.NOSYNC;
+        mixedIOEnabled = mixedIOEnabledFFDefault;
         dataAppendPageSize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
@@ -242,11 +246,9 @@ public class AbstractO3Test extends AbstractTest {
             SqlExecutionContext sqlExecutionContext,
             String sql,
             String resourceName
-    ) throws URISyntaxException, SqlException {
+    ) throws SqlException {
         AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, sql);
-        URL url = O3Test.class.getResource(resourceName);
-        Assert.assertNotNull(url);
-        TestUtils.assertEquals(new File(url.toURI()), sink);
+        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -254,9 +256,9 @@ public class AbstractO3Test extends AbstractTest {
         TestUtils.assertEquals(sink2, sink);
     }
 
-    protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    protected static void assertXCountY(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.assertEquals(compiler, sqlExecutionContext, "select count() from x", "select count() from y");
-        assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
+        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
     protected static void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -324,7 +326,7 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
 
@@ -341,6 +343,12 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public long getPartitionO3SplitMinSize() {
                         return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
+                    }
+
+                    @Override
+                    public boolean isWriterMixedIOEnabled() {
+                        // Allow enabling mixed I/O only if the ff allows it.
+                        return mixedIOEnabledFFDefault && mixedIOEnabled;
                     }
                 };
 
@@ -364,7 +372,7 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
 
@@ -406,6 +414,12 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public long getPartitionO3SplitMinSize() {
                         return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
+                    }
+
+                    @Override
+                    public boolean isWriterMixedIOEnabled() {
+                        // Allow enabling mixed I/O only if the ff allows it.
+                        return mixedIOEnabledFFDefault && mixedIOEnabled;
                     }
                 };
                 TestUtils.execute(null, runnable, configuration, LOG);
@@ -453,6 +467,6 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     protected enum ParallelMode {
-        Contended, Parallel
+        CONTENDED, PARALLEL
     }
 }

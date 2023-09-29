@@ -139,7 +139,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
             return row++ < rowCount;
         }
 
-        public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
+        public void of(RecordCursorFactory base, SqlExecutionContext executionContext) {
             //we can't use getCursor() because that could take a lot of time and execute e.g. table hashing
             //on the other hand until we run it factories may be incomplete
             if (!isBaseClosed) {

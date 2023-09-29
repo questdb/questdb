@@ -24,24 +24,15 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.YieldException;
-import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.YieldEvent;
-import io.questdb.network.YieldEventFactory;
-import io.questdb.network.YieldEventFactoryImpl;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.suspend.TestCase;
+import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.sql.CallableStatement;
@@ -51,270 +42,20 @@ import java.sql.ResultSet;
 
 
 /**
- * This test verifies record cursor factory yield support. To do so, it runs the same query
- * with data available immediately and with simulated cold storage scenario and then compares
- * the result set.
+ * Cold storage may lead to the initiation of suspend events when data is inaccessible to the local database instance.
+ * This disruption affects both the state machine's flow and the factory's data provision process. This test
+ * replicates a suspend event, comparing the query output after resumption with the output of a query that
+ * hasn't been suspended.
  */
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGQueryYieldTest extends BasePGTest {
 
     private static final Log LOG = LogFactory.getLog(PGQueryYieldTest.class);
     private static final StringSink sinkB = new StringSink();
-    private static final ObjList<TestCase> testCases = new ObjList<>();
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        BasePGTest.setUpStatic();
-
-        addTestCase("select * from x");
-        addTestCase("select * from x order by ts desc");
-
-        // AsyncFilteredRecordCursor
-        addTestCase("select * from x where i = 42");
-        addTestCase("select * from x where i = 42 limit 3");
-
-        // AsyncFilteredNegativeLimitRecordCursor
-        addTestCase("select * from x where i = 42 limit -3");
-
-        // FilteredRecordCursor
-        addTestCase("select * from (x union all y) where i = 42");
-
-        // FilterOnSubQueryRecordCursorFactory
-        addTestCase("select * from x where isym in (select s from y limit 3) and i != 42");
-
-        // FilterOnExcludedValuesRecordCursorFactory
-        addTestCase("select * from x where isym not in ('a','b') and i != 42");
-
-        // FilterOnValuesRecordCursorFactory
-        addTestCase("select * from x where isym in (?,?)", false, "d", "a");
-
-        // DataFrameRecordCursorFactory
-        addTestCase("select * from x where isym = ? and i != 42", false, "c");
-
-        // DeferredSingleSymbolFilterDataFrameRecordCursorFactory
-        addTestCase("select * from x where isym = ?", false, "b");
-
-        // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
-        addTestCase("select * from x limit 1");
-        addTestCase("select * from x limit 1,3");
-        addTestCase("select * from x order by ts desc limit 1,3");
-        addTestCase("select * from x limit 1,-1");
-        addTestCase("select * from x limit 0,-1");
-        addTestCase("select * from x limit -1");
-        addTestCase("select * from x limit -4000");
-        addTestCase("select * from x limit -3,-1");
-        addTestCase("select * from x limit -3,-4", true);
-        addTestCase("select * from (x union all y) limit 1");
-        addTestCase("select * from (x union all y) limit 1,3");
-        addTestCase("select * from (x union all y) limit 1,-1");
-        addTestCase("select * from (x union all y) limit -1");
-        addTestCase("select * from (x union all y) limit -3,-1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit 1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit 1,3");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit 1,-1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -3,-1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -4000,-1");
-
-        // SortedRecordCursorFactory
-        addTestCase("select * from (x union all y) order by i");
-
-        // SortedLightRecordCursorFactory
-        addTestCase("select sym, min(i) imin from x where ts in '1970-01-01' order by imin");
-        addTestCase("select * from x where ts in '1970-01-01' order by isym, ts desc");
-
-        // SortedSymbolIndexRecordCursorFactory
-        addTestCase("select * from x where ts in '1970-01-01T00' order by isym, ts desc");
-
-        // LimitedSizeSortedLightRecordCursorFactory
-        addTestCase("select * from x order by i limit 3");
-
-        // CachedAnalyticRecordCursorFactory
-        addTestCase("select i, row_number() over (partition by sym) from x");
-        addTestCase("select i, row_number() over (partition by sym order by ts) from x");
-
-        // InSymbolCursorFunctionFactory
-        addTestCase("select * from x where sym in (select sym from y)");
-        addTestCase("select * from x where cast(s as symbol) in (select sym from y)");
-        addTestCase("select * from x where sym in (select sym from y where isym in (select isym from x limit 3))");
-
-        // CountRecordCursorFactory
-        addTestCase("select count() from x where isym = 'c'");
-
-        // DistinctTimeSeriesRecordCursorFactory
-        addTestCase("select distinct * from x");
-
-        // DistinctRecordCursorFactory
-        addTestCase("select distinct sym from (x union all y)");
-
-        // DistinctKeyRecordCursorFactory
-        addTestCase("select distinct sym from x order by sym");
-
-        // GroupByNotKeyedVectorRecordCursor
-        addTestCase("select max(i), min(i) from x");
-
-        // vect/GroupByRecordCursorFactory
-        // order by is added here to guarantee a deterministic order in the result set
-        addTestCase("select sym, max(i), min(i) from x order by sym");
-
-        // GroupByNotKeyedRecordCursorFactory
-        addTestCase("select max(i), min(i) from (x union all y)");
-
-        // GroupByRecordCursorFactory
-        addTestCase("select sym, max(i), min(i) from (x union all y)");
-
-        // SampleByFillNoneNotKeyedRecordCursor
-        addTestCase("select max(i), min(i) from x sample by 1h");
-
-        // SampleByFillNoneRecordCursor
-        addTestCase("select sym, max(i), min(i) from x sample by 1h");
-
-        // SampleByFillPrevNotKeyedRecordCursor
-        addTestCase("select max(i), min(i) from x sample by 1h fill(prev)");
-
-        // SampleByFillPrevRecordCursor
-        addTestCase("select sym, max(i), min(i) from x sample by 1h fill(prev)");
-
-        // SampleByFillValueNotKeyedRecordCursor
-        addTestCase("select max(i), min(i) from x sample by 1h fill(42,42)");
-
-        // SampleByFillValueRecordCursor
-        addTestCase("select sym, max(i), min(i) from x sample by 1h fill(null)");
-        addTestCase("select sym, max(i), min(i) from x sample by 1h fill(42,42)");
-
-        // SampleByInterpolateRecordCursorFactory
-        addTestCase("select max(i), min(i) from x sample by 1h fill(linear)");
-
-        // SampleByFillNullNotKeyedRecordCursorFactory
-        addTestCase("select sum(i) s, ts from x sample by 30m fill(null)");
-
-        // SampleByFirstLastRecordCursorFactory
-        addTestCase("select first(i) f, last(i) l, isym, ts from x where isym = 'a' sample by 2h");
-
-        // LatestByValueListRecordCursor
-        addTestCase("select * from x latest on ts partition by sym");
-        addTestCase("select * from x where isym <> 'd' latest on ts partition by isym");
-        addTestCase("select * from x where isym not in ('e','f') and i > 42 latest on ts partition by isym");
-
-        // LatestByAllIndexedRecordCursor
-        addTestCase("select * from x latest on ts partition by isym");
-
-        // LatestByAllRecordCursor
-        addTestCase("select * from x latest on ts partition by s");
-
-        // LatestByAllFilteredRecordCursor
-        addTestCase("select * from x where i != 42 latest on ts partition by s");
-
-        // LatestByLightRecordCursorFactory
-        addTestCase("select * from ((x union all y) order by ts asc) latest on ts partition by s");
-        addTestCase("select * from ((x union all y) order by ts desc) latest on ts partition by s");
-
-        // LatestByRecordCursorFactory
-        addTestCase("with yy as (select ts, max(s) s from y sample by 1h) select * from yy latest on ts partition by s");
-
-        // LatestByValueRecordCursor
-        addTestCase("select * from x where sym in ('a') latest on ts partition by sym");
-
-        // LatestByValueFilteredRecordCursor
-        addTestCase("select * from x where sym in ('a') and i > 42 latest on ts partition by sym");
-
-        // LatestByValueDeferredFilteredRecordCursorFactory
-        addTestCase("select * from x where sym in ('d') and i > 42 latest on ts partition by sym", true);
-
-        // LatestByAllSymbolsFilteredRecordCursor
-        addTestCase("select * from x latest on ts partition by sym, isym");
-        addTestCase("select * from x where i != 42 latest on ts partition by sym, isym");
-
-        // LatestBySubQueryRecordCursorFactory, LatestByValuesRecordCursor
-        addTestCase("select * from x where sym in (select sym from y limit 3) latest on ts partition by sym");
-
-        // LatestBySubQueryRecordCursorFactory, LatestByValuesFilteredRecordCursor
-        addTestCase("select * from x where sym in (select sym from y limit 3) and i%2 <> 1 latest on ts partition by sym");
-
-        // LatestByValueIndexedFilteredRecordCursorFactory
-        addTestCase("select * from x where isym = 'c' and i <> 13 latest on ts partition by isym");
-
-        // DataFrameRecordCursorFactory, LatestByValueIndexedRowCursorFactory
-        addTestCase("select * from x where isym = 'c' latest on ts partition by isym");
-
-        // DataFrameRecordCursorFactory, LatestByValueDeferredIndexedRowCursorFactory
-        addTestCase("select * from x where isym = ? latest on ts partition by isym", false, "a");
-
-        // LatestByValueDeferredIndexedFilteredRecordCursorFactory
-        addTestCase("select * from x where isym = ? and i <> 0 latest on ts partition by isym", false, "c");
-
-        // LatestByValuesIndexedFilteredRecordCursor
-        addTestCase("select * from x where isym in ('a','c') and i < 13 latest on ts partition by isym");
-
-        // LatestByValuesIndexedRecordCursor
-        addTestCase("select * from x where isym in ('b','c') latest on ts partition by isym");
-
-        // HashJoinRecordCursorFactory
-        addTestCase("select * from x join (x union all y) on (sym)");
-
-        // HashOuterJoinRecordCursorFactory
-        addTestCase("select * from x left join (x union all y) on (sym)");
-
-        // HashOuterJoinFilteredRecordCursorFactory
-        addTestCase("select * from x left join (x union all y) xy on x.sym = xy.sym and x.sym ~ 'a'");
-
-        // HashJoinLightRecordCursorFactory
-        addTestCase("select * from x join y on (sym)");
-
-        // HashOuterJoinLightRecordCursorFactory
-        addTestCase("select * from x left join y on (sym)");
-
-        // HashOuterJoinFilteredLightRecordCursorFactory
-        addTestCase("select * from x left join y on x.sym = y.sym and x.sym ~ 'a'");
-
-        // NestedLoopLeftJoinRecordCursorFactory
-        addTestCase("select * from x left join y on x.i + 42 = y.i");
-
-        // CrossJoinRecordCursorFactory
-        addTestCase("select * from x cross join y");
-
-        // AsOfJoinNoKeyRecordCursorFactory
-        addTestCase("select * from x asof join y");
-
-        // AsOfJoinRecordCursorFactory
-        addTestCase("with yy as (select ts, max(l) l from y sample by 1h) select * from x asof join (yy timestamp(ts)) on (l)");
-
-        // AsOfJoinLightRecordCursorFactory
-        addTestCase("select * from x asof join y on (sym)");
-
-        // LtJoinNoKeyRecordCursorFactory
-        addTestCase("select * from x lt join y");
-
-        // LtJoinRecordCursorFactory
-        addTestCase("with yy as (select ts, max(l) l from y sample by 1h) select * from x lt join (yy timestamp(ts)) on (l)");
-
-        // LtJoinLightRecordCursorFactory
-        addTestCase("select * from x lt join y on (l)");
-
-        // SpliceJoinLightRecordCursorFactory
-        addTestCase("select * from x splice join y");
-
-        // UnionRecordCursorFactory
-        addTestCase("x union y");
-
-        // UnionAllRecordCursorFactory
-        addTestCase("x union all y");
-
-        // ExceptRecordCursor
-        addTestCase("x except y", true);
-
-        // ExceptCastRecordCursor
-        addTestCase("(select s sym from x) except (select sym from y)", true);
-
-        // IntersectRecordCursor
-        addTestCase("x intersect y");
-
-        // IntersectCastRecordCursor
-        addTestCase("(select s sym from x) intersect (select sym from y)");
-    }
+    private final static TestCases testCases = new TestCases(configuration);
 
     @Test
-    public void testQueryYield() throws Exception {
+    public void testAllCases() throws Exception {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -322,127 +63,52 @@ public class PGQueryYieldTest extends BasePGTest {
             ) {
                 workerPool.start(LOG);
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
-                    CallableStatement stmt = connection.prepareCall(
-                            "create table x as ( " +
-                                    "  select " +
-                                    "    cast(x as int) i, " +
-                                    "    rnd_double(2) d, " +
-                                    "    rnd_long() l, " +
-                                    "    rnd_str('a','b','c') s, " +
-                                    "    rnd_symbol('a','b','c') sym, " +
-                                    "    rnd_symbol('a','b','c') isym, " +
-                                    "    timestamp_sequence(0, 100000000) ts " +
-                                    "   from long_sequence(100)" +
-                                    "), index(isym) timestamp(ts) partition by hour"
-                    );
+                    CallableStatement stmt = connection.prepareCall(testCases.getDdlX());
                     stmt.execute();
-                    stmt = connection.prepareCall("create table y as (select * from x), index(isym) timestamp(ts) partition by hour");
+                    stmt = connection.prepareCall(testCases.getDdlY());
                     stmt.execute();
 
-                    YieldingReaderListener listener = null;
-                    try {
-                        for (int i = 0; i < testCases.size(); i++) {
-                            TestCase tc = testCases.getQuick(i);
+                    for (int i = 0; i < testCases.size(); i++) {
+                        TestCase tc = testCases.getQuick(i);
 
-                            engine.setReaderListener(null);
-                            try (PreparedStatement statement = connection.prepareStatement(tc.query)) {
-                                sink.clear();
-                                if (tc.bindVariableValues != null) {
-                                    for (int j = 0; j < tc.bindVariableValues.length; j++) {
-                                        statement.setString(j + 1, tc.bindVariableValues[j]);
-                                    }
-                                }
-                                try (ResultSet rs = statement.executeQuery()) {
-                                    long rows = printToSink(sink, rs);
-                                    if (!tc.allowEmptyResultSet) {
-                                        Assert.assertTrue("Query " + tc.query + " is expected to return non-empty result set", rows > 0);
-                                    }
+                        engine.releaseAllReaders();
+                        engine.setReaderListener(null);
+
+                        try (PreparedStatement statement = connection.prepareStatement(tc.getQuery())) {
+                            sink.clear();
+                            if (tc.getBindVariableValues() != null) {
+                                for (int j = 0; j < tc.getBindVariableValues().length; j++) {
+                                    statement.setString(j + 1, tc.getBindVariableValues()[j]);
                                 }
                             }
-
-                            engine.releaseAllReaders();
-
-                            listener = new YieldingReaderListener();
-                            // Yes, this write is racy, but it's not an issue in the test scenario.
-                            engine.setReaderListener(listener);
-                            try (PreparedStatement statement = connection.prepareStatement(tc.query)) {
-                                sinkB.clear();
-                                if (tc.bindVariableValues != null) {
-                                    for (int j = 0; j < tc.bindVariableValues.length; j++) {
-                                        statement.setString(j + 1, tc.bindVariableValues[j]);
-                                    }
-                                }
-                                try (ResultSet rs = statement.executeQuery()) {
-                                    printToSink(sinkB, rs);
+                            try (ResultSet rs = statement.executeQuery()) {
+                                long rows = printToSink(sink, rs, null);
+                                if (!tc.isAllowEmptyResultSet()) {
+                                    Assert.assertTrue("Query " + tc.getQuery() + " is expected to return non-empty result set", rows > 0);
                                 }
                             }
-
-                            TestUtils.assertEquals(tc.query, sink, sinkB);
                         }
-                    } finally {
-                        Misc.free(listener);
+
+                        engine.releaseAllReaders();
+
+                        // Yes, this write is racy, but it's not an issue in the test scenario.
+                        engine.setReaderListener(testCases.getSuspendingListener());
+                        try (PreparedStatement statement = connection.prepareStatement(tc.getQuery())) {
+                            sinkB.clear();
+                            if (tc.getBindVariableValues() != null) {
+                                for (int j = 0; j < tc.getBindVariableValues().length; j++) {
+                                    statement.setString(j + 1, tc.getBindVariableValues()[j]);
+                                }
+                            }
+                            try (ResultSet rs = statement.executeQuery()) {
+                                printToSink(sinkB, rs, null);
+                            }
+                        }
+
+                        TestUtils.assertEquals(tc.getQuery(), sink, sinkB);
                     }
                 }
             }
         });
-    }
-
-    private static void addTestCase(String query) {
-        addTestCase(query, false);
-    }
-
-    private static void addTestCase(String query, boolean allowEmptyResultSet) {
-        testCases.add(new TestCase(query, allowEmptyResultSet));
-    }
-
-    private static void addTestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
-        testCases.add(new TestCase(query, allowEmptyResultSet, bindVariableValues));
-    }
-
-    private static class TestCase {
-        final boolean allowEmptyResultSet;
-        final String[] bindVariableValues;
-        final String query;
-
-        public TestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
-            this.query = query;
-            this.allowEmptyResultSet = allowEmptyResultSet;
-            this.bindVariableValues = bindVariableValues;
-        }
-    }
-
-    /**
-     * This listener varies DataUnavailableException and successful execution of TableReader#openPartition()
-     * in the following sequence: exception, success, exception, success, etc.
-     */
-    private static class YieldingReaderListener implements ReaderPool.ReaderListener, QuietCloseable {
-
-        private final YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(configuration);
-        private final ConcurrentHashMap<YieldEvent> yieldedPartitions = new ConcurrentHashMap<>();
-
-        @Override
-        public void close() {
-            yieldedPartitions.forEach((charSequence, yieldEvent) -> yieldEvent.close());
-        }
-
-        @Override
-        public void onOpenPartition(TableToken tableToken, int partitionIndex) {
-            final String key = tableToken + "$" + partitionIndex;
-            YieldEvent computedEvent = yieldedPartitions.compute(key, (charSequence, prevEvent) -> {
-                if (prevEvent != null) {
-                    // Success case.
-                    prevEvent.close();
-                    return null;
-                }
-                // Exception case.
-                YieldEvent nextEvent = yieldEventFactory.newInstance();
-                // Mark the event as immediately fulfilled.
-                nextEvent.trigger();
-                return nextEvent;
-            });
-            if (computedEvent != null) {
-                throw YieldException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
-            }
-        }
     }
 }

@@ -31,8 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -59,7 +57,6 @@ import java.io.InputStream;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Properties;
-import java.util.ServiceLoader;
 import java.util.zip.GZIPInputStream;
 
 @RunWith(Parameterized.class)
@@ -128,14 +125,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
         metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics);
-        serverConf.init(
-                engine,
-                new FunctionFactoryCache(
-                        configuration,
-                        ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
-                ),
-                freeOnExit
-        );
+        serverConf.init(engine, freeOnExit);
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
     }
@@ -210,7 +200,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics.health());
             try (
                     LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool);
-                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 SOCountDownLatch haltLatch = new SOCountDownLatch(1);

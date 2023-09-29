@@ -78,16 +78,27 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
+            final C context = pending.get(i);
             final long id = pending.get(i, OPM_ID);
             final int fd = (int) pending.get(i, OPM_FD);
-            int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
+            final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
-            int event = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
-            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, event) < 0) {
+            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, epollOp(operation, context)) < 0) {
                 LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
                         .$(", err=").$(nf.errno()).I$();
             }
         }
+    }
+
+    private int epollOp(int operation, C context) {
+        int op = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
+        if (context.getSocket().wantsTlsRead()) {
+            op |= EpollAccessor.EPOLLIN;
+        }
+        if (context.getSocket().wantsTlsWrite()) {
+            op |= EpollAccessor.EPOLLOUT;
+        }
+        return op;
     }
 
     private boolean handleSocketOperation(long id) {
@@ -108,15 +119,35 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 doDisconnect(context, id, DISCONNECT_SRC_PEER_DISCONNECT);
                 pending.deleteRow(row);
                 return true;
+            } else {
+                // the connection is alive, so we need to re-arm epoll to be able to detect broken connection
+                rearmEpoll(context, id, IOOperation.READ);
             }
         } else {
-            publishOperation(
-                    // Check EPOLLOUT flag and treat all other events, including EPOLLIN and EPOLLHUP, as a read.
-                    (epoll.getEvent() & EpollAccessor.EPOLLOUT) > 0 ? IOOperation.WRITE : IOOperation.READ,
-                    context
-            );
-            pending.deleteRow(row);
-            return true;
+            final int requestedOp = (int) pending.get(row, OPM_OPERATION);
+            // We check EPOLLOUT flag and treat all other events, including EPOLLIN and EPOLLHUP, as a read.
+            final boolean readyForWrite = (epoll.getEvent() & EpollAccessor.EPOLLOUT) > 0;
+            final boolean readyForRead = !readyForWrite || (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0;
+
+            if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
+                // If the socket is also ready for another operation type, do it.
+                if (context.getSocket().tlsIO(tlsIOFlags(requestedOp, readyForRead, readyForWrite)) < 0) {
+                    doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
+                    pending.deleteRow(row);
+                    return true;
+                }
+                publishOperation(requestedOp, context);
+                pending.deleteRow(row);
+                return true;
+            }
+
+            // It's something different from the requested operation.
+            if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
+                doDisconnect(context, id, DISCONNECT_SRC_TLS_ERROR);
+                pending.deleteRow(row);
+                return true;
+            }
+            rearmEpoll(context, id, requestedOp);
         }
         return false;
     }
@@ -287,8 +318,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
-            final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
-            if (epoll.control(fd, opId, epollCmd, epollOp) < 0) {
+            if (epoll.control(fd, opId, epollCmd, epollOp(operation, context)) < 0) {
                 LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
                         .$(", err=").$(nf.errno()).I$();
             }
@@ -321,19 +351,16 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         pendingEvents.zapTop(count);
     }
 
-    private void resumeOperation(C context, long id, int operation) {
-        // to resume a socket operation, we simply re-arm epoll
-        if (
-                epoll.control(
-                        context.getFd(),
-                        id,
-                        EpollAccessor.EPOLL_CTL_MOD,
-                        operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                ) < 0
-        ) {
-            LOG.critical().$("internal error: epoll_ctl operation mod failure [id=").$(id)
+    private void rearmEpoll(C context, long id, int operation) {
+        if (epoll.control(context.getFd(), id, EpollAccessor.EPOLL_CTL_MOD, epollOp(operation, context)) < 0) {
+            LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(id)
                     .$(", err=").$(nf.errno()).I$();
         }
+    }
+
+    private void resumeOperation(C context, long id, int operation) {
+        // to resume a socket operation, we simply re-arm epoll
+        rearmEpoll(context, id, operation);
         context.clearYieldEvent();
     }
 

@@ -294,6 +294,11 @@ public class RecordComparatorCompiler {
                     getterNameA = "getInt";
                     comparatorClass = Integer.class;
                     break;
+                case ColumnType.IPv4:
+                    fieldType = "J";
+                    getterNameA = "getLongIPv4";
+                    comparatorClass = Long.class;
+                    break;
                 case ColumnType.LONG:
                     fieldType = "J";
                     getterNameA = "getLong";

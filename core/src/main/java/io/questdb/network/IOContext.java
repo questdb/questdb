@@ -24,23 +24,32 @@
 
 package io.questdb.network;
 
+import io.questdb.log.Log;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 
 public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
+    protected final Socket socket;
     protected IODispatcher<T> dispatcher;
-    protected int fd = -1;
     protected long heartbeatId = -1;
+
+    protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
+        this.socket = socketFactory.newInstance(nf, log);
+    }
 
     @Override
     public void clear() {
-        heartbeatId = -1;
-        fd = -1;
-        dispatcher = null;
+        _clear();
     }
 
     public void clearYieldEvent() {
         // no-op
+    }
+
+    @Override
+    public void close() {
+        _clear();
     }
 
     public long getAndResetHeartbeatId() {
@@ -54,25 +63,43 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     public int getFd() {
-        return fd;
+        return socket != null ? socket.getFd() : -1;
+    }
+
+    public Socket getSocket() {
+        return socket;
     }
 
     public YieldEvent getYieldEvent() {
         return null;
     }
 
+    /**
+     * @throws io.questdb.cairo.CairoException if initialization fails
+     */
+    public void init() {
+        // no-op
+    }
+
     public boolean invalid() {
-        return fd == -1;
+        return socket.getFd() == -1;
     }
 
     @SuppressWarnings("unchecked")
-    public T of(int fd, IODispatcher<T> dispatcher) {
-        this.fd = fd;
+    public T of(int fd, @NotNull IODispatcher<T> dispatcher) {
+        socket.of(fd);
         this.dispatcher = dispatcher;
         return (T) this;
     }
 
     public void setHeartbeatId(long heartbeatId) {
         this.heartbeatId = heartbeatId;
+    }
+
+    private void _clear() {
+        heartbeatId = -1;
+        socket.close();
+        dispatcher = null;
+        clearYieldEvent();
     }
 }

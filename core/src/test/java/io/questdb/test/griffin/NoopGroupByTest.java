@@ -24,14 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class NoopGroupByTest extends AbstractGriffinTest {
+public class NoopGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testMissingGroupByWithHourFunction() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "hour\tavgBid\n",
                 "select hour(ts), avg(bid) avgBid from x order by hour",
                 "create table x (\n" +
@@ -53,15 +53,16 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "0\t0.47607185409853914\n" +
                         "1\t0.6861237948732989\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByBindVariable() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
-        assertFailure(
+        assertException(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
                 "create table x (id int, ref int, ref3 int)",
                 73, "literal expected"
@@ -71,35 +72,36 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     //with where clause
     @Test
     public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
-        compiler.compile("create table x ( " +
+        ddl("create table x ( " +
                 "    sym1 symbol," +
                 "    sym2 symbol," +
                 "    bid int," +
-                "    ask int )", sqlExecutionContext);
+                "    ask int )");
         engine.releaseAllWriters();
 
         String query = "select sym1, avg(bid) avgBid " +
                 "from x " +
                 "where sym1 in ('AA', 'BB' ) " +
                 "group by sym1, sym2";
-        assertPlan(query,
+        assertPlan(
+                query,
                 "VirtualRecord\n" +
                         "  functions: [sym1,avgBid]\n" +
                         "    GroupBy vectorized: false\n" +
                         "      keys: [sym1,sym2]\n" +
                         "      values: [avg(bid)]\n" +
-                        "        Async Filter\n" +
+                        "        Async Filter workers: 1\n" +
                         "          filter: sym1 in [AA,BB]\n" +
-                        "          workers: 1\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
-                        "                Frame forward scan on: x\n");
+                        "                Frame forward scan on: x\n"
+        );
         assertQuery("sym1\tavgBid\n", query, null, true, false);
     }
 
     @Test
     public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV1() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -114,7 +116,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV2() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym2",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -129,7 +131,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsingAliasedColumnAndWrongTableAlias() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym ccy, avg(bid) avgBid from x a where sym in ('AA', 'BB' ) group by b.ccy",
                 "create table x (\n" +
                         "    sym symbol,\n" +
@@ -143,7 +145,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsingFunctionColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by avgBid",
                 "create table x (\n" +
                         "    sym symbol,\n" +
@@ -157,7 +159,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByFailureWhenUsingInvalidColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by badColumn",
                 "create table x (\n" +
                         "    sym symbol,\n" +
@@ -171,7 +173,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByInvalidColumnName1() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, avg(bid) avgBid from x a group by b.rubbish",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -187,7 +189,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByInvalidColumnName2() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, avg(bid) avgBid from x a group by b.sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -205,9 +207,9 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     public void testNoopGroupByJoinArithmetic() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table x (id int, ref int, ref3 int)");
-            compile("insert into x values (1,1,1), (1,2,2);");
+            insert("insert into x values (1,1,1), (1,2,2);");
             compile("create table y (id int, ref int, val double)");
-            compile("insert into y values (1,1,1), (1,2,2);");
+            insert("insert into y values (1,1,1), (1,2,2);");
             engine.releaseAllWriters();
             assertQuery(
                     "id\tcolumn\tsum\n" +
@@ -218,7 +220,8 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                     null,
                     true,
                     true
-        );});
+            );
+        });
     }
 
     @Test
@@ -227,8 +230,11 @@ public class NoopGroupByTest extends AbstractGriffinTest {
             compile("create table y(id int, ref int, val double)");
             compile("create table x (id int, ref int, ref3 int)");
             engine.releaseAllWriters();
-            assertFailure("select x.id, x.ref - y.ref, sum(val) from x join y on (id) group by x.id, y.ref - x.ref",
-                    null, 21, "column must appear in GROUP BY clause or aggregate function");
+            assertException(
+                    "select x.id, x.ref - y.ref, sum(val) from x join y on (id) group by x.id, y.ref - x.ref",
+                    21,
+                    "column must appear in GROUP BY clause or aggregate function"
+            );
         });
     }
 
@@ -244,7 +250,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByJoinReference() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
         assertQuery(
                 "id\tref\tref1\tsum\n",
@@ -258,9 +264,9 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByJoinReferenceNonSelected() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
-        assertFailure(
+        assertException(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
                 "create table x (id int, ref int, ref3 int)",
                 13, "column must appear in GROUP BY clause or aggregate function"
@@ -269,8 +275,8 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByJoinStringConst() throws Exception {
-        compiler.compile("create table x (id int, ref int, ref3 int)", sqlExecutionContext);
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        ddl("create table x (id int, ref int, ref3 int)");
+        ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
         String query = "select 'x' z, sum(val) from x join y on (id) group by 'y'";
         assertQuery("z\tsum\n", query, null, true);
@@ -278,7 +284,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByMissingColumnWithTableAlias1() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, a.sym2, avg(bid) avgBid from x a group by a.sym1", //a.sym2 is missing in group by clause
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -294,7 +300,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByValidColumnName() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym1\tavgBid\n",
                 "select a.sym1, avg(bid) avgBid from x a group by a.sym1 order by a.sym1",
                 "create table x (\n" +
@@ -317,13 +323,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "B\t0.7080299543021055\n" +
                         "C\t0.4760584891454253\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByValidColumnNameWithHourFunction() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "hour\tavgBid\n",
                 //select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
                 "select hour(ts), avg(bid) avgBid from x group by hour(ts) order by hour",
@@ -346,13 +353,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "0\t0.47607185409853914\n" +
                         "1\t0.6861237948732989\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByValidColumnNameWithHourFunctionAndAliasedTable() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "hour\tavgBid\n",
                 //select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
                 "select hour(a.ts), avg(bid) avgBid from x a group by hour(a.ts) order by hour",
@@ -375,13 +383,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "0\t0.47607185409853914\n" +
                         "1\t0.6861237948732989\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByWhenUsingAliasedColumn() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "ccy\tavgBid\n",
                 "select sym1 ccy, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by ccy",
                 "create table x (\n" +
@@ -403,25 +412,27 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "A\t0.5942181417903911\n" +
                         "B\t0.7080299543021055\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test//sym1 is aliased as ccy at stage later than group by
     public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable() throws Exception {
-        assertFailure("select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.ccy",
+        assertException("select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.ccy",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY", 80, "Invalid column: a.ccy");
+                        ") timestamp(ts) partition by DAY", 80, "Invalid column: a.ccy"
+        );
     }
 
     @Test
     public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable2() throws Exception {
-        assertFailure(
+        assertException(
                 "select sym1 ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by b.ccy",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -437,7 +448,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupByWhenUsingOriginalColumnAndAliasedTable() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "ccy\tavgBid\n",
                 "select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.sym1",
                 "create table x (\n" +
@@ -459,13 +470,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "A\t0.5942181417903911\n" +
                         "B\t0.7080299543021055\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByWith1Syms() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym1\tavgBid\n",
                 "select sym1, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by sym1",
                 "create table x (\n" +
@@ -487,13 +499,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "A\t0.5942181417903911\n" +
                         "B\t0.7080299543021055\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByWith2Syms() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym1\tsym2\tavgBid\n",
                 "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by sym1, sym2",
                 "create table x (\n" +
@@ -518,13 +531,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "B\tD\t0.8434630350290969\n" +
                         "A\tF\t0.8664158914718532\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByWithAlias() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sym1\tavgBid\n",
                 "select sym1, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.sym1",
                 "create table x (\n" +
@@ -546,13 +560,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "A\t0.5942181417903911\n" +
                         "B\t0.7080299543021055\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByWithCrossJoinAndFilterOnSymbolColumn() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "ts\tsym2\ttotalCost\n",
                 "SELECT A.ts, A.sym2, A.totalCost\n" +
                         "FROM (\n" +
@@ -596,13 +611,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "420000\tE\t1.7202\n" +
                         "1200000\tE\t1.7202\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupByWithFunction1() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "column\tavg\n",
                 "select b+a, avg(c) from x group by b+a",
                 "create table x (\n" +
@@ -644,13 +660,14 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "0.7675889012481835\t0.9540069089049732\n" +
                         "0.9257619753148886\t0.19751370382305056\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoopGroupReferenceAggregate() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, avg(bid) avgBid from x a group by a.sym1, avgBid order by a.sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -666,7 +683,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNoopGroupReferenceNonKeyColumn() throws Exception {
-        assertFailure(
+        assertException(
                 "select a.sym1, avg(bid) avgBid from x a group by a.sym2 order by a.sym1",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -682,7 +699,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testSubQuery() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "bkt\tavg\n",
                 "select bkt, avg(bid) from (select abs(id % 10) bkt, bid from x) group by bkt",
                 "create table x (\n" +
@@ -706,7 +723,8 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "0\t0.1911234617573182\n" +
                         "9\t0.5793466326862211\n",
                 true,
-                true
+                true,
+                false
         );
     }
 }

@@ -27,13 +27,16 @@ package io.questdb.cairo;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.function.Predicate;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
 
-    public TableNameRegistryRW(CairoConfiguration configuration) {
-        super(configuration);
+    public TableNameRegistryRW(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+        super(configuration, protectedTableResolver);
         if (!nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
@@ -68,7 +71,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
-            return new TableToken(tableName, dirName, tableId, isWal);
+            boolean isProtected = protectedTableResolver.test(tableName);
+            return new TableToken(tableName, dirName, tableId, isWal, isProtected);
         } else {
             return null;
         }
@@ -86,13 +90,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
         if (tableToken.isWal()) {
-            nameStore.appendEntry(tableToken);
+            nameStore.logAddTable(tableToken);
         }
         reverseTableNameTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
     }
 
     @Override
-    public synchronized void reloadTableNameCache(ObjList<TableToken> convertedTables) {
+    public synchronized void reloadTableNameCache(@Nullable ObjList<TableToken> convertedTables) {
         nameTableTokenMap.clear();
         reverseTableNameTokenMap.clear();
         if (!nameStore.isLocked()) {
@@ -115,7 +119,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             if (nameTableTokenMap.remove(oldName, tableToken)) {
                 // Persist to file
                 nameStore.logDropTable(tableToken);
-                nameStore.appendEntry(newNameRecord);
+                nameStore.logAddTable(newNameRecord);
                 reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
                 return newNameRecord;
             } else {
@@ -128,19 +132,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         }
     }
 
-
     @Override
     public void replaceAlias(TableToken alias, TableToken replaceWith) {
         if (nameTableTokenMap.remove(alias.getTableName(), alias)) {
             nameStore.logDropTable(alias);
-            nameStore.appendEntry(replaceWith);
+            nameStore.logAddTable(replaceWith);
             reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
         }
-    }
-
-    @Override
-    public void resetMemory() {
-        nameStore.resetMemory();
     }
 
     @Override

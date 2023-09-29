@@ -28,24 +28,28 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
 public class PageFrameReduceTask implements Closeable {
 
+    private static final String exceptionMessage = "unexpected filter error";
+
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
     private final long pageFrameQueueCapacity;
     private final DirectLongList rows;
+    private StringSink errorMsg = new StringSink();
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
 
-    public PageFrameReduceTask(CairoConfiguration configuration) {
-        this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-        this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+    public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
+        this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+        this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
         this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
     }
 
@@ -57,6 +61,10 @@ public class PageFrameReduceTask implements Closeable {
 
     public DirectLongList getColumns() {
         return columns;
+    }
+
+    public CharSequence getErrorMsg() {
+        return errorMsg;
     }
 
     public int getFrameIndex() {
@@ -88,16 +96,30 @@ public class PageFrameReduceTask implements Closeable {
         return rows;
     }
 
+    public boolean hasError() {
+        return errorMsg.length() > 0;
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
         this.frameSequenceId = frameSequence.getId();
         this.frameIndex = frameIndex;
+        errorMsg.clear();
         rows.clear();
     }
 
     public void resetCapacities() {
         rows.resetCapacity();
         columns.resetCapacity();
+    }
+
+    public void setErrorMsg(Throwable th) {
+        if (th instanceof FlyweightMessageContainer) {
+            errorMsg.put(((FlyweightMessageContainer) th).getFlyweightMessage());
+        } else {
+            final String msg = th.getMessage();
+            errorMsg.put(msg != null ? msg : exceptionMessage);
+        }
     }
 
     void collected() {

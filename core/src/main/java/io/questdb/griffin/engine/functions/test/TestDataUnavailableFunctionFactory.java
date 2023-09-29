@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.network.YieldEvent;
@@ -54,7 +53,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);
         return new CursorFunction(new DataUnavailableRecordCursorFactory(configuration, totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
@@ -107,7 +106,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
                 if (eventCallback != null) {
                     eventCallback.onYieldEvent(event);
                 }
-                throw YieldException.instance(new TableToken("foo", "foo", 1, false), "2022-01-01", event);
+                throw YieldException.instance(new TableToken("foo", "foo", 1, false, false), "2022-01-01", event);
             }
             rows++;
             record.of(rows);
@@ -147,7 +146,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.reset();
             return cursor;
         }

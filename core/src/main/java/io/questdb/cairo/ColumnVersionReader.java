@@ -53,7 +53,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public static final int HEADER_SIZE = OFFSET_SIZE_B_64 + 8;
     static final int TIMESTAMP_ADDED_PARTITION_OFFSET = COLUMN_TOP_OFFSET;
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
-    protected final LongList cachedList = new LongList();
+    protected final LongList cachedColumnVersionList = new LongList();
     private MemoryCMR mem;
     private boolean ownMem;
     private long version;
@@ -75,7 +75,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         boolean areaA = (version & 1L) == 0L;
         final long offset = HEADER_SIZE;
         mem.putLong(areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64, offset);
-        final long size = (long) (cachedList.size() / BLOCK_SIZE) * BLOCK_SIZE_BYTES;
+        final long size = (long) (cachedColumnVersionList.size() / BLOCK_SIZE) * BLOCK_SIZE_BYTES;
         mem.putLong(areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64, size);
 
         int i = 0;
@@ -83,26 +83,26 @@ public class ColumnVersionReader implements Closeable, Mutable {
         long lim = offset + size;
 
         while (p < lim) {
-            mem.putLong(p, cachedList.getQuick(i));
-            mem.putLong(p + COLUMN_INDEX_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_INDEX_OFFSET));
-            mem.putLong(p + COLUMN_NAME_TXN_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_NAME_TXN_OFFSET));
-            mem.putLong(p + COLUMN_TOP_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_TOP_OFFSET));
+            mem.putLong(p, cachedColumnVersionList.getQuick(i));
+            mem.putLong(p + COLUMN_INDEX_OFFSET * Long.BYTES, cachedColumnVersionList.getQuick(i + COLUMN_INDEX_OFFSET));
+            mem.putLong(p + COLUMN_NAME_TXN_OFFSET * Long.BYTES, cachedColumnVersionList.getQuick(i + COLUMN_NAME_TXN_OFFSET));
+            mem.putLong(p + COLUMN_TOP_OFFSET * Long.BYTES, cachedColumnVersionList.getQuick(i + COLUMN_TOP_OFFSET));
             i += BLOCK_SIZE;
             p += BLOCK_SIZE_BYTES;
         }
     }
 
-    public LongList getCachedList() {
-        return cachedList;
+    public LongList getCachedColumnVersionList() {
+        return cachedColumnVersionList;
     }
 
     public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
         int versionRecordIndex = getRecordIndex(partitionTimestamp, columnIndex);
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : getDefaultColumnNameTxn(columnIndex);
+        return versionRecordIndex > -1 ? cachedColumnVersionList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : getDefaultColumnNameTxn(columnIndex);
     }
 
     public long getColumnNameTxnByIndex(int versionRecordIndex) {
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : -1L;
+        return versionRecordIndex > -1 ? cachedColumnVersionList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : -1L;
     }
 
     /**
@@ -118,9 +118,13 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return getColumnTopByIndexOrDefault(recordIndex, partitionTimestamp, columnIndex, -1L);
     }
 
+    public long getColumnTopByIndex(int versionRecordIndex) {
+        return versionRecordIndex > -1 ? cachedColumnVersionList.getQuick(versionRecordIndex + COLUMN_TOP_OFFSET) : 0L;
+    }
+
     public long getColumnTopByIndexOrDefault(int recordIndex, long partitionTimestamp, int columnIndex, long defaultValue) {
         if (recordIndex > -1L) {
-            return cachedList.getQuick(recordIndex + COLUMN_TOP_OFFSET);
+            return cachedColumnVersionList.getQuick(recordIndex + COLUMN_TOP_OFFSET);
         }
 
         // Check if column has been already added before this partition
@@ -131,10 +135,6 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         // This column does not exist in the partition
         return defaultValue;
-    }
-
-    public long getColumnTopByIndex(int versionRecordIndex) {
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_TOP_OFFSET) : 0L;
     }
 
     /**
@@ -170,11 +170,11 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     public int getRecordIndex(long partitionTimestamp, int columnIndex) {
-        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
         if (index > -1) {
-            final int sz = cachedList.size();
-            for (; index < sz && cachedList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
-                final long thisIndex = cachedList.getQuick(index + COLUMN_INDEX_OFFSET);
+            final int sz = cachedColumnVersionList.size();
+            for (; index < sz && cachedColumnVersionList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
+                final long thisIndex = cachedColumnVersionList.getQuick(index + COLUMN_INDEX_OFFSET);
 
                 if (thisIndex == columnIndex) {
                     return index;
@@ -235,7 +235,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeGetVersion()) {
                 mem.resize(offset + size);
-                readUnsafe(offset, size, cachedList, mem);
+                readUnsafe(offset, size, cachedColumnVersionList, mem);
 
                 Unsafe.getUnsafe().loadFence();
                 if (version == unsafeGetVersion()) {
@@ -261,7 +261,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
         long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
         mem.resize(offset + size);
-        readUnsafe(offset, size, cachedList, mem);
+        readUnsafe(offset, size, cachedColumnVersionList, mem);
         return version;
     }
 

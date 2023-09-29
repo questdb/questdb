@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
@@ -32,21 +33,25 @@ import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,25 +61,22 @@ import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
 
-public abstract class BasePGTest extends AbstractGriffinTest {
+public abstract class BasePGTest extends AbstractCairoTest {
 
     protected CopyRequestJob copyRequestJob = null;
+    protected int forceRecvFragmentationChunkSize = 1024 * 1024;
+    protected int forceSendFragmentationChunkSize = 1024 * 1024;
+    protected int recvBufferSize = 1024 * 1024;
+    protected int sendBufferSize = 1024 * 1024;
 
     public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
         assertResultSet(null, expected, sink, rs);
-    }
-
-    public static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        printToSink(sink, rs);
-        TestUtils.assertEquals(message, expected, sink);
     }
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             PGWireServer.PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
@@ -82,15 +84,13 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             return null;
         }
 
-        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory, registry);
+        return new PGWireServer(configuration, cairoEngine, workerPool, contextFactory, registry);
     }
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent
+            WorkerPool workerPool
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -103,8 +103,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 configuration,
                 cairoEngine,
                 workerPool,
-                functionFactoryCache,
-                snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,
@@ -115,42 +113,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         );
     }
 
-    private static void toSink(InputStream is, CharSink sink) throws IOException {
-        // limit what we print
-        byte[] bb = new byte[1];
-        int i = 0;
-        while (is.read(bb) > 0) {
-            byte b = bb[0];
-            if (i > 0) {
-                if ((i % 16) == 0) {
-                    sink.put('\n');
-                    Numbers.appendHexPadded(sink, i);
-                }
-            } else {
-                Numbers.appendHexPadded(sink, i);
-            }
-            sink.put(' ');
-
-            final int v;
-            if (b < 0) {
-                v = 256 + b;
-            } else {
-                v = b;
-            }
-
-            if (v < 0x10) {
-                sink.put('0');
-                sink.put(hexDigits[b]);
-            } else {
-                sink.put(hexDigits[v / 0x10]);
-                sink.put(hexDigits[v % 0x10]);
-            }
-
-            i++;
-        }
-    }
-
-    protected static long printToSink(StringSink sink, ResultSet rs) throws SQLException, IOException {
+    public static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
         // dump metadata
         ResultSetMetaData metaData = rs.getMetaData();
         final int columnCount = metaData.getColumnCount();
@@ -160,10 +123,23 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
 
             sink.put(metaData.getColumnName(i + 1));
-            sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+            if (JDBCType.valueOf(metaData.getColumnType(i + 1)) == JDBCType.VARCHAR) {
+                if (map != null) {
+                    if (map.get(i + 1) == ColumnType.IPv4) {
+                        sink.put('[').put("IPv4").put(']');
+                    } else {
+                        sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+                    }
+                } else {
+                    sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+                }
+            } else {
+                sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+            }
         }
         sink.put('\n');
 
+        Timestamp timestamp;
         long rows = 0;
         while (rs.next()) {
             rows++;
@@ -198,7 +174,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                         }
                         break;
                     case TIMESTAMP:
-                        Timestamp timestamp = rs.getTimestamp(i);
+                        timestamp = rs.getTimestamp(i);
                         if (timestamp == null) {
                             sink.put("null");
                         } else {
@@ -269,9 +245,58 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return rows;
     }
 
+    private static void toSink(InputStream is, CharSink sink) throws IOException {
+        // limit what we print
+        byte[] bb = new byte[1];
+        int i = 0;
+        while (is.read(bb) > 0) {
+            byte b = bb[0];
+            if (i > 0) {
+                if ((i % 16) == 0) {
+                    sink.put('\n');
+                    Numbers.appendHexPadded(sink, i);
+                }
+            } else {
+                Numbers.appendHexPadded(sink, i);
+            }
+            sink.put(' ');
+
+            final int v;
+            if (b < 0) {
+                v = 256 + b;
+            } else {
+                v = b;
+            }
+
+            if (v < 0x10) {
+                sink.put('0');
+                sink.put(hexDigits[b]);
+            } else {
+                sink.put(hexDigits[v / 0x10]);
+                sink.put(hexDigits[v % 0x10]);
+            }
+
+            i++;
+        }
+    }
+
+    protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs, map);
+    }
+
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        printToSink(sink, rs, map);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        printToSink(sink, rs, null);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
         TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
-        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount(), compiler.getFunctionFactoryCache());
+        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
         workerPool.assign(copyRequestJob);
         workerPool.freeOnExit(copyRequestJob);
@@ -279,9 +304,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return createPGWireServer(
                 configuration,
                 engine,
-                workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent
+                workerPool
         );
     }
 
@@ -324,8 +347,23 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
 
             @Override
-            public Rnd getRandom() {
-                return new Rnd();
+            public int getForceRecvFragmentationChunkSize() {
+                return forceRecvFragmentationChunkSize;
+            }
+
+            @Override
+            public int getForceSendFragmentationChunkSize() {
+                return forceSendFragmentationChunkSize;
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return recvBufferSize;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return sendBufferSize;
             }
 
             @Override
@@ -409,10 +447,10 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     protected NetworkFacade getFragmentedSendFacade() {
         return new NetworkFacadeImpl() {
             @Override
-            public int send(int fd, long buffer, int bufferLen) {
+            public int sendRaw(int fd, long buffer, int bufferLen) {
                 int total = 0;
                 for (int i = 0; i < bufferLen; i++) {
-                    int n = super.send(fd, buffer + i, 1);
+                    int n = super.sendRaw(fd, buffer + i, 1);
                     if (n < 0) {
                         return n;
                     }

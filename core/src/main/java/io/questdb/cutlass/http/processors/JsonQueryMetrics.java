@@ -31,6 +31,8 @@ import org.jetbrains.annotations.TestOnly;
 
 public class JsonQueryMetrics {
 
+    private final Counter cacheHitCounter;
+    private final Counter cacheMissCounter;
     private final LongGauge cachedQueriesGauge;
     private final Counter completedQueriesCounter;
     private final Counter startedQueriesCounter;
@@ -39,6 +41,16 @@ public class JsonQueryMetrics {
         this.startedQueriesCounter = metricsRegistry.newCounter("json_queries");
         this.completedQueriesCounter = metricsRegistry.newCounter("json_queries_completed");
         this.cachedQueriesGauge = metricsRegistry.newLongGauge("json_queries_cached");
+        this.cacheHitCounter = metricsRegistry.newCounter("json_queries_cache_hits");
+        this.cacheMissCounter = metricsRegistry.newCounter("json_queries_cache_misses");
+    }
+
+    public Counter cacheHitCounter() {
+        return cacheHitCounter;
+    }
+
+    public Counter cacheMissCounter() {
+        return cacheMissCounter;
     }
 
     public LongGauge cachedQueriesGauge() {

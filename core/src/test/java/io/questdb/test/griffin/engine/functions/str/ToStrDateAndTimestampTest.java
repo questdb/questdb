@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -37,7 +37,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 
-public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
+public class ToStrDateAndTimestampTest extends AbstractCairoTest {
     @Test
     public void testToStrBehavior() throws Exception {
         String[] inputs = {

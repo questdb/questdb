@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ThreadLocal;
@@ -56,7 +56,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         writerCommandQueueCapacity = 256;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Override
@@ -151,12 +151,12 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     update.close();
                 }
 
-                assertSql("testUpdateTimeout", "ts\tx\n" +
+                assertSql("ts\tx\n" +
                         "1970-01-01T00:00:00.000000Z\t5\n" +
                         "1970-01-01T00:00:01.000000Z\t5\n" +
                         "1970-01-01T00:00:02.000000Z\t5\n" +
                         "1970-01-01T00:00:03.000000Z\t5\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\n");
+                        "1970-01-01T00:00:04.000000Z\t5\n", "testUpdateTimeout");
             }
         });
     }
@@ -185,8 +185,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
                 // Non-simple connection
                 try (final Connection connection = getConnection(server1.getPort(), false, true, 1L)) {
-                    PreparedStatement update = connection.prepareStatement("" +
-                            "UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
+                    PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
                     update.setQueryTimeout(1);
                     update.setInt(1, 4);
 
@@ -241,9 +240,9 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     update.executeUpdate();
                 }
 
-                assertSql("select count() from testUpdateTimeout where x = 5",
-                        "count\n" +
-                                "2000\n");
+                assertSql("count\n" +
+                        "2000\n", "select count() from testUpdateTimeout where x = 5"
+                );
             }
         });
     }
@@ -301,7 +300,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                 }
 
                 Thread tick = new Thread(() -> {
-                    while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                    while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                         try (TableWriter tableWriter = getWriter("up")) {
                             tableWriter.tick();
                         } catch (EntryUnavailableException ignored) {
@@ -359,7 +358,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         try {
                             barrier.await();
                             try (TableReader rdr = getReader("up")) {
-                                while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                                while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                                     rdr.reload();
                                     assertReader(rdr, expectedValues, validators);
                                 }
@@ -378,7 +377,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                 }
             }
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 Assert.fail(exceptions.poll().toString());
             }
         });

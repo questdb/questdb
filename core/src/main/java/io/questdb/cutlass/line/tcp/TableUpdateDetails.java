@@ -51,7 +51,7 @@ public class TableUpdateDetails implements Closeable {
     private static final DirectByteSymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final long defaultMaxUncommittedRows;
+    private final int defaultMaxUncommittedRows;
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
@@ -269,7 +269,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    private long getMetaMaxUncommittedRows() {
+    private int getMetaMaxUncommittedRows() {
         if (metadataService != null) {
             return metadataService.getMetaMaxUncommittedRows();
         }
@@ -698,6 +698,7 @@ public class TableUpdateDetails implements Closeable {
                     latestKnownMetadata = engine.getMetadata(tableToken);
                 } catch (CairoException | TableReferenceOutOfDateException ex) {
                     if (isWal()) {
+                        LOG.critical().$("could not write to WAL [ex=").$(ex).I$();
                         setWriterInError();
                     } else {
                         throw ex;

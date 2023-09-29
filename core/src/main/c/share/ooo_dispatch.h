@@ -31,12 +31,20 @@ typedef struct index_t {
     uint64_t ts;
     uint64_t i;
 
+    bool operator<(const index_t& other) const {
+        return ts < other.ts;
+    }
+
     bool operator<(uint64_t other) const {
         return ts < other;
     }
 
     bool operator>(uint64_t other) const {
         return ts > other;
+    }
+
+    bool operator>(const index_t& other) const {
+        return ts > other.ts;
     }
 
     bool operator==(index_t other) const {

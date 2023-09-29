@@ -41,7 +41,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -52,14 +52,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class UpdateConcurrentTest extends AbstractGriffinTest {
+public class UpdateConcurrentTest extends AbstractCairoTest {
     private static final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         writerCommandQueueCapacity = 128;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Override
@@ -150,15 +150,15 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            compiler.compile("create table up as" +
+            ddl("create table up as" +
                     " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
                     " 0 as x" +
                     " from long_sequence(5))" +
                     " timestamp(ts)" +
-                    (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""), sqlExecutionContext);
+                    (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
 
             Thread tick = new Thread(() -> {
-                while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                     try (TableWriter tableWriter = getWriter(
                             "up"
                     )) {
@@ -175,7 +175,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
                     try {
-                        final SqlCompiler updateCompiler = new SqlCompiler(engine, snapshotAgent);
+                        final SqlCompiler updateCompiler = engine.getSqlCompiler();
                         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
@@ -223,16 +223,14 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     });
 
                     try {
-                        final SqlCompiler readerCompiler = new SqlCompiler(engine, snapshotAgent);
                         barrier.await();
                         try (TableReader rdr = getReader("up")) {
-                            while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                            while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                                 rdr.reload();
                                 assertReader(rdr, expectedValues, validators);
                                 Os.sleep(1);
                             }
                         }
-                        readerCompiler.close();
                     } catch (Throwable th) {
                         LOG.error().$("reader error ").$(th).$();
                         exceptions.add(th);
@@ -248,7 +246,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                 threads.get(i).join();
             }
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 Assert.fail(exceptions.poll().toString());
             }
         });

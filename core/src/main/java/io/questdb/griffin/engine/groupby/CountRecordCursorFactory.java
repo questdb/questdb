@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -96,14 +93,22 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (baseCursor != null) {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    count++;
-                }
-                baseCursor = Misc.free(baseCursor);
-            }
             if (hasNext) {
+                long size = baseCursor.size();
+                if (size > -1) {
+                    count = size;
+                } else {
+                    count = 0;
+                    try {
+                        while (baseCursor.hasNext()) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            count++;
+                        }
+                    } catch (YieldException e) {
+                        baseCursor.toTop();
+                        throw e;
+                    }
+                }
                 hasNext = false;
                 return true;
             }
@@ -117,20 +122,13 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
+            baseCursor.toTop();
             hasNext = true;
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.baseCursor = baseCursor;
             this.circuitBreaker = circuitBreaker;
-
-            final long size = baseCursor.size();
-            if (size < 0) {
-                count = 0;
-            } else {
-                count = size;
-                this.baseCursor = Misc.free(baseCursor);
-            }
             toTop();
         }
 

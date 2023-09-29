@@ -32,19 +32,22 @@ import io.questdb.griffin.SqlExecutionContext;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
-    private static final int N_DESIGNATED_COL = 6;
-    private static final int N_INDEXED_COL = 2;
-    private static final int N_INDEX_BLOCK_CAPACITY_COL = 3;
     private static final int N_NAME_COL = 0;
-    private static final int N_SYMBOL_CACHED_COL = 4;
-    private static final int N_SYMBOL_CAPACITY_COL = 5;
-    private static final int N_TYPE_COL = 1;
+    private static final int N_TYPE_COL = N_NAME_COL + 1;
+    private static final int N_INDEXED_COL = N_TYPE_COL + 1;
+    private static final int N_INDEX_BLOCK_CAPACITY_COL = N_INDEXED_COL + 1;
+    private static final int N_SYMBOL_CACHED_COL = N_INDEX_BLOCK_CAPACITY_COL + 1;
+    private static final int N_SYMBOL_CAPACITY_COL = N_SYMBOL_CACHED_COL + 1;
+    private static final int N_DESIGNATED_COL = N_SYMBOL_CAPACITY_COL + 1;
+    private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
+    private final int tokenPosition;
 
-    public ShowColumnsRecordCursorFactory(TableToken tableToken) {
+    public ShowColumnsRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
         this.tableToken = tableToken;
+        this.tokenPosition = tokenPosition;
     }
 
     @Override
@@ -112,7 +115,12 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private ShowColumnsCursor of(SqlExecutionContext executionContext) {
-            reader = executionContext.getReader(tableToken);
+            try {
+                reader = executionContext.getReader(tableToken);
+            } catch (CairoException e) {
+                e.position(tokenPosition);
+                throw e;
+            }
             toTop();
             return this;
         }
@@ -132,6 +140,12 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
                 if (col == N_DESIGNATED_COL) {
                     return reader.getMetadata().getTimestampIndex() == columnIndex;
+                }
+                if (col == N_UPSERT_KEY_COL) {
+                    int timestampIndex = reader.getMetadata().getTimestampIndex();
+                    return reader.getMetadata().isDedupKey(columnIndex) && reader.getMetadata().isWalEnabled()
+                            && timestampIndex > -1
+                            && reader.getMetadata().isDedupKey(timestampIndex);
                 }
                 throw new UnsupportedOperationException();
             }
@@ -183,6 +197,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT));
         metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("upsertKey", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }
