@@ -194,7 +194,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    public void authorizeInsert(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 

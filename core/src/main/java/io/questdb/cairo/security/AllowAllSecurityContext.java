@@ -163,7 +163,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    public void authorizeInsert(TableToken tableToken) {
     }
 
     @Override

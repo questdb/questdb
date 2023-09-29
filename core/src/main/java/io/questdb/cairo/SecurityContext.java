@@ -95,8 +95,7 @@ public interface SecurityContext {
 
     void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
-    // columnNames - empty means all columns
-    void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+    void authorizeInsert(TableToken tableToken);
 
     // Add column over ILP/TCP.
     void authorizeLineAlterTableAddColumn(TableToken tableToken);

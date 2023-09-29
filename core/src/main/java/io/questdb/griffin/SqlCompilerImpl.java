@@ -1346,7 +1346,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     lightlyValidateInsertModel(insertModel);
                 }
                 final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
-                executionContext.getSecurityContext().authorizeInsert(tableToken, insertModel.getColumnNameList());
+                executionContext.getSecurityContext().authorizeInsert(tableToken);
                 return insertModel;
             }
             case ExecutionModel.UPDATE:
