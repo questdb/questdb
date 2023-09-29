@@ -95,15 +95,6 @@ public interface SecurityContext {
 
     void authorizeInsert(TableToken tableToken);
 
-    // Add column over ILP/TCP.
-    void authorizeLineAlterTableAddColumn(TableToken tableToken);
-
-    // Insert over ILP/TCP.
-    void authorizeLineInsert(TableToken tableToken);
-
-    // Create table over ILP/TCP.
-    void authorizeLineTableCreate();
-
     void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 
     void authorizeRemoveUser();
