@@ -8,14 +8,15 @@
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | Türkçe
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) |
+Türkçe | [हिंदी](./i18n/README.hn-in.md)
 
 # QuestDB
 
@@ -50,7 +51,7 @@ QuestDB'nin son sürümünü [canlı demo](https://demo.questdb.io/) ve örnek v
 - Pos: 250 bin tane benzersiz geminin coğrafi konumu
 
 | Sorgu                                                                         | Çalışma Süresi                                                                                                                                                                                      |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
 | `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
 | `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
@@ -114,7 +115,8 @@ QuestDB'yi işlevsellik, olgunluk ve performansı kapsamında diğer açık kayn
 ile karşılaştırmaktadır.
 
 32 çekirdekli CPU ve 64 GB RAM ile 6-16 thread `yalnızca cpu` kullanılarak yüksek kardinaliteli
-[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/) sonuçları:
+[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
+sonuçları:
 
 <div align="center">
     <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png" width="600"/>
@@ -160,11 +162,12 @@ başlamak için:
 - [Katkıda bulunma rehberini](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md) okuyun.
 - QuestDb'yi build etmenin detaylarına ulaşmak için
   [build talimatlarına](https://github.com/questdb/questdb/blob/master/core/README.md) bakın.
-- [Projeyi fork edin](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) ve önerilen değişikliklerle
+- [Projeyi fork edin](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) ve önerilen
+  değişikliklerle
   birlikte bir pull request gönderin.
 
 ✨ Minnettarlığımızın bir göstergesi olarak, katkıda bulunanlara QuestDB özel ürünlerini
-   hediye olarak gönderiyoruz. [Hediyenizi burdan alın.](https://questdb.io/community)
+hediye olarak gönderiyoruz. [Hediyenizi burdan alın.](https://questdb.io/community)
 
 QuestDB'ye katkıda bulunan aşağıdaki harika insanlara
 çok büyük teşekkürler: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):

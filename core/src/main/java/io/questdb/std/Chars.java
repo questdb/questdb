@@ -117,6 +117,10 @@ public final class Chars {
         }
     }
 
+    public static void base64UrlDecode(CharSequence encoded, DirectByteCharSink target) {
+        base64Decode(encoded, target, base64UrlInverted);
+    }
+
     /**
      * Decodes base64url encoded string into a byte buffer.
      * <p>
@@ -566,6 +570,19 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    public static boolean isDoubleQuote(char c) {
+        return c == '"';
+    }
+
+    public static boolean isDoubleQuoted(CharSequence s) {
+        if (s == null || s.length() < 2) {
+            return false;
+        }
+
+        char open = s.charAt(0);
+        return isDoubleQuote(open) && open == s.charAt(s.length() - 1);
     }
 
     public static boolean isMalformed3(int b1, int b2, int b3) {

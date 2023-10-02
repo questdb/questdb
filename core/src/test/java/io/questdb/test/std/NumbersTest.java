@@ -454,23 +454,28 @@ public class NumbersTest {
     }
 
     @Test
-    public void testGetBroadcastAddress() {
-        Assert.assertEquals("12.2.255.255", TestUtils.ipv4ToString(Numbers.getBroadcastAddress("12.2/16")));
+    public void testGetBroadcastAddress() throws NumericException {
+        Assert.assertEquals("12.2.0.0/12.2.255.255", TestUtils.ipv4ToString2(Numbers.getBroadcastAddress("12.2/16")));
     }
 
     @Test
-    public void testGetBroadcastAddress2() {
-        Assert.assertEquals("12.2.255.255", TestUtils.ipv4ToString(Numbers.getBroadcastAddress("12.2.10/16")));
+    public void testGetBroadcastAddress2() throws NumericException {
+        Assert.assertEquals("12.2.0.0/12.2.255.255", TestUtils.ipv4ToString2(Numbers.getBroadcastAddress("12.2.10/16")));
     }
 
     @Test
-    public void testGetBroadcastAddress3() {
-        Assert.assertEquals(-2, Numbers.getBroadcastAddress("12.2.10.5"));
+    public void testGetBroadcastAddress3() throws NumericException {
+        Assert.assertEquals("12.2.10.5/12.2.10.5", TestUtils.ipv4ToString2(Numbers.getBroadcastAddress("12.2.10.5")));
     }
 
-    @Test
-    public void testGetBroadcastAddress4() {
-        Assert.assertEquals(-2, Numbers.getBroadcastAddress("12.2.10/a"));
+    @Test(expected = NumericException.class)
+    public void testGetBroadcastAddress4() throws NumericException {
+        Numbers.getBroadcastAddress("12.2.10/a");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testGetBroadcastAddress5() throws NumericException {
+        Numbers.getBroadcastAddress("12.2.10/33");
     }
 
     @Test
@@ -478,12 +483,34 @@ public class NumbersTest {
         Assert.assertEquals("11111111111111111111111100000000", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/24")));
         Assert.assertEquals("10000000000000000000000000000000", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/1")));
         Assert.assertEquals("11111111111111111111111111111111", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/32")));
+        Assert.assertEquals("0", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/0")));
+        Assert.assertEquals("11111111111111111111111111111111", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8")));
+
+        Assert.assertEquals("1", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/")));
+        Assert.assertEquals("1", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/-1")));
+        Assert.assertEquals("1", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/33")));
+        Assert.assertEquals("1", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/1ABC")));
     }
 
     @Test
-    public void testGetIPv4Subnet() {
-        Assert.assertEquals("1100000000100000011000000000", Integer.toBinaryString(Numbers.getIPv4Subnet("12.2.6.8/24")));
-        Assert.assertEquals("12.2.0.0", TestUtils.ipv4ToString(Numbers.getIPv4Subnet("12.2.6.8/16")));
+    public void testGetIPv4Subnet() throws NumericException {
+        Assert.assertEquals("1100000000100000011000001000/11111111111111111111111100000000", toBinaryString(Numbers.getIPv4Subnet("12.2.6.8/24")));
+        Assert.assertEquals("1100000000100000011000001000/11111111111111111111111111111110", toBinaryString(Numbers.getIPv4Subnet("12.2.6.8/31")));
+
+        Assert.assertEquals("11111111111111111111111111111111/0", toBinaryString(Numbers.getIPv4Subnet("255.255.255.255/0")));
+        Assert.assertEquals("11111111111111111111111111111111/11111111111111111111111111111110", toBinaryString(Numbers.getIPv4Subnet("255.255.255.255/31")));
+        Assert.assertEquals("11111111111111111111111111111111/11111111111111111111111111111111", toBinaryString(Numbers.getIPv4Subnet("255.255.255.255/32")));
+
+        assertFails(() -> Numbers.getIPv4Subnet("1"), NumericException.class);
+        assertFails(() -> Numbers.getIPv4Subnet("0.1"), NumericException.class);
+        assertFails(() -> toBinaryString(Numbers.getIPv4Subnet("0.1.2")), NumericException.class);
+        Assert.assertEquals("1000000100000001100000100/11111111111111111111111111111111", toBinaryString(Numbers.getIPv4Subnet("1.2.3.4")));
+
+        Assert.assertEquals("0/0", toBinaryString(Numbers.getIPv4Subnet("0.0/0")));
+        Assert.assertEquals("1/0", toBinaryString(Numbers.getIPv4Subnet("0.0.0.1/0")));
+        Assert.assertEquals("1/11111111111111111111111111111111", toBinaryString(Numbers.getIPv4Subnet("0.0.0.1/32")));
+
+        Assert.assertEquals("12.2.6.8/255.255.0.0", TestUtils.ipv4ToString2(Numbers.getIPv4Subnet("12.2.6.8/16")));
     }
 
     @Test
@@ -1239,16 +1266,13 @@ public class NumbersTest {
     }
 
     @Test
-    public void testParseSUbnet() {
-        Assert.assertEquals("12.2.10.0", TestUtils.ipv4ToString(Numbers.parseSubnet("12.2.10/24")));
-    }
+    public void testParseSubnet() throws NumericException {
+        Assert.assertEquals("12.2.10.0/255.255.255.0", TestUtils.ipv4ToString2(Numbers.parseSubnet("12.2.10/24")));
+        Assert.assertEquals("2.4.8.0/255.255.255.0", TestUtils.ipv4ToString2(Numbers.parseSubnet("2.4.8/24")));
 
-    @Test
-    public void testParseSubnet() {
-        Assert.assertEquals("2.4.8.0", TestUtils.ipv4ToString(Numbers.parseSubnet("2.4.8/24")));
-        Assert.assertEquals(-2, Numbers.parseSubnet("2.4.6"));
-        Assert.assertEquals(-2, Numbers.parseSubnet("apple"));
-        Assert.assertEquals(-2, Numbers.parseSubnet("apple/24"));
+        assertFails(() -> Numbers.parseSubnet("2.4.6"), NumericException.class);
+        assertFails(() -> Numbers.parseSubnet("apple"), NumericException.class);
+        assertFails(() -> Numbers.parseSubnet("apple/24"), NumericException.class);
     }
 
     @Test(expected = NumericException.class)
@@ -1269,6 +1293,11 @@ public class NumbersTest {
     @Test
     public void testParseSubnet011() throws Exception {
         Assert.assertEquals("2.0.0.0", TestUtils.ipv4ToString(Numbers.parseSubnet0("2", 0, 1, 8)));
+    }
+
+    @Test
+    public void testParseSubnet012() throws Exception {
+        Assert.assertEquals(-2, Numbers.parseSubnet0("255.255.255.254", 0, 15, 31));
     }
 
     @Test(expected = NumericException.class)
@@ -1312,8 +1341,8 @@ public class NumbersTest {
     }
 
     @Test
-    public void testParseSubnet1() {
-        Assert.assertEquals("12.2.0.0", TestUtils.ipv4ToString(Numbers.parseSubnet("12.2.10/16")));
+    public void testParseSubnet1() throws Exception {
+        Assert.assertEquals("12.2.0.0/255.255.0.0", TestUtils.ipv4ToString2(Numbers.parseSubnet("12.2.10/16")));
     }
 
     @Test(expected = NumericException.class)
@@ -1386,5 +1415,23 @@ public class NumbersTest {
     public void testShortBswap() {
         short v = Numbers.bswap((short) -7976);
         Assert.assertEquals(-7976, Numbers.bswap(v));
+    }
+
+    private static void assertFails(ExceptionalRunnable r, Class<?> c) {
+        try {
+            r.run();
+            Assert.fail("Exception of class " + c + " expected!");
+        } catch (Exception t) {
+            Assert.assertEquals(c, t.getClass());
+        }
+    }
+
+    private static String toBinaryString(long l) {
+        return Integer.toBinaryString((int) (l >> 32)) + "/" + Integer.toBinaryString((int) (l));
+    }
+
+    @FunctionalInterface
+    interface ExceptionalRunnable {
+        void run() throws Exception;
     }
 }

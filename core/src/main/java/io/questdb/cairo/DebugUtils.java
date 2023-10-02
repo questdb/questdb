@@ -83,7 +83,7 @@ public class DebugUtils {
                     long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
                     long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
                     if (columnTop != colTop) {
-                        LOG.criticalW().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
+                        LOG.critical().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
                                 .$(", column=").$(c)
                                 .$(", expected=").$(columnTop)
                                 .$(", actual=").$(colTop).$(']').

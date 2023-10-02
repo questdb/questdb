@@ -37,10 +37,7 @@ import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.IOContextFactoryImpl;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IODispatchers;
-import io.questdb.network.IORequestProcessor;
+import io.questdb.network.*;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -57,7 +54,7 @@ public class HttpServer implements Closeable {
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
 
-    public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool) {
+    public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool, SocketFactory socketFactory) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
 
@@ -65,7 +62,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, metrics);
+        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory);
         this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
@@ -220,8 +217,8 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
-        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics) {
-            super(() -> new HttpConnectionContext(configuration, metrics), configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
+            super(() -> new HttpConnectionContext(configuration, metrics, socketFactory), configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity());
         }
     }
 

@@ -396,12 +396,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         }
         logQuery();
         final int tableNamePosition = lexer.getPosition();
-        tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-        final TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
+        tok = expectToken(lexer, "table name");
+        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
+        final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
-            String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
+            final String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
             tok = expectToken(lexer, expectedTokenDescription);
 
             if (SqlKeywords.isAddKeyword(tok)) {
@@ -556,7 +557,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
                 tok = SqlUtil.fetchNext(lexer); // optional from part
                 long fromTxn = -1;
-                if (tok != null) {
+                if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isFromKeyword(tok)) {
                         tok = expectToken(lexer, "'transaction' or 'txn'");
                         if (!(SqlKeywords.isTransactionKeyword(tok) || SqlKeywords.isTxnKeyword(tok))) {
@@ -575,6 +576,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 if (!engine.isWalTable(tableToken)) {
                     throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
                 }
+                securityContext.authorizeResumeWal(tableToken);
                 alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
                 securityContext.authorizeAlterTableDropPartition(tableToken);
@@ -585,10 +587,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
                 }
             } else if (SqlKeywords.isDedupKeyword(tok) || SqlKeywords.isDeduplicateKeyword(tok)) {
-                executionContext.getSecurityContext().authorizeAlterTableSetDedup(tableToken);
                 tok = expectToken(lexer, "'dedup columns'");
 
                 if (SqlKeywords.isDisableKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableDedupDisable(tableToken);
                     AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
                             tableNamePosition,
                             tableToken
@@ -596,6 +598,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     compiledQuery.ofAlter(setDedup.build());
                 } else {
                     lexer.unparseLast();
+                    executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
                     alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else {
@@ -1189,6 +1192,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
+
             engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
             executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             compiledQuery.ofTableResume();
@@ -1313,7 +1317,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
         compiledQuery.ofDeallocate(statementName);
     }
@@ -1661,6 +1665,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                         DefaultLifecycleManager.INSTANCE,
                         configuration.getRoot(),
                         engine.getDdlListener(tableToken),
+                        NoOpDatabaseSnapshotAgent.INSTANCE,
                         engine.getMetrics()
                 );
             } else {
@@ -2006,7 +2011,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         }
     }
 
-    private int getNextValidTokenPosition() {
+    private int getNextValidTokenPosition() throws SqlException {
         while (lexer.hasNext()) {
             CharSequence token = SqlUtil.fetchNext(lexer);
             if (token == null) {
@@ -2020,7 +2025,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         return -1;
     }
 
-    private int goToQueryEnd() {
+    private int goToQueryEnd() throws SqlException {
         CharSequence token;
         lexer.unparseLast();
         while (lexer.hasNext()) {
@@ -2487,7 +2492,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             if (isTablesKeyword(tok)) {
                 factory = new TableListRecordCursorFactory();
             } else if (isColumnsKeyword(tok)) {
-                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext));
+                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext), lexer.lastTokenPosition());
             } else if (isPartitionsKeyword(tok)) {
                 factory = new ShowPartitionsRecordCursorFactory(sqlShowFromTable(executionContext));
             } else if (isTransactionKeyword(tok)) {
@@ -2517,7 +2522,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     return;
                 } else {
                     Misc.free(factory);
-                    throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [").put(tok).put(']');
+                    throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
                 }
             }
         }
@@ -2630,7 +2635,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             }
 
             if (tok != null && !Chars.equals(tok, ';')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected [token='").put(tok).put("']");
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
@@ -2674,6 +2679,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             CharSequence tableName = expectToken(lexer, "table name");
+            SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
@@ -2910,7 +2916,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             int tableNamePosition,
             boolean hasIfExists
     ) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
     }
 
     @SuppressWarnings({"unused", "RedundantThrows"})
@@ -3305,7 +3311,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             int srcLen = srcPath.length();
 
             // backup table registry file (tables.d.<last>)
-            int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, srcPath, sink);
+            // Note: this is unsafe way to back up table name registry,
+            //       but since we're going to deprecate BACKUP, that's ok
+            int version = TableNameRegistryStore.findLastTablesFileVersion(ff, srcPath, sink);
             srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
             dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$(); // reset to 0
             LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
@@ -3455,7 +3463,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     } else {
                         lexer.unparseLast(); // tok has table name
                     }
-                    final CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table-name"));
+                    tok = expectToken(lexer, "table-name");
+
+                    SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                    final CharSequence tableName = GenericLexer.unquote(tok);
                     final int tableNamePosition = lexer.lastTokenPosition();
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {

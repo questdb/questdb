@@ -48,6 +48,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     protected int errno;
     private boolean authorizationError = false;
     private boolean cacheable;
+    private boolean entityDisabled; // used when account is disabled and connection should be dropped
     private boolean interruption; // used when a query times out
     private int messagePosition;
 
@@ -89,6 +90,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException duplicateColumn(CharSequence columnName) {
         return duplicateColumn(columnName, null);
+    }
+
+    public static CairoException entityIsDisabled(CharSequence entityName) {
+        return nonCritical().setEntityDisabled(true).put("entity is disabled [name=").put(entityName).put(']');
     }
 
     public static boolean errnoReadPathDoesNotExist(int errno) {
@@ -169,6 +174,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return errno != NON_CRITICAL;
     }
 
+    public boolean isEntityDisabled() {
+        return entityDisabled;
+    }
+
     public boolean isInterruption() {
         return interruption;
     }
@@ -222,6 +231,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public CairoException setEntityDisabled(boolean disabled) {
+        this.entityDisabled = disabled;
+        return this;
+    }
+
     public CairoException setInterruption(boolean interruption) {
         this.interruption = interruption;
         return this;
@@ -246,6 +260,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         ex.cacheable = false;
         ex.interruption = false;
         ex.authorizationError = false;
+        ex.entityDisabled = false;
         return ex;
     }
 }

@@ -88,9 +88,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         this(configuration, tableToken, null);
     }
 
-    public TableReader(CairoConfiguration configuration,
-                       TableToken tableToken,
-                       @Nullable MessageBus messageBus
+    public TableReader(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            @Nullable MessageBus messageBus
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();

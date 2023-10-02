@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,27 +35,23 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
 import java.util.Map;
 import java.util.function.Predicate;
 
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 import static io.questdb.std.Files.DT_FILE;
 
-public class TableNameRegistryFileStore implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TableNameRegistryFileStore.class);
-    private static final int OPERATION_ADD = 0;
-    private static final int OPERATION_REMOVE = -1;
-    private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
+public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
+    private static final Log LOG = LogFactory.getLog(TableNameRegistryStore.class);
     private final CairoConfiguration configuration;
     private final StringSink nameSink = new StringSink();
     private final Predicate<CharSequence> protectedTableResolver;
     private final IntHashSet tableIds = new IntHashSet();
-    private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();
     private int lockFd = -1;
 
-    public TableNameRegistryFileStore(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+    public TableNameRegistryStore(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+        super(configuration.getFilesFacade());
         this.configuration = configuration;
         this.protectedTableResolver = protectedTableResolver;
     }
@@ -92,18 +87,13 @@ public class TableNameRegistryFileStore implements Closeable {
         }
     }
 
-    public synchronized void appendEntry(final TableToken tableToken) {
-        writeEntry(tableToken, OPERATION_ADD);
-        tableNameMemory.sync(false);
-    }
-
     @Override
     public void close() {
+        super.close();
         if (lockFd != -1) {
             configuration.getFilesFacade().close(lockFd);
             lockFd = -1;
         }
-        tableNameMemory.close(false);
     }
 
     public boolean isLocked() {
@@ -123,11 +113,6 @@ public class TableNameRegistryFileStore implements Closeable {
         }
         lockFd = TableUtils.lock(ff, path);
         return lockFd != -1;
-    }
-
-    public synchronized void logDropTable(final TableToken tableToken) {
-        writeEntry(tableToken, OPERATION_REMOVE);
-        tableNameMemory.sync(false);
     }
 
     @TestOnly
@@ -174,6 +159,7 @@ public class TableNameRegistryFileStore implements Closeable {
             for (TableToken token : nameTableTokenMap.values()) {
                 writeEntry(token, OPERATION_ADD);
             }
+
             tableNameMemory.sync(false);
             long newAppendOffset = tableNameMemory.getAppendOffset();
             tableNameMemory.close();
@@ -428,24 +414,6 @@ public class TableNameRegistryFileStore implements Closeable {
         }
     }
 
-    private void writeEntry(TableToken tableToken, int operation) {
-        if (!isLocked()) {
-            throw CairoException.critical(0).put("table registry is not locked");
-        }
-        tableNameMemory.putInt(operation);
-        tableNameMemory.putStr(tableToken.getTableName());
-        tableNameMemory.putStr(tableToken.getDirName());
-        tableNameMemory.putInt(tableToken.getTableId());
-        tableNameMemory.putInt(tableToken.isWal() ? TableUtils.TABLE_TYPE_WAL : TableUtils.TABLE_TYPE_NON_WAL);
-
-        if (operation != OPERATION_REMOVE) {
-            for (int i = 0; i < TABLE_NAME_ENTRY_RESERVED_LONGS; i++) {
-                tableNameMemory.putLong(0);
-            }
-        }
-        tableNameMemory.putLong(0L, tableNameMemory.getAppendOffset());
-    }
-
     void reload(
             ConcurrentHashMap<TableToken> nameTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap,
@@ -454,5 +422,13 @@ public class TableNameRegistryFileStore implements Closeable {
         tableIds.clear();
         reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap, convertedTables);
         reloadFromRootDirectory(nameTableTokenMap, reverseTableNameTokenMap);
+    }
+
+    @Override
+    protected void writeEntry(TableToken tableToken, int operation) {
+        if (!isLocked()) {
+            throw CairoException.critical(0).put("table registry is not locked");
+        }
+        super.writeEntry(tableToken, operation);
     }
 }

@@ -476,11 +476,6 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord criticalW() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public LogRecord debug() {
             throw new UnsupportedOperationException();
         }

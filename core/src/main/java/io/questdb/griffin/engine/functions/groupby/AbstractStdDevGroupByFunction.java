@@ -36,35 +36,42 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Standard deviation is calculated using an algorithm first proposed by B. P. Welford.
+ * The abstract class, in addition, provides a method to aggregate statistics.
+ * We use the B. P. Welford algorithm which works by first aggregating sum of squares Sxx = sum[(X - mean) ^ 2].
+ * Computation of standard deviation and variance is then simple (e.g. variance = Sxx / (n - 1))
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
  */
-public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
 
-    public StdDevSampleDoubleGroupByFunction(@NotNull Function arg) {
+public abstract class AbstractStdDevGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
+    protected final Function arg;
+    protected int valueIndex;
+
+    protected AbstractStdDevGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    protected void aggregate(MapValue mapValue, double value) {
+        double mean = mapValue.getDouble(valueIndex);
+        double sum = mapValue.getDouble(valueIndex + 1);
+        long count = mapValue.getLong(valueIndex + 2) + 1;
+
+        double oldMean = mean;
+        mean += (value - mean) / count;
+        sum += (value - mean) * (value - oldMean);
+        mapValue.putDouble(valueIndex, mean);
+        mapValue.putDouble(valueIndex + 1, sum);
+        mapValue.addLong(valueIndex + 2, 1L);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final double d = arg.getDouble(record);
+        mapValue.putDouble(valueIndex, 0);
+        mapValue.putDouble(valueIndex + 1, 0);
+        mapValue.putLong(valueIndex + 2, 0);
         if (Numbers.isFinite(d)) {
-            double mean = 0;
-            double sum = 0;
-            long count = 1;
-            double oldMean = mean;
-            mean += (d - mean) / count;
-            sum += (d - mean) * (d - oldMean);
-            mapValue.putDouble(valueIndex, mean);
-            mapValue.putDouble(valueIndex + 1, sum);
-            mapValue.putLong(valueIndex + 2, 1L);
-        } else {
-            mapValue.putDouble(valueIndex, 0);
-            mapValue.putDouble(valueIndex + 1, 0);
-            mapValue.putLong(valueIndex + 2, 0);
+            aggregate(mapValue, d);
         }
     }
 
@@ -72,37 +79,13 @@ public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements
     public void computeNext(MapValue mapValue, Record record) {
         final double d = arg.getDouble(record);
         if (Numbers.isFinite(d)) {
-            double mean = mapValue.getDouble(valueIndex);
-            double sum = mapValue.getDouble(valueIndex + 1);
-            long count = mapValue.getLong(valueIndex + 2) + 1;
-            double oldMean = mean;
-            mean += (d - mean) / count;
-            sum += (d - mean) * (d - oldMean);
-            mapValue.putDouble(valueIndex, mean);
-            mapValue.putDouble(valueIndex + 1, sum);
-            mapValue.addLong(valueIndex + 2, 1L);
+            aggregate(mapValue, d);
         }
     }
 
     @Override
     public Function getArg() {
         return arg;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 2);
-        if (count - 1 > 0) {
-            double sum = rec.getDouble(valueIndex + 1);
-            double variance = sum / (count - 1);
-            return Math.sqrt(variance);
-        }
-        return Double.NaN;
-    }
-
-    @Override
-    public String getName() {
-        return "stddev_samp";
     }
 
     @Override
@@ -131,3 +114,4 @@ public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements
         mapValue.putLong(valueIndex + 2, 0);
     }
 }
+

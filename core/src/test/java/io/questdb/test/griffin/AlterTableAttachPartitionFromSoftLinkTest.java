@@ -668,11 +668,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
                             assertSql("l\ti\ts\tts\n" +
-                                    "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
-                                    "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
-                                    "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
-                                    "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" + // <-- update was skipped, l would have been 13
-                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" + // <-- update was skipped, l would have been 13
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                                     // <-- no new row at the end
                             );
                             assertSql("l\ti\ts\tts\n" +
@@ -1068,7 +1068,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     private static void runO3PartitionPurgeJob() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)) {
             while (purgeJob.run(0)) {
                 Os.pause();
             }

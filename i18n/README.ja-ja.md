@@ -8,14 +8,15 @@
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) |  日本語 | [Türkçe](./README.tr-tr.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) |
+日本語 | [Türkçe](./README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md)
 
 # QuestDB
 
@@ -56,6 +57,7 @@ QuestDB を実行するには、Docker を使用してすぐに開始できま�
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
+
 macOS ユーザーは Homebrew を使用できます。
 
 ```bash
@@ -75,13 +77,13 @@ questdb stop  // To stop questdb
 次のインターフェイスを使用して QuestDB とやり取りできます。
 
 - [Web コンソール](https://questdb.io/docs/develop/web-console/) ポートでリッスン
-   `9000`
+  `9000`
 - [REST API](https://questdb.io/docs/reference/api/rest/) ポート `9000` で
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) ワイヤー プロトコル
-   ポート「8812」
+  ポート「8812」
 - [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) の回線プロトコル
-   ポート「9009」での高スループット取り込み
-   
+  ポート「9009」での高スループット取り込み
+
 ## QuestDB と他のオープンソース TSDB との比較
 
 ここに高カーディナリティがあります
@@ -101,36 +103,33 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
 次の表は、1 つのサーバーで実行された 10 億行のクエリ実行時間を示しています。
 利用可能な 96 個のスレッドのうち 16 個を使用する `c5.metal` インスタンス:
 
-| クエリ                                                       | ランタイム   |
-| ------------------------------------------------------------ | ---------- |
+| クエリ                                                          | ランタイム      |
+|--------------------------------------------------------------|------------|
 | `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
 ## 資力
 
-
 ### 📚 ドキュメントを読む
 
 - [QuestDB ドキュメント:](https://questdb.io/docs/introduction/) 方法を理解する
-   QuestDB を実行および構成します。
+  QuestDB を実行および構成します。
 - [チュートリアル:](https://questdb.io/tutorial/) QuestDB で何ができるかを学ぶ
-   一歩一歩。
+  一歩一歩。
 - [製品ロードマップ:](https://github.com/questdb/questdb/projects) チェックアウト
-   今後のリリースの計画。
-   
+  今後のリリースの計画。
 
 ### ❓ 支持を得ます
 
 - [Community Slack:](https://slack.questdb.io) 技術的な議論に参加し、質問してください
-   質問して、他のユーザーに会いましょう！
+  質問して、他のユーザーに会いましょう！
 - [GitHub の問題:](https://github.com/questdb/questdb/issues) バグを報告するか、
-   QuestDB の問題。
+  QuestDB の問題。
 - [GitHub ディスカッション:](https://github.com/questdb/questdb/discussions) 提案
-   新しい機能を紹介したり、作成したものを表示したりできます。
+  新しい機能を紹介したり、作成したものを表示したりできます。
 - [スタック オーバーフロー:](https://stackoverflow.com/questions/tagged/questdb) 探します
-   一般的なトラブルシューティング ソリューション。
-   
+  一般的なトラブルシューティング ソリューション。
 
 ### 🚢 QuestDB をデプロイする
 
@@ -147,14 +146,14 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
 貢献して：
 
 - ラベルが付けられた GitHub の問題に目を通してください。
-   「[良い初号](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)」.
+  「[良い初号](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)」.
 - 読む
-   [貢献ガイド](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
+  [貢献ガイド](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
 - QuestDB の構築の詳細については、
-   [ビルド手順](https://github.com/questdb/questdb/blob/master/core/README.md)。
+  [ビルド手順](https://github.com/questdb/questdb/blob/master/core/README.md)。
 - [フォークを作成する](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
-   QuestDB の を作成し、提案された変更を含むプル リクエストを送信してください。
-   
+  QuestDB の を作成し、提案された変更を含むプル リクエストを送信してください。
+
 ✨ 感謝の印として、**QuestDB グッズ** を
 貢献者。 [ここであなたのスワッグを請求してください。](https://questdb.io/community)
 

@@ -1811,6 +1811,7 @@ public class WalWriter implements TableWriterAPI {
                         // if we did not have to roll uncommitted rows to a new segment
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
+
                         if (securityContext != null) {
                             ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
                         }

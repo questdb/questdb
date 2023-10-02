@@ -165,6 +165,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TxReader slaveTxReader;
+    private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final MemoryMARW todoMem = Vm.getMARWInstance();
@@ -249,11 +250,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LifecycleManager lifecycleManager,
             CharSequence root,
             DdlListener ddlListener,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
         this.ddlListener = ddlListener;
+        this.snapshotAgent = snapshotAgent;
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
@@ -356,12 +359,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @TestOnly
     public TableWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics) {
-        this(configuration, tableToken, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, metrics);
+        this(configuration, tableToken, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, NoOpDatabaseSnapshotAgent.INSTANCE, metrics);
     }
 
     @TestOnly
     public TableWriter(CairoConfiguration configuration, TableToken tableToken, MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, metrics);
+        this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, NoOpDatabaseSnapshotAgent.INSTANCE, metrics);
     }
 
     @TestOnly
@@ -871,6 +874,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
+        if (snapshotAgent.isInProgress()) {
+            // No deletion must happen while a snapshot is in-flight.
+            return true;
+        }
         long lastCommittedTxn = txWriter.getTxn();
         try {
             if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
@@ -2961,6 +2968,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
+        if (snapshotAgent.isInProgress()) {
+            // No overwrite can happen while a snapshot is in-flight.
+            return true;
+        }
         long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
         if (fromTxn < 0) {
             fromTxn = 0;

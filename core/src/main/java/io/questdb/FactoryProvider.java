@@ -41,6 +41,9 @@ public interface FactoryProvider extends QuietCloseable {
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
     @NotNull
+    SocketFactory getHttpMinSocketFactory();
+
+    @NotNull
     SocketFactory getHttpSocketFactory();
 
     @NotNull

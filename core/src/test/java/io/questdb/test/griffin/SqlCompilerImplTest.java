@@ -3050,9 +3050,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testFailOnEmptyColumnName() throws Exception {
         ddl("create table tab ( ts timestamp)");
 
-        assertFailure(28, "Invalid column: ",
-                "SELECT * FROM tab WHERE SUM(\"\", \"\")"
-        );
+        assertFailure(32, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"\")");
+        assertFailure(28, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"ts\")");
     }
 
     @Test
@@ -3140,6 +3139,69 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testGetCurrentUser() throws SqlException {
         assertQuery("current_user\n" +
                 "admin\n", "select current_user()", null, true, true);
+    }
+
+    @Test
+    public void testGroupByInt() throws SqlException {
+        ddl("create table if not exists test(id int)");
+        insert("insert into test(id) select rnd_int() from long_sequence(3)");
+
+        assertSql("id\n" +
+                "-1148479920\n" +
+                "315515118\n" +
+                "1548800833\n", "select id " +
+                "from test " +
+                "group by id " +
+                "order by id ");
+    }
+
+    @Test
+    public void testGroupByInt2() throws SqlException {
+        ddl("create table if not exists test(ts timestamp)");
+        insert("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
+
+        assertSql("hour\n" +
+                "0\n" +
+                "1\n" +
+                "2\n", "select hour(ts) " +
+                "from test " +
+                "group by 1 " +
+                "order by 1 ");
+    }
+
+
+    @Test
+    public void testGroupByLimit() throws SqlException {
+        ddl("create table if not exists test(id uuid)");
+        insert("insert into test(id) select rnd_uuid4() from long_sequence(3)");
+        try (RecordCursorFactory factory = select(
+                "select id " +
+                        "from test " +
+                        "group by id " +
+                        "limit 10")) {
+
+            String expected = "id\n" +
+                    "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                    "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                    "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n";
+
+            assertCursor(expected, factory, true, false, false);
+            assertCursor(expected, factory, true, false, false);
+        }
+    }
+
+    @Test
+    public void testGroupBySymbol() throws SqlException {
+        ddl("create table if not exists test(id symbol)");
+        insert("insert into test(id) select rnd_symbol('A', 'B', 'C') from long_sequence(10)");
+
+        assertSql("id\n" +
+                "A\n" +
+                "B\n" +
+                "C\n", "select id " +
+                "from test " +
+                "group by id " +
+                "order by id ");
     }
 
     @Test

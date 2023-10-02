@@ -133,6 +133,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqIPv4StrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory,
@@ -172,6 +173,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtCharFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory,
@@ -700,8 +703,18 @@ open module io.questdb {
 //                  avg()
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory,
+//                 stddev()
+            io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory,
 //                 stddev_samp()
-            io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.StdDevSampleGroupByFunctionFactory,
+//                 stddev_pop()
+            io.questdb.griffin.engine.functions.groupby.StdDevPopGroupByFunctionFactory,
+//                 variance()
+            io.questdb.griffin.engine.functions.groupby.VarGroupByFunctionFactory,
+//                 var_samp()
+            io.questdb.griffin.engine.functions.groupby.VarSampleGroupByFunctionFactory,
+//                 var_pop()
+            io.questdb.griffin.engine.functions.groupby.VarPopGroupByFunctionFactory,
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
@@ -765,10 +778,15 @@ open module io.questdb {
             BitwiseNotLongFunctionFactory,
             BitwiseXorLongFunctionFactory,
             BitwiseAndIPv4FunctionFactory,
+            BitwiseAndIPv4StrFunctionFactory,
             BitwiseAndIntFunctionFactory,
+            BitwiseAndStrIPv4FunctionFactory,
             BitwiseOrIPv4FunctionFactory,
+            BitwiseOrIPv4StrFunctionFactory,
+            BitwiseOrStrIPv4FunctionFactory,
             BitwiseOrIntFunctionFactory,
             BitwiseNotIPv4FunctionFactory,
+            BitwiseNotIPv4StrFunctionFactory,
             BitwiseNotIntFunctionFactory,
             BitwiseXorIntFunctionFactory,
 
@@ -776,7 +794,13 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.IPv4PlusIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.IntPlusIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.math.IPv4MinusIntFunctionFactory,
+            io.questdb.griffin.engine.functions.math.IPv4StrMinusIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.IPv4MinusIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.math.IPv4StrPlusIntFunctionFactory,
+            io.questdb.griffin.engine.functions.math.IntPlusIPv4StrFunctionFactory,
+            io.questdb.griffin.engine.functions.math.IPv4StrMinusIPv4StrFunctionFactory,
+            io.questdb.griffin.engine.functions.math.IPv4StrMinusIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory,
 
             // ipv4 functions
             io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory,

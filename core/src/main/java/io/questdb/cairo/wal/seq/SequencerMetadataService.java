@@ -85,6 +85,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
     @Override
     public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
         metadata.renameTable(toTableName);
-        this.tableToken = metadata.getTableToken();
+        tableToken = metadata.getTableToken();
     }
 }

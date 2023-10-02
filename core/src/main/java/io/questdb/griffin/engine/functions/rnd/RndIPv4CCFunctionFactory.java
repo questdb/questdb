@@ -33,10 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 
 public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
@@ -47,24 +44,17 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-
         CharSequence subnetStr = args.getQuick(0).getStr(null);
         int nullRate = args.getQuick(1).getInt(null);
-        int lo = Numbers.getIPv4Subnet(subnetStr);
 
-        // first try getting subnet from ip, if arg is subnet (not ip) then try parsing again
-        if (lo == -2) {
-            lo = Numbers.parseSubnet(subnetStr);
+        try {
+            long subnetAndBroadcast = Numbers.getBroadcastAddress(subnetStr);
+            int subnet = (int) (subnetAndBroadcast >> 32);
+            int broadcast = (int) (subnetAndBroadcast);
+            return new RndFunction(subnet, broadcast, nullRate);
+        } catch (NumericException ne) {
+            throw SqlException.$(argPositions.getQuick(0), "invalid argument: ").put(subnetStr);
         }
-
-        int hi = Numbers.getBroadcastAddress(subnetStr);
-
-        // invalid subnet
-        if (lo == -2 || hi == -2) {
-            throw SqlException.$(argPositions.getQuick(0), "invalid subnet: ").put(subnetStr);
-        }
-
-        return new RndFunction(lo, hi, nullRate);
     }
 
     private static class RndFunction extends IPv4Function implements Function {

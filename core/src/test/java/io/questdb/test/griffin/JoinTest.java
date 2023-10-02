@@ -1732,6 +1732,78 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinContextIsolationInIntersect() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE t (\n" +
+                            "  created timestamp,\n" +
+                            "  event short,\n" +
+                            "  origin short\n" +
+                            ") TIMESTAMP(created) PARTITION BY DAY;"
+            );
+            insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
+
+            // The important aspects here are T2.created = '2003-09-21T10:00:00.000000Z'
+            // in the first query and T2.created = T3.created in the second one. Due to this,
+            // transitive filters pass was mistakenly mutating where clause in the second query.
+            final String query1 = "SELECT count(1)\n" +
+                    "FROM t as T1 CROSS JOIN t as T2\n" +
+                    "WHERE T2.created > now() and T2.created = '2003-09-21T10:00:00.000000Z'";
+            final String query2 = "SELECT count(1)\n" +
+                    "FROM t as T1 JOIN t as T2 on T1.created = T2.created JOIN t as T3 ON T2.created = T3.created\n" +
+                    "WHERE T3.created < now()";
+
+            assertQuery("count\n0\n", query1, null, false, true);
+            assertQuery("count\n1\n", query2, null, false, true);
+
+            assertQuery(
+                    "count\n",
+                    query1 + " INTERSECT " + query2,
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinContextIsolationInUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE t (\n" +
+                            "  created timestamp,\n" +
+                            "  event short,\n" +
+                            "  origin short\n" +
+                            ") TIMESTAMP(created) PARTITION BY DAY;"
+            );
+            insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
+            insert("INSERT INTO t VALUES ('2023-09-21T11:00:00.000000Z', 1, 1);");
+
+            // The important aspects here are T1.event = 0.0
+            // in the first query and T1.event = T2.event in the second one. Due to this,
+            // transitive filters pass was mistakenly mutating where clause in the second query.
+            final String query1 = "SELECT count(1)\n" +
+                    "FROM t as T1 JOIN t as T2 ON T1.created = T2.created\n" +
+                    "WHERE T1.event = 1.0";
+            final String query2 = "SELECT count(1)\n" +
+                    "FROM t as T1 JOIN t as T2 ON T1.event = T2.event";
+
+            assertQuery("count\n2\n", query1, null, false, true);
+            assertQuery("count\n4\n", query2, null, false, true);
+
+            assertQuery(
+                    "count\n" +
+                            "2\n" +
+                            "4\n",
+                    query1 + " UNION " + query2,
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testJoinInner() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "c\ta\tb\td\tcolumn\n" +

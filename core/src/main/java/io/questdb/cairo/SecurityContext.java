@@ -34,9 +34,11 @@ public interface SecurityContext {
 
     void assumeServiceAccount(CharSequence serviceAccountName);
 
-    void authorizeAddPassword();
+    void authorizeAddPassword(CharSequence userOrServiceAccountName);
 
     void authorizeAddUser();
+
+    void authorizeAdminAction();
 
     void authorizeAlterTableAddColumn(TableToken tableToken);
 
@@ -45,6 +47,10 @@ public interface SecurityContext {
     void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeAlterTableAttachPartition(TableToken tableToken);
+
+    void authorizeAlterTableDedupDisable(TableToken tableToken);
+
+    void authorizeAlterTableDedupEnable(TableToken tableToken);
 
     void authorizeAlterTableDetachPartition(TableToken tableToken);
 
@@ -57,11 +63,9 @@ public interface SecurityContext {
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    void authorizeAlterTableSetDedup(TableToken tableToken);
-
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    void authorizeAssignServiceAccount();
+    void authorizeAssignServiceAccount(CharSequence serviceAccountName);
 
     void authorizeCopy();
 
@@ -69,7 +73,7 @@ public interface SecurityContext {
 
     void authorizeCreateGroup();
 
-    void authorizeCreateJwk();
+    void authorizeCreateJwk(CharSequence userOrServiceAccountName);
 
     void authorizeCreateServiceAccount();
 
@@ -81,7 +85,7 @@ public interface SecurityContext {
 
     void authorizeDropGroup();
 
-    void authorizeDropJwk();
+    void authorizeDropJwk(CharSequence userOrServiceAccountName);
 
     void authorizeDropServiceAccount();
 
@@ -91,7 +95,7 @@ public interface SecurityContext {
 
     void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
-    // columnNames.size() = 0 means all columns
+    // columnNames - empty means all columns
     void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     // Add column over ILP/TCP.
@@ -103,15 +107,15 @@ public interface SecurityContext {
     // Create table over ILP/TCP.
     void authorizeLineTableCreate();
 
-    void authorizeRemovePassword();
+    void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 
     void authorizeRemoveUser();
 
+    void authorizeResumeWal(TableToken tableToken);
+
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeSelectOnAnyColumn(TableToken tableToken) {
-        //TODO: make non-default 
-    }
+    void authorizeSelectOnAnyColumn(TableToken tableToken);
 
     void authorizeShowGroups();
 
@@ -135,7 +139,7 @@ public interface SecurityContext {
 
     void authorizeTableDrop(TableToken tableToken);
 
-    // columnNames - empty means all columns
+    // columnNames - empty means all indexed columns
     void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableRename(TableToken tableToken);
@@ -146,9 +150,24 @@ public interface SecurityContext {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeUnassignServiceAccount();
+    void authorizeUnassignServiceAccount(CharSequence serviceAccountName);
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
+    /**
+     * User account used for permission checks, i.e. the session user account
+     * or the service account defined by an executed ASSUME statement.
+     */
     CharSequence getPrincipal();
+
+    /**
+     * User account used in initial authentication, i.e. to start the session.
+     */
+    default CharSequence getSessionPrincipal() {
+        return getPrincipal();
+    }
+
+    default boolean isEnabled() {
+        return true;
+    }
 }

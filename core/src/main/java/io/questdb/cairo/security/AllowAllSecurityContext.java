@@ -43,11 +43,15 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAddPassword() {
+    public void authorizeAddPassword(CharSequence userOrServiceAccountName) {
     }
 
     @Override
     public void authorizeAddUser() {
+    }
+
+    @Override
+    public void authorizeAdminAction() {
     }
 
     @Override
@@ -64,6 +68,14 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeAlterTableAttachPartition(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableDedupDisable(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableDedupEnable(TableToken tableToken) {
     }
 
     @Override
@@ -87,15 +99,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableSetDedup(TableToken tableToken) {
-    }
-
-    @Override
     public void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeAssignServiceAccount() {
+    public void authorizeAssignServiceAccount(CharSequence serviceAccountName) {
     }
 
     @Override
@@ -111,7 +119,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCreateJwk() {
+    public void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -135,7 +143,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDropJwk() {
+    public void authorizeDropJwk(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -171,11 +179,15 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeRemovePassword() {
+    public void authorizeRemovePassword(CharSequence userOrServiceAccountName) {
     }
 
     @Override
     public void authorizeRemoveUser() {
+    }
+
+    @Override
+    public void authorizeResumeWal(TableToken tableToken) {
     }
 
     @Override
@@ -251,7 +263,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignServiceAccount() {
+    public void authorizeUnassignServiceAccount(CharSequence serviceAccountName) {
     }
 
     @Override
@@ -261,5 +273,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     @Override
     public String getPrincipal() {
         return Constants.USER_NAME;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
     }
 }

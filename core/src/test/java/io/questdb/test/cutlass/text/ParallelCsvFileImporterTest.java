@@ -2841,7 +2841,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     "(" +
                     "select" +
                     " timestamp_sequence(0, 100000000000) ts," +
-                    " rnd_symbol(5,4,4,3) table," +
+                    " rnd_symbol(5,4,4,3) table_name," +
                     " rnd_symbol(5,4,4,3) file," +
                     " rnd_symbol(5,4,4,3) phase," +
                     " rnd_symbol(5,4,4,3) status," +

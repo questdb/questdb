@@ -144,7 +144,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAliasWithSpaceX() throws Exception {
-        assertSyntaxError("from x 'a b' where x > 1", 7, "unexpected");
+        assertSyntaxError("x 'a b' where x > 1", 0, "impossible type cast, invalid type");
     }
 
     @Test
@@ -487,13 +487,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' : ");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
-        assertSyntaxError("select 'a' ) ", 11, "unexpected token: )");
+        assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");
         assertIdentifierError("select 'a' $ ");
         assertIdentifierError("select 'a' 0 ");
         assertIdentifierError("select 'a' 12 ");
-        assertIdentifierError("select 'a' \"\"\" ");
         assertIdentifierError("select 'a' \"\" ");
-        assertIdentifierError("select 'a' \" ");
         assertIdentifierError("select 'a' ''' ");
         assertIdentifierError("select 'a' '' ");
         assertIdentifierError("select 'a' ' ");
@@ -909,7 +907,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like y), index(s1)",
                 23,
-                "unexpected token: "
+                "unexpected token [,]"
         );
     }
 
@@ -936,7 +934,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like Y.z)",
                 22,
-                "unexpected token: ."
+                "unexpected token [.]"
         );
     }
 
@@ -971,7 +969,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table X.y as ( select a, b, c from tab )",
                 14,
-                "unexpected token: .",
+                "unexpected token [.]",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
@@ -1365,6 +1363,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableIfNotExistsTableNameIsQuotedKeyword() throws SqlException {
+        assertModel("create table from (a INT)", "create table if not exists \"from\" (a int)", ExecutionModel.CREATE_TABLE);
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsTableNameIsUnquotedKeyword() throws Exception {
+        assertException(
+                "create table if not exists from (a int)",
+                27,
+                "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+        );
+    }
+
+    @Test
     public void testCreateTableIfNotTable() throws Exception {
         assertSyntaxError("create table if not x", 20, "'if not exists' expected");
     }
@@ -1682,7 +1694,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR VOLUME peterson",
                 86,
-                "unexpected token: VOLUME"
+                "unexpected token [VOLUME]"
         );
 
         assertSyntaxError(
@@ -2233,6 +2245,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableTableNameIsQuotedKeyword() throws SqlException {
+        assertModel("create table from (a INT)", "create table \"from\" (a int)", ExecutionModel.CREATE_TABLE);
+    }
+
+    @Test
+    public void testCreateTableTableNameIsUnquotedKeyword() throws Exception {
+        assertException(
+                "create table from (a int)",
+                13,
+                "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+        );
+    }
+
+    @Test
     public void testCreateTableUnexpectedToken() throws Exception {
         assertSyntaxError(
                 "create table x blah",
@@ -2376,7 +2402,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
                 96,
-                "unexpected token: x"
+                "unexpected token [x]"
         );
     }
 
@@ -2411,7 +2437,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000,",
                 95,
-                "unexpected token: ,"
+                "unexpected token [,]"
         );
     }
 
@@ -2891,7 +2917,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testEmptySampleBy() throws Exception {
-        assertSyntaxError("select x, y from tab sample by", 30, "literal expected");
+        assertSyntaxError("select x, y from tab sample by", 30, "time interval unit expected");
     }
 
     @Test
@@ -2958,6 +2984,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "customers c" +
                         " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testEraseColumnPrefixInJoinWithNestedUnion() throws Exception {
+        assertQuery(
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c left join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                "customers c" +
+                        " left join ((orders union orders) o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testEraseColumnPrefixInJoinWithOuterUnion() throws Exception {
+        assertQuery(
+                "select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join select [customerId] from (select-choose [customerId] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c)" +
+                        " union all" +
+                        " select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where customerId = 100) c)",
+                "(select c.customerId" +
+                        " from customers c" +
+                        " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100)" +
+                        " union all" +
+                        " (select c.customerId " +
+                        "  from customers c" +
+                        "  left join orders o on c.customerId = o.customerId" +
+                        "  where c.customerId = 100)",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders")
                         .col("customerId", ColumnType.INT)
@@ -3110,21 +3172,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 21, "unexpected token: *",
+        assertSyntaxError("explain (xyz) select * from x", 14, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql1() throws Exception {
-        assertSyntaxError("explain select 1)", 16, "unexpected token: )",
+        assertSyntaxError("explain select 1)", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql2() throws Exception {
-        assertSyntaxError("explain select 1))", 16, "unexpected token: )",
+        assertSyntaxError("explain select 1))", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
@@ -3219,7 +3281,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExtraCommaPartitionByInAnalyticFunction() throws Exception {
-        assertSyntaxError("select a,b, f(c) over (partition by b, order by ts) from xyz", 45, "')' expected");
+        assertQuery(
+                "select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select a,b, f(c) over (partition by b, order by ts) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+
+        );
     }
 
     @Test
@@ -3948,17 +4019,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidGroupBy1() throws Exception {
-        assertSyntaxError("select x, y from tab sample by x,", 32, "literal expected");
+        assertSyntaxError("select x, y from tab sample by x,", 32, "one letter sample by period unit expected");
     }
 
     @Test
     public void testInvalidGroupBy2() throws Exception {
-        assertSyntaxError("select x, y from (tab sample by x,)", 33, "literal expected");
+        assertSyntaxError("select x, y from (tab sample by x,)", 33, "one letter sample by period unit expected");
     }
 
     @Test
     public void testInvalidGroupBy3() throws Exception {
-        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "literal expected");
+        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "one letter sample by period unit expected");
     }
 
     @Test
@@ -4081,8 +4152,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInvalidTypeCast() throws Exception {
         assertSyntaxError(
                 "select cast('2005-04-02 12:00:00-07' as timestamp with time z) col from x",
-                11,
-                "unbalanced (",
+                50,
+                "dangling literal",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
     }
@@ -4091,8 +4162,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInvalidTypeCast2() throws Exception {
         assertSyntaxError(
                 "select cast('2005-04-02 12:00:00-07' as timestamp with tz) col from x",
-                11,
-                "unbalanced (",
+                50,
+                "dangling literal",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
     }
@@ -4360,8 +4431,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(select country, sum(quantity) sum " +
                         "from orders o " +
                         "join customers c on c.customerId = o.customerId " +
-                        "join orderDetails d on o.orderId = d.orderId" +
-                        " where country ~ '^Z') where sum > 2",
+                        "join orderDetails d on o.orderId = d.orderId " +
+                        "where country ~ '^Z') where sum > 2",
                 modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE),
                 modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("comment", ColumnType.STRING)
@@ -4945,7 +5016,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest by x+1",
                 29,
-                "unexpected token: +"
+                "unexpected token [+]"
         );
     }
 
@@ -5081,7 +5152,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest on ts partition by x+1",
                 45,
-                "unexpected token: +"
+                "unexpected token [+]"
         );
     }
 
@@ -7257,6 +7328,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectFromNoColumns() throws Exception {
+        assertSyntaxError(
+                "select from",
+                7,
+                "column expression expected"
+        );
+    }
+
+    @Test
     public void testSelectFromNonCursorFunction() throws Exception {
         assertSyntaxError("select * from length('hello')", 14, "function must return CURSOR");
     }
@@ -7265,7 +7345,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectFromSelectWildcardAndExpr() throws SqlException {
         assertQuery(
                 "select-virtual column + x column from (select-virtual [x, x + y column] x, y, x1, z, x + y column from (select-choose [tab1.x x, tab1.y y] tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x] from tab2 on tab2.x = tab1.x)))",
-                "select column + x from (select *, tab1.x + y from tab1 join tab2 on (x))",
+                "select \"column\" + x from (select *, tab1.x + y from tab1 join tab2 on (x))",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -7361,6 +7441,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectMissing() throws Exception {
+        assertSyntaxError("from x 'a b' where x > 1", 0, "Did you mean 'select * from'?");
+    }
+
+    @Test
     public void testSelectMissingExpression() throws Exception {
         assertSyntaxError(
                 "select ,a from tab",
@@ -7396,24 +7481,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a, c from (select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0 order by a)",
                 "(select a, count() c from tab order by 1) where c > 0",
                 modelOf("tab").col("a", ColumnType.SYMBOL)
-        );
-    }
-
-    @Test
-    public void testSelectTrailingComma() throws SqlException {
-        assertQuery(
-                "select-choose a, b, c, d from (select [a, b, c, d] from tab)",
-                "select " +
-                        "a," +
-                        "b," +
-                        "c," +
-                        "d," +
-                        "from tab",
-                modelOf("tab")
-                        .col("a", ColumnType.SYMBOL)
-                        .col("b", ColumnType.SYMBOL)
-                        .col("c", ColumnType.SYMBOL)
-                        .col("d", ColumnType.SYMBOL)
         );
     }
 
@@ -7473,6 +7540,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSql("x1\tx\n" +
                 "1\t1\n" +
                 "2\t4\n", "select x, sum(x)*sum(x) x from long_sequence(2)");
+    }
+
+    @Test
+    public void testSelectTrailingComma() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, d from (select [a, b, c, d] from tab)",
+                "select " +
+                        "a," +
+                        "b," +
+                        "c," +
+                        "d," +
+                        "from tab",
+                modelOf("tab")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.SYMBOL)
+                        .col("c", ColumnType.SYMBOL)
+                        .col("d", ColumnType.SYMBOL)
+        );
     }
 
     @Test
@@ -7544,10 +7629,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWildcardDetachedStar() throws Exception {
-        assertSyntaxError(
-                "select tab2.*, bxx.  * from tab1 a join tab2 on (x)",
-                33,
-                "',', 'from' or 'over' expected",
+        assertQuery(
+                "select-choose tab2.x x, tab2.z z, a.x x1, a.y y from (select [x, y] from tab1 a join select [x, z] from tab2 on tab2.x = a.x) a",
+                "select tab2.*, a.  * from tab1 a join tab2 on (x)",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -7937,7 +8021,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
             TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false, false);
-            CharSequence lockedReason = engine.lock(tableToken, "testing");
+            CharSequence lockedReason = engine.lockAll(tableToken, "testing", true);
             Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};

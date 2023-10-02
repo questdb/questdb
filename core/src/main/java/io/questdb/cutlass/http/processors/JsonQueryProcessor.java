@@ -194,6 +194,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (CairoError | CairoException e) {
             internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(), e, state, context.getMetrics());
             readyForNextRequest(context);
+            if (e instanceof CairoException
+                    && ((CairoException) e).isEntityDisabled()) {
+                throw ServerDisconnectException.INSTANCE;
+            }
         } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
             // re-throw the exception
             throw e;
@@ -475,9 +479,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     //same as for select new but disallows caching of explain plans
-    private void executeExplain(JsonQueryProcessorState state,
-                                CompiledQuery cq,
-                                CharSequence keepAliveHeader)
+    private void executeExplain(
+            JsonQueryProcessorState state,
+            CompiledQuery cq,
+            CharSequence keepAliveHeader
+    )
             throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
@@ -607,7 +613,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // Give up and close the connection.
             throw ServerDisconnectException.INSTANCE;
         }
-        sendException(socket, 0, message, state.getQuery(), configuration.getKeepAliveHeader());
+        int position = 0;
+        if (e instanceof CairoException) {
+            position = ((CairoException) e).getPosition();
+        }
+
+        sendException(socket, position, message, state.getQuery(), configuration.getKeepAliveHeader());
     }
 
     private boolean parseUrl(

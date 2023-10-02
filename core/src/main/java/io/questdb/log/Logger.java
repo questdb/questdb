@@ -253,11 +253,6 @@ public final class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord criticalW() {
-        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
-    }
-
-    @Override
     public LogRecord debug() {
         return addTimestamp(xdebug(), LogLevel.DEBUG_HEADER);
     }
