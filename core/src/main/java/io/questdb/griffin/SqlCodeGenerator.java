@@ -3930,7 +3930,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
         if (withinExtracted != null) {
-
             CharSequence preferredKeyColumn = null;
 
             if (latestByColumnCount == 1) {

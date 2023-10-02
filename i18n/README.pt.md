@@ -9,7 +9,7 @@
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
@@ -17,16 +17,16 @@
 </p>
 
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | Português | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md)
-
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) |
+Português | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md)
 
 # QuestDB
+
 O QuestDB é um banco de dados SQL de código aberto de alto desempenho para aplicações em
 serviços financeiros, IoT, aprendizado de máquina, DevOps e observabilidade. inclui
 endpoints para protocolo de fio PostgreSQL, agnóstico de esquema de alta taxa de transferência
 ingestão usando o protocolo de linha InfluxDB e uma API REST para consultas,
 importar e exportar.
-
 
 QuestDB implementa ANSI SQL com extensões nativas para linguagem orientada ao tempo
 recursos. Essas extensões simplificam a correlação de dados de vários
@@ -43,32 +43,24 @@ codebase foi construído do zero em Java e C++, sem dependências, e
   </a>
 </div>
 
-
 ## Experimente o QuestDB
-
 
 Nós fornecemos um [demonstração ao vivo](https://demo.questdb.io/) provisionado com o mais recente
 Versão do QuestDB e conjuntos de dados de amostra:
-
 
 - 10 anos de viagens de táxi em Nova York com 1,6 bilhão de filas
 - dados de negociação ao vivo de uma troca de criptomoedas
 - geolocalizações de 250.000 navios únicos ao longo do tempo
 
-
 ## Instale o QuestDB
 
-
 Para executar o QuestDB, o Docker pode ser usado para começar rapidamente:
-
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-
 Os usuários do macOS podem usar o Homebrew:
-
 
 ```bash
 brew install questdb
@@ -78,17 +70,13 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-
 A [QuestDB downloads page](https://questdb.io/get-questdb/) fornece direto
 downloads para binários e tem detalhes para outras instalações e implantações
 métodos.
 
-
 ### Conecte-se ao QuestDB
 
-
 Você pode interagir com o QuestDB usando as seguintes interfaces:
-
 
 - [Web Console](https://questdb.io/docs/develop/web-console/) ouvindo na port
   `9000`
@@ -97,9 +85,7 @@ Você pode interagir com o QuestDB usando as seguintes interfaces:
 - [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) protocolo de linha para
   entrada de alto rendimento na port `9009`
 
-
 ## Como o QuestDB se compara a outros TSDBs de código aberto
-
 
 Aqui estão alta cardinalidade
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
@@ -116,19 +102,15 @@ resultados usando o `cpu-only` caso de uso com 6 trabalhadores em um AMD Ryzen 3
 A tabela a seguir mostra o tempo de execução da consulta de um bilhão de linhas executadas em um
 `c5.metal` instância usando 16 das 96 threads disponíveis:
 
-
 | Query                                                        | Runtime    |
-| ------------------------------------------------------------ | ---------- |
+|--------------------------------------------------------------|------------|
 | `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
-
 ## Recursos
 
-
 ### 📚 Leia os documentos
-
 
 - [Documentação do QuestDB:](https://questdb.io/docs/introduction/) entender como
   para executar e configurar o QuestDB.
@@ -137,9 +119,7 @@ A tabela a seguir mostra o tempo de execução da consulta de um bilhão de linh
 - [Roteiro do produto:](https://github.com/questdb/questdb/projects) confira nosso
   planos para os próximos lançamentos.
 
-
 ### ❓ Obtenha suporte
-
 
 - [Community Slack:](https://slack.questdb.io) participe de discussões técnicas, pergunte
   perguntas e conhecer outros usuários!
@@ -150,9 +130,7 @@ A tabela a seguir mostra o tempo de execução da consulta de um bilhão de linh
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) olhar para
   soluções comuns de resolução de problemas.
 
-
 ### 🚢 Implantar QuestDB
-
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
 - [Plataforma de Google Cloud](https://questdb.io/docs/guides/google-cloud-platform)
@@ -160,14 +138,11 @@ A tabela a seguir mostra o tempo de execução da consulta de um bilhão de linh
 - [Gotículas DigitalOcean](https://questdb.io/docs/guides/digitalocean)
 - [Gráficos de leme do Kubernetes](https://questdb.io/docs/guides/kubernetes)
 
-
 ## Contribuir
-
 
 Estamos sempre felizes em ter contribuições para o projeto, seja de
 código, documentação, relatórios de bugs, solicitações de recursos ou feedback. Começar
 com contribuição:
-
 
 - Dê uma olhada nos problemas do GitHub rotulados
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
@@ -178,10 +153,8 @@ com contribuição:
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   do QuestDB e envie um pull request com suas alterações propostas.
 
-
 ✨Como sinal de nossa gratidão, também enviamos **QuestDB swag** para nossos
 contribuintes. [Reivindique seus swag aqui.](https://questdb.io/community)
-
 
 Um grande agradecimento vai para as seguintes pessoas maravilhosas que contribuíram para
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
