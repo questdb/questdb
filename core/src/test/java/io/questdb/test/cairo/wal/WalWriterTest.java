@@ -3098,10 +3098,9 @@ public class WalWriterTest extends AbstractCairoTest {
                 row.append();
                 long txn = walWriter.commit();
 
-                // TODO fixme
                 engine.drop(path, tableToken);
-
                 drainWalQueue();
+                runWalPurgeJob();
 
                 try {
                     walWriter.yieldUntilTxn(txn);

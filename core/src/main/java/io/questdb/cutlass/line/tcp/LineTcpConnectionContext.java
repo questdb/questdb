@@ -388,7 +388,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
-                // Disconnect on parse error (if configured) or on authz error.
                 if (disconnectOnError) {
                     if (!ex.isAuthorizationError()) {
                         logParseError();

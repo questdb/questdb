@@ -218,11 +218,13 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public long getWriterTxn(TableToken tableToken) {
-        return getSeqTxnTracker(tableToken).getWriterTxn();
+        // Don't use getOrCreateSeqTxnTracker here to avoid re-creating tracker for a dropped table.
+        SeqTxnTracker seqTxnTracker = seqTxnTrackers.get(tableToken.getDirName());
+        return seqTxnTracker != null ? seqTxnTracker.getWriterTxn() : -2;
     }
 
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {
-        SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
+        SeqTxnTracker seqTxnTracker = getOrCreateSeqTxnTracker(tableToken);
         final boolean isSuspended = isSuspended(tableToken);
         return seqTxnTracker.initTxns(writerTxn, seqTxn, isSuspended);
     }
@@ -241,7 +243,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public boolean isTxnTrackerInitialised(final TableToken tableToken) {
-        return getSeqTxnTracker(tableToken).isInitialised();
+        return getOrCreateSeqTxnTracker(tableToken).isInitialised();
     }
 
     public long lastTxn(final TableToken tableName) {
@@ -281,13 +283,13 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public boolean notifyCommitReadable(final TableToken tableToken, long writerTxn) {
-        return getSeqTxnTracker(tableToken).notifyCommitReadable(writerTxn);
+        return getOrCreateSeqTxnTracker(tableToken).notifyCommitReadable(writerTxn);
     }
 
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
-        return getSeqTxnTracker(tableToken).notifyOnCheck(seqTxn);
+        return getOrCreateSeqTxnTracker(tableToken).notifyOnCheck(seqTxn);
     }
 
     public void notifySegmentClosed(TableToken tableToken, long txn, int walId, int segmentId) {
@@ -312,7 +314,7 @@ public class TableSequencerAPI implements QuietCloseable {
     public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
         try (
                 TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt) -> {
-                    final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt, getSeqTxnTracker((TableToken) tt));
+                    final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt, getOrCreateSeqTxnTracker((TableToken) tt));
                     sequencer.create(tableId, tableDescriptor);
                     sequencer.open(tableToken);
                     return sequencer;
@@ -402,14 +404,14 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 sequencer.suspendTable();
-                getSeqTxnTracker(tableToken).setSuspended();
+                getOrCreateSeqTxnTracker(tableToken).setSuspended();
             } finally {
                 sequencer.unlockWrite();
             }
         }
     }
 
-    private SeqTxnTracker getSeqTxnTracker(TableToken tt) {
+    private SeqTxnTracker getOrCreateSeqTxnTracker(TableToken tt) {
         return seqTxnTrackers.computeIfAbsent(tt.getDirName(), createTxnTracker);
     }
 
@@ -449,7 +451,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     private TableSequencerEntry openSequencerInstance(CharSequence tableDir, Object tableToken) {
-        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tableToken, getSeqTxnTracker((TableToken) tableToken));
+        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tableToken, getOrCreateSeqTxnTracker((TableToken) tableToken));
         sequencer.open((TableToken) tableToken);
         return sequencer;
     }

@@ -76,8 +76,8 @@ public class WalTxnYieldEvents implements QuietCloseable {
      */
     public @Nullable YieldEvent register(TableToken tableToken, long txn) {
         long currentTxn = tableSequencerAPI.getWriterTxn(tableToken);
-        if (currentTxn >= txn) {
-            // The txn is already visible.
+        if (currentTxn == -2 || currentTxn >= txn) {
+            // The table is dropped or the txn is already visible.
             return null;
         }
 
@@ -97,10 +97,11 @@ public class WalTxnYieldEvents implements QuietCloseable {
             throw e;
         }
 
-        if (currentTxn >= txn) {
-            // The txn is already visible, so we close the event and pretend it
-            // never existed. The event will be triggered and closed one more time
-            // later either after takeRegisteredEvents() or by close().
+        if (currentTxn == -2 || currentTxn >= txn) {
+            // The table is dropped or the txn is already visible, so we close
+            // the event and pretend it never existed. The event will be triggered
+            // and closed one more time later either after takeRegisteredEvents()
+            // or by close().
             yieldEvent.close();
             return null;
         }
