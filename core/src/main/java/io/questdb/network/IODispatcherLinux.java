@@ -115,7 +115,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         final YieldEvent yieldEvent = context.getYieldEvent();
         if (yieldEvent != null) {
             // the operation has yielded, check if we have a client disconnect
-            if (yieldEvent.isCheckDisconnectWhileYielded() && testConnection(context.getFd())) {
+            if (testConnection(context.getFd())) {
                 doDisconnect(context, id, DISCONNECT_SRC_PEER_DISCONNECT);
                 pending.deleteRow(row);
                 return true;

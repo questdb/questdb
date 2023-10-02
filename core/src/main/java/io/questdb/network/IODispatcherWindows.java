@@ -253,7 +253,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 // select()'ed operation case
                 if (yieldEvent != null) {
                     // the event is still pending, check if we have a client disconnect
-                    if (yieldEvent.isCheckDisconnectWhileYielded() && testConnection(context.getFd())) {
+                    if (testConnection(context.getFd())) {
                         doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
                         pending.deleteRow(i);
                         n--;

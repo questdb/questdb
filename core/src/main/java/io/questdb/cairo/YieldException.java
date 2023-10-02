@@ -29,7 +29,7 @@ import io.questdb.network.YieldEvent;
 import io.questdb.std.ThreadLocal;
 
 /**
- * Thrown when the event loop task has to be yielded to allow other tasks to proceed, e.g.
+ * Thrown when an event loop task has to be yielded to allow other tasks to proceed, e.g.
  * when the queried data is in a cold partition and a request to download it to a local disk
  * has been started. The querying side should switch to other tasks and retry
  * {@link RecordCursor#hasNext()} call later when the data is moved to the local disk.

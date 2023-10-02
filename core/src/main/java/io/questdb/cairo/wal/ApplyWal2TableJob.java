@@ -322,11 +322,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     commitTimestamp
                             );
 
-                            if (added > -1L) {
+                            if (added > -2L) {
                                 insertTimespan += microClock.getTicks() - start;
-                                rowsAdded += added;
                                 iTransaction++;
-                                physicalRowsAdded += writer.getPhysicallyWrittenRowsSinceLastCommit();
+                                if (added > -1L) {
+                                    rowsAdded += added;
+                                    physicalRowsAdded += writer.getPhysicallyWrittenRowsSinceLastCommit();
+                                }
                             }
                             if (added == -2L || isTerminating) {
                                 // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
@@ -418,10 +420,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, seqTxn, rowsAdded, physicalRowCount, latency);
                         return rowCount;
                     } else {
-                        // re-build wal transaction details
+                        // re-build WAL transaction details
                         return -2L;
                     }
-
                 case SQL:
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     final long start = microClock.getTicks();
@@ -461,14 +462,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             }
         } catch (SqlException ex) {
             // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-            LOG.error().$("error applying SQL to wal table [table=")
-                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
+            LOG.error().$("error applying SQL to wal table [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$(", sql=").$(sql)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .I$();
             return -1;
         } catch (CairoException e) {
             if (e.isWALTolerable()) {
                 // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-                LOG.error().$("error applying SQL to wal table [table=")
-                        .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
+                LOG.error().$("error applying SQL to wal table [table=").utf8(tableWriter.getTableToken().getTableName())
+                        .$(", sql=").$(sql)
+                        .$(", error=").$(e.getFlyweightMessage())
+                        .I$();
                 return -1;
             } else {
                 throw e;

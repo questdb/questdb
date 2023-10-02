@@ -330,10 +330,6 @@ public class TableUpdateDetails implements Closeable {
         tick();
     }
 
-    CairoEngine getEngine() {
-        return engine;
-    }
-
     ThreadLocalDetails getThreadLocalDetails(int workerId) {
         lastMeasurementMillis = millisecondClock.getTicks();
         return localDetailsArray[workerId];

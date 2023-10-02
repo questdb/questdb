@@ -180,7 +180,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tt)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
