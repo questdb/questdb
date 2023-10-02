@@ -1074,6 +1074,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 detachedPath.of(configuration.getRoot()).concat(tableToken.getDirName());
                 int detachedRootLen = detachedPath.length();
+                int defaultMode = 0755;
+                
+                int detachedDirMode = configuration.getInt("cairo.sql.detached.mkdir.mode", defaultMode);
                 // detachedPath: detached partition folder
                 if (!ff.exists(detachedPath.slash$())) {
                     // the detached and standard folders can have different roots
