@@ -518,6 +518,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 handleException(-1, e.getFlyweightMessage(), false, -1, true);
             } catch (CairoException e) {
                 handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
+                if (e.isEntityDisabled()) {
+                    throw PeerDisconnectedException.INSTANCE;
+                }
             }
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // BAU, not error metric
@@ -1804,6 +1807,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     .$(", totalReceived=").$(totalReceived)
                     .I$();
             throw BadProtocolException.INSTANCE;
+        }
+
+        if (!sqlExecutionContext.getSecurityContext().isEnabled()) {
+            throw CairoException.entityIsDisabled(sqlExecutionContext.getSecurityContext().getPrincipal());
         }
 
         // msgLen does not take into account type byte
