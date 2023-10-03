@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bug Report Form</title>
+</head>
+<body>
+    <h1>Bug Report Form</h1>
+    <form action="submit_bug.php" method="POST">
+        <label for="bug-title">Bug Title:</label>
+        <input type="text" id="bug-title" name="bug-title" required><br><br>
+
+        <label for="bug-description">Bug Description:</label><br>
+        <textarea id="bug-description" name="bug-description" rows="4" cols="50" required></textarea><br><br>
+
+        <label for="reporter-name">Your Name:</label>
+        <input type="text" id="reporter-name" name="reporter-name" required><br><br>
+
+        <label for="reporter-email">Your Email:</label>
+        <input type="email" id="reporter-email" name="reporter-email" required><br><br>
+
+        <input type="submit" value="Submit Bug Report">
+    </form>
+</body>
+</html>
