@@ -34,7 +34,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     public void testAlterTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table \"table\" (a int)");
-            assertException("alter table table add column b float", 12, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
+            assertException("alter table table add column b float", 12, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
                             "a\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
@@ -54,7 +54,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     public void testVacuumTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table \"table\" (a int)");
-            assertException("vacuum table table", 13, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
+            assertException("vacuum table table", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             ddl("vacuum table \"table\"");
         });
     }
@@ -62,7 +62,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     @Test
     public void testCreateTable() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("create table from (a int)", 13, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
+            assertException("create table from (a int)", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             ddl("create table \"from\" (a int)");
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
@@ -75,7 +75,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     @Test
     public void testCreateTableColumn() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("create table a (from int)", 16, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
+            assertException("create table a (from int)", 16, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             ddl("create table a (\"from\" int)");
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
@@ -89,7 +89,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     public void testDropTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table \"select\" (a int)");
-            assertException("drop table select", 11, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
+            assertException("drop table select", 11, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
             drop("drop table \"select\"");
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getTableStatus("select"));
         });
@@ -99,7 +99,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     public void testInsert() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table \"table\" (a int)");
-            assertException("insert into table values(10)", 12, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
+            assertException("insert into table values(10)", 12, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             insert("insert into \"table\" values(10)");
             assertSql(
                     "a\n" +
@@ -113,7 +113,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     public void testInsertColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table \"from\" (\"from\" int)");
-            assertException("insert into \"from\" (from) values(50)", 20, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
+            assertException("insert into \"from\" (from) values(50)", 20, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             insert("insert into \"from\" (\"from\") values(50)");
             assertSql(
                     "from\n" +
@@ -127,7 +127,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
                     "\"from\""
             );
             // alias cannot be unquoted keyword
-            assertException("select a from \"from\" select", 21, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
+            assertException("select a from \"from\" select", 21, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
         });
     }
 
@@ -135,8 +135,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table \"from\" (a int)");
-            assertException("rename table from to to", 13, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
-            assertException("rename table \"from\" to to", 23, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"to\"");
+            assertException("rename table from to to", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
+            assertException("rename table \"from\" to to", 23, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"to\"");
             ddl("rename table \"from\" to \"to\"");
             assertSql(
                     "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
@@ -150,7 +150,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table \"from\" (a int)");
             insert("insert into \"from\" values(50)");
-            assertException("select a from from", 14, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
+            assertException("select a from from", 14, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             assertSql(
                     "a\n" +
                             "50\n",
@@ -163,7 +163,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
                     "\"from\""
             );
             // alias cannot be unquoted keyword
-            assertException("select a from \"from\" select", 21, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
+            assertException("select a from \"from\" select", 21, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
         });
     }
 
@@ -180,11 +180,11 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             );
 
             // alias cannot be unquoted keyword
-            assertException("select \"from\" select from \"from\"", 14, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
+            assertException("select \"from\" select from \"from\"", 14, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
             // alias via "as" cannot be unquoted
-            assertException("select \"from\" as select from \"from\"", 17, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
+            assertException("select \"from\" as select from \"from\"", 17, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
             // column name cannot be unquoted when referenced via .
-            assertException("select a.from from \"from\" a", 9, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
+            assertException("select a.from from \"from\" a", 9, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
 
 
             // simple alias
@@ -214,7 +214,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table t (\"from\" int)");
             insert("insert into t values(50)");
-            assertException("select * from t order by from", 25, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
+            assertException("select * from t order by from", 25, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             assertSql(
                     "from\n" +
                             "50\n",
@@ -229,7 +229,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table \"from\" (\"from\" int)");
             insert("insert into \"from\" values(50)");
-            assertException("with select as (select * from \"from\") select * from \"select\"", 5, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
+            assertException("with select as (select * from \"from\") select * from \"select\"", 5, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
             assertSql(
                     "from\n" +
                             "50\n",
@@ -244,9 +244,9 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table \"table\" (a int)");
             insert("insert into \"table\" values(10)");
-            assertException("update table set a = 20", 7, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
+            assertException("update table set a = 20", 7, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             // alias cannot be keyword either
-            assertException("update \"table\" table set a = 20", 15, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
+            assertException("update \"table\" table set a = 20", 15, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             update("update \"table\" set a = 20");
             assertSql(
                     "a\n" +
@@ -275,7 +275,7 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     public void testVacuum() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table \"from\" (a int)");
-            assertException("vacuum table from", 13, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
+            assertException("vacuum table from", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             ddl("vacuum table \"from\"");
         });
     }
