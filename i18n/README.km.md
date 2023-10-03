@@ -39,31 +39,31 @@ codebase ត្រូវ​បាន​បង្កើត​ឡើង​ពី�
 
 យើងផ្តល់ជូន [ការបង្ហាញផ្ទាល់](https://demo.questdb.io/) ផ្តល់ជូនជាមួយនឹងការចេញផ្សាយ QuestDB ចុងក្រោយបំផុត និងសំណុំទិន្នន័យគំរូ៖
 
-- Trips: 10 years of NYC taxi trips with 1.6 billion rows
-- Trades: live crypto market data with 30M+ rows per month
-- Pos: geolocations of 250k unique ships over time
+- Trips: 10 ឆ្នាំនៃ NYC taxi trips ជាមួយនឹងជួរ 1.6 ពាន់លាន
+- Trades: ទិន្នន័យទីផ្សារគ្រីបតូផ្ទាល់ជាមួយ 30M+ ជួរក្នុងមួយខែ
+- Pos: ទីតាំងភូមិសាស្ត្រនៃ 250k នាវាប្លែកៗតាមពេលវេលា
 
-| Query                                                                         | Execution time                                                                                                                                                                                      |
+| Query                                                                         | ពេលវេលាប្រតិបត្តិ                                                                                                                                                                                      |
 |-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
-| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+| `SELECT sum(double) FROM trips`                                               | [0.15 វិនាទី](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 វិនាទី](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 វិនាទី](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 វិនាទី](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
+| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 វិនាទី](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
-Our demo is running on `c5.metal` instance and using 24 cores out of 96.
+ការបង្ហាញរបស់យើងកំពុងដំណើរការ `c5.metal` instance និងប្រើប្រាស់ 24 cores ក្នុងចំណោម 96 ។
 
-## Get started
+## ចាប់ផ្តើម
 
-### Install QuestDB
+### ដំឡើង QuestDB
 
-To run QuestDB, [Docker](https://www.docker.com/) can be used to get started quickly:
+ដើម្បីដំណើរការ QuestDB, [Docker](https://www.docker.com/) អាចត្រូវបានប្រើដើម្បីចាប់ផ្តើមយ៉ាងឆាប់រហ័ស:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-macOS users can use Homebrew:
+macOS users អាចប្រើ Homebrew:
 
 ```bash
 brew install questdb
@@ -73,21 +73,20 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct downloads for binaries and has details for
-other installation and deployment methods.
+The [ទំព័រទាញយក QuestDB](https://questdb.io/get-questdb/) ផ្តល់នូវការទាញយកដោយផ្ទាល់សម្រាប់ប្រព័ន្ធគោលពីរ និងមានព័ត៌មានលម្អិតសម្រាប់ វិធីសាស្រ្តដំឡើង និងដាក់ពង្រាយផ្សេងទៀត។
 
-### Connect to QuestDB
+### ភ្ជាប់ទៅ QuestDB
 
-You can interact with QuestDB using the following interfaces:
+អ្នកអាចធ្វើអន្តរកម្មជាមួយ QuestDB ដោយប្រើចំណុចប្រទាក់ខាងក្រោម៖
 
 - [Web Console](https://questdb.io/docs/develop/web-console/) for an interactive SQL editor on port `9000`
 - [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for high-throughput ingestion on port `9009`
 - [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
 - [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on port `8812`
 
-### Insert data
+### បញ្ចូលទិន្នន័យ
 
-Below are our official questdb clients for popular programming languages:
+ខាងក្រោមនេះគឺជាអតិថិជន questdb ផ្លូវការរបស់យើងសម្រាប់ភាសាសរសេរកម្មវិធីពេញនិយម៖
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -97,15 +96,15 @@ Below are our official questdb clients for popular programming languages:
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
-### End-to-end quickstart
+### End-to-end ចាប់ផ្តើមរហ័ស
 
-Want to walk through everything, from streaming ingestion to visualization with Grafana? Check out
+ចង់​ដើរ​ឆ្លងកាត់​គ្រប់​យ៉ាង​ពី​ការ​ស្ទ្រីម​ចូល​ទៅ​ជា​រូបភាព​ជាមួយ Grafana? Check out
 our multi-path [quickstart repository](https://github.com/questdb/questdb-quickstart).
 
-## How QuestDB compares to other open source TSDBs
+## របៀបដែល QuestDB ប្រៀបធៀបទៅនឹង TSDBs ប្រភពបើកចំហផ្សេងទៀត។
 
 [This article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-compares QuestDB to other open source time series databases spanning functionality, maturity and performance.
+ប្រៀបធៀប QuestDB ទៅនឹងមូលដ្ឋានទិន្នន័យស៊េរីពេលវេលាប្រភពបើកចំហផ្សេងទៀតដែលលាតសន្ធឹងលើមុខងារ ភាពចាស់ទុំ និងដំណើរការ។
 
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
@@ -116,21 +115,21 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
   </a>
 </div>
 
-## Resources
+## ធនធាន
 
-### 📚 Read the docs
+### 📚 អានឯកសារ
 
-- [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how to run and configure QuestDB.
-- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB step by step.
-- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our plan for upcoming releases.
+- [QuestDB ឯកសារ:](https://questdb.io/docs/introduction/) យល់ពីរបៀបដំណើរការ និងកំណត់រចនាសម្ព័ន្ធ QuestDB ។
+- [ការបង្រៀន:](https://questdb.io/tutorial/) រៀនពីអ្វីដែលអាចធ្វើទៅបានជាមួយ QuestDB មួយជំហានម្តងៗ។
+- [ផែនទីបង្ហាញផ្លូវផលិតផល:](https://github.com/questdb/questdb/projects) ពិនិត្យមើលផែនការរបស់យើងសម្រាប់ការចេញផ្សាយនាពេលខាងមុខ។
 
-### ❓ Get support
+### ❓ ទទួលបានការគាំទ្រ
 
-- [Community Slack:](https://slack.questdb.io) join technical discussions, ask questions, and meet other users!
-- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or issues with QuestDB.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for common troubleshooting solutions.
+- [Community Slack:](https://slack.questdb.io) ចូលរួមការពិភាក្សាបច្ចេកទេស សួរសំណួរ និងជួបអ្នកប្រើប្រាស់ផ្សេងទៀត!
+- [GitHub issues:](https://github.com/questdb/questdb/issues) រាយការណ៍កំហុស ឬបញ្ហាជាមួយ QuestDB ។
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) ស្វែងរកដំណោះស្រាយបញ្ហាទូទៅ។
 
-### 🚢 Deploy QuestDB
+### 🚢 ដាក់ពង្រាយ QuestDB
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
@@ -138,19 +137,18 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 - [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
-## Contribute
+## រួមចំណែក
 
-We are always happy to have contributions to the project whether it is source code, documentation, bug reports, feature
-requests or feedback. To get started with contributing:
+យើងតែងតែរីករាយក្នុងការរួមចំណែកដល់គម្រោង ថាតើវាជាកូដប្រភព ឯកសារ របាយការណ៍កំហុស លក្ខណៈពិសេស សំណើឬមតិកែលម្អ។ ដើម្បីចាប់ផ្តើមជាមួយការរួមចំណែក៖
 
-- Have a look through GitHub issues labeled
+- សូមក្រឡេកមើលបញ្ហា GitHub ដែលមានស្លាក
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
-- Read the
+- អាន
   [contribution guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-- For details on building QuestDB, see the
+- សម្រាប់ព័ត៌មានលម្អិតអំពីការកសាង QuestDB សូមមើល
   [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
-  of QuestDB and submit a pull request with your proposed changes.
+  នៃ QuestDB ហើយដាក់សំណើទាញជាមួយនឹងការផ្លាស់ប្តូរដែលបានស្នើឡើងរបស់អ្នក។
 
 ✨ As a sign of our gratitude, we also send **QuestDB swag** to our
 contributors. [Claim your swag here.](https://questdb.io/community)
@@ -311,6 +309,6 @@ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-This project adheres to the
-[all-contributors](https://github.com/all-contributors/all-contributors)
-specification. Contributions of any kind are welcome!
+គម្រោងនេះប្រកាន់ខ្ជាប់
+[អ្នករួមចំណែកទាំងអស់](https://github.com/all-contributors/all-contributors)
+ការបញ្ជាក់។ ការចូលរួមចំណែកណាមួយត្រូវបានស្វាគមន៍!
