@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -64,7 +63,7 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueFiltered");
-        sink.child((Plannable) cursor);
+        sink.child(cursor);
         sink.child(dataFrameCursorFactory);
     }
 

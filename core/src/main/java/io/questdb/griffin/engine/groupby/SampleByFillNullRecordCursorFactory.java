@@ -111,6 +111,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
                 return IntConstant.NULL;
+            case ColumnType.IPv4:
+                return IPv4Constant.NULL;
             case ColumnType.LONG:
                 return LongConstant.NULL;
             case ColumnType.FLOAT:
@@ -131,6 +133,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 return GeoLongConstant.NULL;
             case ColumnType.UUID:
                 return UuidConstant.NULL;
+            case ColumnType.TIMESTAMP:
+                return TimestampConstant.NULL;
             default:
                 throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }

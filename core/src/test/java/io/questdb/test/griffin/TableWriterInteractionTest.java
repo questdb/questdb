@@ -24,15 +24,17 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class TableWriterInteractionTest extends AbstractGriffinTest {
+public class TableWriterInteractionTest extends AbstractCairoTest {
     @Test
     public void testRowCancelRowIndexUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -59,7 +61,7 @@ public class TableWriterInteractionTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "xyz where x = 'ELLO'",
                     sink,

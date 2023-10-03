@@ -51,7 +51,6 @@ import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
 class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImpl> implements OperationFuture {
     private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);
-    private final long busyWaitTimeout;
     private final CairoEngine engine;
     private long affectedRowsCount;
     private AsyncWriterCommand asyncWriterCommand;
@@ -66,11 +65,11 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool<OperationFutureImpl> pool) {
         super(pool);
         this.engine = engine;
-        this.busyWaitTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
     }
 
     @Override
     public void await() throws SqlException {
+        long busyWaitTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
         await(busyWaitTimeout);
         if (status == QUERY_STARTED) {
             await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - busyWaitTimeout);
@@ -82,7 +81,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
 
     @Override
     public int await(long timeout) throws SqlException {
-        return await0(timeout > 0 ? timeout : busyWaitTimeout);
+        return await0(timeout > 0 ? timeout : engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
     }
 
     @Override

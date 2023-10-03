@@ -66,7 +66,7 @@ class MockAlertTarget extends Thread {
                 // setup server socket and accept client
                 serverSkt = new ServerSocket(portNumber);
                 serverSkt.setReuseAddress(true);
-                serverSkt.setSoTimeout(5000);
+                serverSkt.setSoTimeout(15000);
                 if (portNumber == 0) {
                     portNumber = serverSkt.getLocalPort();
                 }

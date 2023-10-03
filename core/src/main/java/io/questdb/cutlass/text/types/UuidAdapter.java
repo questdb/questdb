@@ -54,7 +54,7 @@ public final class UuidAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
         row.putUuid(column, value);
     }
 }

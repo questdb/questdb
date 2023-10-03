@@ -36,17 +36,19 @@ import org.jetbrains.annotations.NotNull;
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
-    public static final int ILLEGAL_OPERATION = -101;
     public static final int METADATA_VALIDATION = -100;
+    public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
+    private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
+    private static final int TABLE_SUSPENDED = TABLE_DROPPED - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final int ERRNO_ACCESS_DENIED_WIN = 5;
-    private static final int TABLE_DROPPED = -102;
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected int errno;
     private boolean authorizationError = false;
     private boolean cacheable;
+    private boolean entityDisabled; // used when account is disabled and connection should be dropped
     private boolean interruption; // used when a query times out
     private int messagePosition;
 
@@ -57,15 +59,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException critical(int errno) {
-        CairoException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new CairoException()) != null;
-        ex.message.clear();
-        ex.errno = errno;
-        ex.cacheable = false;
-        ex.interruption = false;
-        ex.authorizationError = false;
-        return ex;
+        return instance(errno);
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
@@ -98,6 +92,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return duplicateColumn(columnName, null);
     }
 
+    public static CairoException entityIsDisabled(CharSequence entityName) {
+        return nonCritical().setEntityDisabled(true).put("entity is disabled [name=").put(entityName).put(']');
+    }
+
     public static boolean errnoReadPathDoesNotExist(int errno) {
         return errnoRemovePathDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == ERRNO_ACCESS_DENIED_WIN);
     }
@@ -111,7 +109,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException nonCritical() {
-        return critical(NON_CRITICAL);
+        return instance(NON_CRITICAL);
     }
 
     public static CairoException queryCancelled(int fd) {
@@ -176,6 +174,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return errno != NON_CRITICAL;
     }
 
+    public boolean isEntityDisabled() {
+        return entityDisabled;
+    }
+
     public boolean isInterruption() {
         return interruption;
     }
@@ -229,6 +231,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public CairoException setEntityDisabled(boolean disabled) {
+        this.entityDisabled = disabled;
+        return this;
+    }
+
     public CairoException setInterruption(boolean interruption) {
         this.interruption = interruption;
         return this;
@@ -242,5 +249,18 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public CairoException ts(long timestamp) {
         TimestampFormatUtils.appendDateTime(message, timestamp);
         return this;
+    }
+
+    private static CairoException instance(int errno) {
+        CairoException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new CairoException()) != null;
+        ex.message.clear();
+        ex.errno = errno;
+        ex.cacheable = false;
+        ex.interruption = false;
+        ex.authorizationError = false;
+        ex.entityDisabled = false;
+        return ex;
     }
 }

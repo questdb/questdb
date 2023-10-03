@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -40,7 +39,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -61,17 +59,12 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private ParallelCsvFileImporter parallelImporter;
     private Path path;
     private SerialCsvFileImporter serialImporter;
-    private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
     private CopyRequestTask task;
     private TableWriter writer;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
 
-    public CopyRequestJob(
-            final CairoEngine engine,
-            int workerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache
-    ) throws SqlException {
+    public CopyRequestJob(final CairoEngine engine, int workerCount) throws SqlException {
         this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
         this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
         this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
@@ -80,28 +73,29 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
 
-        this.sqlCompiler = configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-        this.statusTableToken = this.sqlCompiler.query()
-                .$("CREATE TABLE IF NOT EXISTS \"")
-                .$(statusTableName)
-                .$("\" (" +
-                        "ts timestamp, " + // 0
-                        "id string, " + // 1
-                        "table symbol, " + // 2
-                        "file symbol, " + // 3
-                        "phase symbol, " + // 4
-                        "status symbol, " + // 5
-                        "message string," + // 6
-                        "rows_handled long," + // 7
-                        "rows_imported long," + // 8
-                        "errors long" + // 9
-                        ") timestamp(ts) partition by DAY BYPASS WAL"
-                )
-                .compile(sqlExecutionContext)
-                .getTableToken();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            this.statusTableToken = compiler.query()
+                    .$("CREATE TABLE IF NOT EXISTS \"")
+                    .$(statusTableName)
+                    .$("\" (" +
+                            "ts timestamp, " + // 0
+                            "id string, " + // 1
+                            "table_name symbol, " + // 2
+                            "file symbol, " + // 3
+                            "phase symbol, " + // 4
+                            "status symbol, " + // 5
+                            "message string," + // 6
+                            "rows_handled long," + // 7
+                            "rows_imported long," + // 8
+                            "errors long" + // 9
+                            ") timestamp(ts) partition by DAY BYPASS WAL"
+                    )
+                    .compile(sqlExecutionContext)
+                    .getTableToken();
+        }
 
         this.writer = engine.getWriter(statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
@@ -116,7 +110,6 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
         this.parallelImporter = Misc.free(parallelImporter);
         this.serialImporter = Misc.free(serialImporter);
         this.writer = Misc.free(this.writer);
-        this.sqlCompiler = Misc.free(sqlCompiler);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
         this.path = Misc.free(path);
     }
@@ -212,6 +205,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
             task = requestQueue.get(cursor);
             try {
                 if (useParallelImport()) {
+                    parallelImporter.setStatusReporter(updateStatusRef);
                     parallelImporter.of(
                             task.getTableName(),
                             task.getFileName(),
@@ -225,7 +219,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
-                    parallelImporter.process();
+                    parallelImporter.process(task.getSecurityContext());
                 } else {
                     serialImporter.of(
                             task.getTableName(),

@@ -24,10 +24,6 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -97,7 +93,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         testConversionToType("CHAR", "testCol\ttime\n" +
                 "q\t2016-06-13T17:43:50.100416Z\n" +
                 "q\t2016-06-13T17:43:50.100417Z\n" +
-                "1\t2016-06-13T17:43:50.100427Z\n"
+                "1\t2016-06-13T17:43:50.100427Z\n" +
+                "1\t2016-06-13T17:43:50.100429Z\n"
         );
     }
 
@@ -141,7 +138,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         testConversionToType("GEOHASH(7c)", "testCol\ttime\n" +
                 "questdb\t2016-06-13T17:43:50.100416Z\n" +
                 "\t2016-06-13T17:43:50.100417Z\n" +
-                "\t2016-06-13T17:43:50.100427Z\n");
+                "\t2016-06-13T17:43:50.100427Z\n" +
+                "\t2016-06-13T17:43:50.100429Z\n");
     }
 
     @Test
@@ -186,7 +184,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         testConversionToType("STRING", "testCol\ttime\n" +
                 "questdbb\t2016-06-13T17:43:50.100416Z\n" +
                 "q\t2016-06-13T17:43:50.100417Z\n" +
-                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100427Z\n"
+                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100427Z\n" +
+                "1.1.1.1\t2016-06-13T17:43:50.100429Z\n"
         );
     }
 
@@ -223,7 +222,9 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "T\t2016-06-13T17:43:50.100424Z\n" +
                 "false\t2016-06-13T17:43:50.100425Z\n" +
                 "1465839830101500\t2016-06-13T17:43:50.100426Z\n" +
-                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100427Z\n"
+                "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100427Z\n" +
+                "22.6.4.2\t2016-06-13T17:43:50.100428Z\n" +
+                "1.1.1.1\t2016-06-13T17:43:50.100429Z\n"
         );
     }
 
@@ -259,20 +260,12 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
 
     private void testConversion(String table, String createTableCmd, String input, String expected) throws Exception {
         runInContext(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile(createTableCmd, sqlExecutionContext);
-            } catch (SqlException ex) {
-                throw new RuntimeException(ex);
-            }
-
+            ddl(createTableCmd);
             recvBuffer = input;
             do {
                 handleContextIO0();
                 Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
             closeContext();
             mayDrainWalQueue();
             assertTable(expected, table);
@@ -285,7 +278,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     private void testConversionToType(String type, String expected) throws Exception {
         resetTime();
         String table = "convTest";
-        testConversion(table,
+        testConversion(
+                table,
                 "create table " + table + " (testCol " + type + ", time TIMESTAMP) timestamp(time) partition by day" + (walEnabled ? " WAL;" : ";"),
                 table + ",testCol=questdb " + nextTime() + "\n" +
                         table + ",testCol=q " + nextTime() + "\n" +
@@ -313,7 +307,9 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                         table + " testCol=T " + nextTime() + "\n" +
                         table + " testCol=false " + nextTime() + "\n" +
                         table + " testCol=1465839830101500t " + nextTime() + "\n" +
-                        table + " testCol=\"11111111-1111-1111-1111-111111111111\" " + nextTime() + "\n",
+                        table + " testCol=\"11111111-1111-1111-1111-111111111111\" " + nextTime() + "\n" +
+                        table + ",testCol=22.6.4.2 " + nextTime() + "\n" +
+                        table + " testCol=\"1.1.1.1\" " + nextTime() + "\n",
                 expected
         );
     }

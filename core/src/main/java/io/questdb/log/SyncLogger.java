@@ -24,7 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
 import io.questdb.std.ThreadLocal;
@@ -37,44 +36,29 @@ import java.io.File;
 
 public final class SyncLogger implements LogRecord, Log {
     private final static ThreadLocal<StringSink> line = new ThreadLocal<>(StringSink::new);
-    private final RingQueue<LogRecordSink> advisoryRing;
     private final Sequence advisorySeq;
     private final MicrosecondClock clock;
-    private final RingQueue<LogRecordSink> criticalRing;
     private final Sequence criticalSeq;
-    private final RingQueue<LogRecordSink> debugRing;
     private final Sequence debugSeq;
-    private final RingQueue<LogRecordSink> errorRing;
     private final Sequence errorSeq;
-    private final RingQueue<LogRecordSink> infoRing;
     private final Sequence infoSeq;
     private final CharSequence name;
 
     SyncLogger(
             MicrosecondClock clock,
             CharSequence name,
-            RingQueue<LogRecordSink> debugRing,
             Sequence debugSeq,
-            RingQueue<LogRecordSink> infoRing,
             Sequence infoSeq,
-            RingQueue<LogRecordSink> errorRing,
             Sequence errorSeq,
-            RingQueue<LogRecordSink> criticalRing,
             Sequence criticalSeq,
-            RingQueue<LogRecordSink> advisoryRing,
             Sequence advisorySeq
     ) {
         this.clock = clock;
         this.name = name;
-        this.debugRing = debugRing;
         this.debugSeq = debugSeq;
-        this.infoRing = infoRing;
         this.infoSeq = infoSeq;
-        this.errorRing = errorRing;
         this.errorSeq = errorSeq;
-        this.criticalRing = criticalRing;
         this.criticalSeq = criticalSeq;
-        this.advisoryRing = advisoryRing;
         this.advisorySeq = advisorySeq;
     }
 
@@ -213,11 +197,6 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord criticalW() {
-        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
-    }
-
-    @Override
     public LogRecord debug() {
         return addTimestamp(xdebug(), LogLevel.DEBUG_HEADER);
     }
@@ -281,19 +260,15 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     public LogRecord xAdvisoryW() {
-        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
-    }
-
-    public LogRecord xCriticalW() {
-        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
+        return next(advisorySeq);
     }
 
     public LogRecord xDebugW() {
-        return next(debugSeq, debugRing, LogLevel.DEBUG);
+        return next(debugSeq);
     }
 
     public LogRecord xErrorW() {
-        return next(errorSeq, errorRing, LogLevel.ERROR);
+        return next(errorSeq);
     }
 
     /**
@@ -303,35 +278,35 @@ public final class SyncLogger implements LogRecord, Log {
      * @return log record API
      */
     public LogRecord xInfoW() {
-        return next(infoSeq, infoRing, LogLevel.INFO);
+        return next(infoSeq);
     }
 
     @Override
     public LogRecord xadvisory() {
-        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
+        return next(advisorySeq);
     }
 
     public LogRecord xcritical() {
-        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
+        return next(criticalSeq);
     }
 
     public LogRecord xdebug() {
-        return next(debugSeq, debugRing, LogLevel.DEBUG);
+        return next(debugSeq);
     }
 
     public LogRecord xerror() {
-        return next(errorSeq, errorRing, LogLevel.ERROR);
+        return next(errorSeq);
     }
 
     public LogRecord xinfo() {
-        return next(infoSeq, infoRing, LogLevel.INFO);
+        return next(infoSeq);
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {
         return rec.ts().$(level).$(name);
     }
 
-    private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
+    private LogRecord next(Sequence seq) {
         if (seq == null) {
             return NullLogRecord.INSTANCE;
         }

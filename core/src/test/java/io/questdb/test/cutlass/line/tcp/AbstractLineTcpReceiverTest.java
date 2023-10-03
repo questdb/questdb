@@ -44,6 +44,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 
@@ -73,24 +74,20 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-        @Override
-        public int getBindIPv4Address() {
-            return 0;
-        }
-
-        @Override
-        public int getBindPort() {
-            return bindPort;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return 15;
-        }
-    };
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
+    private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
+        @Override
+        public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
+            if (authKeyId == null) {
+                return super.getLineAuthenticatorFactory();
+            }
+            URL u = getClass().getResource("authDb.txt");
+            assert u != null;
+            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
+            return new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
+        }
+    };
     protected boolean autoCreateNewColumns = true;
     protected long commitIntervalDefault = 2000;
     protected double commitIntervalFraction = 0.5;
@@ -100,16 +97,20 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-    private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
+    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
         @Override
-        public LineAuthenticatorFactory getLineAuthenticatorFactory() {
-            if (authKeyId == null) {
-                return super.getLineAuthenticatorFactory();
-            }
-            URL u = getClass().getResource("authDb.txt");
-            assert u != null;
-            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(u.getFile());
-            return new EllipticCurveAuthenticatorFactory(nf, new StaticChallengeResponseMatcher(authDb));
+        public int getBindPort() {
+            return bindPort;
+        }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return 15;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return nf;
         }
     };
     protected int partitionByDefault = PartitionBy.DAY;
@@ -289,7 +290,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(ff, () -> {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
-                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }
@@ -399,8 +400,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public void close() throws Exception {
-            tlSocket.set(null);
+        public void close() {
+            tlSocket.remove();
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
         }

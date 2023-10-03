@@ -45,6 +45,8 @@ io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory
+io.questdb.griffin.engine.functions.eq.EqIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory
 io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory
@@ -66,9 +68,16 @@ io.questdb.griffin.engine.functions.eq.EqUuidFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqStrUuidFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqUuidStrFunctionFactory
 
+# contains
+io.questdb.griffin.engine.functions.eq.ContainsIPv4FunctionFactory
+io.questdb.griffin.engine.functions.eq.ContainsEqIPv4FunctionFactory
+io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4FunctionFactory
+io.questdb.griffin.engine.functions.eq.NegContainsIPv4FunctionFactory
+
 # nullif
 io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfIPv4FunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
 
@@ -76,6 +85,9 @@ io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtIPv4FunctionFactory
+io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory
 io.questdb.griffin.engine.functions.lt.LtCharFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory
@@ -172,6 +184,8 @@ io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory
 io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndBooleanFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndIPv4FunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndStrFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndStringRndListFunctionFactory
@@ -297,6 +311,11 @@ io.questdb.griffin.engine.functions.cast.CastIntToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastIntToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastIntToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastIntToBooleanFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastIntToIPv4FunctionFactory
+
+# cast ipv4 to...
+io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastIPv4ToIntFunctionFactory
 
 # cast long to ...
 io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory
@@ -406,6 +425,7 @@ io.questdb.griffin.engine.functions.cast.CastCharToTimestampFunctionFactory
 
 # cast str to ...
 io.questdb.griffin.engine.functions.cast.CastStrToIntFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastStrToIPv4FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToDoubleFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastCharToBooleanFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToBooleanFunctionFactory
@@ -476,6 +496,7 @@ io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastFloatGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.LastIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastCharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastShortGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunctionFactory
@@ -490,6 +511,7 @@ io.questdb.griffin.engine.functions.groupby.LastUuidGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstFloatGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.FirstIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstCharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunctionFactory
@@ -502,6 +524,7 @@ io.questdb.griffin.engine.functions.groupby.FirstUuidGroupByFunctionFactory
 # 'max' group
 io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxBooleanGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MaxIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxIntGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxCharGroupByFunctionFactory
@@ -515,6 +538,7 @@ io.questdb.griffin.engine.functions.groupby.MinDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinBooleanGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MinIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinIntGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunctionFactory
@@ -526,6 +550,7 @@ io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountFloatGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountGeoHashGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory
@@ -535,10 +560,12 @@ io.questdb.griffin.engine.functions.groupby.CountDistinctStringGroupByFunctionFa
 io.questdb.griffin.engine.functions.groupby.CountDistinctSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountDistinctIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory
 
 # 'isOrdered'
+io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory
 
 # round()
@@ -613,7 +640,6 @@ io.questdb.griffin.engine.functions.catalogue.KeywordsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedAgeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgIsInRecoveryFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgIsInRecoveryFunctionFactory
@@ -661,8 +687,23 @@ io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory
 
+# stddev()
+io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory
+
 # stddev_samp()
-io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.StdDevSampleGroupByFunctionFactory
+
+# stddev_pop()
+io.questdb.griffin.engine.functions.groupby.StdDevPopGroupByFunctionFactory
+
+# variance()
+io.questdb.griffin.engine.functions.groupby.VarGroupByFunctionFactory
+
+# var_samp()
+io.questdb.griffin.engine.functions.groupby.VarSampleGroupByFunctionFactory
+
+# var_pop()
+io.questdb.griffin.engine.functions.groupby.VarPopGroupByFunctionFactory
 
 # strpos()
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
@@ -678,6 +719,7 @@ io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory
 io.questdb.griffin.engine.functions.table.TablePartitionsFunctionFactory
 io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory
 io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory
+io.questdb.griffin.engine.functions.table.WriterPoolFunctionFactory
 io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory
 io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory
 
@@ -715,10 +757,33 @@ io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseOrLongFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseXorLongFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseNotLongFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseAndIPv4FunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseAndIPv4StrFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseAndStrIPv4FunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseAndIntFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseOrIPv4FunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseOrIPv4StrFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseOrStrIPv4FunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseOrIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseXorIntFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseNotIPv4FunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseNotIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
+
+# IPv4 operators
+io.questdb.griffin.engine.functions.math.IPv4PlusIntFunctionFactory
+io.questdb.griffin.engine.functions.math.IPv4StrPlusIntFunctionFactory
+io.questdb.griffin.engine.functions.math.IntPlusIPv4FunctionFactory
+io.questdb.griffin.engine.functions.math.IntPlusIPv4StrFunctionFactory
+io.questdb.griffin.engine.functions.math.IPv4MinusIntFunctionFactory
+io.questdb.griffin.engine.functions.math.IPv4StrMinusIntFunctionFactory
+io.questdb.griffin.engine.functions.math.IPv4MinusIPv4FunctionFactory
+io.questdb.griffin.engine.functions.math.IPv4StrMinusIPv4StrFunctionFactory
+io.questdb.griffin.engine.functions.math.IPv4StrMinusIPv4FunctionFactory
+io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory
+
+# IPv4 functions
+io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory
 
 # timezone conversion
 io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory

@@ -24,22 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.Os;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class DumpMemoryUsageTest extends AbstractGriffinTest {
+public class DumpMemoryUsageTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select dump_memory_usage",
-                sink,
+        assertMemoryLeak(() -> assertSql(
                 "dump_memory_usage\n" +
-                        "true\n"
+                        "true\n", "select dump_memory_usage"
         ));
         // this sleep to allow async logger to print out the values,
         // although we don't assert them it is less awkward than calling

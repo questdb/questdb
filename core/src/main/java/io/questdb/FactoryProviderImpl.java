@@ -25,53 +25,74 @@
 package io.questdb;
 
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.BasicWalInitializerFactory;
-import io.questdb.cairo.wal.WalInitializerFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.griffin.SqlCompilerFactory;
-import io.questdb.griffin.SqlCompilerFactoryImpl;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SocketFactory;
+import io.questdb.std.Misc;
+import io.questdb.std.str.DirectByteCharSink;
+import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderImpl implements FactoryProvider {
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
     private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
     private final SecurityContextFactory securityContextFactory;
+    private DirectByteCharSink defaultUserPasswordSink;
+    private DirectByteCharSink readOnlyUserPasswordSink;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
-        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration);
+        this.readOnlyUserPasswordSink = new DirectByteCharSink(4);
+        this.defaultUserPasswordSink = new DirectByteCharSink(4);
+        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink);
     }
 
     @Override
-    public HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
+    public void close() {
+        defaultUserPasswordSink = Misc.free(defaultUserPasswordSink);
+        readOnlyUserPasswordSink = Misc.free(readOnlyUserPasswordSink);
+    }
+
+    @Override
+    public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
         return DefaultHttpAuthenticatorFactory.INSTANCE;
     }
 
     @Override
-    public LineAuthenticatorFactory getLineAuthenticatorFactory() {
+    public @NotNull SocketFactory getHttpMinSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getHttpSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
         return lineAuthenticatorFactory;
     }
 
     @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+    public @NotNull SocketFactory getLineSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getPGWireSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return pgWireAuthenticatorFactory;
     }
 
     @Override
-    public SecurityContextFactory getSecurityContextFactory() {
+    public @NotNull SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
-    }
-
-    @Override
-    public SqlCompilerFactory getSqlCompilerFactory() {
-        return SqlCompilerFactoryImpl.INSTANCE;
-    }
-
-    @Override
-    public WalInitializerFactory getWalInitializerFactory() {
-        return BasicWalInitializerFactory.INSTANCE;
     }
 }

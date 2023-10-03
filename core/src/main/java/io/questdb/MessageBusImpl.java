@@ -81,9 +81,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence vectorAggregatePubSeq;
     private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
     private final MCSequence vectorAggregateSubSeq;
-    private final Sequence walTxnNotificationPubSequence;
+    private final MPSequence walTxnNotificationPubSequence;
     private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
-    private final Sequence walTxnNotificationSubSequence;
+    private final MCSequence walTxnNotificationSubSequence;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -157,7 +157,7 @@ public class MessageBusImpl implements MessageBus {
         int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
-                    () -> new PageFrameReduceTask(configuration),
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
                     reduceQueueCapacity
             );
 
@@ -198,7 +198,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getColumnPurgePubSeq() {
+    public MPSequence getColumnPurgePubSeq() {
         return columnPurgePubSeq;
     }
 
@@ -218,7 +218,12 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getIndexerPubSequence() {
+    public MPSequence getCopyRequestPubSeq() {
+        return textImportRequestPubSeq;
+    }
+
+    @Override
+    public MPSequence getIndexerPubSequence() {
         return indexerPubSeq;
     }
 
@@ -228,12 +233,12 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getIndexerSubSequence() {
+    public MCSequence getIndexerSubSequence() {
         return indexerSubSeq;
     }
 
     @Override
-    public Sequence getLatestByPubSeq() {
+    public MPSequence getLatestByPubSeq() {
         return latestByPubSeq;
     }
 
@@ -243,7 +248,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getLatestBySubSeq() {
+    public MCSequence getLatestBySubSeq() {
         return latestBySubSeq;
     }
 
@@ -378,7 +383,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getTextImportPubSeq() {
+    public SPSequence getTextImportPubSeq() {
         return textImportPubSeq;
     }
 
@@ -388,27 +393,22 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getCopyRequestPubSeq() {
-        return textImportRequestPubSeq;
-    }
-
-    @Override
     public RingQueue<CopyRequestTask> getTextImportRequestQueue() {
         return textImportRequestQueue;
     }
 
     @Override
-    public Sequence getTextImportRequestSubSeq() {
+    public SCSequence getTextImportRequestSubSeq() {
         return textImportRequestSubSeq;
     }
 
     @Override
-    public Sequence getTextImportSubSeq() {
+    public MCSequence getTextImportSubSeq() {
         return textImportSubSeq;
     }
 
     @Override
-    public Sequence getVectorAggregatePubSeq() {
+    public MPSequence getVectorAggregatePubSeq() {
         return vectorAggregatePubSeq;
     }
 
@@ -418,12 +418,12 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getVectorAggregateSubSeq() {
+    public MCSequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
     }
 
     @Override
-    public Sequence getWalTxnNotificationPubSequence() {
+    public MPSequence getWalTxnNotificationPubSequence() {
         return walTxnNotificationPubSequence;
     }
 
@@ -433,7 +433,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getWalTxnNotificationSubSequence() {
+    public MCSequence getWalTxnNotificationSubSequence() {
         return walTxnNotificationSubSequence;
     }
 

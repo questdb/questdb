@@ -26,7 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -39,7 +42,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.model.ExpressionNode.*;
 
-public class SqlOptimiser {
+public class SqlOptimiser implements Mutable {
 
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
@@ -63,6 +66,7 @@ public class SqlOptimiser {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
@@ -85,7 +89,6 @@ public class SqlOptimiser {
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet literalCollectorAIndexes = new IntHashSet();
-    private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
@@ -109,7 +112,7 @@ public class SqlOptimiser {
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
 
-    SqlOptimiser(
+    public SqlOptimiser(
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
@@ -127,6 +130,36 @@ public class SqlOptimiser {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
+    }
+
+    public void clear() {
+        clearForUnionModelInJoin();
+        contextPool.clear();
+        intHashSetPool.clear();
+        joinClausesSwap1.clear();
+        joinClausesSwap2.clear();
+        literalCollectorAIndexes.clear();
+        literalCollectorBIndexes.clear();
+        literalCollectorANames.clear();
+        literalCollectorBNames.clear();
+        defaultAliasCount = 0;
+        expressionNodePool.clear();
+        characterStore.clear();
+        tablesSoFar.clear();
+        clausesToSteal.clear();
+        tmpCursorAliases.clear();
+        functionsInFlight.clear();
+        groupByAliases.clear();
+        groupByNodes.clear();
+        groupByUsed.clear();
+        tempColumnAlias = null;
+        tempQueryModel = null;
+    }
+
+    public void clearForUnionModelInJoin() {
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
     }
 
     public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
@@ -150,8 +183,8 @@ public class SqlOptimiser {
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel baseModel) {
-        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1 &&
-                Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
+        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1
+                && Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
     }
 
     private static void linkDependencies(QueryModel model, int parent, int child) {
@@ -413,8 +446,12 @@ public class SqlOptimiser {
         }
     }
 
-    private void addOuterJoinExpression(QueryModel model, ExpressionNode node) {
+    private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
         model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
+        // add dependency to prevent previous model reordering (left joins are not symmetric)
+        if (joinIndex > 0) {
+            linkDependencies(parent, joinIndex - 1, joinIndex);
+        }
     }
 
     private void addPostJoinWhereClause(QueryModel model, ExpressionNode node) {
@@ -563,7 +600,7 @@ public class SqlOptimiser {
 
         JoinContext jc;
         boolean canMovePredicate = joinBarriers.excludes(joinModel.getJoinType());
-        int joinIdx = parent.getJoinModels().indexOf(joinModel);
+        int joinIndex = parent.getJoinModels().indexOf(joinModel);
 
         //switch code below assumes expression are simple column references  
         if (literalCollector.functionCount > 0) {
@@ -571,7 +608,7 @@ public class SqlOptimiser {
             if (canMovePredicate) {
                 parent.addParsedWhereNode(node, innerPredicate);
             } else {
-                addOuterJoinExpression(joinModel, node);
+                addOuterJoinExpression(parent, joinModel, joinIndex, node);
             }
             return;
         }
@@ -579,7 +616,7 @@ public class SqlOptimiser {
         switch (aSize) {
             case 0:
                 if (!canMovePredicate) {
-                    addOuterJoinExpression(joinModel, node);
+                    addOuterJoinExpression(parent, joinModel, joinIndex, node);
                     break;
                 }
                 if (bSize == 1
@@ -611,7 +648,14 @@ public class SqlOptimiser {
                         // single table reference
                         jc.slaveIndex = lhi;
                         if (canMovePredicate) {
-                            addWhereNode(parent, lhi, node);
+                            // we can't push anything into other left join
+                            if (jc.slaveIndex != joinIndex &&
+                                    joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
+                                addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
+                            } else {
+                                addWhereNode(parent, lhi, node);
+                            }
+                            return;
                         }
                     } else if (lhi < rhi) {
                         // we must align "a" nodes with slave index
@@ -636,9 +680,9 @@ public class SqlOptimiser {
                         jc.parents.add(rhi);
                     }
 
-                    if (canMovePredicate || jc.slaveIndex == joinIdx) {
+                    if (canMovePredicate || jc.slaveIndex == joinIndex) {
                         //we can't push anything into other left join
-                        if (jc.slaveIndex != joinIdx && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
+                        if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                         } else {
                             addJoinContext(parent, jc);
@@ -647,14 +691,14 @@ public class SqlOptimiser {
                             }
                         }
                     } else {
-                        addOuterJoinExpression(joinModel, node);
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
                     }
                 } else if (bSize == 0
                         && literalCollector.nullCount == 0
                         && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())) {
                     // single table reference + constant
                     if (!canMovePredicate) {
-                        addOuterJoinExpression(joinModel, node);
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
                         break;
                     }
                     jc.slaveIndex = lhi;
@@ -669,7 +713,7 @@ public class SqlOptimiser {
                     if (canMovePredicate) {
                         parent.addParsedWhereNode(node, innerPredicate);
                     } else {
-                        addOuterJoinExpression(joinModel, node);
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
                     }
                 }
                 break;
@@ -678,7 +722,7 @@ public class SqlOptimiser {
                     node.innerPredicate = innerPredicate;
                     parent.addParsedWhereNode(node, innerPredicate);
                 } else {
-                    addOuterJoinExpression(joinModel, node);
+                    addOuterJoinExpression(parent, joinModel, joinIndex, node);
                 }
 
                 break;
@@ -754,62 +798,12 @@ public class SqlOptimiser {
                     if (qualifies) {
                         postFilterRemoved.add(k);
                         QueryModel m = parent.getJoinModels().getQuick(index);
-                        // it is possible that filter references only top query via alias
-                        // we will need to strip these aliases before assigning filter
-                        if (index == 0) {
-                            traversalAlgo.traverse(node, literalRewritingVisitor.of(m.getAliasToColumnNameMap()));
-                        }
                         m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), node));
                     }
                 }
             }
         }
         assert postFilterRemoved.size() == pc;
-    }
-
-    private void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
-        if (model != null) {
-            if (model.getTableName() != null) {
-                ExpressionNode tableNameExpr = model.getTableNameExpr();
-                switch (tableNameExpr.type) {
-                    case CONSTANT:
-                    case LITERAL:
-                        // adjust name in case of marker
-                        GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) tableNameExpr.token;
-                        int lo = tab.getLo();
-                        if (Chars.startsWith(tab, QueryModel.NO_ROWID_MARKER)) {
-                            tab.setLo(lo + QueryModel.NO_ROWID_MARKER.length());
-                        }
-                        try {
-                            // copy column names
-                            literalCollectorANames.clear();
-                            final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-                            for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-                                literalCollectorANames.add(topDownColumns.getQuick(i).getName());
-                            }
-
-                            executionContext.getSecurityContext().authorizeSelect(
-                                    executionContext.getTableToken(tab),
-                                    literalCollectorANames
-                            );
-                        } finally {
-                            tab.setLo(lo);
-                        }
-                        break;
-                    default:
-                        // todo: function call
-                        break;
-                }
-            } else {
-                authorizeColumnAccess(executionContext, model.getNestedModel());
-                ObjList<QueryModel> joinModels = model.getJoinModels();
-                for (int i = 1, n = joinModels.size(); i < n; i++) {
-                    // exclude 0 index, it is the same as "model"
-                    authorizeColumnAccess(executionContext, joinModels.getQuick(i));
-                }
-                authorizeColumnAccess(executionContext, model.getUnionModel());
-            }
-        }
     }
 
     // The model for the following SQL:
@@ -971,11 +965,11 @@ public class SqlOptimiser {
         }
     }
 
-    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean cleanColumnNames) throws SqlException {
+    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean nonLiteral) throws SqlException {
         // column names are not allowed to have a dot
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, cleanColumnNames);
+            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, nonLiteral);
             QueryColumn column = queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0), true, m.getColumnType(i));
             model.addField(column);
         }
@@ -996,8 +990,8 @@ public class SqlOptimiser {
         }
     }
 
-    private CharSequence createColumnAlias(CharSequence name, QueryModel model, boolean cleanColumnNames) {
-        return SqlUtil.createColumnAlias(characterStore, name, -1, model.getAliasToColumnMap(), cleanColumnNames);
+    private CharSequence createColumnAlias(CharSequence name, QueryModel model, boolean nonLiteral) {
+        return SqlUtil.createColumnAlias(characterStore, name, -1, model.getAliasToColumnMap(), nonLiteral);
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model) {
@@ -1412,7 +1406,7 @@ public class SqlOptimiser {
             for (int i = 0, k = dependencies.size(); i < k; i++) {
                 int depIndex = dependencies.get(i);
                 JoinContext jc = joinModels.getQuick(depIndex).getContext();
-                if (--jc.inCount == 0) {
+                if (jc != null && --jc.inCount == 0) {
                     orderingStack.push(depIndex);
                 }
             }
@@ -1539,7 +1533,8 @@ public class SqlOptimiser {
             if (next.getBottomUpColumns().size() != columnCount) {
                 throw SqlException.$(next.getModelPosition(), "queries have different number of columns");
             }
-            parent.setUnionModel(rewriteOrderByPosition(next));
+            rewriteOrderByPosition(next);
+            parent.setUnionModel(next);
             parent = next;
             next = next.getUnionModel();
         }
@@ -1657,7 +1652,6 @@ public class SqlOptimiser {
             QueryModel validatingModel,
             boolean analyticCall
     ) throws SqlException {
-
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -1760,7 +1754,7 @@ public class SqlOptimiser {
     }
 
     private void enumerateColumns(QueryModel model, TableRecordMetadata metadata) throws SqlException {
-        model.setTableVersion(metadata.getMetadataVersion());
+        model.setMetadataVersion(metadata.getMetadataVersion());
         model.setTableId(metadata.getTableId());
         copyColumnsFromMetadata(model, metadata, false);
         if (model.isUpdate()) {
@@ -1960,7 +1954,6 @@ public class SqlOptimiser {
     }
 
     private boolean hasAggregates(ExpressionNode node) {
-
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -2688,10 +2681,10 @@ public class SqlOptimiser {
             // optimiser can assign there correct nodes
 
             model.setWhereClause(null);
-            processJoinConditions(model, where, false, model);
+            processJoinConditions(model, where, false, model, -1);
 
             for (int i = 1; i < n; i++) {
-                processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria(), true, joinModels.getQuick(i));
+                processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria(), true, joinModels.getQuick(i), i);
             }
 
             processEmittedJoinClauses(model);
@@ -2711,6 +2704,7 @@ public class SqlOptimiser {
 
             m = model.getJoinModels().getQuick(i).getUnionModel();
             if (m != null) {
+                clearForUnionModelInJoin();
                 optimiseJoins(m);
             }
         }
@@ -2776,7 +2770,7 @@ public class SqlOptimiser {
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                if (model.getGroupBy().size() == 0) {//order by should not copy through group by
+                if (model.getGroupBy().size() == 0 && model.getSampleBy() == null) { // order by should not copy through group by or sample by
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
@@ -2815,7 +2809,13 @@ public class SqlOptimiser {
      *
      * @param node expression n
      */
-    private void processJoinConditions(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
+    private void processJoinConditions(
+            QueryModel parent,
+            ExpressionNode node,
+            boolean innerPredicate,
+            QueryModel joinModel,
+            int joinIndex
+    ) throws SqlException {
         ExpressionNode n = node;
         // pre-order traversal
         sqlNodeStack.clear();
@@ -2835,7 +2835,7 @@ public class SqlOptimiser {
                     case JOIN_OP_REGEX:
                         analyseRegex(parent, n);
                         if (joinBarriers.contains(joinModel.getJoinType())) {
-                            addOuterJoinExpression(joinModel, n);
+                            addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
                         }
@@ -2843,7 +2843,7 @@ public class SqlOptimiser {
                         break;
                     default:
                         if (joinBarriers.contains(joinModel.getJoinType())) {
-                            addOuterJoinExpression(joinModel, n);
+                            addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
                         }
@@ -2931,8 +2931,17 @@ public class SqlOptimiser {
                 emitLiteralsTopDown(leftJoinWhere, jm);
                 emitLiteralsTopDown(leftJoinWhere, model);
             }
+        }
 
+        // propagate join models columns in separate loop to catch columns added to models prior to the current one 
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final QueryModel jm = joinModels.getQuick(i);
             propagateTopDownColumns0(jm, false, model, true);
+        }
+
+        final ExpressionNode postJoinWhere = model.getPostJoinWhereClause();
+        if (postJoinWhere != null) {
+            emitLiteralsTopDown(postJoinWhere, model);
         }
 
         // If this is group by model we need to add all non-selected keys, only if this is sub-query
@@ -3324,10 +3333,12 @@ public class SqlOptimiser {
 
     //push aggregate function calls to group by model, replace key column expressions with group by aliases
     //raise error if raw column usage doesn't match one of expressions on group by list
-    private ExpressionNode rewriteGroupBySelectExpression(final @Transient ExpressionNode topLevelNode,
-                                                          QueryModel groupByModel,
-                                                          ObjList<ExpressionNode> groupByNodes,
-                                                          ObjList<CharSequence> groupByAliases) throws SqlException {
+    private ExpressionNode rewriteGroupBySelectExpression(
+            final @Transient ExpressionNode topLevelNode,
+            QueryModel groupByModel,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases
+    ) throws SqlException {
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -3402,56 +3413,70 @@ public class SqlOptimiser {
      * @param model            input model
      * @param executionContext execution context
      */
-    private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        QueryModel current = model;
-
-        while (current != null) {
-            QueryModel nested = current.getNestedModel();
+    private void rewriteNegativeLimit(final QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (model != null) {
+            final QueryModel nested = model.getNestedModel();
             Function loFunction;
             ObjList<ExpressionNode> orderBy;
             long limitValue;
 
-            if (current.getLimitLo() != null
-                    && current.getLimitHi() == null
-                    && current.getUnionModel() == null
-                    && current.getJoinModels().size() == 1
-                    && current.getGroupBy().size() == 0
-                    && current.getSampleBy() == null
-                    && !hasAggregateQueryColumn(current)
-                    && !current.isDistinct()
-                    && nested != null
-                    && nested.getTimestamp() != null
-                    && nested.getWhereClause() == null
-                    && (loFunction = getLoFunction(current.getLimitLo(), executionContext)) != null
-                    && loFunction.isConstant()
-                    && (limitValue = loFunction.getLong(null)) < 0
-                    && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
-                    && ((orderBy = nested.getOrderBy()).size() == 0 ||
-                    (orderBy.size() == 1 && Chars.equals(orderBy.getQuick(0).token, nested.getTimestamp().token)))
+            if (
+                    model.getLimitLo() != null
+                            && model.getLimitHi() == null
+                            && model.getUnionModel() == null
+                            && model.getJoinModels().size() == 1
+                            && model.getGroupBy().size() == 0
+                            && model.getSampleBy() == null
+                            && !hasAggregateQueryColumn(model)
+                            && !model.isDistinct()
+                            && nested != null
+                            && nested.getJoinModels().size() == 1
+                            && nested.getTimestamp() != null
+                            && nested.getWhereClause() == null
+                            && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
+                            && loFunction.isConstant()
+                            && (limitValue = loFunction.getLong(null)) < 0
+                            && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
+                            && ((orderBy = nested.getOrderBy()).size() == 0 ||
+                            (
+                                    orderBy.size() == 1
+                                            && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
+                            )
+                    )
             ) {
-                IntList orderByDirection = nested.getOrderByDirection();
-                ExpressionNode limitNode = current.getLimitLo();
-                limitNode = limitNode.rhs != null ? limitNode.rhs : limitNode.lhs;
-                current.setLimit(null, null);
+                final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                characterStoreEntry.put(-limitValue);
+                ExpressionNode limitNode = nextLiteral(characterStoreEntry.toImmutable());
+                // override limit node type
+                limitNode.type = CONSTANT;
 
-                QueryModel limit = queryModelPool.next();
-                limit.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-                SqlUtil.addSelectStar(limit, queryColumnPool, expressionNodePool);
-                limit.setLimit(limitNode, null);
-                limit.setNestedModel(nested);
-                limit.setTimestamp(nested.getTimestamp());
-                limit.setExplicitTimestamp(nested.isExplicitTimestamp());
+                // insert two models between "model" and "nested", like so:
+                // model -> order -> limit -> nested + order
 
-                int timestampKey = current.getColumnNameToAliasMap().keyIndex(nested.getTimestamp().token);
-                if (timestampKey < 0) {
-                    int timestampIdx = current.getColumnAliasIndex(current.getColumnNameToAliasMap().valueAt(timestampKey));
-                    current.setTimestamp(current.getColumns().get(timestampIdx).getAst());
+                // the outer model loses its limit
+                model.setLimit(null, null);
+
+                QueryModel limitModel = queryModelPool.next();
+                limitModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                limitModel.setNestedModel(nested);
+                limitModel.setLimit(limitNode, null);
+
+                // copy columns to the "limit" model from the "nested" model
+                ObjList<CharSequence> nestedColumnNames = nested.getBottomUpColumnNames();
+                for (int i = 0, n = nestedColumnNames.size(); i < n; i++) {
+                    limitModel.addBottomUpColumn(nextColumn(nestedColumnNames.getQuick(i)));
                 }
-                //not needed if limit = -1
+
                 QueryModel order = null;
                 if (limitValue < -1) {
                     order = queryModelPool.next();
-                    order.setNestedModel(limit);
+                    order.setNestedModel(limitModel);
+                    ObjList<QueryColumn> limitColumns = limitModel.getBottomUpColumns();
+                    for (int i = 0, n = limitColumns.size(); i < n; i++) {
+                        order.addBottomUpColumn(limitColumns.getQuick(i));
+                    }
+                    order.setNestedModelIsSubQuery(true);
+                    model.setNestedModel(order);
                 }
 
                 if (orderBy.size() == 0) {
@@ -3461,8 +3486,19 @@ public class SqlOptimiser {
 
                     nested.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_DESCENDING);
                 } else {
+                    final IntList orderByDirection = nested.getOrderByDirection();
                     if (order != null) {
-                        order.addOrderBy(orderBy.getQuick(0), orderByDirection.getQuick(0));
+                        // it is possible that order by column has not been selected in the order model
+                        // for that reason we must add column lookup to allow order-by optimisation to resolve the column name
+                        final ExpressionNode orderByNode = nested.getTimestamp();
+                        final CharSequence orderByToken = orderByNode.token;
+                        // We are here because order-by matched timestamp, what we don't know is
+                        // if we matched timestamp via index or name. If we parse order-by token
+                        // AGAIN, that would be our index, otherwise - it is a name
+                        if (order.getAliasToColumnMap().excludes(orderByToken)) {
+                            order.getAliasToColumnMap().put(orderByToken, nextColumn(orderByToken));
+                        }
+                        order.addOrderBy(orderByNode, orderByDirection.getQuick(0));
                     }
 
                     int newOrder;
@@ -3474,16 +3510,12 @@ public class SqlOptimiser {
                     orderByDirection.setQuick(0, newOrder);
                 }
 
-                if (order != null) {
-                    current.setNestedModel(order);
-                } else {
-                    current.setNestedModel(limit);
+                if (order == null) {
+                    model.setNestedModel(limitModel);
                 }
-
-                current = nested.getNestedModel();
-                continue;
             }
-            current = nested;
+            // assign different nested model because it might need to be re-written
+            rewriteNegativeLimit(nested, executionContext);
         }
     }
 
@@ -3500,7 +3532,7 @@ public class SqlOptimiser {
      * @return outbound model
      * @throws SqlException when column names are ambiguous or not found at all.
      */
-    private QueryModel rewriteOrderBy(QueryModel model) throws SqlException {
+    private QueryModel rewriteOrderBy(final QueryModel model) throws SqlException {
         // find base model and check if there is "group-by" model in between
         // when we are dealing with "group by" model some implicit "order by" columns have to be dropped,
         // However, in the following example
@@ -3729,7 +3761,7 @@ public class SqlOptimiser {
         return result;
     }
 
-    private QueryModel rewriteOrderByPosition(QueryModel model) throws SqlException {
+    private void rewriteOrderByPosition(final QueryModel model) throws SqlException {
         QueryModel base = model;
         QueryModel baseParent = model;
         QueryModel baseGroupBy = null;
@@ -3817,11 +3849,9 @@ public class SqlOptimiser {
             //    would remain the same again.
             rewriteOrderByPosition(joinModels.getQuick(i));
         }
-
-        return model;
     }
 
-    private QueryModel rewriteOrderByPositionForUnionModels(QueryModel model) throws SqlException {
+    private void rewriteOrderByPositionForUnionModels(final QueryModel model) throws SqlException {
         QueryModel next = model.getUnionModel();
         if (next != null) {
             doRewriteOrderByPositionForUnionModels(model, model, next);
@@ -3831,7 +3861,6 @@ public class SqlOptimiser {
         if (next != null) {
             rewriteOrderByPositionForUnionModels(next);
         }
-        return model;
     }
 
     // flatParent = true means that parent model does not have selected columns
@@ -4128,6 +4157,14 @@ public class SqlOptimiser {
                             useOuterModel = true;
                         }
                     } else {
+                        //groupByModel is populated in createSelectColumn
+                        //groupByModel must be used as it is the only model that is populated with duplicate column names in createSelectColumn
+                        //The below if-statement will only evaluate to true when using wildcards in a join with duplicate column names
+                        //Because the other column aliases are not known at the time qc's alias gets set, we must wait until this point (when we know the other column aliases) to alter it if a duplicate has occurred
+                        if (groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
+                            CharSequence newAlias = createColumnAlias(qc.getAst(), groupByModel);
+                            qc.setAlias(newAlias);
+                        }
                         createSelectColumn(
                                 qc.getAlias(),
                                 qc.getAst(),
@@ -4402,9 +4439,7 @@ public class SqlOptimiser {
             // be implemented by nested model. Nested model must not implement limit
             // when parent model is order by or join.
             // Only exception is when order by is by designated timestamp because it'll be implemented as forward or backward scan (no sorting required) .
-            if ((baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) &&
-                    baseModel.getJoinModels().size() < 2 &&
-                    !useDistinctModel) {
+            if ((baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) && !useDistinctModel) {
                 baseModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
             }
 
@@ -4664,33 +4699,13 @@ public class SqlOptimiser {
         }
     }
 
-    void clear() {
-        contextPool.clear();
-        intHashSetPool.clear();
-        joinClausesSwap1.clear();
-        joinClausesSwap2.clear();
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
-        literalCollectorAIndexes.clear();
-        literalCollectorBIndexes.clear();
-        literalCollectorANames.clear();
-        literalCollectorBNames.clear();
-        defaultAliasCount = 0;
-        expressionNodePool.clear();
-        characterStore.clear();
-        tablesSoFar.clear();
-        clausesToSteal.clear();
-        tmpCursorAliases.clear();
-        functionsInFlight.clear();
-        groupByAliases.clear();
-        groupByNodes.clear();
-        groupByUsed.clear();
-        tempColumnAlias = null;
-        tempQueryModel = null;
+    protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
     }
 
-    QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
+    }
+
+    QueryModel optimise(@Transient final QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
         QueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
@@ -4701,31 +4716,23 @@ public class SqlOptimiser {
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
+            rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext);
+            optimiseJoins(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
-            rewrittenModel = rewriteOrderBy(
-                    rewriteOrderByPositionForUnionModels(
-                            rewriteOrderByPosition(
-                                    rewriteSelectClause(
-                                            rewrittenModel,
-                                            true,
-                                            sqlExecutionContext
-                                    )
-                            )
-                    )
-            );
+            rewriteOrderByPosition(rewrittenModel);
+            rewriteOrderByPositionForUnionModels(rewrittenModel);
+            rewrittenModel = rewriteOrderBy(rewrittenModel);
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
             createOrderHash(rewrittenModel);
-            optimiseJoins(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
-        } catch (SqlException e) {
+        } catch (Throwable e) {
             // at this point models may have functions than need to be freed
-            Misc.freeObjList(functionsInFlight);
-            functionsInFlight.clear();
+            Misc.freeObjListAndClear(functionsInFlight);
             throw e;
         }
     }
@@ -4784,9 +4791,7 @@ public class SqlOptimiser {
                 }
             }
 
-
             TableToken tableToken = metadata.getTableToken();
-
             sqlExecutionContext.getSecurityContext().authorizeTableUpdate(tableToken, literalCollectorANames);
 
             if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName())) {
@@ -4794,6 +4799,7 @@ public class SqlOptimiser {
                 throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
             }
             updateQueryModel.setUpdateTableToken(tableToken);
+            authorizeUpdate(updateQueryModel, tableToken);
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

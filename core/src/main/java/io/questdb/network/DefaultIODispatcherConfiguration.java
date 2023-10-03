@@ -29,6 +29,8 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
 
+    public static final IODispatcherConfiguration INSTANCE = new DefaultIODispatcherConfiguration();
+
     @Override
     public int getBindIPv4Address() {
         return 0;
@@ -50,8 +52,9 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getInitialBias() {
-        return BIAS_READ;
+    public long getHeartbeatInterval() {
+        // don't send heartbeat messages by default
+        return -1L;
     }
 
     @Override
@@ -67,11 +70,6 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public boolean getPeerNoLinger() {
-        return false;
     }
 
     @Override
@@ -102,11 +100,5 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public long getTimeout() {
         return 5 * 60 * 1000L;
-    }
-
-    @Override
-    public long getHeartbeatInterval() {
-        // don't send heartbeat messages by default
-        return -1L;
     }
 }

@@ -24,14 +24,12 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class OrderByAdviceTest extends AbstractGriffinTest {
+public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithOrderBy() throws Exception {
@@ -47,18 +45,20 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
     @Test
     public void testDistinctWithOrderByAnotherColumn() throws Exception {
-        try {
-            assertQuery("b\n1\n2\n0\n",
-                    "select distinct b from x order by a desc;",
-                    "create table x as (" +
-                            "select" +
-                            " x a," +
-                            " x % 3 b" +
-                            " from long_sequence(9)" +
-                            ")", null);
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "ORDER BY expressions must appear in select list.");
-        }
+        ddl(
+                "create table x as (" +
+                "select" +
+                " x a," +
+                " x % 3 b" +
+                " from long_sequence(9)" +
+                ")"
+        );
+
+        assertException(
+                "select distinct b from x order by a desc;",
+                34,
+                "ORDER BY expressions must appear in select list."
+        );
     }
 
     @Test
@@ -87,25 +87,16 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "ABB\t1233285715\n" +
                 "DXR\t1275864035\n";
 
-        assertQuery13(
-                "sym\tspread\n",
-                "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread",
-                "create table x (\n" +
+        assertQuery("sym\tspread\n", "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY", null, "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true,
-                true
-        );
+                        "    from long_sequence(10)) timestamp (ts)", expected, true, true, false);
     }
 
     @Test
@@ -115,24 +106,14 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "ABB\t0.9809851788419132\n" +
                 "HBC\t0.9940353811420282\n";
 
-        assertQuery13(
-                "sym\tmaxp\n",
-                "select sym , max(price) maxp from x where ts IN '1970-01-04' order by maxp",
-                "create table x (\n" +
+        assertQuery("sym\tmaxp\n", "select sym , max(price) maxp from x where ts IN '1970-01-04' order by maxp", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY", null, "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true,
-                true
-
-        );
+                        "    from long_sequence(1000)) timestamp (ts)", expected, true, true, false);
     }
 
     @Test
@@ -142,45 +123,27 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.008427132543617488\n" +
                 "ABB\t0.008444033230580739\n";
 
-        assertQuery13(
-                "sym\tmaxp\n",
-                "select sym, min(price) maxp from x where ts in '1970-01-04' order by maxp",
-                "create table x (\n" +
+        assertQuery("sym\tmaxp\n", "select sym, min(price) maxp from x where ts in '1970-01-04' order by maxp", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY", null, "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true,
-                true
-        );
+                        "    from long_sequence(1000)) timestamp (ts)", expected, true, true, false);
     }
 
     @Test
     public void testNoKeyGroupBy() throws Exception {
-        assertQuery13(
-                "column\nNaN\n",
-                "select sum(price)/count() from x where price>0",
-                "create table x (\n" +
+        assertQuery("column\nNaN\n", "select sum(price)/count() from x where price>0", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY", null, "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                "column\n" +
-                        "0.48510032025339733\n",
-                false,
-                true
-        );
+                        "    from long_sequence(1000)) timestamp (ts)", "column\n" +
+                        "0.48510032025339733\n", false, true, false);
     }
 
     @Test
@@ -197,24 +160,14 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
                 "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n";
 
-        assertQuery13(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x order by k, ts desc",
-                "create table x (\n" +
+        assertQuery("k\tprice\tts\n", "select sym k, price, ts from x order by k, ts desc", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY", null, "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true,
-                true
-
-        );
+                        "    from long_sequence(10)) timestamp (ts)", expected, true, true, false);
     }
 
     @Test
@@ -545,25 +498,16 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "CC\t73575701\t-948263339\t1970-01-03T00:06:00.000000Z\n" +
                 "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
 
-        assertQuery13(
-                "sym\tbid\task\tts\n",
-                "select * from x order by ts desc",
-                "create table x (\n" +
+        assertQuery("sym\tbid\task\tts\n", "select * from x order by ts desc", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        ") timestamp(ts) partition by DAY", "ts", "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true,
-                true
-        );
+                        "    from long_sequence(10)) timestamp (ts)", expected, true, true, false);
     }
 
     @Test
@@ -1347,24 +1291,14 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.5716129058692643\t1970-01-03T09:48:00.000000Z\n" +
                 "DXR\t0.05094182589333662\t1970-01-03T09:54:00.000000Z\n";
 
-        assertQuery13(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'",
-                "create table x (\n" +
+        assertQuery("k\tprice\tts\n", "select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY", "ts", "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(100)) timestamp (ts)",
-                expected,
-                true,
-                true
-
-        );
+                        "    from long_sequence(100)) timestamp (ts)", expected, true, true, false);
     }
 
     @Test

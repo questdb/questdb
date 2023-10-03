@@ -628,8 +628,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     private transient volatile CounterCell[] counterCells;
     // Original (since JDK1.2) Map methods
     private transient EntrySetView<V> entrySet;
-
-
+    private transient boolean ics = true;
     /* ---------------- Public operations -------------- */
     // views
     private transient KeySetView<V> keySet;
@@ -651,8 +650,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     private transient volatile int transferIndex;
     private transient ValuesView<V> values;
-
-    private transient boolean ics = true;
 
     /**
      * Creates a new, empty map with the default initial table size (16).
@@ -1631,6 +1628,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 mix64(System.nanoTime()));
     }
 
+    private static boolean keyEquals(final CharSequence lhs, final CharSequence rhs, boolean isCaseSensitive) {
+        return isCaseSensitive ? Chars.equals(lhs, rhs) : Chars.equalsIgnoreCase(lhs, rhs);
+    }
+
+    private static int keyHashCode(final CharSequence key, boolean isCaseSensitive) {
+        return isCaseSensitive ? Chars.hashCode(key) : Chars.lowerCaseHashCode(key);
+    }
+
     private static long mix64(long z) {
         z = (z ^ (z >>> 33)) * 0xff51afd7ed558ccdL;
         z = (z ^ (z >>> 33)) * 0xc4ceb9fe1a85ec53L;
@@ -1812,14 +1817,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             }
         }
         return tab;
-    }
-
-    private static boolean keyEquals(final CharSequence lhs, final CharSequence rhs, boolean isCaseSensitive) {
-        return isCaseSensitive ? Chars.equals(lhs, rhs) : Chars.equalsIgnoreCase(lhs, rhs);
-    }
-
-    private static int keyHashCode(final CharSequence key, boolean isCaseSensitive) {
-        return isCaseSensitive ? Chars.hashCode(key) : Chars.lowerCaseHashCode(key);
     }
 
     private boolean keyEquals(final CharSequence lhs, final CharSequence rhs) {
@@ -2903,10 +2900,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     static class Node<V> implements Map.Entry<CharSequence, V> {
         final int hash;
+        final boolean ics;
         final CharSequence key;
         volatile Node<V> next;
         volatile V val;
-        final boolean ics;
 
         Node(int hash, CharSequence key, V val, Node<V> next, boolean ics) {
             this.hash = hash;

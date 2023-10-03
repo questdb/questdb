@@ -62,7 +62,7 @@ final class FastMapRecord implements MapRecord {
     private long valueAddress;
 
     FastMapRecord(
-            @Nullable int[] valueOffsets,
+            int[] valueOffsets,
             int keyOffset,
             FastMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
@@ -226,6 +226,11 @@ final class FastMapRecord implements MapRecord {
     @Override
     public short getGeoShort(int col) {
         return getShort(col);
+    }
+
+    @Override
+    public int getIPv4(int columnIndex) {
+        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
     }
 
     @Override

@@ -31,7 +31,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
@@ -66,13 +65,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    compiler.compile("drop table tab" + j, executionContext);
+                                    drop("drop table tab" + j, executionContext);
                                 } catch (TableReferenceOutOfDateException e) {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
@@ -96,14 +92,11 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         Rnd rnd = TestUtils.generateRandom(LOG);
-                        try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 boolean isWal = rnd.nextBoolean();
                                 try {
-                                    compiler.compile(
+                                    ddl(
                                             "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
                                                     + (!isWal ? "BYPASS" : "")
                                                     + " WAL ",
@@ -115,7 +108,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 }
 
                                 try {
-                                    compiler.compile("drop table tab" + j, executionContext);
+                                    drop("drop table tab" + j, executionContext);
                                 } catch (TableReferenceOutOfDateException e) {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
@@ -169,7 +162,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             threads.add(new Thread(() -> {
                 try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getMicrosecondClock())) {
                     barrier.await();
-                    snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+                    engine.setWalPurgeJobRunLock(job.getRunLock());
                     //noinspection StatementWithEmptyBody
                     while (!done.get() && job.run(0)) {
                         // run until empty
@@ -204,7 +197,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             engine.getTableTokens(tableTokenBucket, true);
-            if (0 != tableTokenBucket.size()) {
+            if (!tableTokenBucket.isEmpty()) {
                 Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
             }
         });
@@ -224,7 +217,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             for (int i = 0; i < threadCount; i++) {
                 threads.add(new Thread(() -> {
                     try {
-                        try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration)) {
+                        try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration, CairoEngine.EMPTY_RESOLVER)) {
                             startBarrier.await();
                             while (!done.get()) {
                                 ro.reloadTableNameCache();
@@ -252,7 +245,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 // Add / remove tables
                 engine.closeNameRegistry();
                 Rnd rnd = TestUtils.generateRandom(LOG);
-                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration)) {
+                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration, CairoEngine.EMPTY_RESOLVER)) {
                     rw.reloadTableNameCache();
                     startBarrier.await();
                     int iteration = 0;
@@ -285,7 +278,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                             // Remove table directory
                             rmPath.trimTo(len).$();
-                            for (int i = 0; i < 1000 && ff.rmdir(rmPath) != 0; i++) {
+                            for (int i = 0; i < 1000 && !ff.rmdir(rmPath); i++) {
                                 Os.sleep(50L);
                             }
                         }
@@ -320,19 +313,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             CyclicBarrier barrier = new CyclicBarrier(threadCount);
             ObjList<Thread> threads = new ObjList<>(threadCount);
 
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
+            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 for (int j = 0; j < tableCount; j++) {
                     String tableName = "tab" + j;
                     if (j % 2 == 0) {
                         tableName = "Tab" + j;
                     }
-                    compiler.compile(
-                            "create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL",
-                            executionContext
-                    );
+                    ddl("create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL", executionContext);
                 }
             }
 
@@ -341,13 +328,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                        ) {
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    compiler.compile("rename table tab" + j + " to renamed_" + threadId + "_" + j, executionContext);
+                                    ddl("rename table tab" + j + " to renamed_" + threadId + "_" + j, executionContext);
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
                                         throw e;
@@ -427,7 +411,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.releaseInactive();
             FilesFacade ff = configuration.getFilesFacade();
-            Assert.assertEquals(0, ff.rmdir(Path.getThreadLocal2(root).concat(tt1).$()));
+            Assert.assertTrue(ff.rmdir(Path.getThreadLocal2(root).concat(tt1).$()));
 
             engine.reloadTableNames();
 
@@ -539,18 +523,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
             Assert.assertFalse(engine.isWalTable(tt3));
 
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile("alter table " + tt2.getTableName() + " set type bypass wal", sqlExecutionContext);
-                compiler.compile("alter table " + tt3.getTableName() + " set type wal", sqlExecutionContext);
-            }
+            ddl("alter table " + tt2.getTableName() + " set type bypass wal");
+            ddl("alter table " + tt3.getTableName() + " set type wal");
             if (releaseInactiveBeforeConversion) {
                 engine.releaseInactive();
             }
 
-            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
 
             if (!releaseInactiveBeforeConversion) {
                 engine.releaseInactive();

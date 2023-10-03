@@ -175,6 +175,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public void clear() {
         command = DO_NOTHING;
+        sqlExecutionContext = null;
+        securityContext = null;
         extraStrInfo.clear();
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
@@ -241,6 +243,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case RENAME_COLUMN:
             case DROP_COLUMN:
             case RENAME_TABLE:
+            case SET_DEDUP_DISABLE:
+            case SET_DEDUP_ENABLE:
                 return true;
             default:
                 return false;
@@ -346,7 +350,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         isIndexed,
                         indexValueBlockCapacity,
                         false,
-                        sqlExecutionContext
+                        securityContext
                 );
             } catch (CairoException e) {
                 e.position(columnNamePosition);
@@ -460,7 +464,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         while (i < n) {
             CharSequence columnName = activeExtraStrInfo.getStrA(i++);
             CharSequence newName = activeExtraStrInfo.getStrB(i++);
-            svc.renameColumn(columnName, newName);
+            svc.renameColumn(columnName, newName, securityContext);
         }
     }
 

@@ -53,9 +53,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     private final int maxEntries;
     private final int maxSegments;
 
-    public AbstractMultiTenantPool(CairoConfiguration configuration) {
-        super(configuration, configuration.getInactiveReaderTTL());
-        this.maxSegments = configuration.getReaderPoolMaxSegments();
+    public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
+        super(configuration, inactiveTtlMillis);
+        this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
@@ -65,7 +65,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
     @Override
     public T get(TableToken tableToken) {
-
         Entry<T> e = getEntry(tableToken);
 
         long lockOwner = e.lockOwner;
@@ -116,7 +115,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                         tenant.updateTableToken(tableToken);
                         return tenant;
                     }
-                    LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
+                    LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i)
+                            .$(", thread=").$(thread)
+                            .I$();
                     tenant.updateTableToken(tableToken);
                     return tenant;
                 }
@@ -139,7 +140,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
         // max entries exceeded
         notifyListener(thread, tableToken, PoolListener.EV_FULL, -1, -1);
-        LOG.info().$("could not get, busy [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
+        LOG.info().$("could not get, busy [table=`").utf8(tableToken.getDirName())
+                .$("`, thread=").$(thread)
+                .$(", retries=").$(this.maxSegments)
+                .I$();
         throw EntryUnavailableException.instance(NO_LOCK_REASON);
     }
 
@@ -245,7 +249,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         if (tenant != null) {
             tenant.goodbye();
             tenant.close();
-            LOG.debug().$("closed '").utf8(tenant.getTableToken().getDirName())
+            LOG.info().$("closed '").utf8(tenant.getTableToken().getDirName())
                     .$("' [at=").$(entry.index).$(':').$(index)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
                     .I$();

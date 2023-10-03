@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class ExtractFunctionTest extends AbstractGriffinTest {
+public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void test1997Millennium() throws Exception {
@@ -103,11 +103,19 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testComma() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(hour, '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "Invalid column: hour"
+        );
+    }
+
+    @Test
+    public void testDanglingArg() throws Exception {
+        assertException(
+                "select extract(hour from to_timestamp('2022-03-11T22:00:30.555555Z') table)",
+                69,
+                "dangling literal"
         );
     }
 
@@ -373,11 +381,10 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testMissingPart() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(from to_timestamp('2022-03-11T22:00:30.555555Z'))",
-                null,
-                14,
-                "unbalanced ("
+                15,
+                "Huh? What would you like to extract?"
         );
     }
 
@@ -396,19 +403,17 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testMultipleFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(hour from from to_timestamp('2022-03-11T22:00:30.555555Z'))",
-                null,
-                14,
-                "unbalanced ("
+                25,
+                "Unnecessary `from`. Typo?"
         );
     }
 
     @Test
     public void testNonLiteralPart() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(1+1 from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 17,
                 "we expect timestamp part here"
         );
@@ -416,19 +421,17 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testNotExtractFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select something(null from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
-                16,
-                "unbalanced ("
+                22,
+                "dangling literal"
         );
     }
 
     @Test
     public void testNullFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(null from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "unsupported timestamp part: null"
         );
@@ -540,9 +543,8 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testUnsupported() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(timezone from '2022-12-30T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "unsupported timestamp part: timezone"
         );

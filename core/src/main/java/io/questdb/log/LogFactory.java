@@ -280,15 +280,10 @@ public class LogFactory implements Closeable {
         return new SyncLogger(
                 clock,
                 compressScope(key, sink),
-                dbg == null ? null : dbg.ring,
                 dbg == null ? null : dbg.lSeq,
-                inf == null ? null : inf.ring,
                 inf == null ? null : inf.lSeq,
-                err == null ? null : err.ring,
                 err == null ? null : err.lSeq,
-                cri == null ? null : cri.ring,
                 cri == null ? null : cri.lSeq,
-                adv == null ? null : adv.ring,
                 adv == null ? null : adv.lSeq
         );
     }
@@ -570,7 +565,7 @@ public class LogFactory implements Closeable {
         }
 
         String s = getProperty(properties, "queueDepth");
-        if (s != null && s.length() > 0) {
+        if (s != null && !s.isEmpty()) {
             try {
                 setQueueDepth(Numbers.parseInt(s));
             } catch (NumericException e) {
@@ -579,7 +574,7 @@ public class LogFactory implements Closeable {
         }
 
         s = getProperty(properties, "recordLength");
-        if (s != null && s.length() > 0) {
+        if (s != null && !s.isEmpty()) {
             try {
                 setRecordLength(Numbers.parseInt(s));
             } catch (NumericException e) {
@@ -668,14 +663,6 @@ public class LogFactory implements Closeable {
         public LogRecord critical() {
             if (delegate != null) {
                 return delegate.critical();
-            }
-            return noOpRecord;
-        }
-
-        @Override
-        public LogRecord criticalW() {
-            if (delegate != null) {
-                return delegate.criticalW();
             }
             return noOpRecord;
         }

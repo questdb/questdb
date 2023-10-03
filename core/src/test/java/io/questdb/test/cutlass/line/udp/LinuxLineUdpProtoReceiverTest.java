@@ -28,7 +28,6 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.cutlass.line.udp.*;
-import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;

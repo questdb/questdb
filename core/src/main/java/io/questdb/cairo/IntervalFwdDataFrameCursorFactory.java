@@ -38,13 +38,12 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
 
     public IntervalFwdDataFrameCursorFactory(
             TableToken tableToken,
-            int tableId,
-            long tableVersion,
+            long metadataVersion,
             RuntimeIntrinsicIntervalModel intervals,
             int timestampIndex,
             GenericRecordMetadata metadata
     ) {
-        super(tableToken, tableVersion, metadata);
+        super(tableToken, metadataVersion, metadata);
         this.cursor = new IntervalFwdDataFrameCursor(intervals, timestampIndex);
         this.intervals = intervals;
     }
@@ -57,15 +56,21 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
 
     @Override
     public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        if (order == ORDER_ASC || order == ORDER_ANY) {
-            cursor.of(getReader(executionContext), executionContext);
-            return cursor;
-        }
+        final TableReader reader = getReader(executionContext);
+        try {
+            if (order == ORDER_ASC || order == ORDER_ANY) {
+                cursor.of(reader, executionContext);
+                return cursor;
+            }
 
-        if (bwdCursor == null) {
-            bwdCursor = new IntervalBwdDataFrameCursor(intervals, cursor.getTimestampIndex());
+            if (bwdCursor == null) {
+                bwdCursor = new IntervalBwdDataFrameCursor(intervals, cursor.getTimestampIndex());
+            }
+            return bwdCursor.of(reader, executionContext);
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
         }
-        return bwdCursor.of(getReader(executionContext), executionContext);
     }
 
     @Override

@@ -34,6 +34,9 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
+
+    String getAuthDB();
+
     boolean getAutoCreateNewColumns();
 
     boolean getAutoCreateNewTables();
@@ -56,9 +59,9 @@ public interface LineTcpReceiverConfiguration {
 
     IODispatcherConfiguration getDispatcherConfiguration();
 
-    FilesFacade getFilesFacade();
+    FactoryProvider getFactoryProvider();
 
-    String getAuthDB();
+    FilesFacade getFilesFacade();
 
     WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
@@ -99,8 +102,4 @@ public interface LineTcpReceiverConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isSymbolAsFieldSupported();
-
-    boolean readOnlySecurityContext();
-
-    FactoryProvider getFactoryProvider();
 }

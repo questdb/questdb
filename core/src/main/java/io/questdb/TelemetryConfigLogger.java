@@ -63,18 +63,18 @@ public class TelemetryConfigLogger implements Closeable {
         configWriter = Misc.free(configWriter);
     }
 
-    private void appendConfigRow(SqlCompiler compiler, TableWriter configWriter, Long256 id, boolean enabled) {
+    private void appendConfigRow(CairoEngine engine, SqlCompiler compiler, TableWriter configWriter, Long256 id, boolean enabled) {
         final TableWriter.Row row = configWriter.newRow();
         if (id == null) {
-            final MicrosecondClock clock = compiler.getEngine().getConfiguration().getMicrosecondClock();
-            final NanosecondClock nanosecondClock = compiler.getEngine().getConfiguration().getNanosecondClock();
+            final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
+            final NanosecondClock nanosecondClock = engine.getConfiguration().getNanosecondClock();
             final long a = nanosecondClock.getTicks();
             final long b = clock.getTicks();
             row.putLong256(0, a, b, 0, 0);
             LOG.info()
                     .$("new instance [id=").$256(a, b, 0, 0)
                     .$(", enabled=").$(enabled)
-                    .$(']').$();
+                    .I$();
         } else {
             row.putLong256(0, id);
         }
@@ -101,14 +101,12 @@ public class TelemetryConfigLogger implements Closeable {
     }
 
     private TableWriter updateTelemetryConfig(
+            CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContextImpl sqlExecutionContext,
             TableToken tableToken
     ) throws SqlException {
-        final TableWriter configWriter = compiler.getEngine().getWriter(
-                tableToken,
-                "telemetryConfig"
-        );
+        final TableWriter configWriter = engine.getWriter(tableToken, "telemetryConfig");
         final CompiledQuery cc = compiler.query().$(TELEMETRY_CONFIG_TABLE_NAME).$(" LIMIT -1").compile(sqlExecutionContext);
         try (
                 final RecordCursorFactory factory = cc.getRecordCursorFactory();
@@ -124,26 +122,26 @@ public class TelemetryConfigLogger implements Closeable {
                 // if the configuration changed to enable or disable telemetry
                 // we need to update the table to reflect that
                 if (enabled != _enabled || !questDBVersion.equals(_questDBVersion)) {
-                    appendConfigRow(compiler, configWriter, l256, enabled);
+                    appendConfigRow(engine, compiler, configWriter, l256, enabled);
                     LOG.advisory()
                             .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
-                            .$(']').$();
+                            .I$();
                 } else {
                     LOG.advisory()
                             .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
-                            .$(']').$();
+                            .I$();
                 }
             } else {
                 // if there are no record for telemetry id we need to create one using clocks
-                appendConfigRow(compiler, configWriter, null, enabled);
+                appendConfigRow(engine, compiler, configWriter, null, enabled);
             }
         }
         return configWriter;
     }
 
-    void init(SqlCompiler compiler, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
+    void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
         final TableToken configTableToken = compiler.query()
                 .$("CREATE TABLE IF NOT EXISTS ")
                 .$(TELEMETRY_CONFIG_TABLE_NAME)
@@ -158,13 +156,13 @@ public class TelemetryConfigLogger implements Closeable {
         // TODO: close configWriter, we currently keep it open to prevent users from modifying the table.
         // Once we have a permission system, we can use that instead.
         try {
-            configWriter = updateTelemetryConfig(compiler, sqlExecutionContext, configTableToken);
+            configWriter = updateTelemetryConfig(engine, compiler, sqlExecutionContext, configTableToken);
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
                     .$("`, ex=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
-                    .$(']').$();
+                    .I$();
         }
     }
 }

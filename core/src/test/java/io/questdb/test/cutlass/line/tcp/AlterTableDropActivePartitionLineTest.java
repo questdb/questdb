@@ -208,7 +208,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 // check size
                 try (
                         SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                        SqlCompiler compiler = new SqlCompiler(engine)
+                        SqlCompiler compiler = engine.getSqlCompiler()
                 ) {
                     TestUtils.assertSql(
                             compiler,

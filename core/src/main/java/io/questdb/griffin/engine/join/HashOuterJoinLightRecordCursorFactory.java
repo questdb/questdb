@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -41,13 +38,10 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
-public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
     private final HashOuterJoinLightRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public HashOuterJoinLightRecordCursorFactory(
@@ -62,9 +56,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
             int columnSplit,
             JoinContext context
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, context, masterFactory, slaveFactory);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashOuterJoinLightRecordCursor(
@@ -73,7 +65,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 joinColumnTypes,
                 valueTypes, configuration
         );
-        this.joinContext = context;
     }
 
     @Override
@@ -160,7 +151,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
-                buildMapOfSlaveRecords();
+                TableUtils.populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
                 isMapBuilt = true;
             }
 
@@ -202,24 +193,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 slaveCursor.toTop();
                 joinKeyMap.clear();
                 slaveChain.clear();
-            }
-        }
-
-        private void buildMapOfSlaveRecords() {
-            final Record record = slaveCursor.getRecord();
-            while (slaveCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-
-                MapKey key = joinKeyMap.withKey();
-                key.put(record, slaveKeySink);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    final long offset = slaveChain.put(record.getRowId(), -1);
-                    value.putLong(0, offset);
-                    value.putLong(1, offset);
-                } else {
-                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
-                }
             }
         }
 

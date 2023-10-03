@@ -27,7 +27,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.mp.SimpleSpinLock;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 
 import java.io.Closeable;
 

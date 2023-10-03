@@ -24,6 +24,7 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;
@@ -49,16 +50,24 @@ public class FuzzStableInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
-        TableWriter.Row row = tableWriter.newRow(timestamp);
+    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+        TableWriter.Row row = tableWriter.newRow(getTimestamp());
         if (virtualTimestampIndex != -1) {
-            row.putTimestamp(virtualTimestampIndex, timestamp);
+            row.putTimestamp(virtualTimestampIndex, getTimestamp());
         }
         row.putInt(1, commit);
         if (withSymbol) {
-            row.putSym(2, symbol);
+            row.putSym(2, getSymbol());
         }
         row.append();
         return false;
+    }
+
+    public String getSymbol() {
+        return symbol;
+    }
+
+    public long getTimestamp() {
+        return timestamp;
     }
 }

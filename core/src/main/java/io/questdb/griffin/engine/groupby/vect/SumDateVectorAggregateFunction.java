@@ -112,11 +112,6 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
     }

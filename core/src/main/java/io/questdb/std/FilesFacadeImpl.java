@@ -61,10 +61,18 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean closeRemove(int fd, LPSZ path) {
-        if (fd > -1) {
+        // On Windows we cannot remove file that is open, close it first
+        if (isRestrictedFileSystem() && fd > -1) {
             Files.close(fd);
         }
-        return remove(path);
+
+        // On other file systems we can remove file that is open, and sometimes we want to close the file descriptor
+        // after the removal, in case when file descriptor is the lock FD.
+        boolean ok = remove(path);
+        if (!isRestrictedFileSystem() && fd > -1) {
+            Files.close(fd);
+        }
+        return ok;
     }
 
     @Override
@@ -372,8 +380,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int rmdir(Path name) {
-        return Files.rmdir(name);
+    final public boolean rmdir(Path name) {
+        return rmdir(name, true);
+    }
+
+    @Override
+    public boolean rmdir(Path name, boolean lazy) {
+        return Files.rmdir(name, lazy);
     }
 
     @Override
@@ -407,33 +420,32 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int unlinkOrRemove(Path path, Log LOG) {
+    public boolean unlinkOrRemove(Path path, Log LOG) {
         int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
         return unlinkOrRemove(path, checkedType, LOG);
     }
 
     @Override
-    public int unlinkOrRemove(Path path, int checkedType, Log LOG) {
+    public boolean unlinkOrRemove(Path path, int checkedType, Log LOG) {
         if (checkedType == Files.DT_LNK) {
             // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
             // is to delete the link, not the contents of the target. in *nix
             // systems we can simply unlink, which deletes the link and leaves
             // the contents of the target intact
             if (unlink(path) == 0) {
-                LOG.info().$("removed by unlink [path=").utf8(path).I$();
-                return 0;
+                LOG.debug().$("removed by unlink [path=").utf8(path).I$();
+                return true;
             } else {
-                LOG.error().$("failed to unlink, will remove [path=").utf8(path).I$();
+                LOG.debug().$("failed to unlink, will remove [path=").utf8(path).I$();
             }
         }
 
-        int errno;
-        if ((errno = rmdir(path)) == 0) {
-            LOG.info().$("removed [path=").utf8(path).I$();
-        } else {
-            LOG.error().$("cannot remove [path=").utf8(path).$(", errno=").$(errno).I$();
+        if (rmdir(path)) {
+            LOG.debug().$("removed [path=").utf8(path).I$();
+            return true;
         }
-        return errno;
+        LOG.debug().$("cannot remove [path=").utf8(path).$(", errno=").$(errno()).I$();
+        return false;
     }
 
     public void walk(Path path, FindVisitor func) {

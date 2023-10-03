@@ -43,7 +43,7 @@ public interface ExecutionModel {
     default CharSequence getTableName() {
         return null;
     }
-    
+
     default ExpressionNode getTableNameExpr() {
         return null;
     }

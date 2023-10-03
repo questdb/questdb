@@ -121,8 +121,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void switchTo(int fd, long offset, byte truncateMode) {
-        close(true, truncateMode);
+    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+        close(truncate, truncateMode);
         this.fd = fd;
         jumpTo(offset);
     }

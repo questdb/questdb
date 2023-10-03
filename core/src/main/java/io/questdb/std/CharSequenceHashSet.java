@@ -123,6 +123,10 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return list.getLast();
     }
 
+    public ObjList<CharSequence> getList() {
+        return list;
+    }
+
     public int getListIndexAt(int keyIndex) {
         int index = -keyIndex - 1;
         return list.indexOf(keys[index]);
@@ -130,6 +134,10 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
 
     public int getListIndexOf(CharSequence cs) {
         return getListIndexAt(keyIndex(cs));
+    }
+
+    public boolean hasNull() {
+        return hasNull;
     }
 
     public CharSequence keyAt(int index) {

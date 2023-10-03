@@ -27,14 +27,14 @@ package io.questdb.test.tools;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
 
-public final class TestUtilsTest extends AbstractGriffinTest {
+public final class TestUtilsTest extends AbstractCairoTest {
 
     @Test
     public void testOrderTolerantRecordComparison() throws Exception {
@@ -42,13 +42,13 @@ public final class TestUtilsTest extends AbstractGriffinTest {
             compile("create table x (x long, ts timestamp) timestamp(ts) partition by day");
             compile("create table y (x long, ts timestamp) timestamp(ts) partition by day");
 
-            compile("insert into x values (1, '2022-02-24T00:00:01.000000Z')");
-            compile("insert into x values (2, '2022-02-24T00:00:01.000000Z')");
-            compile("insert into x values (3, '2022-02-24T00:00:02.000000Z')");
+            insert("insert into x values (1, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into x values (2, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into x values (3, '2022-02-24T00:00:02.000000Z')");
 
-            compile("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
-            compile("insert into y values (1, '2022-02-24T00:00:01.000000Z')");
-            compile("insert into y values (3, '2022-02-24T00:00:02.000000Z')");
+            insert("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into y values (1, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into y values (3, '2022-02-24T00:00:02.000000Z')");
 
             HashMap<String, Integer> mapX = new HashMap<>();
             HashMap<String, Integer> mapY = new HashMap<>();
@@ -58,7 +58,7 @@ public final class TestUtilsTest extends AbstractGriffinTest {
 
             Assert.assertEquals(mapX, mapY);
 
-            compile("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
+            insert("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
 
             // now the maps should be different since we've added an extra record
 
@@ -71,7 +71,7 @@ public final class TestUtilsTest extends AbstractGriffinTest {
 
     private static void addAllRecordsToMap(String query, Map<String, Integer> map) throws SqlException {
         try (
-                RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory factory = select(query);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             TestUtils.addAllRecordsToMap(cursor, factory.getMetadata(), map);

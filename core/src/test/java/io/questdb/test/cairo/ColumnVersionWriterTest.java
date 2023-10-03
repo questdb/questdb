@@ -109,7 +109,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
                 }
 
-                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
             }
         });
     }
@@ -209,17 +209,17 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
                 }
 
-                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
 
                 r.ofRO(ff, path);
                 r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
 
                 MemoryCMR mem = Vm.getCMRInstance();
                 mem.of(ff, path, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
                 r.ofRO(mem);
                 r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
                 mem.close();
             }
         });
@@ -247,11 +247,11 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
                     w.commit();
                     r.readSafe(configuration.getMillisecondClock(), 1);
-                    Assert.assertTrue(w.getCachedList().size() > 0);
-                    TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
+                    Assert.assertTrue(w.getCachedColumnVersionList().size() > 0);
+                    TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
                     // assert list is ordered by (timestamp,column_index)
 
-                    LongList list = r.getCachedList();
+                    LongList list = r.getCachedColumnVersionList();
                     long prevTimestamp = -1;
                     long prevColumnIndex = -1;
                     for (int j = 0, n = list.size(); j < n; j += ColumnVersionWriter.BLOCK_SIZE) {
@@ -295,7 +295,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$());
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(configuration.getFilesFacade(), path)
             ) {
-                CVStringTable.setupColumnVersionWriter(w, "" +
+                CVStringTable.setupColumnVersionWriter(w,
                         "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2      -1      10\n" +
                         "       0       3      -1      10\n" +
@@ -312,7 +312,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 w.removePartition(0);
                 w.commit();
 
-                String expected = "" +
+                String expected =
                         "     pts  colIdx  colTxn  colTop\n" +
                         "       1       0      -1      10\n" +
                         "       1       2      -1      10\n" +
@@ -321,9 +321,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         "       2      15      -1      10\n" +
                         "       3       0      -1      10\n";
 
-                TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedList()));
+                TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedColumnVersionList()));
                 r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(expected, CVStringTable.asTable(r.getCachedList()));
+                TestUtils.assertEquals(expected, CVStringTable.asTable(r.getCachedColumnVersionList()));
             }
         });
     }
@@ -331,8 +331,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2      -1      10\n" +
                         "       0       3      -1      10\n" +
                         "       0       5      -1      10\n" +
@@ -343,8 +342,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         "       2      15      -1      10\n" +
                         "       3       0      -1      10\n" +
                         "       4       7      -1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n" +
                         "       1       0      -1      10\n" +
@@ -352,8 +350,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         "       2      11       2       1\n" +
                         "       2      15       2    1001\n" +
                         "       3       0       3     110\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2      -1      10\n" +
                         "       0       3      -1      10\n" +
                         "       0       5      -1      10\n" +
@@ -370,19 +367,16 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionDstContainsPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       2      11       0      99\n" +
                         "       2      12       1      17\n" +
                         "       3      11       1       8\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n" +
                         "       2      11       5      12\n" +
                         "       2      12       5      12\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n" +
                         "       2      11       0      99\n" +
@@ -394,15 +388,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionDstDoesNotContainPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       2      11       1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n" +
                         "       2      11       1      10\n", // Gets added
@@ -413,15 +404,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionSrcDoesNotContainPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       2      11       1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
+                "     pts  colIdx  colTxn  colTop\n" +
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" + // No changes
+                "     pts  colIdx  colTxn  colTop\n" + // No changes
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n",
                 0
@@ -444,12 +432,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 CVStringTable.setupColumnVersionWriter(w1, srcExpected);
                 CVStringTable.setupColumnVersionWriter(w2, dstExpected);
                 for (long p : partitionTimestamp) {
-                    w2.copyPartition(p, w1);
+                    w2.overrideColumnVersions(p, w1);
                 }
-                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedList()));
+                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedColumnVersionList()));
                 w2.commit();
                 r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(r.getCachedList()));
+                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(r.getCachedColumnVersionList()));
             }
         });
     }
@@ -475,7 +463,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                             for (int j = 0; j < increment; j++) {
                                 w.upsert(rnd.nextLong(20), rnd.nextInt(10), txn, -1);
                             }
-                            LongList list = w.getCachedList();
+                            LongList list = w.getCachedColumnVersionList();
                             for (int j = 0, n = list.size(); j < n; j += ColumnVersionWriter.BLOCK_SIZE) {
                                 long timestamp = list.getQuick(j);
                                 int index = (int) list.getQuick(j + 1);
@@ -503,7 +491,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                                 throw ex;
                             }
                             long txn = -1;
-                            LongList list = r.getCachedList();
+                            LongList list = r.getCachedColumnVersionList();
                             long prevTimestamp = -1;
                             long prevColumnIndex = -1;
 
@@ -544,7 +532,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 writer.join();
                 reader.join();
 
-                if (exceptions.size() != 0) {
+                if (!exceptions.isEmpty()) {
                     Assert.fail(exceptions.poll().toString());
                 }
             }
@@ -589,7 +577,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         values[i + ColumnVersionWriter.COLUMN_NAME_TXN_OFFSET],
                         values[i + ColumnVersionWriter.COLUMN_TOP_OFFSET]);
             }
-            TestUtils.assertEquals(expectedTable, asTable(w.getCachedList()));
+            TestUtils.assertEquals(expectedTable, asTable(w.getCachedColumnVersionList()));
         }
 
         private static final class SinkFormatterAdapter extends StringSink implements Appendable {

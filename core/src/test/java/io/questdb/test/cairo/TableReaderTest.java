@@ -1578,7 +1578,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(ff.wasCalled());
-            try (ColumnPurgeJob job = new ColumnPurgeJob(engine, null)) {
+            try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
                 job.run(0);
             }
 
@@ -2796,17 +2796,17 @@ public class TableReaderTest extends AbstractCairoTest {
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public int rmdir(Path name) {
+                public boolean rmdir(Path name, boolean lazy) {
                     if (Chars.endsWith(name, "2017-12-14" + Files.SEPARATOR)) {
-                        return 1;
+                        return false;
                     }
-                    return super.rmdir(name);
+                    return super.rmdir(name, lazy);
                 }
             };
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -3454,7 +3454,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static void checkColumnPurgeRemovesFiles(AtomicInteger counterRef, TestFilesFacade ff, int removeCallsExpected) throws SqlException {
         Assert.assertFalse(ff.wasCalled());
         counterRef.set(0);
-        try (ColumnPurgeJob job = new ColumnPurgeJob(engine, null)) {
+        try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
             job.run(0);
         }
         Assert.assertTrue(ff.called() >= removeCallsExpected);

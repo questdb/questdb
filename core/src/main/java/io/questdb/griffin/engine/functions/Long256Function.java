@@ -94,6 +94,11 @@ public abstract class Long256Function implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -163,8 +168,4 @@ public abstract class Long256Function implements ScalarFunction {
         return ColumnType.LONG256;
     }
 
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
 }

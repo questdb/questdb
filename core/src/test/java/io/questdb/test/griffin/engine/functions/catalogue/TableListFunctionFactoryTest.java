@@ -26,16 +26,16 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.cairo.TableToken;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
-public class TableListFunctionFactoryTest extends AbstractGriffinTest {
+public class TableListFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMetadataQuery() throws Exception {
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
@@ -49,10 +49,9 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                         "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
-                        "1\ttable1\tts1\tDAY\t1000\t300000000\n"
+                        "1\ttable1\tts1\tDAY\t1000\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc"
         );
     }
 
@@ -68,9 +67,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "1\ttable1\tts1\tDAY\t83737\t28291\n"
+                        "1\ttable1\tts1\tDAY\t83737\t28291\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
         );
     }
 
@@ -98,9 +96,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
 
         refreshTablesInBaseEngine();
         assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "2\ttable2\tts2\tNONE\t1000\t300000000\n"
+                        "2\ttable2\tts2\tNONE\t1000\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
         );
     }
 
@@ -117,9 +114,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'table1'",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "1\ttable1\tts1\tDAY\t1000\t300000000\n"
+                        "1\ttable1\tts1\tDAY\t1000\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'table1'"
         );
     }
 
@@ -136,9 +132,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select designatedTimestamp from tables where name = 'table1'",
                 "designatedTimestamp\n" +
-                        "ts1\n"
+                        "ts1\n", "select designatedTimestamp from tables where name = 'table1'"
         );
     }
 }

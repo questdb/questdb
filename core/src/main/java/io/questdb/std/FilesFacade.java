@@ -144,7 +144,11 @@ public interface FilesFacade {
 
     int rename(LPSZ from, LPSZ to);
 
-    int rmdir(Path name);
+    default boolean rmdir(Path name) {
+        return rmdir(name, false);
+    }
+
+    boolean rmdir(Path name, boolean lazy);
 
     int softLink(LPSZ src, LPSZ softLink);
 
@@ -158,9 +162,9 @@ public interface FilesFacade {
 
     int unlink(LPSZ softLink);
 
-    int unlinkOrRemove(Path path, Log LOG);
+    boolean unlinkOrRemove(Path path, Log LOG);
 
-    int unlinkOrRemove(Path path, int checkedType, Log LOG);
+    boolean unlinkOrRemove(Path path, int checkedType, Log LOG);
 
     void walk(Path src, FindVisitor func);
 

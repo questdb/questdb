@@ -1,7 +1,6 @@
 FROM debian:bullseye
 ARG tag_name
 
-ENV MAVEN_VERSION=3.9.3
 ENV GOSU_VERSION=1.14
 ENV JDK_VERSION=17.0.7.7-1
 
@@ -11,21 +10,19 @@ RUN apt-get update \
 RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/winehq.gpg >/dev/null && \
     add-apt-repository 'deb https://apt.corretto.aws stable main' && \
     apt-get update && \
-    apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:${JDK_VERSION}
+    apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:${JDK_VERSION} && \
+    apt-get -y install maven
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
 WORKDIR /build
 
 RUN echo tag_name ${tag_name:-master}
 
-
-RUN curl -L "https://dlcdn.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.zip" --output maven.zip \
-  && unzip maven.zip \
-  && git clone --depth=1 --progress --branch "${tag_name:-master}" --verbose https://github.com/questdb/questdb.git
+RUN git clone --depth=1 --progress --branch "${tag_name:-master}" --verbose https://github.com/questdb/questdb.git
 
 WORKDIR /build/questdb
 
-RUN ../apache-maven-${MAVEN_VERSION}/bin/mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P build-web-console,build-binaries
+RUN mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P build-web-console,build-binaries
 
 WORKDIR /build/questdb/core/target
 

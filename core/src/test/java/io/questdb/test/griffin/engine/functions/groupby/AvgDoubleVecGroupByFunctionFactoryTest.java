@@ -24,28 +24,19 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
 
-        assertQuery13(
-                "avg\n" +
-                        "0.511848387\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b double",
-                "avg\n" +
-                        "0.511848387\n",
-                false,
-                true
-        );
+        assertQuery("avg\n" +
+                        "0.511848387\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_double(2) f from long_sequence(131))", null, "alter table tab add column b double", "avg\n" +
+                        "0.511848387\n", false, true, false);
 
         assertQuery(
                 "avg\tavg2\n" +
@@ -60,18 +51,9 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "avg\n" +
-                        "NaN\n",
-                "select avg(f) from tab",
-                "create table tab as (select cast(null as double) f from long_sequence(33))",
-                null,
-                "insert into tab select 123 from long_sequence(1)",
-                "avg\n" +
-                        "123.0\n",
-                false,
-                true
-        );
+        assertQuery("avg\n" +
+                        "NaN\n", "select avg(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 123 from long_sequence(1)", "avg\n" +
+                        "123.0\n", false, true, false);
     }
 
     @Test

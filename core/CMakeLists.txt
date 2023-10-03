@@ -57,6 +57,7 @@ set(
         src/main/c/share/jit/compiler.cpp
         src/main/c/share/cpprt_overrides.h
         src/main/c/share/cpprt_overrides.cpp
+        src/main/c/share/dedup.cpp
 )
 
 # JNI includes
@@ -324,7 +325,7 @@ if (WIN32)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
 elseif (APPLE)
-    target_link_libraries(questdb -nostdlib++ -dead_strip)
+    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
     target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc)

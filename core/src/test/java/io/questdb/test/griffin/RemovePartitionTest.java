@@ -29,17 +29,17 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RemovePartitionTest extends AbstractGriffinTest {
+public class RemovePartitionTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveSeveralFromTop() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 1000000000l) t from long_sequence(1000)) timestamp (t)) timestamp(t) partition by DAY", sqlExecutionContext);
+            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 1000000000l) t from long_sequence(1000)) timestamp (t)) timestamp(t) partition by DAY");
 
             try (
                     TableReader reader = getReader("tst");

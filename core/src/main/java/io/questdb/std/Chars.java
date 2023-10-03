@@ -117,6 +117,10 @@ public final class Chars {
         }
     }
 
+    public static void base64UrlDecode(CharSequence encoded, DirectByteCharSink target) {
+        base64Decode(encoded, target, base64UrlInverted);
+    }
+
     /**
      * Decodes base64url encoded string into a byte buffer.
      * <p>
@@ -295,8 +299,7 @@ public final class Chars {
     }
 
     /**
-     * Compares two char sequences on assumption and right value is always lower case.
-     * Method converts every char of right sequence before comparing to left sequence.
+     * Case-insensitive comparison of two char sequences.
      *
      * @param l left sequence
      * @param r right sequence
@@ -312,13 +315,7 @@ public final class Chars {
             return false;
         }
 
-        for (int i = 0; i < ll; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
-                return false;
-            }
-        }
-
-        return true;
+        return equalsCharsIgnoreCase(l, r, ll);
     }
 
     public static boolean equalsIgnoreCaseNc(@NotNull CharSequence l, @Nullable CharSequence r) {
@@ -396,6 +393,18 @@ public final class Chars {
         int h = 0;
         for (int p = lo; p < hi; p++) {
             h = 31 * h + value.charAt(p);
+        }
+        return h;
+    }
+
+    public static int hashCode(char @NotNull [] value, int lo, int hi) {
+        if (hi == lo) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = lo; p < hi; p++) {
+            h = 31 * h + value[p];
         }
         return h;
     }
@@ -563,6 +572,19 @@ public final class Chars {
         return true;
     }
 
+    public static boolean isDoubleQuote(char c) {
+        return c == '"';
+    }
+
+    public static boolean isDoubleQuoted(CharSequence s) {
+        if (s == null || s.length() < 2) {
+            return false;
+        }
+
+        char open = s.charAt(0);
+        return isDoubleQuote(open) && open == s.charAt(s.length() - 1);
+    }
+
     public static boolean isMalformed3(int b1, int b2, int b3) {
         return b1 == -32 && (b2 & 224) == 128 || (b2 & 192) != 128 || (b3 & 192) != 128;
     }
@@ -606,13 +628,17 @@ public final class Chars {
         return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
-    public static int lastIndexOf(CharSequence s, char c) {
-        for (int i = s.length() - 1; i > -1; i--) {
-            if (s.charAt(i) == c) {
+    public static int lastIndexOf(CharSequence sequence, char term) {
+        for (int i = sequence.length() - 1; i > -1; i--) {
+            if (sequence.charAt(i) == term) {
                 return i;
             }
         }
         return -1;
+    }
+
+    public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
+        return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
     }
 
     public static int lowerCaseAsciiHashCode(CharSequence value, int lo, int hi) {
@@ -767,6 +793,11 @@ public final class Chars {
 
     public static boolean startsWith(CharSequence _this, char c) {
         return _this.length() > 0 && _this.charAt(0) == c;
+    }
+
+    public static boolean startsWithIgnoreCase(CharSequence _this, CharSequence that) {
+        final int len = that.length();
+        return _this.length() >= len && equalsCharsIgnoreCase(_this, that, len);
     }
 
     public static String stringFromUtf8Bytes(long lo, long hi) {
@@ -1054,6 +1085,51 @@ public final class Chars {
         return true;
     }
 
+    /**
+     * Translates UTF8 sequence into UTF16 sequence and returns number of bytes read from the input sequence.
+     * It terminates transcoding when it encounters one of the following:
+     * <ul>
+     *     <li>end of the input sequence</li>
+     *     <li>terminator byte</li>
+     *     <li>invalid UTF8 sequence</li>
+     * </ul>
+     * The terminator byte must be a valid ASCII character.
+     * <p>
+     * It returns number of bytes consumed from the input sequence and does not include terminator byte.
+     * <p>
+     * When input sequence is invalid, it returns -1 and the sink is left in undefined state and should be cleared before
+     * next use.
+     *
+     * @param seq        input sequence encoded in UTF8
+     * @param sink       sink to write UTF16 characters to
+     * @param terminator terminator byte, must be a valid ASCII character
+     * @return number of bytes read or -1 if input sequence is invalid.
+     */
+    public static int utf8toUtf16(ByteSequence seq, CharSinkBase sink, byte terminator) {
+        assert terminator >= 0 : "terminator must be ASCII character";
+
+        int i = 0;
+        int len = seq.length();
+        while (i < len) {
+            byte b = seq.byteAt(i);
+            if (b == terminator) {
+                return i;
+            }
+            if (b < 0) {
+                int n = utf8DecodeMultiByte(seq, i, b, sink);
+                if (n == -1) {
+                    // UTF8 error
+                    return -1;
+                }
+                i += n;
+            } else {
+                sink.put((char) b);
+                ++i;
+            }
+        }
+        return i;
+    }
+
     private static int[] base64CreateInvertedAlphabet(char[] alphabet) {
         int[] inverted = new int[128]; // ASCII only
         Arrays.fill(inverted, (byte) -1);
@@ -1267,12 +1343,21 @@ public final class Chars {
         return true;
     }
 
+    private static boolean equalsCharsIgnoreCase(CharSequence l, CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static int utf8Decode2Bytes(ByteSequence seq, int index, int b1, CharSinkBase sink) {
         if (seq.length() - index < 2) {
             return utf8error();
         }
 
-        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
+        byte b2 = seq.byteAt(index + 1);
         if (isNotContinuation(b2)) {
             return utf8error();
         }
@@ -1338,8 +1423,8 @@ public final class Chars {
             return utf8error();
         }
 
-        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(index + 2);
+        byte b2 = seq.byteAt(index + 1);
+        byte b3 = seq.byteAt(index + 2);
 
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
@@ -1375,9 +1460,9 @@ public final class Chars {
             return utf8error();
         }
 
-        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(index + 2);
-        byte b4 = Unsafe.getUnsafe().getByte(index + 3);
+        byte b2 = seq.byteAt(index + 1);
+        byte b3 = seq.byteAt(index + 2);
+        byte b4 = seq.byteAt(index + 3);
 
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }

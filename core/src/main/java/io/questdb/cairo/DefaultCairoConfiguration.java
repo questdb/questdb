@@ -34,6 +34,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.function.LongSupplier;
 
@@ -83,7 +84,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public String getAttachPartitionSuffix() {
+    public @NotNull String getAttachPartitionSuffix() {
         return TableUtils.ATTACHABLE_DIR_MARKER;
     }
 
@@ -103,7 +104,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getBackupTempDirName() {
+    public @NotNull CharSequence getBackupTempDirName() {
         return "tmp";
     }
 
@@ -118,12 +119,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public BuildInformation getBuildInformation() {
+    public @NotNull BuildInformation getBuildInformation() {
         return buildInformation;
     }
 
     @Override
-    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
     }
 
@@ -168,12 +169,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getConfRoot() {
+    public @NotNull CharSequence getConfRoot() {
         return confRoot;
     }
 
     @Override
-    public LongSupplier getCopyIDSupplier() {
+    public @NotNull LongSupplier getCopyIDSupplier() {
         return importIDSupplier;
     }
 
@@ -218,17 +219,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getDbDirectory() {
+    public @NotNull CharSequence getDbDirectory() {
         return PropServerConfiguration.DB_DIRECTORY;
     }
 
     @Override
-    public DateLocale getDefaultDateLocale() {
+    public @NotNull DateLocale getDefaultDateLocale() {
         return DateFormatUtils.enLocale;
     }
 
     @Override
-    public CharSequence getDefaultMapType() {
+    public @NotNull CharSequence getDefaultMapType() {
         return "fast";
     }
 
@@ -253,7 +254,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public FactoryProvider getFactoryProvider() {
+    public @NotNull FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
 
@@ -263,7 +264,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public FilesFacade getFilesFacade() {
+    public @NotNull FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
     }
 
@@ -439,11 +440,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPageFrameReduceTaskPoolCapacity() {
-        return 4;
-    }
-
-    @Override
     public int getParallelIndexThreshold() {
         return 100000;
     }
@@ -489,7 +485,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public String getRoot() {
+    public @NotNull String getRoot() {
         return root;
     }
 
@@ -504,12 +500,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getSnapshotInstanceId() {
+    public @NotNull CharSequence getSnapshotInstanceId() {
         return "";
     }
 
     @Override
-    public CharSequence getSnapshotRoot() {
+    public @NotNull CharSequence getSnapshotRoot() {
         return snapshotRoot;
     }
 
@@ -701,11 +697,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlMapKeyCapacity() {
-        return 128;
-    }
-
-    @Override
     public int getSqlMapMaxPages() {
         return 1024;
     }
@@ -713,11 +704,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlMapMaxResizes() {
         return 64;
-    }
-
-    @Override
-    public int getSqlMapPageSize() {
-        return 16 * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -786,7 +772,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getSystemTableNamePrefix() {
+    public @NotNull CharSequence getSystemTableNamePrefix() {
         return "__sys";
     }
 
@@ -801,12 +787,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public TelemetryConfiguration getTelemetryConfiguration() {
+    public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }
 
     @Override
-    public TextConfiguration getTextConfiguration() {
+    public CharSequence getTempRenamePendingTablePrefix() {
+        return "temp_5822f658-31f6-11ee-be56-0242ac120002";
+    }
+
+    @Override
+    public @NotNull TextConfiguration getTextConfiguration() {
         return textConfiguration;
     }
 
@@ -821,7 +812,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public VolumeDefinitions getVolumeDefinitions() {
+    public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
     }
 
@@ -846,6 +837,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalMaxLagTxnCount() {
+        return 20;
+    }
+
+    @Override
     public long getWalPurgeInterval() {
         return 30_000;
     }
@@ -858,6 +854,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return 200000;
+    }
+
+    @Override
+    public long getWalSegmentRolloverSize() {
+        return 0;  // watermark level disabled.
     }
 
     @Override
@@ -882,7 +883,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
-        return 500L;
+        return 1000L;
     }
 
     @Override

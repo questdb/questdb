@@ -34,7 +34,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    public static final String TABLE_NAME_COLUMN = "table";
+    public static final String TABLE_NAME_COLUMN = "table_name";
     private static final RecordMetadata METADATA;
     private final TableListRecordCursor cursor;
 
@@ -56,10 +56,6 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("all_tables");
-    }
-
-    @Override
-    protected void _close() {
     }
 
     private static class TableListRecordCursor implements RecordCursor {

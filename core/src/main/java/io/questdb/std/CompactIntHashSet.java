@@ -90,10 +90,6 @@ public class CompactIntHashSet extends AbstractIntHashSet {
         return true;
     }
 
-    public boolean excludes(int key) {
-        return keyIndex(key) > -1;
-    }
-
     @Override
     public int hashCode() {
         int hashCode = 0;
@@ -103,16 +99,6 @@ public class CompactIntHashSet extends AbstractIntHashSet {
             }
         }
         return hashCode;
-    }
-
-    @Override
-    public int remove(int key) {
-        int keyIndex = keyIndex(key);
-        if (keyIndex < 0) {
-            removeAt(keyIndex);
-            return -keyIndex - 1;
-        }
-        return -1;
     }
 
     @Override

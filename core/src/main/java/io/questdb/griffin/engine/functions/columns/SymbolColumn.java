@@ -95,11 +95,6 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
     }

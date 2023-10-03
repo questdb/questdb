@@ -26,8 +26,8 @@ package io.questdb.metrics;
 
 import io.questdb.std.str.CharSink;
 
-class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
-    static final NullCounter INSTANCE = new NullCounter();
+public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
+    public static final NullCounter INSTANCE = new NullCounter();
 
     private NullCounter() {
     }

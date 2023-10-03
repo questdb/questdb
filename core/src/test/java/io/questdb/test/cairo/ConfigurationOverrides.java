@@ -125,11 +125,15 @@ public interface ConfigurationOverrides {
 
     MicrosecondClock getTestMicrosClock();
 
-    long getWalApplyTableTimeQuote();
+    long getWalApplyTableTimeQuota();
+
+    int getWalMaxLagTxnCount();
 
     long getWalPurgeInterval();
 
     long getWalSegmentRolloverRowCount();
+
+    long getWalSegmentRolloverSize();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -261,11 +265,15 @@ public interface ConfigurationOverrides {
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 
-    void setWalApplyTableTimeQuote(long walApplyTableTimeQuote);
+    void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
+
+    void setWalMaxLagTxnCount(int walMaxLagTxnCount);
 
     void setWalPurgeInterval(long walPurgeInterval);
 
     void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount);
+
+    void setWalSegmentRolloverSize(long walSegmentRolloverSize);
 
     void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity);
 

@@ -24,6 +24,33 @@
 
 package io.questdb.cairo.sql;
 
-public class WriterOutOfDateException extends RuntimeException {
-    public static final WriterOutOfDateException INSTANCE = new WriterOutOfDateException();
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.StringSink;
+
+public class WriterOutOfDateException extends RuntimeException implements FlyweightMessageContainer {
+
+    private static final ThreadLocal<WriterOutOfDateException> tlException = new ThreadLocal<>(WriterOutOfDateException::new);
+
+    private final StringSink message = new StringSink();
+
+    public static WriterOutOfDateException of(CharSequence outdatedTableName) {
+        WriterOutOfDateException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new WriterOutOfDateException()) != null;
+        ex.message.clear();
+        ex.message.put(outdatedTableName).put("']");
+        return ex;
+    }
+
+
+    @Override
+    public CharSequence getFlyweightMessage() {
+        return message;
+    }
+
+    @Override
+    public String getMessage() {
+        return message.toString();
+    }
 }

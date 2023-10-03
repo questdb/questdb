@@ -31,7 +31,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -129,7 +128,7 @@ public class LogFactoryTest {
 
             Log logger1 = factory.create("com.questdb.x.y");
             for (int i = 0; i < messageCount; i++) {
-                logger1.criticalW().$("test ").$(i).$();
+                logger1.critical().$("test ").$(i).$();
             }
         } finally {
             factory.close(true);
@@ -229,11 +228,8 @@ public class LogFactoryTest {
             Log logger = factory.create("x");
 
             try {
-                logger.info().$("message 1").$(new Sinkable() {
-                    @Override
-                    public void toSink(CharSink sink) {
-                        throw new NullPointerException();
-                    }
+                logger.info().$("message 1").$(sink1 -> {
+                    throw new NullPointerException();
                 }).$(" message 2").$();
                 Assert.fail();
             } catch (NullPointerException npe) {
@@ -871,7 +867,6 @@ public class LogFactoryTest {
             assertDisabled(logger.debugW());
             assertDisabled(logger.infoW());
             assertDisabled(logger.errorW());
-            assertDisabled(logger.criticalW());
             assertDisabled(logger.advisoryW());
 
             factory.init(null);
@@ -890,7 +885,6 @@ public class LogFactoryTest {
             assertEnabled(logger.debugW());
             assertDisabled(logger.infoW());
             assertEnabled(logger.errorW());
-            assertEnabled(logger.criticalW());
             assertEnabled(logger.advisoryW());
         }
     }

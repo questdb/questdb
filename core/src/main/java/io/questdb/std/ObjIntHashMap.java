@@ -103,6 +103,16 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         putAt(keyIndex(key), key, value);
     }
 
+    public void putAll(ObjIntHashMap<K> other) {
+        K[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryValue) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
     public void putAt(int index, K key, int value) {
         if (index < 0) {
             values[-index - 1] = value;

@@ -28,7 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -64,7 +64,7 @@ public class TableReaderReloadBenchmark {
                             -1,
                             null
                     );
-            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compiler.compile("create table if not exists test(f timestamp) timestamp (f) PARTITION BY DAY", sqlExecutionContext);
             } catch (SqlException e) {
                 throw new ExceptionInInitializerError();
@@ -84,7 +84,7 @@ public class TableReaderReloadBenchmark {
 
     @Setup(Level.Iteration)
     public void setup() throws NumericException {
-        TableToken tableToken = new TableToken("test", "test", 0, false);
+        TableToken tableToken = new TableToken("test", "test", 0, false, false);
         writer = new TableWriter(configuration, tableToken, Metrics.disabled());
         writer.truncate();
         // create 10 partitions
@@ -110,7 +110,7 @@ public class TableReaderReloadBenchmark {
     }
 
     @TearDown(Level.Iteration)
-    public void tearDown() throws NumericException {
+    public void tearDown() {
         System.out.println("writer size = " + Math.max(writer.size(), writer.size()));
         writer.close();
         reader.close();

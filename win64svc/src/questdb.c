@@ -77,7 +77,7 @@ int fileExists(char *file) {
 
 void buildJavaArgs(CONFIG *config) {
     // main class
-    LPCSTR mainClass = "io.questdb/io.questdb.ServerMain";
+    LPCSTR mainClass = QUESTDB_MAIN_CLASS;
 
     // put together static java opts
     LPCSTR javaOpts = "-XX:+UnlockExperimentalVMOptions"
@@ -372,7 +372,7 @@ int qdbRun(int argc, char **argv) {
     eprintf("| | | | | | |/ _ \\/ __| __| | | |  _ \\\n");
     eprintf("| |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n");
     eprintf(" \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n");
-    eprintf("                        www.questdb.io\n\n");
+    eprintf(QUESTDB_BANNER);
 
     CONFIG config;
     initAndParseConfig(argc, argv, &config);

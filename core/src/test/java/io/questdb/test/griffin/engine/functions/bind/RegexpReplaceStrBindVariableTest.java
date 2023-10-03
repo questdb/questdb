@@ -26,20 +26,20 @@ package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RegexpReplaceStrBindVariableTest extends AbstractGriffinTest {
+public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str('foobar','barbaz') s from long_sequence(3))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str('foobar','barbaz') s from long_sequence(3))");
 
-            try (RecordCursorFactory factory = compiler.compile("select regexp_replace(s, $1, $2) from x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select regexp_replace(s, $1, $2) from x")) {
                 bindVariableService.setStr(0, "foo");
                 bindVariableService.setStr(1, "bar");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

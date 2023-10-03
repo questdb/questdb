@@ -26,9 +26,9 @@ package io.questdb.cairo.wal;
 
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
+    public static final int CREATE_TABLE_WALID = -3;
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
     public static final int DROP_TABLE_WALID = -2;
-    public static final int CREATE_TABLE_WALID = -3;
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
@@ -56,4 +56,5 @@ public class WalUtils {
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
+    public static final String WAL_PENDING_FS_MARKER = ".pending";
 }

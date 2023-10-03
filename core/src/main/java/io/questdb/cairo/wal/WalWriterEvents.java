@@ -58,7 +58,11 @@ class WalWriterEvents implements Closeable {
 
     @Override
     public void close() {
-        eventMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    public void close(boolean truncate, byte truncateMode) {
+        eventMem.close(truncate, truncateMode);
         Unsafe.free(longBuffer, Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
         longBuffer = 0L;
         ff.close(indexFd);
@@ -104,6 +108,9 @@ class WalWriterEvents implements Closeable {
                 break;
             case ColumnType.INT:
                 eventMem.putInt(function.getInt(null));
+                break;
+            case ColumnType.IPv4:
+                eventMem.putInt(function.getIPv4(null));
                 break;
             case ColumnType.GEOINT:
                 eventMem.putInt(function.getGeoInt(null));
@@ -220,6 +227,11 @@ class WalWriterEvents implements Closeable {
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         return txn++;
+    }
+
+    /** Size in bytes consumed by the events file, including any symbols. */
+    public long size() {
+        return eventMem.getAppendOffset();
     }
 
     int appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {

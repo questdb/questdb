@@ -24,13 +24,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
 
-public class GroupByTest extends AbstractGriffinTest {
+public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
@@ -41,24 +41,28 @@ public class GroupByTest extends AbstractGriffinTest {
                     "    select 1, 'a' )");
 
             String query1 = "select l,s from t group by l,s";
-            assertPlan(query1,
+            assertPlan(
+                    query1,
                     "GroupBy vectorized: false\n" +
                             "  keys: [l,s]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n");
+                            "        Frame forward scan on: t\n"
+            );
             assertQuery("l\ts\n1\ta\n", query1, null, true, true);
 
             String query2 = "select l as l1,s as s1 from t group by l,s";
             //virtual model must be used here to change aliases
-            assertPlan(query2,
+            assertPlan(
+                    query2,
                     "VirtualRecord\n" +
                             "  functions: [l,s]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [l,s]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n");
+                            "            Frame forward scan on: t\n"
+            );
             assertQuery("l1\ts1\n1\ta\n", query2, null, true, true);
         });
     }
@@ -67,8 +71,10 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2FailOnAggregateFunctionAliasInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            assertError("select x, avg(x) as agx, avg(y) from t group by agx ",
-                    "[48] aggregate functions are not allowed in GROUP BY");
+            assertError(
+                    "select x, avg(x) as agx, avg(y) from t group by agx ",
+                    "[48] aggregate functions are not allowed in GROUP BY"
+            );
         });
     }
 
@@ -76,8 +82,10 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2FailOnAggregateFunctionColumnIndexInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            assertError("select x, avg(x) as agx, avg(y) from t group by 2 ",
-                    "[48] aggregate functions are not allowed in GROUP BY");
+            assertError(
+                    "select x, avg(x) as agx, avg(y) from t group by 2 ",
+                    "[48] aggregate functions are not allowed in GROUP BY"
+            );
         });
     }
 
@@ -205,13 +213,14 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             String query = "select x+1, count(*) " +
                     "from t " +
                     "group by x+1 ";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "VirtualRecord\n" +
                             "  functions: [column,count]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -221,7 +230,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "          functions: [x+1]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "                Frame forward scan on: t\n"
+            );
 
             assertQuery("column\tcount\n" +
                     "2\t2\n", query, null, true, true);
@@ -232,13 +242,14 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             String query = "select case when x < 0 then -1 when x = 0 then 0 else 1 end, count(*) " +
                     "from t " +
                     "group by case when x < 0 then -1 when x = 0 then 0 else 1 end ";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "GroupBy vectorized: false\n" +
                             "  keys: [case]\n" +
                             "  values: [count(*)]\n" +
@@ -246,7 +257,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "      functions: [case([x<0,-1,x=0,0,1])]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n");
+                            "            Frame forward scan on: t\n"
+            );
 
             assertQuery("case\tcount\n" +
                     "1\t2\n", query, null, true, true);
@@ -257,13 +269,14 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             String query = "select case when x+1 < 0 then -1 when x+1 = 0 then 0 else 1 end, count(*) " +
                     "from t " +
                     "group by x+1";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "VirtualRecord\n" +
                             "  functions: [case([column<0,-1,column=0,0,1]),count]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -273,7 +286,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "          functions: [x+1]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "                Frame forward scan on: t\n"
+            );
 
             assertQuery("case\tcount\n" +
                     "1\t2\n", query, null, true, true);
@@ -284,13 +298,14 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             String query = "select x, avg(y), avg(y) + min(y), x+10, avg(x), avg(x) + 10 " +
                     "from t " +
                     "group by x ";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "VirtualRecord\n" +
                             "  functions: [x,avg,avg+min,x+10,avg1,avg1+10]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -298,7 +313,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "      values: [avg(y),min(y),avg(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n");
+                            "            Frame forward scan on: t\n"
+            );
             assertQuery("x\tavg\tcolumn\tcolumn1\tavg1\tcolumn2\n" +
                     "1\t11.5\t22.5\t11\t1.0\t11.0\n", query, null, true, true);
         });
@@ -308,7 +324,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumnsAndBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
 
             bindVariableService.clear();
             bindVariableService.setStr("bv", "x");
@@ -316,7 +332,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "from t " +
                     "group by x ";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "VirtualRecord\n" +
                             "  functions: [x,avg,:bv::string]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -324,7 +341,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "      values: [avg(y)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n");
+                            "            Frame forward scan on: t\n"
+            );
             assertQuery("x\tavg\t:bv\n" +
                     "1\t11.5\tx\n", query, null, true, true);
         });
@@ -334,9 +352,10 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2SuccessOnSelectWithExplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t group by x ";
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "VirtualRecord\n" +
                             "  functions: [x*10,x+avg,min]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -344,7 +363,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "      values: [avg(y),min(y)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n");
+                            "            Frame forward scan on: t\n"
+            );
             assertQuery("column\tcolumn1\tmin\n" +
                     "10\t12.5\t11\n", query, null, true, true);
         });
@@ -354,9 +374,10 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test2SuccessOnSelectWithoutExplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            compile("insert into t values (1, 11), (1, 12);");
+            insert("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t";
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "VirtualRecord\n" +
                             "  functions: [column,x+avg,min]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -366,7 +387,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "          functions: [x*10,y,x]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "                Frame forward scan on: t\n"
+            );
             assertQuery("column\tcolumn1\tmin\n" +
                     "10\t12.5\t11\n", query, null, true, true);
         });
@@ -399,7 +421,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "group by ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -407,7 +430,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "      values: [count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: dat\n");
+                            "            Frame forward scan on: dat\n"
+            );
             assertQuery("date_report\tcount\n" +
                     "1970-01-01T00:00:00.000000Z\t3\n" +
                     "1970-01-02T00:00:00.000000Z\t4\n" +
@@ -423,7 +447,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "from dat ordr " +
                     "group by date_report " +//no alias used here
                     "order by ordr.date_report";
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -431,7 +456,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "      values: [count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: dat\n");
+                            "            Frame forward scan on: dat\n"
+            );
             assertQuery("date_report\tcount\n" +
                     "1970-01-01T00:00:00.000000Z\t3\n" +
                     "1970-01-02T00:00:00.000000Z\t4\n" +
@@ -448,7 +474,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "group by ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -456,7 +483,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "      values: [count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: dat\n");
+                            "            Frame forward scan on: dat\n"
+            );
             assertQuery("date_report\tcount\n" +
                     "1970-01-01T00:00:00.000000Z\t3\n" +
                     "1970-01-02T00:00:00.000000Z\t4\n" +
@@ -472,7 +500,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "from dat ordr " +
                     "group by date_report, ordr.date_report " +
                     "order by ordr.date_report";
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "Sort light\n" +
                             "  keys: [date_report1]\n" +
                             "    VirtualRecord\n" +
@@ -482,7 +511,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "          values: [count(*)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: dat\n");
+                            "                Frame forward scan on: dat\n"
+            );
             assertQuery("date_report\tdate_report1\tcount\n" +
                     "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t3\n" +
                     "1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t4\n" +
@@ -499,7 +529,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "from dat ordr " +
                     "group by dateadd('d', -1, date_report), ordr.date_report " +
                     "order by ordr.date_report";
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
@@ -511,7 +542,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "              functions: [date_report,dateadd('d',-1,date_report)]\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: dat\n");
+                            "                    Frame forward scan on: dat\n"
+            );
             assertQuery("date_report\tminusday\tplusday\tconcat\tcount\n" +
                     "1970-01-01T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t103\t3\n" +
                     "1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t1864000000003\t4\n" +
@@ -529,7 +561,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "group by ordr.date_report\n" +
                     "order by ordr.date_report";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
@@ -539,7 +572,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "          values: [count(*)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: dat\n");
+                            "                Frame forward scan on: dat\n"
+            );
             assertQuery("date_report\tdt\tplusday\tminusday\tcount\n" +
                     "1970-01-01T00:00:00.000000Z\t01.01.1970\t1970-01-02T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t3\n" +
                     "1970-01-02T00:00:00.000000Z\t02.01.1970\t1970-01-03T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t4\n" +
@@ -564,7 +598,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "group by details.date_report " +
                     "order by details.date_report";
 
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
@@ -581,7 +616,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "                    Hash\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: det\n");
+                            "                            Frame forward scan on: det\n"
+            );
             assertQuery("date_report\tdt\tplusday\tmin\tcount\tminminusday\n" +
                     "1970-01-11T00:00:00.000000Z\t11.01.1970\t1970-01-12T00:00:00.000000Z\t3\t3\t1969-12-31T00:00:00.000000Z\n" +
                     "1970-01-12T00:00:00.000000Z\t12.01.1970\t1970-01-13T00:00:00.000000Z\t1\t4\t1970-01-01T00:00:00.000000Z\n" +
@@ -627,7 +663,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t3\t2\n" +
                         "1\t1\t3\n",
                 "select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true);
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
+        );
     }
 
     @Test
@@ -638,12 +675,14 @@ public class GroupByTest extends AbstractGriffinTest {
                         "2\t3\t2\n" +
                         "2\t1\t3\n",
                 "select key1+1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true);
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
+        );
     }
 
     @Test
     public void testGroupByAllIndexedColumns() throws Exception {
-        assertQuery("time\ts1\tfirst\tfirst1\tfirst2\n" +
+        assertQuery(
+                "time\ts1\tfirst\tfirst1\tfirst2\n" +
                         "2023-05-16T00:00:00.000000Z\ta\tfoo\tNaN\t0.08486964232560668\n" +
                         "2023-05-16T00:02:00.000000Z\tb\tfoo\t0.8899286912289663\t0.6254021542412018\n" +
                         "2023-05-16T00:05:00.000000Z\tc\tfoo\t0.1985581797355932\t0.33608255572515877\n",
@@ -674,7 +713,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100))", null, true, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100))", null, true, true
+        );
     }
 
     @Test
@@ -683,7 +723,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by 1, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+        );
     }
 
     @Test
@@ -692,7 +733,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by key, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+        );
     }
 
     @Test
@@ -701,7 +743,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by key+1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+        );
     }
 
     @Test
@@ -710,7 +753,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1 as z, count(*) from t group by key, 1 order by z",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+        );
     }
 
     @Test
@@ -719,7 +763,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+        );
     }
 
     @Test
@@ -728,7 +773,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "2\t50\n" +
                         "1\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by key+3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+        );
     }
 
     @Test
@@ -737,7 +783,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t0\t0\t50\n" +
                         "2\t1\t1\t50\n",
                 "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true
+        );
     }
 
     @Test
@@ -748,7 +795,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t1\t3\n" +
                         "1\t3\t2\n",
                 "select key1 as k1, key2 as k2, count(*) from t group by k2, k1, k2 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true);
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
+        );
     }
 
     @Test
@@ -760,7 +808,8 @@ public class GroupByTest extends AbstractGriffinTest {
                     "    select 1, 'a' )");
 
             String query = "select l,s, l+1 from t group by l+1,s, l, l+2";
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "VirtualRecord\n" +
                             "  functions: [l,s,column]\n" +
                             "    GroupBy vectorized: false\n" +
@@ -769,7 +818,8 @@ public class GroupByTest extends AbstractGriffinTest {
                             "          functions: [l,s,l+1,l+2]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "                Frame forward scan on: t\n"
+            );
 
             assertQuery("l\ts\tcolumn\n" +
                     "1\ta\t2\n", query, null, true, true);
@@ -780,14 +830,16 @@ public class GroupByTest extends AbstractGriffinTest {
     public void testGroupByIndexOutsideSelectList() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table tab as (select x, x%2 as y from long_sequence(2))");
-            assertError("select * from tab group by 5",
-                    "[27] GROUP BY position 5 is not in select list");
+            assertError(
+                    "select * from tab group by 5",
+                    "[27] GROUP BY position 5 is not in select list"
+            );
         });
     }
 
     @Test
     public void testGroupByInvalidOrderByExpression() throws Exception {
-        assertFailure(
+        assertException(
                 "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
                 "CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);",
                 69,
@@ -818,13 +870,15 @@ public class GroupByTest extends AbstractGriffinTest {
                     "    select 1, 'a', -2 )");
 
             String query = "select s, max, max(l) from t group by s, max";
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "GroupBy vectorized: false\n" +
                             "  keys: [s,max]\n" +
                             "  values: [max(l)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n");
+                            "        Frame forward scan on: t\n"
+            );
 
             assertQuery("s\tmax\tmax1\n" +
                     "a\t-1\t1\n" +
@@ -995,7 +1049,8 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t1\t1\t3\n" +
                         "1\t3\t3\t2\n",
                 "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true);
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true
+        );
     }
 
     @Test
@@ -1007,14 +1062,16 @@ public class GroupByTest extends AbstractGriffinTest {
                     "    select 1, 'a' )");
 
             String query = "select l,s,rnd_int(0,1,0)/10 from t group by l,s";
-            assertPlan(query,
+            assertPlan(
+                    query,
                     "VirtualRecord\n" +
                             "  functions: [l,s,rnd_int(0,1,0)/10]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [l,s]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n");
+                            "            Frame forward scan on: t\n"
+            );
             assertQuery("l\ts\tcolumn\n" +
                     "1\ta\t0\n", query, null, true, true);
         });
@@ -1022,7 +1079,8 @@ public class GroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testNestedGroupByWithExplicitGroupByClause() throws Exception {
-        assertQuery("url\tu_count\tcnt\tavg_m_sum\n" +
+        assertQuery(
+                "url\tu_count\tcnt\tavg_m_sum\n" +
                         "RXPEHNRXGZ\t4\t4\t414.25\n" +
                         "DXYSBEOUOJ\t1\t1\t225.0\n" +
                         "SXUXIBBTGP\t2\t2\t379.5\n" +
@@ -1056,36 +1114,40 @@ public class GroupByTest extends AbstractGriffinTest {
 
     @Test
     public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
-        assertCompile("create table tst ( ts timestamp ) timestamp(ts);");
-        assertCompile("insert into tst values ('2023-05-29T15:30:00.000000Z')");
+        ddl("create table tst ( ts timestamp ) timestamp(ts);");
+        insert("insert into tst values ('2023-05-29T15:30:00.000000Z')");
 
-        assertCompile("create table data ( dts timestamp, s symbol ) timestamp(dts);");
-        assertCompile("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
+        ddl("create table data ( dts timestamp, s symbol ) timestamp(dts);");
+        insert("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
 
         //single table 
         assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
                 "SELECT ts AS ref0 " +
                         "FROM tst " +
                         "GROUP BY ts " +
-                        "ORDER BY ts", "", true, true);
+                        "ORDER BY ts", "", true, true
+        );
 
         assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
                 "SELECT tst.ts AS ref0 " +
                         "FROM tst " +
                         "GROUP BY tst.ts " +
-                        "ORDER BY tst.ts", "", true, true);
+                        "ORDER BY tst.ts", "", true, true
+        );
 
         assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
                 "SELECT tst.ts AS ref0 " +
                         "FROM tst " +
                         "GROUP BY ts " +
-                        "ORDER BY tst.ts", "", true, true);
+                        "ORDER BY tst.ts", "", true, true
+        );
 
         assertQuery("ref0\n2023-05-29T15:30:00.000000Z\n",
                 "SELECT ts AS ref0 " +
                         "FROM tst " +
                         "GROUP BY tst.ts " +
-                        "ORDER BY ts", "", true, true);
+                        "ORDER BY ts", "", true, true
+        );
 
         //joins
         for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
@@ -1094,21 +1156,23 @@ public class GroupByTest extends AbstractGriffinTest {
                             "FROM tst " +
                             join +
                             "GROUP BY tst.ts, data.dts " +
-                            "ORDER BY ts", "", true, true);
+                            "ORDER BY ts", "", true, true
+            );
 
             assertQuery("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
                     "SELECT ts AS ref0, dts " +
                             "FROM tst " +
                             join +
                             "GROUP BY ts, data.dts " +
-                            "ORDER BY tst.ts", "", true, true);
+                            "ORDER BY tst.ts", "", true, true
+            );
         }
     }
 
     @Test
     public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
-        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
-        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
         drainWalQueue();
 
         String query = "SELECT DISTINCT tab.created AS ref0 " +
@@ -1117,7 +1181,8 @@ public class GroupByTest extends AbstractGriffinTest {
                 "GROUP BY tab.created " +
                 "ORDER BY tab.created";
 
-        assertPlan(query,
+        assertPlan(
+                query,
                 "Sort light\n" +
                         "  keys: [ref0]\n" +
                         "    Distinct\n" +
@@ -1126,24 +1191,25 @@ public class GroupByTest extends AbstractGriffinTest {
                         "          functions: [created]\n" +
                         "            GroupBy vectorized: false\n" +
                         "              keys: [created]\n" +
-                        "                Async JIT Filter\n" +
+                        "                Async JIT Filter workers: 1\n" +
                         "                  filter: created!=null\n" +
-                        "                  workers: 1\n" +
                         "                    DataFrame\n" +
                         "                        Row forward scan\n" +
-                        "                        Frame forward scan on: tab\n");
+                        "                        Frame forward scan on: tab\n"
+        );
 
         assertQuery("ref0\n" +
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000002Z\n" +
                         "1970-01-01T00:00:00.000003Z\n",
-                query, null, true, false);
+                query, null, true, false
+        );
     }
 
     @Test
     public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
-        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
-        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
         drainWalQueue();
 
         String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
@@ -1152,7 +1218,8 @@ public class GroupByTest extends AbstractGriffinTest {
                 "GROUP BY tab.created " +
                 "ORDER BY dateadd('h', 1, tab.created)";
 
-        assertPlan(query,
+        assertPlan(
+                query,
                 "Sort light\n" +
                         "  keys: [ref0]\n" +
                         "    Distinct\n" +
@@ -1161,24 +1228,25 @@ public class GroupByTest extends AbstractGriffinTest {
                         "          functions: [dateadd('h',1,created)]\n" +
                         "            GroupBy vectorized: false\n" +
                         "              keys: [created]\n" +
-                        "                Async JIT Filter\n" +
+                        "                Async JIT Filter workers: 1\n" +
                         "                  filter: created!=null\n" +
-                        "                  workers: 1\n" +
                         "                    DataFrame\n" +
                         "                        Row forward scan\n" +
-                        "                        Frame forward scan on: tab\n");
+                        "                        Frame forward scan on: tab\n"
+        );
 
         assertQuery("ref0\n" +
                         "1970-01-01T01:00:00.000001Z\n" +
                         "1970-01-01T01:00:00.000002Z\n" +
                         "1970-01-01T01:00:00.000003Z\n",
-                query, null, true, false);
+                query, null, true, false
+        );
     }
 
     @Test
     public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
-        assertCompile("create table tab (created timestamp, i int) timestamp(created)");
-        assertCompile("insert into tab select x::timestamp, x from long_sequence(3)");
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
         drainWalQueue();
 
         String query = "SELECT DISTINCT tab.created " +
@@ -1187,36 +1255,38 @@ public class GroupByTest extends AbstractGriffinTest {
                 "GROUP BY tab.created " +
                 "ORDER BY tab.created";
 
-        assertPlan(query,
+        assertPlan(
+                query,
                 "Sort light\n" +
                         "  keys: [created]\n" +
                         "    Distinct\n" +
                         "      keys: created\n" +
                         "        GroupBy vectorized: false\n" +
                         "          keys: [created]\n" +
-                        "            Async JIT Filter\n" +
+                        "            Async JIT Filter workers: 1\n" +
                         "              filter: created!=null\n" +
-                        "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
-                        "                    Frame forward scan on: tab\n");
+                        "                    Frame forward scan on: tab\n"
+        );
 
         assertQuery("created\n" +
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000002Z\n" +
                         "1970-01-01T00:00:00.000003Z\n",
-                query, null, true, false);
+                query, null, true, false
+        );
     }
 
     @Test
     public void testSelectMatchingButInDifferentOrderThanGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x (" +
+            ddl("create table x (" +
                     "    sym symbol," +
                     "    bid double, " +
                     "    ts timestamp " +
                     ") timestamp(ts) partition by DAY");
-            compile("insert into x " +
+            ddl("insert into x " +
                     " select rnd_symbol('A', 'B'), rnd_double(), dateadd('m', x::int, 0::timestamp) " +
                     " from long_sequence(20)");
 
@@ -1241,15 +1311,18 @@ public class GroupByTest extends AbstractGriffinTest {
     public void testStarIsNotAllowedInGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table tab as (select x, x%2 as y from long_sequence(2))");
-            assertError("select * from tab group by tab.*",
-                    "[27] '*' is not allowed in GROUP BY");
+            assertError(
+                    "select * from tab group by tab.*",
+                    "[27] '*' is not allowed in GROUP BY"
+            );
         });
     }
 
     private void assertError(String query, String errorMessage) {
         try {
             assertQuery(null, query,
-                    null, true, true);
+                    null, true, true
+            );
             Assert.fail();
         } catch (SqlException sqle) {
             //sqle.printStackTrace();

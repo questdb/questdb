@@ -58,11 +58,11 @@ public class HttpResponseSink implements Closeable, Mutable {
     private boolean compressionComplete;
     private int crc = 0;
     private boolean deflateBeforeSend = false;
-    private int fd;
     private boolean headersSent;
+    private Socket socket;
     private long total = 0;
     private long totalBytesSent = 0;
-    private long z_streamp = 0;
+    private long zStreamPtr = 0;
 
     public HttpResponseSink(HttpContextConfiguration configuration) {
         final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -86,13 +86,13 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     @Override
     public void close() {
-        if (z_streamp != 0) {
-            Zip.deflateEnd(z_streamp);
-            z_streamp = 0;
+        if (zStreamPtr != 0) {
+            Zip.deflateEnd(zStreamPtr);
+            zStreamPtr = 0;
             compressOutBuffer.close();
         }
         buffer.close();
-        fd = -1;
+        socket = null;
     }
 
     public HttpChunkedResponseSocket getChunkedSocket() {
@@ -132,8 +132,8 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     public void setDeflateBeforeSend(boolean deflateBeforeSend) {
         this.deflateBeforeSend = deflateBeforeSend;
-        if (z_streamp == 0 && deflateBeforeSend) {
-            z_streamp = Zip.deflateInit();
+        if (zStreamPtr == 0 && deflateBeforeSend) {
+            zStreamPtr = Zip.deflateInit();
             compressOutBuffer.reopen();
         }
     }
@@ -149,9 +149,9 @@ public class HttpResponseSink implements Closeable, Mutable {
         int nInAvailable = (int) buffer.getReadNAvailable();
         if (nInAvailable > 0) {
             long inAddress = buffer.getReadAddress();
-            LOG.debug().$("Zip.setInput [inAddress=").$(inAddress).$(", nInAvailable=").$(nInAvailable).$(']').$();
+            LOG.debug().$("Zip.setInput [inAddress=").$(inAddress).$(", nInAvailable=").$(nInAvailable).I$();
             buffer.write64BitZeroPadding();
-            Zip.setInput(z_streamp, inAddress, nInAvailable);
+            Zip.setInput(zStreamPtr, inAddress, nInAvailable);
         }
 
         int ret;
@@ -160,9 +160,9 @@ public class HttpResponseSink implements Closeable, Mutable {
         do {
             int sz = (int) compressOutBuffer.getWriteNAvailable() - 8;
             long p = compressOutBuffer.getWriteAddress(0);
-            LOG.debug().$("deflate starting [p=").$(p).$(", sz=").$(sz).$(", chunkedRequestDone=").$(chunkedRequestDone).$(']').$();
-            ret = Zip.deflate(z_streamp, p, sz, chunkedRequestDone);
-            len = sz - Zip.availOut(z_streamp);
+            LOG.debug().$("deflate starting [p=").$(p).$(", sz=").$(sz).$(", chunkedRequestDone=").$(chunkedRequestDone).I$();
+            ret = Zip.deflate(zStreamPtr, p, sz, chunkedRequestDone);
+            len = sz - Zip.availOut(zStreamPtr);
             compressOutBuffer.onWrite(len);
             if (ret < 0) {
                 // This is not an error, zlib just couldn't do any work with the input/output buffers it was provided.
@@ -173,7 +173,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 }
             }
 
-            int availIn = Zip.availIn(z_streamp);
+            int availIn = Zip.availIn(zStreamPtr);
             int nInConsumed = nInAvailable - availIn;
             if (nInConsumed > 0) {
                 this.crc = Zip.crc32(this.crc, buffer.getReadAddress(), nInConsumed);
@@ -182,7 +182,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 nInAvailable = availIn;
             }
 
-            LOG.debug().$("deflate finished [ret=").$(ret).$(", len=").$(len).$(", availIn=").$(availIn).$(']').$();
+            LOG.debug().$("deflate finished [ret=").$(ret).$(", len=").$(len).$(", availIn=").$(availIn).I$();
         } while (len == 0 && nInAvailable > 0);
 
         if (nInAvailable == 0) {
@@ -223,14 +223,18 @@ public class HttpResponseSink implements Closeable, Mutable {
         sendBuffer(buffer);
     }
 
+    private int getFd() {
+        return socket != null ? socket.getFd() : -1;
+    }
+
     private void prepareHeaderSink() {
         buffer.prepareToReadFromBuffer(false, false);
         headerImpl.prepareToSend();
     }
 
     private void resetZip() {
-        if (z_streamp != 0) {
-            Zip.deflateReset(z_streamp);
+        if (zStreamPtr != 0) {
+            Zip.deflateReset(zStreamPtr);
             compressOutBuffer.clear();
             crc = 0;
             total = 0;
@@ -243,13 +247,13 @@ public class HttpResponseSink implements Closeable, Mutable {
     private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int nSend = (int) sendBuf.getReadNAvailable();
         while (nSend > 0) {
-            int n = nf.send(fd, sendBuf.getReadAddress(), nSend);
+            int n = socket.send(sendBuf.getReadAddress(), nSend);
             if (n < 0) {
                 // disconnected
                 LOG.error()
                         .$("disconnected [errno=").$(nf.errno())
-                        .$(", fd=").$(fd)
-                        .$(']').$();
+                        .$(", fd=").$(socket.getFd())
+                        .I$();
                 throw PeerDisconnectedException.INSTANCE;
             }
             if (n == 0) {
@@ -278,9 +282,9 @@ public class HttpResponseSink implements Closeable, Mutable {
         return totalBytesSent;
     }
 
-    void of(int fd) {
-        this.fd = fd;
-        if (fd > -1) {
+    void of(Socket socket) {
+        this.socket = socket;
+        if (socket != null) {
             this.buffer.reopen();
         }
     }
@@ -399,7 +403,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 int len = EOF_CHUNK.length();
                 Chars.asciiStrCpy(EOF_CHUNK, len, _wptr);
                 _wptr += len;
-                LOG.debug().$("end chunk sent [fd=").$(fd).$(']').$();
+                LOG.debug().$("end chunk sent [fd=").$(getFd()).I$();
             }
         }
 
@@ -472,7 +476,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public void shutdownWrite() {
-            nf.shutdown(fd, Net.SHUT_WR);
+            socket.shutdown(Net.SHUT_WR);
         }
 
         @Override
@@ -710,7 +714,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         public void sendStatusWithHeader(int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
             buffer.clearAndPrepareToWriteToBuffer();
             final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
-            headerImpl.put(header);
+            headerImpl.put(header).put(Misc.EOL);
             prepareHeaderSink();
             flushSingle();
             buffer.clearAndPrepareToWriteToBuffer();

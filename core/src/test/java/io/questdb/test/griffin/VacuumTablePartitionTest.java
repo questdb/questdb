@@ -26,21 +26,21 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class VacuumTablePartitionTest extends AbstractGriffinTest {
+public class VacuumTablePartitionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumExceedsQueueSize() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table \"таблица\"  (x long, ts timestamp) timestamp(ts) partition by month", sqlExecutionContext);
+            ddl("create table \"таблица\"  (x long, ts timestamp) timestamp(ts) partition by month");
             try {
                 int n = engine.getConfiguration().getO3PurgeDiscoveryQueueCapacity() * 2;
                 for (int i = 0; i < n; i++) {
-                    compiler.compile("VACUUM partitions \"таблица\";", sqlExecutionContext);
+                    ddl("VACUUM partitions \"таблица\";");
                 }
                 Assert.fail();
             } catch (SqlException ex) {
@@ -50,7 +50,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
             }
 
             // cleanup
-            try (O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
+            try (O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)) {
                 purgeDiscoveryJob.drain(0);
             }
         });
@@ -60,8 +60,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     public void testVacuumSyntaxError1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("vacuum asdf", sqlExecutionContext);
-                Assert.fail();
+                assertException("vacuum asdf");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "'partitions' expected");
                 Assert.assertEquals("vacuum ".length(), ex.getPosition());
@@ -73,8 +72,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     public void testVacuumSyntaxError2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("vacuum partitions asdfad", sqlExecutionContext);
-                Assert.fail();
+                assertException("vacuum partitions asdfad");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist [table=asdfad]");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
@@ -86,8 +84,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     public void testVacuumSyntaxError4() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("vacuum partitions ", sqlExecutionContext);
-                Assert.fail();
+                assertException("vacuum partitions ");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table name expected");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
@@ -98,10 +95,9 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumSyntaxErrorNoEOL() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tbl (x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            ddl("create table tbl (x long, ts timestamp) timestamp(ts)");
             try {
-                compiler.compile("vacuum partitions tbl asdf", sqlExecutionContext);
-                Assert.fail();
+                assertException("vacuum partitions tbl asdf");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "end of line or ';' expected");
                 Assert.assertEquals("vacuum partitions tbl ".length(), ex.getPosition());
@@ -112,10 +108,9 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumSyntaxErrorNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tbl (x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            ddl("create table tbl (x long, ts timestamp) timestamp(ts)");
             try {
-                compiler.compile("vacuum partitions tbl", sqlExecutionContext);
-                Assert.fail();
+                assertException("vacuum partitions tbl");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table 'tbl' is not partitioned");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
@@ -127,8 +122,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     public void testVacuumSyntaxErrorTableSpecialChars() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("VACUUM partitions ..\\root", sqlExecutionContext);
-                Assert.fail();
+                assertException("VACUUM partitions ..\\root");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "'.' is an invalid table name");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
@@ -139,12 +133,12 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumSyntaxQuotedTableOk() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tbl (x long, ts timestamp) timestamp(ts) partition by month", sqlExecutionContext);
-            compiler.compile("VACUUM partitions 'tbl'", sqlExecutionContext);
-            compiler.compile("VACUUM PARTITIONS tbl;", sqlExecutionContext);
+            ddl("create table tbl (x long, ts timestamp) timestamp(ts) partition by month");
+            ddl("VACUUM partitions 'tbl'");
+            ddl("VACUUM PARTITIONS tbl;");
 
-            compiler.compile("create table \"tbl with space\" (x long, ts timestamp) timestamp(ts) partition by month", sqlExecutionContext);
-            compiler.compile("VACUUM PARTITIONS \"tbl with space\";", sqlExecutionContext);
+            ddl("create table \"tbl with space\" (x long, ts timestamp) timestamp(ts) partition by month");
+            ddl("VACUUM PARTITIONS \"tbl with space\";");
         });
     }
 }

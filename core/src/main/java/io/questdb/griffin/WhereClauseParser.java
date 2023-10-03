@@ -952,7 +952,7 @@ public final class WhereClauseParser implements Mutable {
             boolean latestByMultiColumn,
             TableReader reader
     ) throws SqlException {
-        if (nodesEqual(a, b) && !a.hasLeafs() && !b.hasLeafs()) {
+        if (nodesEqual(a, b) && a.noLeafs() && b.noLeafs()) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return true;
         }
@@ -1814,15 +1814,17 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
-    private boolean removeAndIntrinsics(AliasTranslator translator,
-                                        IntrinsicModel model,
-                                        ExpressionNode node,
-                                        RecordMetadata m,
-                                        FunctionParser functionParser,
-                                        RecordMetadata metadata,
-                                        SqlExecutionContext executionContext,
-                                        boolean latestByMultiColumn,
-                                        TableReader reader) throws SqlException {
+    private boolean removeAndIntrinsics(
+            AliasTranslator translator,
+            IntrinsicModel model,
+            ExpressionNode node,
+            RecordMetadata m,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            TableReader reader
+    ) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN:
                 return analyzeIn(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);

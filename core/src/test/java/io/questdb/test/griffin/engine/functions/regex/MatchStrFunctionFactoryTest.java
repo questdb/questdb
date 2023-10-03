@@ -26,21 +26,20 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
+public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                compiler.compile("select * from x where name ~ null", sqlExecutionContext);
-                Assert.fail();
+                assertException("select * from x where name ~ null");
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
@@ -51,10 +50,9 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                compiler.compile("select * from x where name ~ 'XJ**'", sqlExecutionContext);
-                Assert.fail();
+                assertException("select * from x where name ~ 'XJ**'");
             } catch (SqlException e) {
                 Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
@@ -84,9 +82,9 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
                     "HXJULSPH\n" +
                     "IPCBXJG\n" +
                     "XJN\n";
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ~ 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name ~ 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
