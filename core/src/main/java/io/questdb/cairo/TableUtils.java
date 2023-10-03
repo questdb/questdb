@@ -910,13 +910,17 @@ public final class TableUtils {
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {
             if (!ff.touch(path)) {
-                LOG.error().$("cannot touch '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
+                if (verbose) {
+                    LOG.error().$("cannot touch '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
+                }
             }
         }
 
         int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
-            LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
+            if (verbose) {
+                LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
+            }
             return -1;
         }
         if (ff.lock(fd) != 0) {
