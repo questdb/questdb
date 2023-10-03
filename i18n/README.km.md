@@ -150,11 +150,9 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   នៃ QuestDB ហើយដាក់សំណើទាញជាមួយនឹងការផ្លាស់ប្តូរដែលបានស្នើឡើងរបស់អ្នក។
 
-✨ As a sign of our gratitude, we also send **QuestDB swag** to our
-contributors. [Claim your swag here.](https://questdb.io/community)
+✨ ជាសញ្ញានៃការដឹងគុណរបស់យើង យើងក៏ផ្ញើ ** QuestDB swag ** ទៅកាន់របស់យើង។ អ្នករួមចំណែក។ [ទាមទារ swag(អាវយឺត) របស់អ្នកនៅទីនេះ។](https://questdb.io/community)
 
-A big thanks goes to the following wonderful people who have contributed to
-QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+សូមថ្លែងអំណរគុណយ៉ាងជ្រាលជ្រៅចំពោះមនុស្សអស្ចារ្យខាងក្រោមដែលបានរួមចំណែកដល់ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
