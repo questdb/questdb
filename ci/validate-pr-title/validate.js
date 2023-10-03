@@ -8,7 +8,6 @@ const allowedTypes = [
   "perf",
   "test",
   "ci",
-  "chore",
   "revert",
 ];
 
