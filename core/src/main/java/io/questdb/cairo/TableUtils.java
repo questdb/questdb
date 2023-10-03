@@ -913,6 +913,7 @@ public final class TableUtils {
                 if (verbose) {
                     LOG.error().$("cannot touch '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
                 }
+                return -1;
             }
         }
 
