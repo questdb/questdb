@@ -424,7 +424,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(TableToken tableToken, @NotNull String lockReason) {
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             return pendingWriters.valueAt(index);
@@ -433,7 +433,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(CharSequence tableName, @NotNull String lockReason) {
         return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
     }
 
