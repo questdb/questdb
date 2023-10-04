@@ -350,7 +350,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
     }
 
-    @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType);
         if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null
@@ -364,7 +363,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         parseValue(value, ColumnType.SYMBOL, cache, false);
     }
 
-    @SuppressWarnings("unused")
     private void parseTagValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         parseValueNewTable(value, ColumnType.SYMBOL);
     }
@@ -404,6 +402,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                     case ColumnType.STRING:
                         valid = columnTypeTag == ColumnType.STRING ||
                                 columnTypeTag == ColumnType.CHAR ||
+                                columnTypeTag == ColumnType.IPv4 ||
                                 isForField &&
                                         (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
                         break;
@@ -614,6 +613,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return false;
         }
 
         @Override

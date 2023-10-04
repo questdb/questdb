@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -44,9 +44,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.util.ServiceLoader;
-
-public class WhereClauseParserTest extends AbstractGriffinTest {
+public class WhereClauseParserTest extends AbstractCairoTest {
 
     private static RecordMetadata metadata;
     private static RecordMetadata noDesignatedTimestampNorIdxMetadata;
@@ -61,7 +59,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
     private final WhereClauseParser e = new WhereClauseParser();
     private final FunctionParser functionParser = new FunctionParser(
             configuration,
-            new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+            engine.getFunctionFactoryCache()
     );
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
     private final RpnBuilder rpn = new RpnBuilder();
@@ -70,7 +68,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
 
         // same as x but with different number of values in symbol maps
         try (TableModel model = new TableModel(configuration, "v", PartitionBy.NONE)) {
@@ -163,7 +161,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         reader = Misc.free(reader);
         metadata = null;
         noTimestampReader = Misc.free(noTimestampReader);
@@ -174,7 +172,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
         noDesignatedTimestampNorIdxMetadata = null;
         nonEmptyReader = Misc.free(nonEmptyReader);
         nonEmptyMetadata = null;
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override
@@ -1743,7 +1741,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
             modelOf("sym in ()");
             Assert.fail("exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Too few arguments");
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few arguments");
         }
     }
 
@@ -2012,7 +2010,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
             modelOf("timestamp in ()");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Too few arg");
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few arg");
         }
     }
 
@@ -2375,7 +2373,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
             modelOf("not (ex in  ()) and timestamp = '2015-05-11'");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Too few");
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
             Assert.assertEquals(8, e.getPosition());
         }
     }
@@ -2960,66 +2958,74 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
-        return e.extract(
-                column -> column,
-                compiler.testParseExpression(seq, queryModel),
-                metadata,
-                preferredColumn,
-                metadata.getTimestampIndex(),
-                functionParser,
-                metadata,
-                sqlExecutionContext,
-                false,
-                reader
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return e.extract(
+                    column -> column,
+                    compiler.testParseExpression(seq, queryModel),
+                    metadata,
+                    preferredColumn,
+                    metadata.getTimestampIndex(),
+                    functionParser,
+                    metadata,
+                    sqlExecutionContext,
+                    false,
+                    reader
+            );
+        }
     }
 
     private IntrinsicModel noDesignatedTimestampNotIdxModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
-        return e.extract(
-                column -> column,
-                compiler.testParseExpression(seq, queryModel),
-                noDesignatedTimestampNorIdxMetadata,
-                null,
-                noDesignatedTimestampNorIdxMetadata.getTimestampIndex(),
-                functionParser,
-                metadata,
-                sqlExecutionContext,
-                false,
-                noDesignatedTimestampNorIdxReader
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return e.extract(
+                    column -> column,
+                    compiler.testParseExpression(seq, queryModel),
+                    noDesignatedTimestampNorIdxMetadata,
+                    null,
+                    noDesignatedTimestampNorIdxMetadata.getTimestampIndex(),
+                    functionParser,
+                    metadata,
+                    sqlExecutionContext,
+                    false,
+                    noDesignatedTimestampNorIdxReader
+            );
+        }
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
-        return e.extract(
-                column -> column,
-                compiler.testParseExpression(seq, queryModel),
-                noTimestampMetadata,
-                null,
-                noTimestampMetadata.getTimestampIndex(),
-                functionParser,
-                metadata,
-                sqlExecutionContext,
-                false,
-                noTimestampReader
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return e.extract(
+                    column -> column,
+                    compiler.testParseExpression(seq, queryModel),
+                    noTimestampMetadata,
+                    null,
+                    noTimestampMetadata.getTimestampIndex(),
+                    functionParser,
+                    metadata,
+                    sqlExecutionContext,
+                    false,
+                    noTimestampReader
+            );
+        }
     }
 
     private IntrinsicModel nonEmptyModelOf() throws SqlException {
         queryModel.clear();
-        return e.extract(
-                column -> column,
-                compiler.testParseExpression("sym = 'X' and ex = 'Y' and mode = 'Z'", queryModel),
-                nonEmptyMetadata,
-                null,
-                nonEmptyMetadata.getTimestampIndex(),
-                functionParser,
-                metadata,
-                sqlExecutionContext,
-                false,
-                nonEmptyReader
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return e.extract(
+                    column -> column,
+                    compiler.testParseExpression("sym = 'X' and ex = 'Y' and mode = 'Z'", queryModel),
+                    nonEmptyMetadata,
+                    null,
+                    nonEmptyMetadata.getTimestampIndex(),
+                    functionParser,
+                    metadata,
+                    sqlExecutionContext,
+                    false,
+                    nonEmptyReader
+            );
+        }
     }
 
     private IntrinsicModel runWhereCompareToModelTest(String where, String expected) throws SqlException {
@@ -3119,18 +3125,20 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
 
     private IntrinsicModel unindexedModelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
-        return e.extract(
-                column -> column,
-                compiler.testParseExpression(seq, queryModel),
-                unindexedMetadata,
-                preferredColumn,
-                unindexedMetadata.getTimestampIndex(),
-                functionParser,
-                metadata,
-                sqlExecutionContext,
-                false,
-                unindexedReader
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return e.extract(
+                    column -> column,
+                    compiler.testParseExpression(seq, queryModel),
+                    unindexedMetadata,
+                    preferredColumn,
+                    unindexedMetadata.getTimestampIndex(),
+                    functionParser,
+                    metadata,
+                    sqlExecutionContext,
+                    false,
+                    unindexedReader
+            );
+        }
     }
 
     @FunctionalInterface

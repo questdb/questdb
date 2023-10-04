@@ -135,7 +135,7 @@ public class GcUtf8StringTest {
 
         final String src = "abc";
         final GcUtf8String s2 = new GcUtf8String(src);
-        final boolean identity = src == s2.toString();
+        @SuppressWarnings("StringEquality") final boolean identity = src == s2.toString();
         Assert.assertTrue(identity);
     }
 
@@ -150,19 +150,20 @@ public class GcUtf8StringTest {
     public void testEquals() {
         // Null test
         final GcUtf8String s1 = new GcUtf8String("hi");
-        final boolean nullIdentity = s1.equals(null);
-        Assert.assertFalse(nullIdentity);
+        //noinspection ConstantValue,SimplifiableAssertion
+        Assert.assertFalse(s1.equals(null));
 
         // Self test
-        final boolean identity = s1.equals(s1);
-        Assert.assertTrue(identity);
+        // noinspection SimplifiableAssertion,EqualsWithItself
+        Assert.assertTrue(s1.equals(s1));
 
         // Two obj equality
+        @SuppressWarnings("StringBufferReplaceableByString")
         final StringBuilder sb = new StringBuilder();  // String builder used to avoid string identity.
         sb.append('h');
         sb.append('i');
         final String src1 = sb.toString();
-        final boolean srcNotIdentical = s1.toString() != src1;
+        @SuppressWarnings("StringEquality") final boolean srcNotIdentical = s1.toString() != src1;
         Assert.assertTrue(srcNotIdentical);
         final GcUtf8String s2 = new GcUtf8String(src1);
         Assert.assertEquals(s1, s2);

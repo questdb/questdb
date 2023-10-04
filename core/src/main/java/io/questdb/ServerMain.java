@@ -43,8 +43,6 @@ import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
@@ -52,7 +50,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.Chars;
+import io.questdb.std.str.DirectByteCharSink;
 
 import java.io.Closeable;
 import java.io.File;
@@ -74,29 +73,17 @@ public class ServerMain implements Closeable {
     }
 
     public ServerMain(final Bootstrap bootstrap) {
-        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog(), bootstrap.getBanner());
-    }
-
-    public ServerMain(final ServerConfiguration config, final Metrics metrics, final Log log, String banner) {
-        this.config = config;
-        this.log = log;
-        this.banner = banner;
+        this.config = bootstrap.getConfiguration();
+        this.log = bootstrap.getLog();
+        this.banner = bootstrap.getBanner();
+        final Metrics metrics = bootstrap.getMetrics();
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit.register(new CairoEngine(cairoConfig, metrics));
-
-        // obtain function factory cache
-        FunctionFactoryCache ffCache = engine.getFunctionFactoryCache();
-        // TODO: now the engine has access to the FFC, so all methods below
-        //       that pass it in their signature should be simplified. Not
-        //       done for compatibility with enterprise
-        config.init(engine, ffCache, freeOnExit);
-
+        engine = freeOnExit.register(bootstrap.newCairoEngine());
+        config.init(engine, freeOnExit);
         freeOnExit.register(config.getFactoryProvider());
-
-        // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = freeOnExit.register(new DatabaseSnapshotAgent(engine));
+        engine.load();
 
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
@@ -118,20 +105,19 @@ public class ServerMain implements Closeable {
                         O3Utils.setupWorkerPool(
                                 sharedPool,
                                 engine,
-                                config.getCairoConfiguration().getCircuitBreakerConfiguration(),
-                                ffCache
+                                config.getCairoConfiguration().getCircuitBreakerConfiguration()
                         );
 
                         if (walSupported) {
                             sharedPool.assign(new CheckWalTransactionsJob(engine));
                             final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
-                            snapshotAgent.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
+                            engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
                             walPurgeJob.delayByHalfInterval();
                             sharedPool.assign(walPurgeJob);
                             sharedPool.freeOnExit(walPurgeJob);
 
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
-                                setupWalApplyJob(sharedPool, engine, getSharedWorkerCount(), ffCache);
+                                setupWalApplyJob(sharedPool, engine, getSharedWorkerCount());
                             }
                         }
 
@@ -141,8 +127,7 @@ public class ServerMain implements Closeable {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
-                                    Math.max(1, sharedPool.getWorkerCount() - 2),
-                                    ffCache
+                                    Math.max(1, sharedPool.getWorkerCount() - 2)
                             );
                             sharedPool.assign(copyRequestJob);
                             sharedPool.freeOnExit(copyRequestJob);
@@ -151,7 +136,7 @@ public class ServerMain implements Closeable {
 
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-                        final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
+                        final TelemetryJob telemetryJob = new TelemetryJob(engine);
                         freeOnExit.register(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
@@ -169,7 +154,7 @@ public class ServerMain implements Closeable {
                     metrics.health(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
-            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount(), ffCache);
+            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
 
         // http
@@ -177,8 +162,6 @@ public class ServerMain implements Closeable {
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
-                ffCache,
-                snapshotAgent,
                 metrics
         ));
 
@@ -195,8 +178,6 @@ public class ServerMain implements Closeable {
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
-                ffCache,
-                snapshotAgent,
                 metrics
         ));
 
@@ -229,18 +210,16 @@ public class ServerMain implements Closeable {
             final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
             final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
             CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
-            authenticatorFactory = new EllipticCurveAuthenticatorFactory(
-                    configuration.getLineTcpReceiverConfiguration().getNetworkFacade(),
-                    new StaticChallengeResponseMatcher(authDb)
-            );
+            authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
         } else {
             authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
         }
         return authenticatorFactory;
     }
 
-    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration) {
-        return new UsernamePasswordPgWireAuthenticatorFactory(new StaticUsernamePasswordMatcher(configuration.getPGWireConfiguration()));
+    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration, DirectByteCharSink defaultUserPasswordSink, DirectByteCharSink readOnlyUserPasswordSink) {
+        UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
+        return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
     }
 
     public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
@@ -265,6 +244,35 @@ public class ServerMain implements Closeable {
             thr.printStackTrace();
             LogFactory.closeInstance();
             System.exit(55);
+        }
+    }
+
+    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration, DirectByteCharSink defaultUserPasswordSink, DirectByteCharSink readOnlyUserPasswordSink) {
+        String defaultUsername = configuration.getDefaultUsername();
+        String defaultPassword = configuration.getDefaultPassword();
+        boolean defaultUserEnabled = !Chars.empty(defaultUsername) && !Chars.empty(defaultPassword);
+
+        String readOnlyUsername = configuration.getReadOnlyUsername();
+        String readOnlyPassword = configuration.getReadOnlyPassword();
+        boolean readOnlyUserValid = !Chars.empty(readOnlyUsername) && !Chars.empty(readOnlyPassword);
+        boolean readOnlyUserEnabled = configuration.isReadOnlyUserEnabled() && readOnlyUserValid;
+
+        if (defaultUserEnabled && readOnlyUserEnabled) {
+            defaultUserPasswordSink.encodeUtf8(defaultPassword);
+            readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
+
+            return new CombiningUsernamePasswordMatcher(
+                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.getPtr(), defaultUserPasswordSink.length()),
+                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.getPtr(), readOnlyUserPasswordSink.length())
+            );
+        } else if (defaultUserEnabled) {
+            defaultUserPasswordSink.encodeUtf8(defaultPassword);
+            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.getPtr(), defaultUserPasswordSink.length());
+        } else if (readOnlyUserEnabled) {
+            readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
+            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.getPtr(), readOnlyUserPasswordSink.length());
+        } else {
+            return NeverMatchUsernamePasswordMatcher.INSTANCE;
         }
     }
 
@@ -336,12 +344,11 @@ public class ServerMain implements Closeable {
     protected void setupWalApplyJob(
             WorkerPool workerPool,
             CairoEngine engine,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache ffCache
+            int sharedWorkerCount
     ) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount);
             workerPool.assign(i, applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }

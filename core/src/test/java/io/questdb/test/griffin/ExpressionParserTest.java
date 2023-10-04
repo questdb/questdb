@@ -27,15 +27,14 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ExpressionParserTest extends AbstractCairoTest {
-    private final static SqlCompiler compiler = new SqlCompiler(engine);
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
     @Test
@@ -659,13 +658,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDotSpaceStar() {
-        assertFail("a. *", 3, "too few arguments");
-    }
-
-    @Test
     public void testDotSpaceStarExpression() throws SqlException {
-        x("a. 3 *", "a. * 3");
+        x("a. *", "a. * 3");
     }
 
     @Test
@@ -1044,8 +1038,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNewLambdaQuerySyntax() {
-        assertFail("x in (select a,b, from T)", 23, "column name expected");
+    public void testNewLambdaQuerySyntax() throws SqlException {
+        x("x  (select-choose a, b from (T)) in", "x in (select a,b, from T)");
     }
 
     @Test
@@ -1200,7 +1194,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     private void assertFail(String content, int pos, String contains) {
-        try {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.testParseExpression(content, rpnBuilder);
             Assert.fail("expected exception");
         } catch (SqlException e) {
@@ -1213,7 +1207,9 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     private void x(CharSequence expectedRpn, String content) throws SqlException {
         rpnBuilder.reset();
-        compiler.testParseExpression(content, rpnBuilder);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.testParseExpression(content, rpnBuilder);
+        }
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
 }

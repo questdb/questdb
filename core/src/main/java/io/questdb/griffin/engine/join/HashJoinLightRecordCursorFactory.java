@@ -38,12 +38,9 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
-public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final HashJoinRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
-    private final RecordSink masterKeySink;
-    private final RecordCursorFactory slaveFactory;
+    private final RecordSink masterSink;
     private final RecordSink slaveKeySink;
 
     public HashJoinLightRecordCursorFactory(
@@ -53,18 +50,15 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
             @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
-            RecordSink masterKeySink,
+            RecordSink masterSink,
             RecordSink slaveKeySink,
             int columnSplit,
             JoinContext joinContext
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
-        this.masterKeySink = masterKeySink;
+        super(metadata, joinContext, masterFactory, slaveFactory);
+        this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashJoinRecordCursor(columnSplit, configuration, joinColumnTypes, valueTypes);
-        this.joinContext = joinContext;
     }
 
     @Override
@@ -121,6 +115,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
+        private long size = -1;
         private LongChain.TreeCursor slaveChainCursor;
         private Record slaveRecord;
 
@@ -136,6 +131,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         public void close() {
             if (isOpen) {
                 isOpen = false;
+                size = -1;
                 joinKeyMap.close();
                 slaveChain.close();
                 super.close();
@@ -149,10 +145,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
-            if (!isMapBuilt) {
-                buildMapOfSlaveRecords();
-                isMapBuilt = true;
-            }
+            buildMapOfSlaveRecords();
 
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
@@ -161,7 +154,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
             while (masterCursor.hasNext()) {
                 MapKey key = joinKeyMap.withKey();
-                key.put(masterRecord, masterKeySink);
+                key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
                     slaveChainCursor = slaveChain.getCursor(value.getLong(0));
@@ -177,7 +170,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public long size() {
-            return -1;
+            if (size > -1) {
+                return size;
+            }
+            buildMapOfSlaveRecords();
+            return size = TableUtils.computeCursorSizeFromMap(masterCursor, joinKeyMap, masterSink);
         }
 
         @Override
@@ -192,20 +189,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         private void buildMapOfSlaveRecords() {
-            final Record record = slaveCursor.getRecord();
-            while (slaveCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-
-                MapKey key = joinKeyMap.withKey();
-                key.put(record, slaveKeySink);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    final long offset = slaveChain.put(record.getRowId(), -1);
-                    value.putLong(0, offset);
-                    value.putLong(1, offset);
-                } else {
-                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
-                }
+            if (!isMapBuilt) {
+                TableUtils.populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                isMapBuilt = true;
             }
         }
 
@@ -222,6 +208,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
+            size = -1;
             isMapBuilt = false;
         }
     }

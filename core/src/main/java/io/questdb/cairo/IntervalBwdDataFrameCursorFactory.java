@@ -37,13 +37,12 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
 
     public IntervalBwdDataFrameCursorFactory(
             TableToken tableToken,
-            int tableId,
-            long tableVersion,
+            long metadataVersion,
             RuntimeIntrinsicIntervalModel intervals,
             int timestampIndex,
             GenericRecordMetadata metadata
     ) {
-        super(tableToken, tableVersion, metadata);
+        super(tableToken, metadataVersion, metadata);
         this.cursor = new IntervalBwdDataFrameCursor(intervals, timestampIndex);
         this.intervals = intervals;
     }
@@ -57,8 +56,14 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     @Override
     public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (order == ORDER_DESC || order == ORDER_ANY) {
-            cursor.of(getReader(executionContext), executionContext);
-            return cursor;
+            final TableReader reader = getReader(executionContext);
+            try {
+                cursor.of(reader, executionContext);
+                return cursor;
+            } catch (Throwable th) {
+                Misc.free(reader);
+                throw th;
+            }
         }
         throw new UnsupportedOperationException();
     }

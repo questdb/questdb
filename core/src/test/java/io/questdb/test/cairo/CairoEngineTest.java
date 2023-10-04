@@ -59,7 +59,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         otherPath = Misc.free(otherPath);
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
@@ -209,7 +209,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 TableToken x = createX(engine);
                 try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
-                    Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(x, "testing"));
+                    Assert.assertEquals(CairoEngine.REASON_BUSY_READER, engine.lockAll(x, "testing", true));
                     assertReader(engine, x);
                     assertWriter(engine, x);
                 }

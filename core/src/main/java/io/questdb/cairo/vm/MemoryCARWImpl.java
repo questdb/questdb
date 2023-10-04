@@ -120,11 +120,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         putLong256(hexString, start, end, long256Acceptor);
     }
 
-    @Override
-    public long size() {
-        return size;
-    }
-
     /**
      * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
      * no memory write takes place.
@@ -144,6 +139,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         extend0(0);
         // reset append offset
         appendAddress = pageAddress;
+        shiftAddressRight(0);
     }
 
     @Override

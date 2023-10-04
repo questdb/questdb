@@ -116,6 +116,11 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
+    public int getIPv4(int col) {
+        return getFunction(col).getIPv4(base);
+    }
+
+    @Override
     public int getInt(int col) {
         return getFunction(col).getInt(base);
     }
@@ -138,11 +143,6 @@ public class SplitVirtualRecord implements Record {
     @Override
     public Record getRecord(int col) {
         return getFunction(col).getRecord(base);
-    }
-
-    @Override
-    public long getRowId() {
-        throw new UnsupportedOperationException();
     }
 
     @Override

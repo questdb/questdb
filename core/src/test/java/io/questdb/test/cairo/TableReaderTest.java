@@ -1578,7 +1578,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(ff.wasCalled());
-            try (ColumnPurgeJob job = new ColumnPurgeJob(engine, null)) {
+            try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
                 job.run(0);
             }
 
@@ -2796,9 +2796,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public int rmdir(Path name) {
+                public boolean rmdir(Path name) {
                     if (Chars.endsWith(name, "2017-12-14" + Files.SEPARATOR)) {
-                        return 1;
+                        return false;
                     }
                     return super.rmdir(name);
                 }
@@ -2806,7 +2806,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -2906,6 +2906,42 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testRemovePartitionByYearReload() throws Exception {
         testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
+    }
+
+    @Test
+    public void testScoreBoardOverflow() throws Throwable {
+        try (TableModel model = new TableModel(configuration, "all", PartitionBy.DAY)
+                .col("int", ColumnType.INT)
+                .timestamp("t")
+        ) {
+            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
+            assertMemoryLeak(() -> {
+
+                try (TableReader ignore = getReader("all")) {
+                    try (TableWriter w = newTableWriter(configuration, "all", metrics)) {
+                        for (int i = 0; i < configuration.getTxnScoreboardEntryCount() + 1; i++) {
+                            TableWriter.Row r = w.newRow(1000);
+                            r.putInt(0, 100);
+                            r.append();
+                            w.commit();
+                        }
+                    }
+
+                    try (TableReader ignore2 = getReader("all")) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
+                    }
+
+                    try (TableWriter w = newTableWriter(configuration, "all", metrics)) {
+                        TableWriter.Row r = w.newRow(0);
+                        r.putInt(0, 100);
+                        r.append();
+                        w.commit();
+                    }
+                }
+            });
+        }
     }
 
     @Test
@@ -3418,7 +3454,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static void checkColumnPurgeRemovesFiles(AtomicInteger counterRef, TestFilesFacade ff, int removeCallsExpected) throws SqlException {
         Assert.assertFalse(ff.wasCalled());
         counterRef.set(0);
-        try (ColumnPurgeJob job = new ColumnPurgeJob(engine, null)) {
+        try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
             job.run(0);
         }
         Assert.assertTrue(ff.called() >= removeCallsExpected);

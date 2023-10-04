@@ -156,8 +156,13 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
             mergeAllPartitions(merged);
 
             String limit = "";
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext,
-                    tableName + limit, tableNameMerged + limit, LOG);
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    tableName + limit,
+                    tableNameMerged + limit,
+                    LOG
+            );
             assertRandomIndexes(tableName, tableNameMerged, rnd);
         });
     }

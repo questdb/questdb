@@ -1111,7 +1111,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = new FunctionParser(
                 new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public MillisecondClock getMillisecondClock() {
+                    public @NotNull MillisecondClock getMillisecondClock() {
                         return () -> {
                             try {
                                 return DateFormatUtils.parseUTCDate("2018-03-04T21:40:00.000Z");
@@ -1149,9 +1149,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testOverloadBetweenNullAndAnyType() {
         for (short type = ColumnType.BOOLEAN; type < ColumnType.MAX; type++) {
-            String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
-            Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
-            Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
+            if(type == ColumnType.STRING || type == ColumnType.SYMBOL) {
+                String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
+                Assert.assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
+                Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
+            } else {
+                String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
+                Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
+                Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
+            }
         }
     }
 
@@ -1534,23 +1540,20 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testVarArgFunctionNoArg() throws SqlException {
+    public void testVarArgFunctionNoArg() {
         functions.add(new InStrFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
 
         FunctionParser functionParser = createFunctionParser();
-        Record record = new Record() {
-            @Override
-            public CharSequence getStr(int col) {
-                return "Y";
-            }
-        };
 
-        Function function = parseFunction("a in ()", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertFalse(function.getBool(record));
+        try {
+            parseFunction("a in ()", metadata, functionParser);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals("[2] too few arguments for 'in'", e.getMessage());
+        }
     }
 
     private void assertBindVariableTypes(

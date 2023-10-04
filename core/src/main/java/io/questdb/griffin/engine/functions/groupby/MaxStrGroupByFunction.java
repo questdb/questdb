@@ -109,11 +109,6 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public boolean isScalar() {
         return false;
     }

@@ -24,12 +24,12 @@
 
 package io.questdb.cliutil;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -37,14 +37,14 @@ import org.junit.Assert;
 
 public class TestUtils {
     public static void assertEquals(
-            SqlCompiler compiler,
+            CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
             String expectedSql,
             String actualSql
     ) throws SqlException {
         try (
-                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f1 = engine.select(expectedSql, sqlExecutionContext);
+                RecordCursorFactory f2 = engine.select(actualSql, sqlExecutionContext);
                 RecordCursor c1 = f1.getCursor(sqlExecutionContext);
                 RecordCursor c2 = f2.getCursor(sqlExecutionContext)
         ) {
@@ -103,6 +103,7 @@ public class TestUtils {
                         Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-3);
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
                         break;
                     case ColumnType.GEOINT:

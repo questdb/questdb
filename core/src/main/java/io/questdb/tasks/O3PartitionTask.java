@@ -35,17 +35,20 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3PartitionTask {
-    private long partitionUpdateSinkAddr;
     private AtomicInteger columnCounter;
     private ObjList<MemoryMA> columns;
+    private long dedupColSinkAddr;
     private boolean last;
     private long maxTimestamp; // table's max timestamp
+    private long newPartitionSize;
     private O3Basket o3Basket;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
+    private long oldPartitionSize;
     private long oooTimestampMax;
     private long oooTimestampMin;
     private int partitionBy;
     private long partitionTimestamp;
+    private long partitionUpdateSinkAddr;
     private Path pathToTable;
     private long sortedTimestampsAddr;
     private long srcDataMax;
@@ -56,10 +59,6 @@ public class O3PartitionTask {
     private TableWriter tableWriter;
     private long txn;
 
-    public long getPartitionUpdateSinkAddr() {
-        return partitionUpdateSinkAddr;
-    }
-
     public AtomicInteger getColumnCounter() {
         return columnCounter;
     }
@@ -68,8 +67,16 @@ public class O3PartitionTask {
         return columns;
     }
 
+    public long getDedupColSinkAddr() {
+        return dedupColSinkAddr;
+    }
+
     public long getMaxTimestamp() {
         return maxTimestamp;
+    }
+
+    public long getNewPartitionSize() {
+        return newPartitionSize;
     }
 
     public O3Basket getO3Basket() {
@@ -78,6 +85,10 @@ public class O3PartitionTask {
 
     public ReadOnlyObjList<? extends MemoryCR> getO3Columns() {
         return o3Columns;
+    }
+
+    public long getOldPartitionSize() {
+        return oldPartitionSize;
     }
 
     public long getOooTimestampMax() {
@@ -94,6 +105,10 @@ public class O3PartitionTask {
 
     public long getPartitionTimestamp() {
         return partitionTimestamp;
+    }
+
+    public long getPartitionUpdateSinkAddr() {
+        return partitionUpdateSinkAddr;
     }
 
     public Path getPathToTable() {
@@ -156,7 +171,10 @@ public class O3PartitionTask {
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
-            long partitionUpdateSinkAddr
+            long newPartitionSize,
+            long oldPartitionSize,
+            long partitionUpdateSinkAddr,
+            long dedupColSinkAddr
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -177,6 +195,9 @@ public class O3PartitionTask {
         this.tableWriter = tableWriter;
         this.columnCounter = columnCounter;
         this.o3Basket = o3Basket;
+        this.newPartitionSize = newPartitionSize;
+        this.oldPartitionSize = oldPartitionSize;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
+        this.dedupColSinkAddr = dedupColSinkAddr;
     }
 }

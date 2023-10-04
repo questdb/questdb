@@ -39,7 +39,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
             boolean columnIndexed,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
-            int writerIndex
+            int writerIndex,
+            boolean isDedupKey
     ) {
         if (columnType > -1L) {
             add(
@@ -50,7 +51,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
                             indexValueBlockCapacity,
                             symbolTableStatic,
                             null,
-                            writerIndex
+                            writerIndex,
+                            isDedupKey
                     )
             );
         }
@@ -82,7 +84,15 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+    public void of(
+            TableToken tableToken,
+            int tableId,
+            int timestampIndex,
+            int compressedTimestampIndex,
+            boolean suspended,
+            long structureVersion,
+            int columnCount
+    ) {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = compressedTimestampIndex;

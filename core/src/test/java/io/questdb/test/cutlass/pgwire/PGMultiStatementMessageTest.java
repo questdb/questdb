@@ -38,7 +38,6 @@ import org.postgresql.jdbc.PgConnection;
 import org.postgresql.util.PSQLException;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.sql.*;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -98,7 +97,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 assertResults(statement, hasResult, count(0), count(0), count(0),
                         count(1), count(1), count(0), count(0),
                         count(1), count(1), count(0),
-                        data(row(150L, "150")), data(row((byte) 78, 5.0d)));
+                        data(row(150L, "150")), data(row((byte) 78, 5.0d))
+                );
             }
         });
     }
@@ -126,7 +126,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 assertResults(statement, hasResult, zero(), zero(), zero(),
                         count(1), count(1), zero(), zero(),
                         count(1), count(1),
-                        data(row(50L, "z"), row(29L, "g")), data(row((byte) 8, 1.0d), row((byte) 2, 1.0d)));
+                        data(row(50L, "z"), row(29L, "g")), data(row((byte) 8, 1.0d), row((byte) 2, 1.0d))
+                );
             }
         });
     }
@@ -146,9 +147,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "COMMIT; " +
                                     "DELETE FROM test; " +
                                     "INSERT INTO test VALUES (21, 'x');");
-                    fail("PSQLException should be thrown");
+                    assertException("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: FROM\n  Position: 94", e.getMessage());
+                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 94", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -173,9 +174,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "DELETE FROM testA; " +
                             "DELETE FROM testB;");
-                    fail("PSQLException should be thrown");
+                    assertException("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: FROM\n  Position: 173", e.getMessage());
+                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 173", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select  *from testB;");
@@ -200,7 +201,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * from test;");
 
                 assertResults(statement, hasResult, count(0), count(0), count(1), count(0),
-                        count(1), data(row(27L, "f")));
+                        count(1), data(row(27L, "f"))
+                );
             }
         });
     }
@@ -226,7 +228,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 assertResults(statement, hasResult, count(0), count(0), count(0),
                         count(1), count(1), count(0),
-                        count(1), count(1), data(row(29L, "g")), data(row((byte) 2, 1.0d)));
+                        count(1), count(1), data(row(29L, "g")), data(row((byte) 2, 1.0d))
+                );
             }
         });
     }
@@ -323,9 +326,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "INSERT INTO mytable VALUES(2); " +
                             "DELETE from mytable3;");
-                    fail("PSQLException expected");
+                    assertException("PSQLException expected");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: mytable3\n  Position: 120", e.getMessage());
+                    assertEquals("ERROR: unexpected token [mytable3]\n  Position: 120", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from mytable;");
@@ -408,7 +411,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
                                     "ALTER TABLE test ATTACH PARTITION LIST '2020';" +
                                     "SELECT l from TEST;");
-                    fail("PSQLException should be thrown");
+                    assertException("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
                 }
@@ -443,7 +446,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "ALTER TABLE test DROP PARTITION LIST '1970', '2020'; " +
                                 "SELECT l from test;");
                 assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
-                        count(1), Result.ZERO, data(row(2021L)));
+                        count(1), Result.ZERO, data(row(2021L))
+                );
             }
         });
     }
@@ -479,7 +483,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "ALTER TABLE test DROP PARTITION WHERE ts <= to_timestamp('2020', 'yyyy'); " +
                                 "SELECT l from test;");
                 assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
-                        count(1), Result.ZERO, data(row(2021L)));
+                        count(1), Result.ZERO, data(row(2021L))
+                );
             }
         });
     }
@@ -525,7 +530,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "INSERT INTO test select l,s from test; " +
                         "SELECT l,s from test;");
                 assertResults(statement, hasResult, Result.ZERO, count(1), count(1), count(2), /*this is wrong, qdb doesn't report row count for insert as select !*/
-                        data(row(20L, "z"), row(21L, "u"), row(20L, "z"), row(21L, "u")));
+                        data(row(20L, "z"), row(21L, "u"), row(20L, "z"), row(21L, "u"))
+                );
             }
         });
     }
@@ -547,7 +553,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * From mytable; ");
 
                 assertResults(statement, hasResult, count(0), count(0), count(2),
-                        count(1), count(0), data(row(1L), row(2L)));
+                        count(1), count(0), data(row(1L), row(2L))
+                );
             }
         });
     }
@@ -578,9 +585,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "DELETE FROM test; " +
                             "INSERT INTO test VALUES (21, 'x');");
-                    fail("PSQLException should be thrown");
+                    assertException("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: FROM\n  Position: 87", e.getMessage());
+                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 87", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -605,9 +612,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testA; " +
                             "DELETE FROM testB; " +
                             "INSERT INTO testA VALUES (21, 'x');");
-                    fail("PSQLException should be thrown");
+                    assertException("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: FROM\n  Position: 171", e.getMessage());
+                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 171", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select * from testB; ");
@@ -678,7 +685,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * from test;");
 
                 assertResults(statement, hasResult, count(0), count(1), count(0),
-                        count(1), data(row(27L, "f")));
+                        count(1), data(row(27L, "f"))
+                );
             }
         });
     }
@@ -704,7 +712,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 assertResults(statement, hasResult, count(0), count(0),
                         count(1), count(1), count(0),
-                        count(1), count(1), data(row(-27L, "o")), data(row("z", 1.0)));
+                        count(1), count(1), data(row(-27L, "o")), data(row("z", 1.0))
+                );
             }
         });
     }
@@ -777,7 +786,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "DELETE FROM test; " +
                                     "INSERT INTO test VALUES (20, 'z');");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: FROM\n  Position: 79", e.getMessage());
+                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 79", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -801,7 +810,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testA; " +
                             "INSERT INTO testA VALUES (20, 'z');");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: FROM\n  Position: 151", e.getMessage());
+                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 151", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select * from testB;");
@@ -863,7 +872,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * From mytable; ");
 
                 assertResults(statement, hasResult, count(0), count(0), count(1),
-                        count(0), count(0), empty());
+                        count(0), count(0), empty()
+                );
             }
         });
     }
@@ -898,7 +908,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * From mytable; ");
 
                 assertResults(statement, hasResult, count(0), count(0), count(1),
-                        count(2), count(0), data(row(1L), row(2L), row(3L)));
+                        count(2), count(0), data(row(1L), row(2L), row(3L))
+                );
             }
         });
     }
@@ -1001,7 +1012,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 // TODO(puzpuzpuz): the second query get ignored here since batch statement execution doesn't
                 //  support proper pause/resume on insufficient buffer size or data in cold storage.
                 assertResults(statement, hasResult,
-                        data(row(1L, 1L, 1L), row(2L, 2L, 2L), row(3L, 3L, 3L)));
+                        data(row(1L, 1L, 1L), row(2L, 2L, 2L), row(3L, 3L, 3L))
+                );
 
                 Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
             }
@@ -1083,7 +1095,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * from TEST;" +
                                 "DROP TABLE TEST;");
                 assertResults(statement, hasResult, count(0), count(1),
-                        data(row(3L, "three")), count(0));
+                        data(row(3L, "three")), count(0)
+                );
             }
         });
     }
@@ -1100,7 +1113,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "TRUNCATE TABLE TEST;" +
                                 "SELECT '1';");
                 assertResults(statement, hasResult, count(0), count(1),
-                        count(0), data(row("1")));
+                        count(0), data(row("1"))
+                );
             }
         });
     }
@@ -1336,7 +1350,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "select * from test;");
 
                 assertResults(test.statement, hasResult, Result.ZERO, count(1), count(1),
-                        data(row(1L, "a"), row(2L, "b")));
+                        data(row(1L, "a"), row(2L, "b"))
+                );
             }
         });
     }
@@ -1560,7 +1575,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 assertResults(statement, hasResult, zero(), zero(),
                         count(1), count(1),
-                        data(row(50L, "z"), row(29L, "g")));
+                        data(row(50L, "z"), row(29L, "g"))
+                );
             }
         });
     }
@@ -1746,7 +1762,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             try {
                 statement.close();
             } catch (SQLException e) {

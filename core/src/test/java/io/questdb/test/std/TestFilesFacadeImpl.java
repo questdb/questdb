@@ -26,14 +26,13 @@ package io.questdb.test.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 
 import java.util.HashMap;
 import java.util.Map;
-
-import static io.questdb.std.Files.DT_DIR;
 
 public class TestFilesFacadeImpl extends FilesFacadeImpl {
     public static final TestFilesFacadeImpl INSTANCE = new TestFilesFacadeImpl();
@@ -106,42 +105,6 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
             LOG.info().$("cannot remove file: ").utf8(name).$(", errno:").$(errno()).$();
         }
         return ok;
-    }
-
-    @Override
-    public int rmdir(Path path) {
-        long p = Files.findFirst(path);
-        int len = path.length();
-        int errno = -1;
-        if (p > 0) {
-            try {
-                do {
-                    long lpszName = findName(p);
-                    path.trimTo(len).concat(lpszName).$();
-                    if (findType(p) == DT_DIR) {
-                        if (Files.strcmp(lpszName, "..") || Files.strcmp(lpszName, ".")) {
-                            continue;
-                        }
-                        if ((errno = rmdir(path)) == 0) {
-                            continue;
-                        }
-                    } else {
-                        if (remove(path)) {
-                            continue;
-                        }
-                        errno = errno() > 0 ? errno() : 5;
-                    }
-                    return errno;
-                } while (findNext(p) > 0);
-            } finally {
-                findClose(p);
-            }
-            if (Files.rmdir(path.trimTo(len).$()) == 0) {
-                return 0;
-            }
-            return Os.errno();
-        }
-        return errno;
     }
 
     private static synchronized boolean checkRemove(LPSZ name) {

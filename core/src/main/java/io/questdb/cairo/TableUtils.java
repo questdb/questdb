@@ -25,15 +25,18 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -52,7 +55,6 @@ import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
 public final class TableUtils {
-    public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
     public static final String ATTACHABLE_DIR_MARKER = ".attachable";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
@@ -166,6 +168,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_NOT_INDEXED = 0;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = META_FLAG_BIT_SEQUENTIAL << 1;
+    static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -227,6 +230,25 @@ public final class TableUtils {
             }
         }
         return count;
+    }
+
+    public static long computeCursorSizeFromMap(RecordCursor masterCursor, Map map, RecordSink keySink) {
+        final Record masterRecord = masterCursor.getRecord();
+        long size = 0;
+        try {
+            masterCursor.toTop();
+            while (masterCursor.hasNext()) {
+                MapKey key = map.withKey();
+                key.put(masterRecord, keySink);
+                MapValue value = key.findValue();
+                if (value != null) {
+                    size += value.getLong(2);
+                }
+            }
+            return size;
+        } finally {
+            masterCursor.toTop();
+        }
     }
 
     public static void createColumnVersionFile(MemoryMARW mem) {
@@ -427,7 +449,7 @@ public final class TableUtils {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
             }
             if (ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
-                if (ff.rmdir(path.slash$()) != 0) {
+                if (!ff.rmdir(path.slash$())) {
                     LOG.error().$("cannot remove table directory in volume [errno=").$(ff.errno()).$(", path=").utf8(path.trimTo(rootLen).$()).I$();
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
@@ -620,6 +642,76 @@ public final class TableUtils {
         return type;
     }
 
+    public static int getMaxUncommittedRows(TableRecordMetadata metadata, CairoEngine engine) {
+        if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
+            return ((TableWriterMetadata) metadata).getMaxUncommittedRows();
+        }
+        try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+            return tableMetadata.getMaxUncommittedRows();
+        }
+    }
+
+    public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
+        // In theory, we can have a column type where `NULL` value will be different `LONG` values,
+        // then this should return different values on longIndex. At the moment there are no such types.
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+                return 0L;
+            case ColumnType.SYMBOL:
+                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, 0);
+            case ColumnType.FLOAT:
+                return Float.floatToIntBits(Float.NaN);
+            case ColumnType.DOUBLE:
+                return Double.doubleToLongBits(Double.NaN);
+            case ColumnType.LONG256:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+                // Long128 and UUID are null when all 2 longs are NaNs
+                // Long256 is null when all 4 longs are NaNs
+                return Numbers.LONG_NaN;
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOLONG:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+                return GeoHashes.NULL;
+            case ColumnType.IPv4:
+                return Numbers.IPv4_NULL;
+            default:
+                assert false : "Invalid column type: " + columnType;
+                return 0;
+        }
+    }
+
+    public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
+        if (!metadata.isWalEnabled()) {
+            if (metadata instanceof TableWriterMetadata) {
+                return ((TableWriterMetadata) metadata).getO3MaxLag();
+            }
+
+            try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+                return tableMetadata.getO3MaxLag();
+            }
+        }
+        // Does not have effect for WAL enabled tables
+        return 0;
+    }
+
+    public static int getPartitionBy(TableRecordMetadata metadata, CairoEngine engine) {
+        if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
+            return ((TableWriterMetadata) metadata).getPartitionBy();
+        }
+        try (TableMetadata tableMetadata = engine.getMetadata(metadata.getTableToken())) {
+            return tableMetadata.getPartitionBy();
+        }
+    }
+
     public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
         return partitionTableOffset + 4 + index * 8L;
     }
@@ -695,6 +787,10 @@ public final class TableUtils {
 
     public static LPSZ iFile(Path path, CharSequence columnName) {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    public static boolean isPendingRenameTempTableName(String tableName, CharSequence tempTablePrefix) {
+        return Chars.startsWith(tableName, tempTablePrefix);
     }
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
@@ -810,14 +906,24 @@ public final class TableUtils {
     }
 
     public static int lock(FilesFacade ff, Path path, boolean verbose) {
-        final int fd = ff.openRW(path, CairoConfiguration.O_NONE);
+
+        // workaround for https://github.com/docker/for-mac/issues/7004
+        if (Files.VIRTIO_FS_DETECTED) {
+            if (!ff.touch(path)) {
+                if (verbose) {
+                    LOG.error().$("cannot touch '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
+                }
+                return -1;
+            }
+        }
+
+        int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (verbose) {
                 LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
             }
             return -1;
         }
-
         if (ff.lock(fd) != 0) {
             if (verbose) {
                 LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();
@@ -877,7 +983,7 @@ public final class TableUtils {
      */
     public static long mapRO(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         assert fd != -1;
-        assert offset % ff.getPageSize() == 0;
+        assert offset % Files.PAGE_SIZE == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
             throw CairoException.critical(ff.errno())
@@ -910,7 +1016,7 @@ public final class TableUtils {
      */
     public static long mapRW(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         assert fd != -1;
-        assert offset % ff.getPageSize() == 0;
+        assert offset % Files.PAGE_SIZE == 0;
         allocateDiskSpace(ff, fd, size + offset);
         return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
     }
@@ -986,6 +1092,13 @@ public final class TableUtils {
         return page;
     }
 
+    public static void msync(FilesFacade ff, long addr, long len, boolean async) {
+        // Linux requires the msync address to be page aligned
+        long alignedAddr = Files.floorPageSize(addr);
+        long alignedExtraLen = addr - alignedAddr;
+        ff.msync(alignedAddr, len + alignedExtraLen, async);
+    }
+
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".o");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
@@ -1048,6 +1161,58 @@ public final class TableUtils {
         memory.jumpTo(0);
         createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    public static void populateRowIDHashMap(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            RecordCursor cursor,
+            Map keyMap,
+            RecordSink recordSink,
+            LongChain rowIDChain
+    ) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+
+            MapKey key = keyMap.withKey();
+            key.put(record, recordSink);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                final long offset = rowIDChain.put(record.getRowId(), -1);
+                value.putLong(0, offset);
+                value.putLong(1, offset);
+                value.putLong(2, 1);
+            } else {
+                value.putLong(1, rowIDChain.put(record.getRowId(), value.getLong(1)));
+                value.addLong(2, 1);
+            }
+        }
+    }
+
+    public static void populateRecordHashMap(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            RecordCursor cursor,
+            Map map,
+            RecordSink recordSink,
+            RecordChain chain
+    ) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+
+            MapKey key = map.withKey();
+            key.put(record, recordSink);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                long offset = chain.put(record, -1);
+                value.putLong(0, offset);
+                value.putLong(1, offset);
+                value.putLong(2, 1);
+            } else {
+                value.putLong(1, chain.put(record, value.getLong(1)));
+                value.addLong(2, 1);
+            }
+        }
     }
 
     public static int readIntOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, Path path) {
@@ -1281,6 +1446,9 @@ public final class TableUtils {
             case ColumnType.INT:
                 Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
                 break;
+            case ColumnType.IPv4:
+                Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
+                break;
             case ColumnType.GEOINT:
                 Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);
                 break;
@@ -1387,6 +1555,12 @@ public final class TableUtils {
                 final int type = Math.abs(getColumnType(metaMem, i));
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+
+                if (isColumnDedupKey(metaMem, i)) {
+                    if (ColumnType.isVariableLength(type)) {
+                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
+                    }
                 }
 
                 if (isColumnIndexed(metaMem, i)) {
@@ -1502,6 +1676,10 @@ public final class TableUtils {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
             }
 
+            if (tableStruct.isDedupKey(i)) {
+                flags |= META_FLAG_BIT_DEDUP_KEY;
+            }
+
             mem.putLong(flags);
             mem.putInt(tableStruct.getIndexBlockCapacity(i));
             mem.putInt(tableStruct.getSymbolCapacity(i));
@@ -1571,6 +1749,10 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static boolean isColumnDedupKey(MemoryMR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {

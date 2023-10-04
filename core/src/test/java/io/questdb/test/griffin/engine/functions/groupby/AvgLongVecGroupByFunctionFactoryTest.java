@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
@@ -35,18 +35,9 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         pageFrameMaxRows = 10_000;
 
-        assertQuery13(
-                "avg\n" +
-                        "5261.376146789\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b long",
-                "avg\n" +
-                        "5261.376146789\n",
-                false,
-                true
-        );
+        assertQuery("avg\n" +
+                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", "avg\n" +
+                        "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tavg2\n" +
@@ -61,32 +52,23 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "avg\n" +
-                        "NaN\n",
-                "select avg(f) from tab",
-                "create table tab as (select cast(null as long) f from long_sequence(33))",
-                null,
-                "insert into tab select 123L from long_sequence(1)",
-                "avg\n" +
-                        "123.0\n",
-                false,
-                true
-        );
+        assertQuery("avg\n" +
+                        "NaN\n", "select avg(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 123L from long_sequence(1)", "avg\n" +
+                        "123.0\n", false, true, false);
     }
 
     @Test
     public void testAvgLongOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test as(select 21474836475L * x as x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1000000));", sqlExecutionContext);
+            ddl("create table test as(select 21474836475L * x as x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1000000));");
             String expected = "sym\tavg\n" +
                     "a\t1.0731625369352276E16\n" +
                     "b\t1.0731385513028126E16\n" +
                     "c\t1.0749264817744848E16\n";
 
 
-            assertSql("select sym, avg(cast(x as double)) from test order by sym", expected);
-            assertSql("select sym, avg(x) from test where x > 0 order by sym", expected);
+            assertSql(expected, "select sym, avg(cast(x as double)) from test order by sym");
+            assertSql(expected, "select sym, avg(x) from test where x > 0 order by sym");
 
             final String diffExpected = "sym\tcolumn\n" +
                     "a\ttrue\n" +
@@ -95,8 +77,8 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
             // Here 6000 is a hack.
             // Difference between avg(double) and avg(long) depends on column values range and rows count.
-            assertSql("with a as (select sym, avg(x) from test), b as (select sym, avg(x) from test where x > 0) " +
-                    "select a.sym, b.avg-a.avg < 6000 from a join b on(sym) order by sym", diffExpected);
+            assertSql(diffExpected, "with a as (select sym, avg(x) from test), b as (select sym, avg(x) from test where x > 0) " +
+                    "select a.sym, b.avg-a.avg < 6000 from a join b on(sym) order by sym");
         });
     }
 

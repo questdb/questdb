@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -127,11 +126,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     @Override
     public boolean supportPageFrameCursor() {
         return framingSupported;
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(TableToken tableToken) {
-        return dataFrameCursorFactory.supportTableRowId(tableToken);
     }
 
     @Override

@@ -25,9 +25,6 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
@@ -69,8 +66,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Before
     public void setUp() {
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
     }
 
     @Test
@@ -474,7 +471,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                             "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
                     assertTable(expected, table);
-                }, null);
+                }, null
+        );
     }
 
     @Test
@@ -505,10 +503,10 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                                     table + ",location=us-westcost temperature=82 40000\n";
                     do {
                         handleContextIO0();
-                    } while (!disconnected && recvBuffer.length() > 0);
+                    } while (!disconnected && !recvBuffer.isEmpty());
 
                     Assert.assertTrue(disconnected);
-                    Assert.assertTrue(recvBuffer.length() > 0);
+                    Assert.assertFalse(recvBuffer.isEmpty());
                     closeContext();
 
                     String expected = "location\ttemperature\ttimestamp\n" +
@@ -765,16 +763,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDesignatedTimestampNotCalledTimestampWhenTableExistAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile(
-                        "create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);",
-                        sqlExecutionContext);
-            } catch (SqlException ex) {
-                throw new RuntimeException(ex);
-            }
+            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,time=1465839830100300200t 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -801,16 +790,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDifferentCaseForExistingColumnWhenTableExistsAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile(
-                        "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
-                        sqlExecutionContext);
-            } catch (SqlException ex) {
-                throw new RuntimeException(ex);
-            }
+            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -855,6 +835,32 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDuplicateFieldIPv4() throws Exception {
+        String table = "dupField";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=\"1.1.1.1\" 1465839830100400200\n" +
+                            table + ",location=us-midwest temperature=\"1.1.1.1\" 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=\"1.1.1.1\",temperature=\"2.2.2.2\" 1465839830101400200\n" +
+                            table + ",location=us-midwest temperature=\"1.1.1.1\" 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=\"1.1.1.1\" 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=\"1.1.1.1\" 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=\"1.1.1.1\" 1465839830102500200\n";
+            handleIO();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t1.1.1.1\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t1.1.1.1\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t1.1.1.1\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t1.1.1.1\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t1.1.1.1\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t1.1.1.1\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t1.1.1.1\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, table);
         });
     }
@@ -993,16 +999,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDuplicateFieldWhenTableExistsAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile(
-                        "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
-                        sqlExecutionContext);
-            } catch (SqlException ex) {
-                throw new RuntimeException(ex);
-            }
+            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1029,16 +1026,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
         String table = "dupField";
         runInContext(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile(
-                        "create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
-                        sqlExecutionContext);
-            } catch (SqlException ex) {
-                throw new RuntimeException(ex);
-            }
+            ddl("create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",terület=us-midwest hőmérséklet=82,ветер=2.5,ВЕтеР=2.4 1465839830100400200\n" +
                             table + ",terület=us-midwest hőmérséklet=83,ветер=3.0 1465839830100500200\n" +
@@ -1229,29 +1217,32 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testFailure() throws Exception {
         final AtomicInteger nCommittedLines = new AtomicInteger(4);
         String table = "failure1";
-        Runnable onCommitNewEvent = () -> {
+        UnstableRunnable onCommitNewEvent = () -> {
             if (nCommittedLines.decrementAndGet() <= 0) {
                 throw new RuntimeException("Failed");
             }
         };
-        runInContext(() -> {
-            recvBuffer =
-                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
-                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
-                            table + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
-                            table + ",location=us-midwest temperature=85 1465839830102300200\n" +
-                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
-                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
-                            table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO0();
-            Assert.assertTrue(disconnected);
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n";
-            assertTable(expected, table);
-        }, onCommitNewEvent);
+        runInContext(
+                () -> {
+                    recvBuffer =
+                            table + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                                    table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                                    table + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
+                                    table + ",location=us-midwest temperature=85 1465839830102300200\n" +
+                                    table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                                    table + ",location=us-westcost temperature=82 1465839830102500200\n";
+                    handleContextIO0();
+                    Assert.assertTrue(disconnected);
+                    closeContext();
+                    String expected = "location\ttemperature\ttimestamp\n" +
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n";
+                    assertTable(expected, table);
+                },
+                onCommitNewEvent
+        );
     }
 
     @Test
@@ -1356,7 +1347,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
             do {
                 handleContextIO0();
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
         });
 
         engine.releaseInactive();
@@ -1365,17 +1356,17 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer = ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
             do {
                 handleContextIO0();
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
 
             recvBuffer = ".,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
             do {
                 handleContextIO0();
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
 
             recvBuffer = "..\\/dbRoot,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
             do {
                 handleContextIO0();
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
 
 
             closeContext();
@@ -1583,7 +1574,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
             do {
                 handleContextIO0();
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
 
             Assert.assertTrue(disconnected);
         });
@@ -1600,16 +1591,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "testNewColumnsNotAllowed";
         autoCreateNewColumns = false;
         disconnectOnError = true;
-        try (
-                SqlCompiler compiler = new SqlCompiler(engine);
-                SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-        ) {
-            compiler.compile(
-                    "create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);",
-                    sqlExecutionContext);
-        } catch (SqlException ex) {
-            throw new RuntimeException(ex);
-        }
+        ddl("create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);");
 
         engine.releaseInactive();
         runInContext(() -> {
@@ -1617,7 +1599,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
             do {
                 handleContextIO0();
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
 
             Assert.assertTrue(disconnected);
         });
@@ -1635,7 +1617,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
             do {
                 handleContextIO0();
-            } while (recvBuffer.length() > 0);
+            } while (!recvBuffer.isEmpty());
 
             Assert.assertTrue(disconnected);
         });
@@ -1655,27 +1637,11 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
 
-
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                try {
-                    // must not create table
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
-                            sink,
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n"
-                    );
-                    // should be able to create table after this (e.g. no debris left by ILP)
-                    compiler.compile("create table vbw(a int)", sqlExecutionContext);
-
-                } catch (SqlException e) {
-                    Assert.fail();
-                }
-            }
+            assertSql(
+                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n",
+                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+            );
+            ddl("create table vbw(a int)");
         });
     }
 
@@ -1889,16 +1855,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testTableParameterRetentionOnAddColumn() throws Exception {
         String table = "retention";
         runInContext(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
-            ) {
-                compiler.compile(
-                        "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;",
-                        sqlExecutionContext);
-            } catch (SqlException ex) {
-                throw new RuntimeException(ex);
-            }
+            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;");
             try (TableReader reader = getReader(table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());
@@ -1994,7 +1951,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         do {
             handleContextIO0();
             Assert.assertFalse(disconnected);
-        } while (recvBuffer.length() > 0);
+        } while (!recvBuffer.isEmpty());
     }
 
     @NotNull
@@ -2100,7 +2057,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     if (handleContextIO0()) {
                         Os.pause();
                     }
-                } while (recvBuffer.length() > 0);
+                } while (!recvBuffer.isEmpty());
             }
             waitForIOCompletion();
             closeContext();

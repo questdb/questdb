@@ -26,17 +26,18 @@ package io.questdb.cairo;
 
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public interface TableNameRegistry extends Closeable {
-    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false);
+    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false, false);
 
     TableToken addTableAlias(String newName, TableToken tableToken);
 
     /**
-     * cleans the registry and releases all resources
+     * Cleans the registry and releases all resources
      */
     void close();
 
@@ -57,7 +58,7 @@ public interface TableNameRegistry extends Closeable {
      * @return resolves table name to TableToken. If no token exists, returns null
      */
     TableToken getTableToken(CharSequence tableName);
-    
+
     /**
      * Returns table token by directory name. If table does not exist, returns null.
      *
@@ -135,7 +136,7 @@ public interface TableNameRegistry extends Closeable {
     /**
      * Reloads table name registry from storage, adjusted with converted tables.
      */
-    void reloadTableNameCache(ObjList<TableToken> convertedTables);
+    void reloadTableNameCache(@Nullable ObjList<TableToken> convertedTables);
 
     void removeAlias(TableToken tableToken);
 

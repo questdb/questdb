@@ -36,6 +36,7 @@ public class TableColumnMetadata implements Plannable {
     private final int writerIndex;
     private int indexValueBlockCapacity;
     private boolean indexed;
+    private boolean isDedupKey;
     private String name;
     private int type;
 
@@ -44,7 +45,7 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
-        this(name, type, false, 0, false, metadata, -1);
+        this(name, type, false, 0, false, metadata, -1, false);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -58,25 +59,27 @@ public class TableColumnMetadata implements Plannable {
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
-        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1);
+        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false);
     }
 
     public TableColumnMetadata(
             String name,
             int type,
-            boolean indexFlag,
+            boolean indexed,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
-            int writerIndex
+            int writerIndex,
+            boolean dedupKeyFlag
     ) {
         this.name = name;
         this.type = type;
-        this.indexed = indexFlag;
+        this.indexed = indexed;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
+        this.isDedupKey = dedupKeyFlag;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -100,6 +103,10 @@ public class TableColumnMetadata implements Plannable {
         return writerIndex;
     }
 
+    public boolean isDedupKey() {
+        return isDedupKey;
+    }
+
     public boolean isDeleted() {
         return type < 0;
     }
@@ -114,6 +121,10 @@ public class TableColumnMetadata implements Plannable {
 
     public void markDeleted() {
         type = -Math.abs(type);
+    }
+
+    public void setDedupKeyFlag(boolean dedupKeyFlag) {
+        isDedupKey = dedupKeyFlag;
     }
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {

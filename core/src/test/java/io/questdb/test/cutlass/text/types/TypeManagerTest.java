@@ -57,7 +57,7 @@ public class TypeManagerTest extends AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         Misc.free(utf8Sink);
         Misc.free(jsonLexer);
         AbstractTest.tearDownStatic();
@@ -123,13 +123,13 @@ public class TypeManagerTest extends AbstractTest {
         File configFile = new File(root, "text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/text_loader.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
     }
 
     @Test
     public void testEmpty() throws JsonException {
         TypeManager typeManager = createTypeManager("/textloader/types/empty.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
     }
 
     @Test
@@ -143,13 +143,13 @@ public class TypeManagerTest extends AbstractTest {
     }
 
     @Test
-    public void testIllegalMethodParameterTimestamp() {
-        testIllegalParameterForGetTypeAdapter(ColumnType.TIMESTAMP);
+    public void testIllegalMethodParameterGeoInt() {
+        testIllegalParameterForGetTypeAdapter(ColumnType.GEOINT);
     }
 
     @Test
-    public void testIllegalMethodParameterGeoInt() {
-        testIllegalParameterForGetTypeAdapter(ColumnType.GEOINT);
+    public void testIllegalMethodParameterTimestamp() {
+        testIllegalParameterForGetTypeAdapter(ColumnType.TIMESTAMP);
     }
 
     @Test
@@ -157,7 +157,7 @@ public class TypeManagerTest extends AbstractTest {
         File configFile = new File(root, "my_awesome_text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/my_awesome_text_loader.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
     }
 
     @Test

@@ -28,6 +28,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class InCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -52,8 +53,13 @@ public class InCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testZeroArgs() throws SqlException {
-        call('y').andAssert(false);
+    public void testZeroArgs() {
+        try {
+            call('y').andAssert(false);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals("[3] too few arguments for 'in'", e.getMessage());
+        }
     }
 
     @Override

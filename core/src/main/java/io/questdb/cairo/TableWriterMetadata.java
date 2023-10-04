@@ -34,8 +34,8 @@ import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata, TableStructure {
     private int maxUncommittedRows;
-    private long o3MaxLag;
     private long metadataVersion;
+    private long o3MaxLag;
     private int partitionBy;
     private int symbolMapCount;
     private int tableId;
@@ -64,6 +64,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public long getMetadataVersion() {
+        return metadataVersion;
+    }
+
+    @Override
     public long getO3MaxLag() {
         return o3MaxLag;
     }
@@ -80,27 +85,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public int getSymbolCapacity(int columnIndex) {
-        return ((WriterTableColumnMetadata)getColumnMetadata(columnIndex)).symbolCapacity;
-    }
-
-    @Override
-    public CharSequence getTableName() {
-        return tableToken.getTableName();
-    }
-
-    @Override
-    public boolean isIndexed(int columnIndex) {
-        return  getColumnMetadata(columnIndex).isIndexed();
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
-        return ((WriterTableColumnMetadata)getColumnMetadata(columnIndex)).sequential;
-    }
-
-    @Override
-    public long getMetadataVersion() {
-        return metadataVersion;
+        return ((WriterTableColumnMetadata) getColumnMetadata(columnIndex)).symbolCapacity;
     }
 
     public int getSymbolMapCount() {
@@ -113,12 +98,27 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public CharSequence getTableName() {
+        return tableToken.getTableName();
+    }
+
+    @Override
     public TableToken getTableToken() {
         return tableToken;
     }
 
     public int getTableVersion() {
         return version;
+    }
+
+    @Override
+    public boolean isIndexed(int columnIndex) {
+        return getColumnMetadata(columnIndex).isIndexed();
+    }
+
+    @Override
+    public boolean isSequential(int columnIndex) {
+        return ((WriterTableColumnMetadata) getColumnMetadata(columnIndex)).sequential;
     }
 
     @Override
@@ -159,7 +159,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                             null,
                             i,
                             TableUtils.isSequential(metaMem, i),
-                            TableUtils.getSymbolCapacity(metaMem, i)
+                            TableUtils.getSymbolCapacity(metaMem, i),
+                            TableUtils.isColumnDedupKey(metaMem, i)
                     )
             );
             columnNameIndexMap.put(nameStr, i);
@@ -174,12 +175,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.maxUncommittedRows = rows;
     }
 
-    public void setO3MaxLag(long o3MaxLagUs) {
-        this.o3MaxLag = o3MaxLagUs;
-    }
-
     public void setMetadataVersion(long value) {
         this.metadataVersion = value;
+    }
+
+    public void setO3MaxLag(long o3MaxLagUs) {
+        this.o3MaxLag = o3MaxLagUs;
     }
 
     public void setTableVersion() {
@@ -190,7 +191,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
-    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex, boolean sequential, int symbolCapacity) {
+    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex, boolean sequential, int symbolCapacity, boolean isDedupKey) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
@@ -203,7 +204,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                         null,
                         columnIndex,
                         sequential,
-                        symbolCapacity
+                        symbolCapacity,
+                        isDedupKey
                 )
         );
         columnCount++;
@@ -238,8 +240,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         private final boolean sequential;
         private final int symbolCapacity;
 
-        public WriterTableColumnMetadata(String nameStr, int type, boolean columnIndexed, int indexBlockCapacity, boolean symbolTableStatic, RecordMetadata parent, int i, boolean sequential, int symbolCapacity) {
-            super(nameStr, type, columnIndexed, indexBlockCapacity, symbolTableStatic, parent, i);
+        public WriterTableColumnMetadata(String nameStr, int type, boolean columnIndexed, int indexBlockCapacity, boolean symbolTableStatic, RecordMetadata parent, int i, boolean sequential, int symbolCapacity, boolean isDedupKey) {
+            super(nameStr, type, columnIndexed, indexBlockCapacity, symbolTableStatic, parent, i, isDedupKey);
             this.sequential = sequential;
             this.symbolCapacity = symbolCapacity;
         }

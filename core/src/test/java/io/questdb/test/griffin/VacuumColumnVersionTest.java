@@ -28,12 +28,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -42,13 +44,15 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class VacuumColumnVersionTest extends AbstractGriffinTest {
+import java.util.concurrent.atomic.AtomicReference;
+
+public class VacuumColumnVersionTest extends AbstractCairoTest {
     private int iteration;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         columnVersionPurgeQueueCapacity = 2;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Before
@@ -61,10 +65,26 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testVacuumPurgesColumnVersionsAfterColumnDrop() throws Exception {
-        assertMemoryLeak(() -> {
+    public void testVacuumInMiddleOfUpdate() throws Exception {
+        AtomicReference<ColumnPurgeJob> purgeJobInstance = new AtomicReference<>();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (purgeJobInstance.get() != null && (Chars.endsWith(name, "/1970-01-05/sym1.d.2") || Chars.endsWith(name, "\\1970-01-05\\sym1.d.2"))) {
+                    try {
+                        runTableVacuum("testPurge");
+                        runPurgeJob(purgeJobInstance.get());
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -72,13 +92,46 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
+                );
+                compile("alter table testPurge drop column x");
+
+                purgeJobInstance.set(purgeJob);
+                update("UPDATE testPurge SET sym1='123'");
+
+                assertSql("ts\tstr\tsym1\tsym2\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t123\t2\n" +
+                        "1970-01-02T00:00:00.000000Z\td\t123\t4\n" +
+                        "1970-01-03T00:00:00.000000Z\tc\t123\t3\n" +
+                        "1970-01-04T00:00:00.000000Z\ta\t123\t1\n" +
+                        "1970-01-05T00:00:00.000000Z\tc\t123\t2\n", "testPurge");
+
+                String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
+                String[] files = {"sym1.d"};
+                assertFilesExist(partitions, "testPurge", files, "", false);
+
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesColumnVersionsAfterColumnDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                ddl(
+                        "create table testPurge as" +
+                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                                " x," +
+                                " rnd_str('a', 'b', 'c', 'd') str," +
+                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                                " rnd_symbol('1', '2', '3', '4') sym2" +
+                                " from long_sequence(5)), index(sym2)" +
+                                " timestamp(ts) PARTITION BY DAY"
                 );
                 compile("alter table testPurge drop column x");
 
                 try (TableReader rdr = getReader("testPurge")) {
-                    executeUpdate("UPDATE testPurge SET sym1='123', str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge SET sym1='123', str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
 
@@ -99,7 +152,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     public void testVacuumPurgesColumnVersionsAsync() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -107,14 +160,13 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
                 String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04"};
                 String[] files = {"sym2.d", "sym2.k", "sym2.v"};
 
                 try (TableReader rdr = getReader("testPurge")) {
-                    executeUpdate("UPDATE testPurge SET x = 100, sym2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge SET x = 100, sym2='EE' WHERE ts >= '1970-01-02'");
                     runPurgeJob(purgeJob);
 
                     // Open reader does not allow to delete the files
@@ -154,7 +206,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
             currentMicros = 0;
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -162,12 +214,11 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
 
                 try (TableReader rdr = getReader("testPurge")) {
-                    executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
 
@@ -190,7 +241,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
             currentMicros = 0;
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge1 as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -198,11 +249,10 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
 
-                compiler.compile(
+                ddl(
                         "create table testPurge2 as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -210,16 +260,15 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
 
                 try (
                         TableReader rdr1 = getReader("testPurge1");
                         TableReader rdr2 = getReader("testPurge2")
                 ) {
-                    executeUpdate("UPDATE testPurge1 SET x = 100, str = 'abc' WHERE ts >= '1970-01-02'");
-                    executeUpdate("UPDATE testPurge2 SET x = 100, str = 'dcf' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge1 SET x = 100, str = 'abc' WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge2 SET x = 100, str = 'dcf' WHERE ts >= '1970-01-02'");
                     rdr1.openPartition(0);
                     rdr2.openPartition(0);
                 }
@@ -240,7 +289,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumSyncFailsQueueSize() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            ddl(
                     "create table testPurge as" +
                             " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                             " x," +
@@ -248,12 +297,11 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                             " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                             " rnd_symbol('1', '2', '3', '4') sym2" +
                             " from long_sequence(5)), index(sym2)" +
-                            " timestamp(ts) PARTITION BY DAY",
-                    sqlExecutionContext
+                            " timestamp(ts) PARTITION BY DAY"
             );
 
             try (TableReader rdr = getReader("testPurge")) {
-                executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                update("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                 rdr.openPartition(0);
 
                 String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04"};
@@ -279,7 +327,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
             currentMicros = 0;
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
+                ddl(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                                 " x," +
@@ -287,15 +335,14 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                                 " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                                 " rnd_symbol('1', '2', '3', '4') sym2" +
                                 " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
+                                " timestamp(ts) PARTITION BY DAY"
                 );
                 compile("alter table testPurge drop column x");
                 compile("alter table testPurge add column x int");
-                compile("insert into testPurge(str,sym1,sym2,x,ts) values('str', 'sym1', 'sym2', 123, '1970-02-01')");
+                insert("insert into testPurge(str,sym1,sym2,x,ts) values('str', 'sym1', 'sym2', 123, '1970-02-01')");
 
                 try (TableReader rdr = getReader("testPurge")) {
-                    executeUpdate("UPDATE testPurge SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
+                    update("UPDATE testPurge SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
 
@@ -395,15 +442,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
 
     @NotNull
     private ColumnPurgeJob createPurgeJob() throws SqlException {
-        return new ColumnPurgeJob(engine, null);
-    }
-
-    private void executeUpdate(String query) throws SqlException {
-        final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-        try (OperationFuture fut = cq.execute(null)) {
-            fut.await();
-        }
+        return new ColumnPurgeJob(engine);
     }
 
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
@@ -424,7 +463,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     private String[] update3ColumnsWithOpenReader(ColumnPurgeJob purgeJob, String tableName) throws SqlException {
         compile(
                 "create table " + tableName + " as" +
-                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T00:01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -443,7 +482,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                     " rnd_symbol('1', '2', '3', '4') sym2" +
                     " from long_sequence(5)");
 
-            executeUpdate("UPDATE " + tableName + " SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
+            update("UPDATE " + tableName + " SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
             rdr.openPartition(0);
         }
 

@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -217,13 +218,18 @@ public class O3MaxLagTest extends AbstractO3Test {
                         " WITH maxUncommittedRows=1, o3MaxLag=120s", sqlExecutionContext);
 
                 try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
+                    int effectiveMaxUncommitted;
+                    try (TableMetadata tableMetadata = engine.getMetadata(engine.verifyTableName(tableName))) {
+                        effectiveMaxUncommitted = tableMetadata.getMaxUncommittedRows();
+                    }
+
                     for (int i = 0; i < length; i++) {
                         long ts = IntervalUtils.parseFloorPartialTimestamp(dates[i]);
                         Row r = writer.newRow(ts);
                         r.append();
 
                         Assert.assertEquals(i + 1, writer.size());
-                        if (writer.getMetadata().getMaxUncommittedRows() < writer.getUncommittedRowCount()) {
+                        if (effectiveMaxUncommitted < writer.getUncommittedRowCount()) {
                             writer.ic(CommitMode.NOSYNC);
                         }
                         Assert.assertEquals(i + 1, writer.size());
@@ -254,7 +260,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
-                    int maxUncommitted = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(hi);
+                    int maxUncommitted = TestUtils.generateRandom(null).nextInt(hi);
 
                     int initialCountLo = longsPerPage - 1;
                     int additionalCountLo = longsPerPage - 1;
@@ -300,7 +306,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     @Test
     public void testVarColumnPageBoundariesAppendRndPageSize() throws Exception {
-        int rndPagesMultiplier = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(129);
+        int rndPagesMultiplier = TestUtils.generateRandom(null).nextInt(129);
         int multiplier = Numbers.ceilPow2(rndPagesMultiplier);
 
         dataAppendPageSize = (int) Files.PAGE_SIZE * multiplier;
@@ -373,7 +379,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
-                    int maxUncommitted = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(hi);
+                    int maxUncommitted = TestUtils.generateRandom(null).nextInt(hi);
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, maxUncommitted);

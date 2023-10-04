@@ -32,8 +32,8 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
-import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyContext;
+import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -53,6 +53,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final int atomicity;
+    private final CopyContext copyContext;
     private final byte delimiter;
     private final String fileName;
     private final boolean headerFlag;
@@ -62,7 +63,6 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     private final CopyRecord record = new CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private final String tableName;
-    private final CopyContext copyContext;
     private final String timestampColumn;
     private final String timestampFormat;
 

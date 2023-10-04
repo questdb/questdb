@@ -48,7 +48,6 @@ public class RpnBuilder implements ExpressionParserListener {
         if (sink.charAt(sink.length() - 1) == ' ') {
             sink.clear(sink.length() - 1);
         }
-
         return sink;
     }
 }

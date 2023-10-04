@@ -25,20 +25,65 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     public static final DenyAllSecurityContext INSTANCE = new DenyAllSecurityContext();
 
     @Override
-    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    public void authorizeAdminAction() {
         throw CairoException.nonCritical().put("permission denied");
     }
 
     @Override
-    public void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowGroups() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowGroups(CharSequence userName) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowPermissions(CharSequence entityName) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowServiceAccount(CharSequence serviceAccountName) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowServiceAccounts() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowServiceAccounts(CharSequence userOrGroupName) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowUser(CharSequence userName) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeShowUsers() {
         throw CairoException.nonCritical().put("permission denied");
     }
 }

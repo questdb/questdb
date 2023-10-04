@@ -38,7 +38,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Files {
-
+    public static boolean VIRTIO_FS_DETECTED = false;
+    private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     public static final int DT_DIR = 4;
     public static final int DT_FILE = 8;
     public static final int DT_LNK = 10; // soft link
@@ -219,7 +220,11 @@ public final class Files {
      */
     public static int getFileSystemStatus(LPSZ lpszName) {
         assert lpszName.capacity() > 127;
-        return getFileSystemStatus(lpszName.address());
+        int status = getFileSystemStatus(lpszName.address());
+        if (status == VIRTIO_FS_MAGIC) {
+            VIRTIO_FS_DETECTED = true;
+        }
+        return status;
     }
 
     public static long getLastModified(LPSZ lpsz) {
@@ -451,12 +456,26 @@ public final class Files {
         return rename(oldName.address(), newName.address());
     }
 
-    public static int rmdir(Path path) {
+    /**
+     * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.
+     * The function can operate in two modes, eager and haltOnFail. In haltOnFail mode function fails fast, providing precise
+     * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
+     * directory, should some files remain. Thus, not providing correct diagnostics.
+     * <p>
+     * rmdir() will fail if directory does not exist
+     *
+     * @param path       path to the directory, must include trailing slash (/)
+     * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
+     *                   false, the function will remove as many files and subdirectories as possible. That might be useful
+     *                   when the intent is too free up as much disk space as possible.
+     * @return true on success
+     */
+    public static boolean rmdir(Path path, boolean haltOnFail) {
         long pathUtf8Ptr = path.address();
         long pFind = findFirst(pathUtf8Ptr);
         if (pFind > 0L) {
             int len = path.length();
-            int errno;
+            boolean res;
             int type;
             long nameUtf8Ptr;
             try {
@@ -465,13 +484,13 @@ public final class Files {
                     path.trimTo(len).concat(nameUtf8Ptr).$();
                     type = findType(pFind);
                     if (type == Files.DT_FILE) {
-                        if (!remove(pathUtf8Ptr)) {
-                            return Os.errno();
+                        if (!remove(pathUtf8Ptr) && haltOnFail) {
+                            return false;
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        errno = type == Files.DT_LNK ? unlink(pathUtf8Ptr) : rmdir(path);
-                        if (errno != 0) {
-                            return errno;
+                        res = type == Files.DT_LNK ? unlink(pathUtf8Ptr) == 0 : rmdir(path, haltOnFail);
+                        if (!res && haltOnFail) {
+                            return res;
                         }
                     }
                 }
@@ -480,13 +499,13 @@ public final class Files {
                 findClose(pFind);
                 path.trimTo(len).$();
             }
+
             if (isSoftLink(pathUtf8Ptr)) {
-                return unlink(pathUtf8Ptr);
-            } else if (rmdir(pathUtf8Ptr)) {
-                return 0;
+                return unlink(pathUtf8Ptr) == 0;
             }
+            return rmdir(pathUtf8Ptr);
         }
-        return Os.errno();
+        return false;
     }
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {
@@ -497,17 +516,6 @@ public final class Files {
 
     public static int softLink(LPSZ src, LPSZ softLink) {
         return softLink(src.address(), softLink.address());
-    }
-
-    public static boolean strcmp(long lpsz, CharSequence s) {
-        int len = s.length();
-        for (int i = 0; i < len; i++) {
-            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
-            if (b == 0 || b != (byte) s.charAt(i)) {
-                return false;
-            }
-        }
-        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
     }
 
     public static native int sync();

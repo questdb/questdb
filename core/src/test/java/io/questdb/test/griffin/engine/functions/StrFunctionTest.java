@@ -252,6 +252,11 @@ public class StrFunctionTest {
     }
 
     @Test
+    public void testCastToIPv4() {
+        Assert.assertEquals("23.200.41.90", TestUtils.ipv4ToString(new StrConstant("23.200.41.90").getIPv4(null)));
+    }
+
+    @Test
     public void testCastToInt() {
         Assert.assertEquals(1345, new StrConstant("1345").getInt(null));
     }

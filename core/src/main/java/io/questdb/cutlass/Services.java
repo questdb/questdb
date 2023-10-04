@@ -32,7 +32,6 @@ import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
-import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -42,8 +41,6 @@ import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
@@ -60,8 +57,6 @@ public final class Services {
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
@@ -76,8 +71,6 @@ public final class Services {
                 cairoEngine,
                 workerPoolManager.getInstance(configuration, metrics.health(), Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
-                functionFactoryCache,
-                snapshotAgent,
                 metrics
         );
     }
@@ -88,23 +81,18 @@ public final class Services {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
-        QueryCache.configure(configuration, metrics);
+        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, configuration.getFactoryProvider().getHttpSocketFactory());
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
-                sharedWorkerCount,
-                functionFactoryCache,
-                snapshotAgent
+                sharedWorkerCount
         );
 
         HttpServer.addDefaultEndpoints(
@@ -113,9 +101,7 @@ public final class Services {
                 cairoEngine,
                 workerPool,
                 sharedWorkerCount,
-                jsonQueryProcessorBuilder,
-                functionFactoryCache,
-                snapshotAgent
+                jsonQueryProcessorBuilder
         );
         return server;
     }
@@ -206,7 +192,7 @@ public final class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
+        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
@@ -239,8 +225,6 @@ public final class Services {
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
@@ -262,8 +246,6 @@ public final class Services {
                 configuration,
                 cairoEngine,
                 workerPool,
-                functionFactoryCache,
-                snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,

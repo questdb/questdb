@@ -51,7 +51,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
         for (int loop = 0; loop < 10; loop++) {
             Rnd rnd = new Rnd();
             // increments randomly by [0..512] up to three pages
-            for (long longCountIncr = longsPerPage, limit = longsPerPage * 3; longCountIncr < limit; longCountIncr += rnd.nextDouble() * 512) {
+            for (long longCountIncr = longsPerPage, limit = longsPerPage * 3; longCountIncr < limit; longCountIncr += (long) (rnd.nextDouble() * 512)) {
                 long longCount = longCountIncr;
                 final CountDownLatch readLatch = new CountDownLatch(1);
                 final File file = temp.newFile();

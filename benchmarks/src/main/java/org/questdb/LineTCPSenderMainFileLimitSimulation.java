@@ -31,7 +31,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.StringSink;
 
 import java.util.concurrent.locks.LockSupport;
 
@@ -78,10 +77,9 @@ public class LineTCPSenderMainFileLimitSimulation {
     private static final String[] nr = new String[70];
     private static final String[] puui = new String[70];
     private static final String[] rpcm = new String[41];
-    private static final StringSink sink = new StringSink();
     private static final String[] t5 = new String[70];
 
-    public static void main(String[] args) throws NumericException {
+    public static void main(String[] args) {
         Rnd rnd = new Rnd();
         generateStrings(rnd, auui, 16);
         generateStrings(rnd, puui, 16);

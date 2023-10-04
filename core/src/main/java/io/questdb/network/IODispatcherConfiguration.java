@@ -48,6 +48,8 @@ public interface IODispatcherConfiguration {
         return Numbers.ceilPow2(getLimit());
     }
 
+    long getHeartbeatInterval();
+
     default boolean getHint() {
         return false;
     }
@@ -56,7 +58,9 @@ public interface IODispatcherConfiguration {
         return Numbers.ceilPow2(getLimit());
     }
 
-    int getInitialBias();
+    default int getInitialBias() {
+        return BIAS_READ;
+    }
 
     default int getInterestQueueCapacity() {
         return Numbers.ceilPow2(getLimit());
@@ -94,6 +98,4 @@ public interface IODispatcherConfiguration {
     int getTestConnectionBufferSize();
 
     long getTimeout();
-
-    long getHeartbeatInterval();
 }

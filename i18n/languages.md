@@ -9,3 +9,5 @@
 - [Spanish / Español](./README.es-es.md)
 - [Portuguese / Português](README.pt.md)
 - [Japanese / 日本語](./README.ja-ja.md)
+- [Turkish / Türkçe](./README.tr-tr.md)
+- [Hindi / हिंदी](./README.hn-in.md)

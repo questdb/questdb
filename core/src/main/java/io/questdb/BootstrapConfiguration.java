@@ -29,6 +29,7 @@ import io.questdb.std.FilesFacade;
 import java.util.Map;
 
 public interface BootstrapConfiguration {
+
     String getBanner();
 
     Map<String, String> getEnv();

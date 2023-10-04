@@ -38,8 +38,8 @@ import io.questdb.std.Rows;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
 
+    static final String exceptionMessage = "timeout, query aborted";
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
-    private static final String exceptionMessage = "timeout, query aborted";
     private final Function filter;
     private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
@@ -146,7 +146,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
 
         if (!allFramesActive) {
-            throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
+            throwTimeoutException();
         }
         return false;
     }
@@ -218,6 +218,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
+                    if (task.hasError()) {
+                        throw CairoException.nonCritical().put(task.getErrorMsg());
+                    }
+
                     allFramesActive &= frameSequence.isActive();
                     rows = task.getRows();
                     frameRowCount = rows.size();
@@ -238,13 +242,25 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
             } while (frameIndex < frameLimit);
         } catch (Throwable e) {
-            LOG.critical().$("unexpected error [ex=").$(e).I$();
-            throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
+            LOG.error().$("filter error [ex=").$(e).I$();
+            if (e instanceof CairoException) {
+                CairoException ce = (CairoException) e;
+                if (ce.isInterruption()) {
+                    throwTimeoutException();
+                } else {
+                    throw ce;
+                }
+            }
+            throw CairoException.nonCritical().put(e.getMessage());
         }
     }
 
     private long rowIndex() {
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
+    }
+
+    private void throwTimeoutException() {
+        throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {

@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
@@ -32,21 +33,25 @@ import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,16 +61,22 @@ import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
 
-public abstract class BasePGTest extends AbstractGriffinTest {
+public abstract class BasePGTest extends AbstractCairoTest {
 
     protected CopyRequestJob copyRequestJob = null;
+    protected int forceRecvFragmentationChunkSize = 1024 * 1024;
+    protected int forceSendFragmentationChunkSize = 1024 * 1024;
+    protected int recvBufferSize = 1024 * 1024;
+    protected int sendBufferSize = 1024 * 1024;
+
+    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs);
+    }
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             PGWireServer.PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
@@ -73,15 +84,13 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             return null;
         }
 
-        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory, registry);
+        return new PGWireServer(configuration, cairoEngine, workerPool, contextFactory, registry);
     }
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent
+            WorkerPool workerPool
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -94,8 +103,6 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 configuration,
                 cairoEngine,
                 workerPool,
-                functionFactoryCache,
-                snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,
@@ -106,255 +113,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         );
     }
 
-    private static void toSink(InputStream is, CharSink sink) throws IOException {
-        // limit what we print
-        byte[] bb = new byte[1];
-        int i = 0;
-        while (is.read(bb) > 0) {
-            byte b = bb[0];
-            if (i > 0) {
-                if ((i % 16) == 0) {
-                    sink.put('\n');
-                    Numbers.appendHexPadded(sink, i);
-                }
-            } else {
-                Numbers.appendHexPadded(sink, i);
-            }
-            sink.put(' ');
-
-            final int v;
-            if (b < 0) {
-                v = 256 + b;
-            } else {
-                v = b;
-            }
-
-            if (v < 0x10) {
-                sink.put('0');
-                sink.put(hexDigits[b]);
-            } else {
-                sink.put(hexDigits[v / 0x10]);
-                sink.put(hexDigits[v % 0x10]);
-            }
-
-            i++;
-        }
-    }
-
-    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        assertResultSet(null, expected, sink, rs);
-    }
-
-    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
-        printToSink(sink, rs);
-        TestUtils.assertEquals(message, expected, sink);
-    }
-
-    protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
-        TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
-        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount(), compiler.getFunctionFactoryCache());
-
-        workerPool.assign(copyRequestJob);
-        workerPool.freeOnExit(copyRequestJob);
-
-        return createPGWireServer(
-                configuration,
-                engine,
-                workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent
-        );
-    }
-
-    protected PGWireServer createPGServer(int workerCount) throws SqlException {
-        return createPGServer(workerCount, Long.MAX_VALUE);
-    }
-
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) throws SqlException {
-        return createPGServer(workerCount, maxQueryTime, -1);
-    }
-
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) throws SqlException {
-
-        final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-            @Override
-            public int getCircuitBreakerThrottle() {
-                return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
-                        ? 0 // fail on first check
-                        : super.getCircuitBreakerThrottle();
-            }
-
-            // should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because
-            // Os.currentTimeMillis() could be a couple ms in the future compare to System.currentTimeMillis(), at least on Windows 10
-            @Override
-            public @NotNull MillisecondClock getClock() {
-                return () -> testMicrosClock.getTicks() / 1000L;
-            }
-
-            @Override
-            public long getTimeout() {
-                return maxQueryTime;
-            }
-        };
-
-        final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit) {
-
-            @Override
-            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-                return circuitBreakerConfiguration;
-            }
-
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        };
-
-        return createPGServer(conf);
-    }
-
-    protected void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
-        sink.clear();
-        select.setInt(1, value);
-        try (ResultSet resultSet = select.executeQuery()) {
-            sink.clear();
-            while (resultSet.next()) {
-                sink.put(resultSet.getInt(1));
-                sink.put('\n');
-            }
-        }
-    }
-
-    protected Connection getConnection(int port, boolean simple, boolean binary) throws SQLException {
-        if (simple) {
-            return getConnection(Mode.SIMPLE, port, binary, -2);
-        } else {
-            return getConnection(Mode.EXTENDED, port, binary, -2);
-        }
-    }
-
-    protected Connection getConnection(int port, boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
-        Properties properties = new Properties();
-        properties.setProperty("user", "admin");
-        properties.setProperty("password", "quest");
-        properties.setProperty("sslmode", "disable");
-        properties.setProperty("binaryTransfer", Boolean.toString(binary));
-        properties.setProperty("preferQueryMode", simple ? Mode.SIMPLE.value : Mode.EXTENDED.value);
-        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        properties.setProperty("options", "-c statement_timeout=" + statementTimeoutMs);
-        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
-        return DriverManager.getConnection(url, properties);
-    }
-
-    protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
-        Properties properties = new Properties();
-        properties.setProperty("user", "admin");
-        properties.setProperty("password", "quest");
-        properties.setProperty("binaryTransfer", Boolean.toString(binary));
-        properties.setProperty("preferQueryMode", mode.value);
-        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
-            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
-        }
-
-        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        // use this line to switch to local postgres
-        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
-        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
-        return DriverManager.getConnection(url, properties);
-    }
-
-    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
-        Properties properties = new Properties();
-        properties.setProperty("user", "admin");
-        properties.setProperty("password", "quest");
-        properties.setProperty("sslmode", "disable");
-        properties.setProperty("binaryTransfer", Boolean.toString(binary));
-        properties.setProperty("preferQueryMode", mode.value);
-        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
-            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
-        }
-
-        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        // use this line to switch to local postgres
-        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
-        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
-        return DriverManager.getConnection(url, properties);
-    }
-
-    @NotNull
-    protected NetworkFacade getFragmentedSendFacade() {
-        return new NetworkFacadeImpl() {
-            @Override
-            public int send(int fd, long buffer, int bufferLen) {
-                int total = 0;
-                for (int i = 0; i < bufferLen; i++) {
-                    int n = super.send(fd, buffer + i, 1);
-                    if (n < 0) {
-                        return n;
-                    }
-                    total += n;
-                }
-                return total;
-            }
-        };
-    }
-
-    @NotNull
-    protected DefaultPGWireConfiguration getHexPgWireConfig() {
-        return new DefaultPGWireConfiguration() {
-            @Override
-            public String getDefaultPassword() {
-                return "oh";
-            }
-
-            @Override
-            public String getDefaultUsername() {
-                return "xyz";
-            }
-
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return new DefaultIODispatcherConfiguration() {
-                    @Override
-                    public int getBindPort() {
-                        return 0;  // Bind to ANY port.
-                    }
-                };
-            }
-
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-        };
-    }
-
-    @NotNull
-    protected DefaultPGWireConfiguration getStdPgWireConfig() {
-        return new DefaultPGWireConfiguration() {
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return new DefaultIODispatcherConfiguration() {
-                    @Override
-                    public int getBindPort() {
-                        return 0;  // Bind to ANY port.
-                    }
-                };
-            }
-
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-        };
-    }
-
-    protected long printToSink(StringSink sink, ResultSet rs) throws SQLException, IOException {
+    public static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
         // dump metadata
         ResultSetMetaData metaData = rs.getMetaData();
         final int columnCount = metaData.getColumnCount();
@@ -364,10 +123,23 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
 
             sink.put(metaData.getColumnName(i + 1));
-            sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+            if (JDBCType.valueOf(metaData.getColumnType(i + 1)) == JDBCType.VARCHAR) {
+                if (map != null) {
+                    if (map.get(i + 1) == ColumnType.IPv4) {
+                        sink.put('[').put("IPv4").put(']');
+                    } else {
+                        sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+                    }
+                } else {
+                    sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+                }
+            } else {
+                sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+            }
         }
         sink.put('\n');
 
+        Timestamp timestamp;
         long rows = 0;
         while (rs.next()) {
             rows++;
@@ -402,7 +174,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                         }
                         break;
                     case TIMESTAMP:
-                        Timestamp timestamp = rs.getTimestamp(i);
+                        timestamp = rs.getTimestamp(i);
                         if (timestamp == null) {
                             sink.put("null");
                         } else {
@@ -473,13 +245,279 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         return rows;
     }
 
-    enum Mode {
+    private static void toSink(InputStream is, CharSink sink) throws IOException {
+        // limit what we print
+        byte[] bb = new byte[1];
+        int i = 0;
+        while (is.read(bb) > 0) {
+            byte b = bb[0];
+            if (i > 0) {
+                if ((i % 16) == 0) {
+                    sink.put('\n');
+                    Numbers.appendHexPadded(sink, i);
+                }
+            } else {
+                Numbers.appendHexPadded(sink, i);
+            }
+            sink.put(' ');
+
+            final int v;
+            if (b < 0) {
+                v = 256 + b;
+            } else {
+                v = b;
+            }
+
+            if (v < 0x10) {
+                sink.put('0');
+                sink.put(hexDigits[b]);
+            } else {
+                sink.put(hexDigits[v / 0x10]);
+                sink.put(hexDigits[v % 0x10]);
+            }
+
+            i++;
+        }
+    }
+
+    protected static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs, map);
+    }
+
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+        printToSink(sink, rs, map);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        printToSink(sink, rs, null);
+        TestUtils.assertEquals(message, expected, sink);
+    }
+
+    protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
+        TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
+        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
+
+        workerPool.assign(copyRequestJob);
+        workerPool.freeOnExit(copyRequestJob);
+
+        return createPGWireServer(
+                configuration,
+                engine,
+                workerPool
+        );
+    }
+
+    protected PGWireServer createPGServer(int workerCount) throws SqlException {
+        return createPGServer(workerCount, Long.MAX_VALUE);
+    }
+
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) throws SqlException {
+        return createPGServer(workerCount, maxQueryTime, -1);
+    }
+
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) throws SqlException {
+
+        final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
+                        ? 0 // fail on first check
+                        : super.getCircuitBreakerThrottle();
+            }
+
+            // should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because
+            // Os.currentTimeMillis() could be a couple ms in the future compare to System.currentTimeMillis(), at least on Windows 10
+            @Override
+            public @NotNull MillisecondClock getClock() {
+                return () -> testMicrosClock.getTicks() / 1000L;
+            }
+
+            @Override
+            public long getTimeout() {
+                return maxQueryTime;
+            }
+        };
+
+        final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit) {
+
+            @Override
+            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                return circuitBreakerConfiguration;
+            }
+
+            @Override
+            public int getForceRecvFragmentationChunkSize() {
+                return forceRecvFragmentationChunkSize;
+            }
+
+            @Override
+            public int getForceSendFragmentationChunkSize() {
+                return forceSendFragmentationChunkSize;
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return recvBufferSize;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return sendBufferSize;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
+
+        return createPGServer(conf);
+    }
+
+    protected void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
+        sink.clear();
+        select.setInt(1, value);
+        try (ResultSet resultSet = select.executeQuery()) {
+            sink.clear();
+            while (resultSet.next()) {
+                sink.put(resultSet.getInt(1));
+                sink.put('\n');
+            }
+        }
+    }
+
+    protected Connection getConnection(int port, boolean simple, boolean binary) throws SQLException {
+        if (simple) {
+            return getConnection(Mode.SIMPLE, port, binary, -2);
+        } else {
+            return getConnection(Mode.EXTENDED, port, binary, -2);
+        }
+    }
+
+    protected Connection getConnection(int port, boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        properties.setProperty("preferQueryMode", simple ? Mode.SIMPLE.value : Mode.EXTENDED.value);
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        properties.setProperty("options", "-c statement_timeout=" + statementTimeoutMs);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        properties.setProperty("preferQueryMode", mode.value);
+        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
+            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
+        }
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        properties.setProperty("preferQueryMode", mode.value);
+        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
+            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
+        }
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    @NotNull
+    protected NetworkFacade getFragmentedSendFacade() {
+        return new NetworkFacadeImpl() {
+            @Override
+            public int sendRaw(int fd, long buffer, int bufferLen) {
+                int total = 0;
+                for (int i = 0; i < bufferLen; i++) {
+                    int n = super.sendRaw(fd, buffer + i, 1);
+                    if (n < 0) {
+                        return n;
+                    }
+                    total += n;
+                }
+                return total;
+            }
+        };
+    }
+
+    @NotNull
+    protected DefaultPGWireConfiguration getHexPgWireConfig() {
+        return new DefaultPGWireConfiguration() {
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
+            }
+
+            @Override
+            public IODispatcherConfiguration getDispatcherConfiguration() {
+                return new DefaultIODispatcherConfiguration() {
+                    @Override
+                    public int getBindPort() {
+                        return 0;  // Bind to ANY port.
+                    }
+                };
+            }
+
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
+        };
+    }
+
+    @NotNull
+    protected DefaultPGWireConfiguration getStdPgWireConfig() {
+        return new DefaultPGWireConfiguration() {
+            @Override
+            public IODispatcherConfiguration getDispatcherConfiguration() {
+                return new DefaultIODispatcherConfiguration() {
+                    @Override
+                    public int getBindPort() {
+                        return 0;  // Bind to ANY port.
+                    }
+                };
+            }
+
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
+        };
+    }
+
+    public enum Mode {
         SIMPLE("simple"),
         EXTENDED("extended"),
         EXTENDED_FOR_PREPARED("extendedForPrepared"),
         EXTENDED_CACHE_EVERYTHING("extendedCacheEverything");
 
-        final String value;
+        public final String value;
 
         Mode(String value) {
             this.value = value;

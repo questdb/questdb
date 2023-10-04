@@ -24,10 +24,10 @@
 
 package io.questdb.client;
 
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
@@ -87,7 +87,8 @@ public interface Sender extends Closeable {
      * This behavior can be adjusted by QuestDB server configuration. See <code>line.tcp.timestamp</code> in
      * <a href="https://questdb.io/docs/reference/configuration/">QuestDB server documentation</a>
      *
-     * @param timestamp time since 1st Jan 1970 UTC (epoch)
+     * @param timestamp timestamp value since epoch (in nanoseconds by default; see "line.tcp.timestamp" configuration
+     *                  option to learn how to change the unit on the server side)
      */
     void at(long timestamp);
 
@@ -184,7 +185,7 @@ public interface Sender extends Closeable {
      * Add a column with a non-designated timestamp value.
      *
      * @param name  name of the column
-     * @param value value to add (in microseconds since epoch)
+     * @param value timestamp value since epoch (in microseconds)
      * @return this instance for method chaining
      */
     Sender timestampColumn(CharSequence name, long value);
@@ -458,7 +459,7 @@ public interface Sender extends Closeable {
              * the Sender to load a trust store from a classpath.
              *
              * @param trustStorePath     a path to a trust store.
-             * @param trustStorePassword a password to for the trustore
+             * @param trustStorePassword a password to for the truststore
              * @return an instance of LineSenderBuilder for further configuration
              */
             public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {

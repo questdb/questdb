@@ -25,73 +25,48 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.InsertNullTest.expectedNullInserts;
 
-public class InsertNullGeoHashTest extends AbstractGriffinTest {
+public class InsertNullGeoHashTest extends AbstractCairoTest {
 
     private static final int NULL_INSERTS = 15;
 
     @Test
     public void testInsertGeoNullByte() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table g(a geohash(4b))", sqlExecutionContext);
-            executeInsert("insert into g values (cast(null as geohash(5b)))");
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "g",
-                    sink,
-                    "a\n\n"
-            );
+            ddl("create table g(a geohash(4b))");
+            insert("insert into g values (cast(null as geohash(5b)))");
+            assertSql("a\n\n", "g");
         });
     }
 
     @Test
     public void testInsertGeoNullInt() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table g(a geohash(22b))", sqlExecutionContext);
-            executeInsert("insert into g values (cast(null as geohash(24b)))");
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "g",
-                    sink,
-                    "a\n\n"
-            );
+            ddl("create table g(a geohash(22b))");
+            insert("insert into g values (cast(null as geohash(24b)))");
+            assertSql("a\n\n", "g");
         });
     }
 
     @Test
     public void testInsertGeoNullLong() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table g(a geohash(42b))", sqlExecutionContext);
-            executeInsert("insert into g values (cast(null as geohash(44b)))");
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "g",
-                    sink,
-                    "a\n\n"
-            );
+            ddl("create table g(a geohash(42b))");
+            insert("insert into g values (cast(null as geohash(44b)))");
+            assertSql("a\n\n", "g");
         });
     }
 
     @Test
     public void testInsertGeoNullShort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table g(a geohash(12b))", sqlExecutionContext);
-            executeInsert("insert into g values (cast(null as geohash(14b)))");
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "g",
-                    sink,
-                    "a\n\n"
-            );
+            ddl("create table g(a geohash(12b))");
+            insert("insert into g values (cast(null as geohash(14b)))");
+            assertSql("a\n\n", "g");
         });
     }
 

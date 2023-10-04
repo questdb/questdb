@@ -134,6 +134,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
+    CAIRO_SQL_COPY_ID_SUPPLIER("cairo.sql.copy.id.supplier"),
     CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
@@ -357,6 +358,8 @@ public enum PropertyKey implements ConfigProperty {
     PG_NAMED_STATEMENT_POOL_CAPACITY("pg.named.statement.pool.capacity"),
     PG_PENDING_WRITERS_CACHE_CAPACITY("pg.pending.writers.cache.capacity"),
     PG_NET_CONNECTION_SNDBUF("pg.net.connection.sndbuf"),
+    PG_DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("pg.debug.force.send.fragmentation.chunk.size"),
+    PG_DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("pg.debug.force.recv.fragmentation.chunk.size"),
     QUERY_TIMEOUT_SEC("query.timeout.sec"),
     SHARED_WORKER_COUNT("shared.worker.count"),
     SHARED_WORKER_AFFINITY("shared.worker.affinity"),
@@ -398,8 +401,10 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
     CAIRO_WAL_INACTIVE_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
     CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER("cairo.wal.squash.uncommitted.rows.multiplier"),
+    CAIRO_WAL_MAX_LAG_TXN_COUNT("cairo.wal.max.lag.txn.count"),
     CAIRO_WAL_APPLY_TABLE_TIME_QUOTA("cairo.wal.apply.table.time.quota"),
     CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
+    CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX("cairo.wal.temp.pending.rename.table.prefix"),
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
@@ -423,8 +428,12 @@ public enum PropertyKey implements ConfigProperty {
         return propertyPath;
     }
 
+    @Override
+    public String toString() {
+        return propertyPath;
+    }
+
     static {
         nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
     }
-
 }

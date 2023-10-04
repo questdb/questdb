@@ -47,6 +47,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
 import java.net.URISyntaxException;
@@ -108,6 +109,7 @@ public class O3Test extends AbstractO3Test {
                 TestUtils.create(model, engine);
             }
 
+            AtomicInteger errorCount = new AtomicInteger();
             short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
             IntList newColTypes = new IntList();
             CyclicBarrier barrier = new CyclicBarrier(1);
@@ -141,7 +143,9 @@ public class O3Test extends AbstractO3Test {
                         }
                         barrier.await();
                     } catch (Exception e) {
+                        //noinspection CallToPrintStackTrace
                         e.printStackTrace();
+                        errorCount.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
                         LOG.info().$("write is done").$();
@@ -151,6 +155,7 @@ public class O3Test extends AbstractO3Test {
                 writerT.start();
                 writerT.join();
             }
+            Assert.assertEquals(0, errorCount.get());
         });
     }
 
@@ -445,7 +450,7 @@ public class O3Test extends AbstractO3Test {
 
             // to_timestamp produces NULL because values does not match the pattern
             try {
-                TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
+                CairoEngine.insert(compiler, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 1970-01-01 are not allowed for O3");
@@ -1015,9 +1020,11 @@ public class O3Test extends AbstractO3Test {
 
         ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
         executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     String strColVal =
                             "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, mixedIOFlag=true]";
                     int len = getStorageLength(strColVal);
@@ -1034,7 +1041,7 @@ public class O3Test extends AbstractO3Test {
 
                     long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
-                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+                    CairoEngine.insert(compiler, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
 
                     // Check that there was an attempt to write a file bigger than 2GB
                     long max = 0;
@@ -1057,16 +1064,20 @@ public class O3Test extends AbstractO3Test {
                         writeLen.add(len);
                         return super.write(fd, address, len, offset);
                     }
-                });
+                }
+        );
     }
 
     @Test
     public void testVarColumnPageBoundariesAppend() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
@@ -1075,16 +1086,20 @@ public class O3Test extends AbstractO3Test {
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "12:00:01.000000Z");
                         compiler.compile("drop table x", sqlExecutionContext);
                     }
-                });
+                }
+        );
     }
 
     @Test
     public void testVarColumnPageBoundariesInsertInTheMiddle() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
@@ -1093,16 +1108,20 @@ public class O3Test extends AbstractO3Test {
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "11:00:00.002500Z");
                         compiler.compile("drop table x", sqlExecutionContext);
                     }
-                });
+                }
+        );
     }
 
     @Test
     public void testVarColumnPageBoundariesPrepend() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
@@ -1111,7 +1130,8 @@ public class O3Test extends AbstractO3Test {
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "00:00:01.000000Z");
                         compiler.compile("drop table x", sqlExecutionContext);
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1207,6 +1227,44 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "select max(ts) from y"
         );
+    }
+
+    private static void assertO3DataCursors(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            @Nullable String referenceTableDDL,
+            String referenceSQL,
+            String o3InsertSQL,
+            String assertSQL,
+            String countReferenceSQL,
+            String countAssertSQL
+    ) throws SqlException {
+        // create third table, which will contain both X and 1AM
+        if (referenceTableDDL != null) {
+            compiler.compile(referenceTableDDL, sqlExecutionContext);
+        }
+        if (o3InsertSQL != null) {
+            compiler.compile(o3InsertSQL, sqlExecutionContext);
+        }
+        testXAndIndex(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                referenceSQL,
+                assertSQL
+        );
+
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "select count() from " + countReferenceSQL,
+                "select count() from " + countAssertSQL
+        );
+    }
+
+    private static void dropTableY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        compiler.compile("drop table y", sqlExecutionContext);
     }
 
     private static void testAppendIntoColdWriter0(
@@ -1951,7 +2009,7 @@ public class O3Test extends AbstractO3Test {
                 "y",
                 "x"
         );
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastAppendBlankColumn0(
@@ -1985,19 +2043,19 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("alter table x add column v double", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", executionContext).execute(null).await();
+        engine.ddl("alter table x add column v double", executionContext);
+        engine.ddl("alter table x add column v1 float", executionContext);
+        engine.ddl("alter table x add column v2 int", executionContext);
+        engine.ddl("alter table x add column v3 byte", executionContext);
+        engine.ddl("alter table x add column v4 short", executionContext);
+        engine.ddl("alter table x add column v5 boolean", executionContext);
+        engine.ddl("alter table x add column v6 date", executionContext);
+        engine.ddl("alter table x add column v7 timestamp", executionContext);
+        engine.ddl("alter table x add column v8 symbol", executionContext);
+        engine.ddl("alter table x add column v10 char", executionContext);
+        engine.ddl("alter table x add column v11 string", executionContext);
+        engine.ddl("alter table x add column v12 binary", executionContext);
+        engine.ddl("alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2052,17 +2110,18 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopLastAppendColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2102,6 +2161,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "insert into x " +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2133,14 +2193,14 @@ public class O3Test extends AbstractO3Test {
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
                         " rnd_long() v9" +
-                        " from long_sequence(10)" +
-                        "",
+                        " from long_sequence(10)",
                 sqlExecutionContext
         );
 
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2177,17 +2237,16 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataConsistencyStableSort(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "insert into x select * from append",
-                "/o3/testColumnTopLastAppendColumn.txt"
+                "insert into x select * from append"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastDataMerge2Data0(
@@ -3083,17 +3142,18 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopMidAppendColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3133,6 +3193,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "insert into x " +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3164,14 +3225,14 @@ public class O3Test extends AbstractO3Test {
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
                         " rnd_long() v9" +
-                        " from long_sequence(1000)" +
-                        "",
+                        " from long_sequence(1000)",
                 sqlExecutionContext
         );
 
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3208,17 +3269,16 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataConsistencyStableSort(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "insert into x select * from append",
-                "/o3/testColumnTopMidAppendColumn.txt"
+                "insert into x select * from append"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopMidDataMergeData0(
@@ -3463,7 +3523,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopMidMergeBlankColumnGeoHash0(
@@ -3521,14 +3581,14 @@ public class O3Test extends AbstractO3Test {
                 "y",
                 "x"
         );
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopMidOOOData0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -4283,7 +4343,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testLagOverflowBySize0(
@@ -4436,6 +4496,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4464,6 +4525,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4490,6 +4552,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table tail as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4516,11 +4579,6 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        final String expected = Chars.toString(sink);
-
         // The query above generates expected result, but there is a problem using it
         // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
         // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
@@ -4530,14 +4588,16 @@ public class O3Test extends AbstractO3Test {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        // It is necessary to release cached "x" reader because as of yet
-        // reader cannot reload any partition other than "current".
-        // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
-        testXAndIndex(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                expected
+                null,
+                "y order by ts, commit",
+                null,
+                "x",
+                "y",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -4624,7 +4684,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testOOOTouchesNotLastPartitionTop0(
@@ -4641,6 +4701,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as ( " +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4669,6 +4730,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4697,7 +4759,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y order by ts, i desc",
+                "y order by ts, commit",
                 "insert into x select * from append",
                 "x",
                 "y",
@@ -4705,7 +4767,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testOooFollowedByAnotherOOO0(
@@ -4716,6 +4778,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4744,6 +4807,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4770,6 +4834,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table tail as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4793,24 +4858,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
-
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        String expected = Chars.toString(sink);
 
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
-
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, "x");
-
-        TestUtils.assertEquals(expected, sink);
-
-        testXAndIndex(engine, compiler, sqlExecutionContext, expected);
+        testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
         assertMaxTimestamp(
                 engine,
@@ -4829,6 +4883,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4855,6 +4910,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4884,7 +4940,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 executionContext,
                 "create table y as (x union all append)",
-                "y order by ts",
+                "y order by ts, commit",
                 "insert into x select * from append",
                 "x",
                 "y",
@@ -4898,6 +4954,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append2 as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4921,28 +4978,31 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
+        compiler.compile("drop table y", executionContext);
+
         // create third table, which will contain both X and 1AM
         assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
-                "create table y2 as (y union all append2)",
-                "y2 order by ts",
+                "create table y as (x union all append2)",
+                "y order by ts, commit",
                 "insert into x select * from append2",
                 "x",
-                "y2",
+                "y",
                 "x"
         );
+
 
         TestUtils.printSql(
                 compiler,
                 executionContext,
-                "select count() from y2",
+                "select count() from y",
                 sink2
         );
 
         assertXCount(compiler, executionContext);
-        assertMaxTimestamp(engine, compiler, executionContext, "select max(ts) from y2");
+        assertMaxTimestamp(engine, compiler, executionContext, "select max(ts) from y");
     }
 
     private static void testPartitionedDataAppendOODataIndexed0(
@@ -4953,6 +5013,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -4979,6 +5040,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5008,7 +5070,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y where sym = 'googl' order by ts",
+                "y where sym = 'googl' order by ts, commit",
                 "insert into x select * from append",
                 "x where sym = 'googl'",
                 "y where sym = 'googl'",
@@ -5111,6 +5173,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5139,6 +5202,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5168,7 +5232,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y order by ts",
+                "y order by ts, commit",
                 "insert into x select * from append",
                 "x",
                 "y",
@@ -5178,7 +5242,8 @@ public class O3Test extends AbstractO3Test {
         assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
-                engine);
+                engine
+        );
 
         assertMaxTimestamp(
                 engine,
@@ -5260,25 +5325,29 @@ public class O3Test extends AbstractO3Test {
         // check that reader can process out of order partition layout after fresh open
         String filteredColumnSelect = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,j,ts,l,m,n,t from x";
         engine.releaseAllReaders();
-        assertSqlResultAgainstFile(compiler,
+        assertSqlResultAgainstFile(
+                compiler,
                 sqlExecutionContext,
                 filteredColumnSelect,
-                "/o3/testPartitionedDataMergeData.txt");
+                "/o3/testPartitionedDataMergeData.txt"
+        );
 
         assertSqlResultAgainstFile(compiler, sqlExecutionContext,
                 filteredColumnSelect + " where sym = 'googl'",
-                "/o3/testPartitionedDataMergeData_Index.txt");
-        assertXCountY(compiler, sqlExecutionContext);
+                "/o3/testPartitionedDataMergeData_Index.txt"
+        );
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataMergeEnd0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5304,6 +5373,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table middle as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5326,19 +5396,28 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
+                "y where sym = 'googl' order by ts, commit",
                 "insert into x select * from middle",
-                "/o3/testPartitionedDataMergeEnd.txt"
+                "x where sym = 'googl'",
+                "y",
+                "x"
         );
 
-        assertIndexResultAgainstFile(
+        assertO3DataCursors(
+                engine,
                 compiler,
                 sqlExecutionContext,
-                "/o3/testPartitionedDataMergeEnd_Index.txt"
+                null,
+                "y order by ts, commit",
+                null,
+                "x",
+                "y",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -5353,10 +5432,11 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5384,6 +5464,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table middle as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5407,13 +5488,12 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataConsistencyStableSort(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
-                "insert into x select * from middle",
-                "/o3/testPartitionedDataOOData.txt"
+                "insert into x select * from middle"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -5430,10 +5510,11 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5461,6 +5542,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5486,6 +5568,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table top2 as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5508,22 +5591,24 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table y as (select * from x union all select * from 1am union all select * from top2)",
+                "y order by ts, commit, i",
                 "insert into x select * from (1am union all top2)",
-                "/o3/testPartitionedDataOODataPbOOData.txt"
+                "x",
+                "y",
+                "x"
         );
 
-        assertIndexResultAgainstFile(
+        assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
-                "/o3/testPartitionedDataOODataPbOOData_Index.txt"
+                engine
         );
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataOODataPbOODataDropColumn0(
@@ -5534,6 +5619,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5562,6 +5648,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5588,6 +5675,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append2 as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5621,37 +5709,39 @@ public class O3Test extends AbstractO3Test {
         assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
-                engine);
+                engine
+        );
 
         compiler.compile("alter table x drop column c", sqlExecutionContext).execute(null).await();
 
+        dropTableY(compiler, sqlExecutionContext);
         assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "create table z as (select * from x union all append2)",
-                "z order by ts",
+                "create table y as (select * from x union all append2)",
+                "y order by ts, commit",
                 "insert into x select * from append2",
                 "x",
-                "z",
+                "y",
                 "x"
         );
 
         assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
-                "z",
+                "y",
                 engine
         );
 
         TestUtils.printSql(
                 compiler,
                 sqlExecutionContext,
-                "select count() from z",
+                "select count() from y",
                 sink2
         );
         assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from z");
+        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
     private static void testPartitionedDataOOIntoLastIndexSearchBug0(
@@ -5662,6 +5752,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5690,6 +5781,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5716,6 +5808,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table tail as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5742,11 +5835,6 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        final String expected = Chars.toString(sink);
-
         // The query above generates expected result, but there is a problem using it
         // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
         // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
@@ -5763,7 +5851,8 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                expected
+                "y order by ts, commit",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -5778,10 +5867,11 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5809,6 +5899,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5834,6 +5925,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table tail as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5856,35 +5948,31 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
-
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        assertSqlResultAgainstFile(
+        testXAndIndex(
+                engine,
                 compiler,
                 sqlExecutionContext,
-                "x",
-                "/o3/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
+                "y order by ts, commit",
+                "x"
         );
-
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         // check if the same remains true when we open fresh TableReader instance
-
         engine.releaseAllReaders();
-        assertSqlResultAgainstFile(
+
+        testXAndIndex(
+                engine,
                 compiler,
                 sqlExecutionContext,
-                "x",
-                "/o3/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
+                "y order by ts, commit",
+                "x"
         );
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedOOData0(
@@ -5975,10 +6063,6 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        String expected = Chars.toString(sink);
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
@@ -5986,7 +6070,8 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                expected
+                "y order by ts",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -6006,6 +6091,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -6034,6 +6120,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table middle as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -6063,7 +6150,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
-                "y order by ts",
+                "y order by ts, commit",
                 "insert into x select * from middle",
                 "x",
                 "y",
@@ -6196,6 +6283,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -6224,6 +6312,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -6250,6 +6339,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table tail as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -6276,20 +6366,11 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        String expected = Chars.toString(sink);
-
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, "x");
-
-        TestUtils.assertEquals(expected, sink);
-
-        testXAndIndex(engine, compiler, sqlExecutionContext, expected);
+        testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
         assertMaxTimestamp(
                 engine,
@@ -6307,6 +6388,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -6335,6 +6417,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -6363,6 +6446,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table tail as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -6389,16 +6473,11 @@ public class O3Test extends AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        String expected = Chars.toString(sink);
-
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        testXAndIndex(engine, compiler, sqlExecutionContext, expected);
+        testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
         assertMaxTimestamp(
                 engine,
@@ -6717,7 +6796,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testRebuildIndexLastPartitionWithColumnTop(
@@ -6730,7 +6809,8 @@ public class O3Test extends AbstractO3Test {
                 "CREATE TABLE monthly_col_top(" +
                         "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
                         ") timestamp(ts) partition by MONTH",
-                sqlExecutionContext);
+                sqlExecutionContext
+        );
 
         compiler.compile(
                 "INSERT INTO monthly_col_top (ts, metric, diagnostic, sensorChannel) VALUES" +
@@ -6738,12 +6818,14 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T02:41:00.000000Z', '2', 'true', '2')," +
                         "('2022-06-08T02:42:00.000000Z', '3', 'true', '1')," +
                         "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         compiler.compile("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
                 .execute(null).await();
 
-        compiler.compile("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
+        compiler.compile(
+                "INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
                         "('2022-06-08T02:50:00.000000Z', '5', '3')," +
                         "('2022-06-08T02:50:00.000000Z', '6', '3')," +
                         "('2022-06-08T02:50:00.000000Z', '7', '1')," +
@@ -6754,13 +6836,16 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T03:50:00.000000Z', '12', '2')," +
                         "('2022-06-08T04:50:00.000000Z', '13', '2')," +
                         "('2022-06-08T04:50:00.000000Z', '14', '2')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         // OOO in the middle
-        compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+        compiler.compile(
+                "INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                         "('2022-06-08T03:30:00.000000Z', '15', '2', '3')," +
                         "('2022-06-08T03:30:00.000000Z', '16', '2', '3')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
@@ -6770,13 +6855,16 @@ public class O3Test extends AbstractO3Test {
                         "2022-06-08T03:50:00.000000Z\t11\t\t\t2\n" +
                         "2022-06-08T03:50:00.000000Z\t12\t\t\t2\n" +
                         "2022-06-08T04:50:00.000000Z\t13\t\t\t2\n" +
-                        "2022-06-08T04:50:00.000000Z\t14\t\t\t2\n");
+                        "2022-06-08T04:50:00.000000Z\t14\t\t\t2\n"
+        );
 
         // OOO appends to last partition
-        compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+        compiler.compile(
+                "INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                         "('2022-06-08T05:30:00.000000Z', '17', '4', '3')," +
                         "('2022-06-08T04:50:00.000000Z', '18', '4', '3')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
@@ -6785,14 +6873,17 @@ public class O3Test extends AbstractO3Test {
                         "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
                         "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
                         "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
-                        "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n");
+                        "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n"
+        );
 
         // OOO merges and appends to last partition
-        compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+        compiler.compile(
+                "INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                         "('2022-06-08T05:30:00.000000Z', '19', '4', '3')," +
                         "('2022-06-08T02:50:00.000000Z', '20', '4', '3')," +
                         "('2022-06-08T02:50:00.000000Z', '21', '4', '3')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
@@ -6803,8 +6894,9 @@ public class O3Test extends AbstractO3Test {
                         "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
                         "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
                         "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
-                        "2022-06-08T05:30:00.000000Z\t19\t\t4\t3\n" +
-                        "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n");
+                        "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n" +
+                        "2022-06-08T05:30:00.000000Z\t19\t\t4\t3\n"
+        );
     }
 
     private static void testRebuildIndexWithColumnTopPrevPartition(
@@ -6817,7 +6909,8 @@ public class O3Test extends AbstractO3Test {
                 "CREATE TABLE monthly_col_top(" +
                         "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
                         ") timestamp(ts) partition by DAY",
-                sqlExecutionContext);
+                sqlExecutionContext
+        );
 
         compiler.compile(
                 "INSERT INTO monthly_col_top (ts, metric, diagnostic, sensorChannel) VALUES" +
@@ -6825,31 +6918,38 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T02:41:00.000000Z', '2', 'true', '2')," +
                         "('2022-06-08T02:42:00.000000Z', '3', 'true', '1')," +
                         "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         compiler.compile("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
                 .execute(null).await();
 
-        compiler.compile("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
+        compiler.compile(
+                "INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
                         "('2022-06-08T02:50:00.000000Z', '5', '3')," +
                         "('2022-06-08T02:55:00.000000Z', '6', '3')," +
                         "('2022-06-08T02:59:00.000000Z', '7', '1')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
-        compiler.compile("INSERT batch 6 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
+        compiler.compile(
+                "INSERT batch 6 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
                         "('2022-06-09T02:50:00.000000Z', '9', '2')," +
                         "('2022-06-09T02:50:00.000000Z', '10', '2')," +
                         "('2022-06-09T03:50:00.000000Z', '11', '2')," +
                         "('2022-06-09T03:50:00.000000Z', '12', '2')," +
                         "('2022-06-09T04:50:00.000000Z', '13', '2')," +
                         "('2022-06-09T04:50:00.000000Z', '14', '2')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         // OOO append prev partition
-        compiler.compile("INSERT batch 2 INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+        compiler.compile(
+                "INSERT batch 2 INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                         "('2022-06-08T03:30:00.000000Z', '15', '2', '3')," +
                         "('2022-06-08T03:30:00.000000Z', '16', '2', '3')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
@@ -6857,13 +6957,16 @@ public class O3Test extends AbstractO3Test {
                         "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                         "2022-06-08T02:55:00.000000Z\t6\t\t\t3\n" +
                         "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
-                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n");
+                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n"
+        );
 
         // OOO insert mid prev partition
-        compiler.compile("INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
+        compiler.compile(
+                "INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
                         "('2022-06-08T02:54:00.000000Z', '17', '3')," +
                         "('2022-06-08T02:56:00.000000Z', '18', '3')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
@@ -6872,14 +6975,17 @@ public class O3Test extends AbstractO3Test {
                         "2022-06-08T02:55:00.000000Z\t6\t\t\t3\n" +
                         "2022-06-08T02:56:00.000000Z\t18\t\t\t3\n" +
                         "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
-                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n");
+                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n"
+        );
 
         // OOO insert overlaps prev partition and adds new rows at the end
-        compiler.compile("INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
+        compiler.compile(
+                "INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
                         "('2022-06-08T03:15:00.000000Z', '19', '3')," +
                         "('2022-06-08T04:30:00.000000Z', '20', '3')," +
                         "('2022-06-08T04:31:00.000000Z', '21', '3')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
@@ -6891,14 +6997,17 @@ public class O3Test extends AbstractO3Test {
                         "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
                         "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
                         "2022-06-08T04:30:00.000000Z\t20\t\t\t3\n" +
-                        "2022-06-08T04:31:00.000000Z\t21\t\t\t3\n");
+                        "2022-06-08T04:31:00.000000Z\t21\t\t\t3\n"
+        );
 
         // OOO insert overlaps prev partition and adds new rows at the top
-        compiler.compile("INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
+        compiler.compile(
+                "INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
                         "('2022-06-08T03:15:00.000000Z', '22', '3')," +
                         "('2022-06-08T03:15:00.000000Z', '23', '3')," +
                         "('2022-06-08T00:40:00.000000Z', '24', '3')",
-                sqlExecutionContext).execute(null).await();
+                sqlExecutionContext
+        ).execute(null).await();
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3' order by ts, metric", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
@@ -6913,7 +7022,8 @@ public class O3Test extends AbstractO3Test {
                         "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
                         "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
                         "2022-06-08T04:30:00.000000Z\t20\t\t\t3\n" +
-                        "2022-06-08T04:31:00.000000Z\t21\t\t\t3\n");
+                        "2022-06-08T04:31:00.000000Z\t21\t\t\t3\n"
+        );
     }
 
     private static void testRepeatedIngest0(
@@ -7164,6 +7274,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 0 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -7192,6 +7303,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -7218,6 +7330,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append2 as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x+100 as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -7244,6 +7357,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table append3 as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x + 200 as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -7273,7 +7387,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y order by ts",
+                "y order by ts, commit",
                 "insert into x select * from append",
                 "x",
                 "y",
@@ -7287,15 +7401,16 @@ public class O3Test extends AbstractO3Test {
                 "select max(ts) from y"
         );
 
+        dropTableY(compiler, sqlExecutionContext);
         assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "create table z as (x union all append2)",
-                "z order by i,sym,amt",
+                "create table y as (x union all append2)",
+                "y order by i,sym,amt",
                 "insert into x select * from append2",
                 "x order by i,sym,amt",
-                "z",
+                "y",
                 "x"
         );
 
@@ -7303,18 +7418,19 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "select max(ts) from z"
+                "select max(ts) from y"
         );
 
+        dropTableY(compiler, sqlExecutionContext);
         assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "create table w as (x union all append3)",
-                "w order by i,sym,amt",
+                "create table y as (x union all append3)",
+                "y order by i,sym,amt",
                 "insert into x select * from append3",
                 "x order by i,sym,amt",
-                "w",
+                "y",
                 "x"
         );
 
@@ -7322,7 +7438,7 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "select max(ts) from w"
+                "select max(ts) from y"
         );
     }
 
@@ -7391,7 +7507,7 @@ public class O3Test extends AbstractO3Test {
         compiler.compile("create table z as (x union all y)", executionContext);
 
         // create another compiler to be used by second pool
-        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+        try (SqlCompiler compiler2 = engine.getSqlCompiler()) {
 
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
@@ -7411,6 +7527,7 @@ public class O3Test extends AbstractO3Test {
                             barrier.await();
                             compiler.compile("insert into x select * from y", executionContext);
                         } catch (Throwable e) {
+                            //noinspection CallToPrintStackTrace
                             e.printStackTrace();
                             errorCount.incrementAndGet();
                         } finally {
@@ -7434,6 +7551,7 @@ public class O3Test extends AbstractO3Test {
                             barrier.await();
                             compiler2.compile("insert into x1 select * from y1", executionContext);
                         } catch (Throwable e) {
+                            //noinspection CallToPrintStackTrace
                             e.printStackTrace();
                             errorCount.incrementAndGet();
                         } finally {
@@ -7572,10 +7690,11 @@ public class O3Test extends AbstractO3Test {
                             .timestamp("ts"),
                     10,
                     "2020-01-01",
-                    1);
+                    1
+            );
 
             // Insert OOO to create partition dir 2020-01-01.1
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(1, 100.0, '2020-01-01T00:01:00')");
+            CairoEngine.insert(compiler, "insert into x values(1, 100.0, '2020-01-01T00:01:00')", sqlExecutionContext);
             TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
                     "count\n" +
                             "11\n"
@@ -7583,7 +7702,7 @@ public class O3Test extends AbstractO3Test {
 
             // Close and open writer. Partition dir 2020-01-01.1 should not be purged
             engine.releaseAllWriters();
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(2, 101.0, '2020-01-01T00:02:00')");
+            CairoEngine.insert(compiler, "insert into x values(2, 101.0, '2020-01-01T00:02:00')", sqlExecutionContext);
             TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
                     "count\n" +
                             "12\n"
@@ -7604,7 +7723,8 @@ public class O3Test extends AbstractO3Test {
                     .col("sym", ColumnType.SYMBOL).indexed(true, 2)
                     .timestamp("ts");
 
-            TestUtils.createPopulateTable("x",
+            TestUtils.createPopulateTable(
+                    "x",
                     compiler,
                     sqlExecutionContext,
                     tableModel,
@@ -7672,7 +7792,8 @@ public class O3Test extends AbstractO3Test {
             }
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
-                    "count\n" + (2 * idBatchSize + 1) + "\n");
+                    "count\n" + (2 * idBatchSize + 1) + "\n"
+            );
             engine.releaseAllReaders();
             try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
                 o3.truncate();
@@ -7680,15 +7801,13 @@ public class O3Test extends AbstractO3Test {
         }
     }
 
-    private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected) throws SqlException {
-        printSqlResult(compiler, sqlExecutionContext, "x");
-        TestUtils.assertEquals(expected, sink);
+    private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expectedSql, String assertSql) throws SqlException {
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedSql, assertSql, LOG, true);
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         // test that after reader is re-opened we can still see the same data
         engine.releaseAllReaders();
-        printSqlResult(compiler, sqlExecutionContext, "x");
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedSql, assertSql, LOG, true);
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
     }
 
@@ -7767,6 +7886,7 @@ public class O3Test extends AbstractO3Test {
                         r.putChar(indexes.get(j), rnd.nextChar());
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                     case ColumnType.GEOINT:
                         r.putInt(indexes.get(j), rnd.nextInt());
                         break;
@@ -7871,6 +7991,7 @@ public class O3Test extends AbstractO3Test {
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
                 "str\tts\tx\tstr2\ty\n" +
                         "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
-                        "cc\t" + ts2 + "\t11111\tdd\t22222\n");
+                        "cc\t" + ts2 + "\t11111\tdd\t22222\n"
+        );
     }
 }

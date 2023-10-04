@@ -24,13 +24,13 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
  * Tests group by with geohash column(s)
  */
-public class GroupByGeoHashTest extends AbstractGriffinTest {
+public class GroupByGeoHashTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByGeoByte() throws Exception {

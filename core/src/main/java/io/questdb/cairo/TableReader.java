@@ -88,9 +88,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         this(configuration, tableToken, null);
     }
 
-    public TableReader(CairoConfiguration configuration,
-                       TableToken tableToken,
-                       @Nullable MessageBus messageBus
+    public TableReader(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            @Nullable MessageBus messageBus
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
@@ -255,6 +256,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return metadata;
     }
 
+    public long getMetadataVersion() {
+        return txFile.getMetadataVersion();
+    }
+
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
     }
@@ -324,10 +329,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
-    }
-
-    public long getVersion() {
-        return txFile.getMetadataVersion();
     }
 
     public void goActive() {
@@ -513,10 +514,19 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean acquireTxn() {
         if (!txnAcquired) {
-            if (txnScoreboard.acquireTxn(txn)) {
-                txnAcquired = true;
-            } else {
-                return false;
+            try {
+                if (txnScoreboard.acquireTxn(txn)) {
+                    txnAcquired = true;
+                } else {
+                    return false;
+                }
+            } catch (CairoException ex) {
+                // Scoreboard can be over allocated
+                LOG.critical().$("cannot lock txn in scoreboard [table=")
+                        .$(tableToken)
+                        .$(", txn=").$(txn)
+                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                throw ex;
             }
         }
 

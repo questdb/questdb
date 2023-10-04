@@ -64,6 +64,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     //since we're only interested in timestamp field/col there's no point buffering whole line
     //we'll copy field part to buffer only if current field is designated timestamp
     private static final int MAX_TIMESTAMP_LENGTH = 100;
+    private final CairoConfiguration configuration;
     private final int dirMode;
     private final FilesFacade ff;
     private final int fieldRollBufLen;
@@ -120,7 +121,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private int timestampIndex;
     private long timestampValue;
     private boolean useFieldRollBuf = false;
-    private final CairoConfiguration configuration;
 
     public CsvFileIndexer(CairoConfiguration configuration) {
         this.configuration = configuration;

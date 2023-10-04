@@ -145,7 +145,7 @@ public class SqlUtil {
      * @param lexer input lexer
      * @return with next valid token or null if end of input is reached .
      */
-    public static CharSequence fetchNext(GenericLexer lexer) {
+    public static CharSequence fetchNext(GenericLexer lexer) throws SqlException {
         int blockCount = 0;
         boolean lineComment = false;
         while (lexer.hasNext()) {
@@ -174,6 +174,10 @@ public class SqlUtil {
             }
 
             if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
+                // unclosed quote check
+                if (cs.length() == 1 && cs.charAt(0) == '"') {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
+                }
                 return cs;
             }
         }
@@ -486,6 +490,17 @@ public class SqlUtil {
         return Float.NaN;
     }
 
+    public static int implicitCastStrAsIPv4(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseIPv4(value);
+            } catch (NumericException exception) {
+                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
+            }
+        }
+        return Numbers.IPv4_NULL;
+    }
+
     public static int implicitCastStrAsInt(CharSequence value) {
         if (value != null) {
             try {
@@ -621,9 +636,9 @@ public class SqlUtil {
             CharSequence base,
             int indexOfDot,
             LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
-            boolean cleanColumnNames
+            boolean nonLiteral
     ) {
-        final boolean disallowed = cleanColumnNames && disallowedAliases.contains(base);
+        final boolean disallowed = nonLiteral && disallowedAliases.contains(base);
 
         // short and sweet version
         if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
@@ -633,7 +648,7 @@ public class SqlUtil {
         final CharacterStoreEntry characterStoreEntry = store.newEntry();
 
         if (indexOfDot == -1) {
-            if (disallowed) {
+            if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NaN) {
                 characterStoreEntry.put("column");
             } else {
                 characterStoreEntry.put(base);

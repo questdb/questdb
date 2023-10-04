@@ -28,18 +28,18 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        ddl("create table tab (f double)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -49,7 +49,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select max(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -62,7 +62,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFirstNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        ddl("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -76,7 +76,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select max(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -89,7 +89,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        ddl("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -100,7 +100,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select max(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -112,7 +112,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tmax\tk\n" +
+        assertQuery("b\tmax\tk\n" +
                         "\t0.975019885372507\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -136,9 +136,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t0.21055995482842357\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\t1.486661884650934\t1970-01-03T09:00:00.000000Z\n",
-                "select b, max(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
+                        "CPSW\t1.486661884650934\t1970-01-03T09:00:00.000000Z\n", "select b, max(a), k from x sample by 3h fill(linear)", "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0) a," +
@@ -146,17 +144,14 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                         "select" +
                         " rnd_double(0) a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                "b\tmax\tk\n" +
+                        ") timestamp(k)", "b\tmax\tk\n" +
                         "\t0.975019885372507\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -277,10 +272,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "RXGZ\t0.986312060094449\t1970-01-04T06:00:00.000000Z\n" +
                         "PEHN\t-1.9805699408189095\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t-2.362042754952945\t1970-01-04T06:00:00.000000Z\n" +
-                        "CPSW\t3.379954054510219\t1970-01-04T06:00:00.000000Z\n",
-                true,
-                true
-        );
+                        "CPSW\t3.379954054510219\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
 
     @Test

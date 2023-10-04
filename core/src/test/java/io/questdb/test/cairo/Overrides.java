@@ -48,8 +48,6 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    private int o3PartitionSplitMaxCount = -1;
-    private long partitionO3SplitThreshold;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
@@ -68,12 +66,14 @@ public class Overrides implements ConfigurationOverrides {
     private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
     private long o3MinLag = -1;
+    private int o3PartitionSplitMaxCount = -1;
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
     private int pageFrameReduceQueueCapacity = -1;
     private int pageFrameReduceShardCount = -1;
     private Boolean parallelFilterEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
+    private long partitionO3SplitThreshold;
     private int queryCacheEventQueueCapacity = -1;
     private int recreateDistressedSequencerAttempts = 3;
     private int repeatMigrationsFromVersion = -1;
@@ -88,7 +88,8 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
     private int tableRegistryCompactionThreshold;
-    private long walApplyTableTimeQuote = -1;
+    private long walApplyTableTimeQuota = -1;
+    private int walMaxLagTxnCount = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private int walTxnNotificationQueueCapacity = -1;
@@ -329,8 +330,13 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public long getWalApplyTableTimeQuote() {
-        return walApplyTableTimeQuote;
+    public long getWalApplyTableTimeQuota() {
+        return walApplyTableTimeQuota;
+    }
+
+    @Override
+    public int getWalMaxLagTxnCount() {
+        return walMaxLagTxnCount;
     }
 
     @Override
@@ -448,7 +454,8 @@ public class Overrides implements ConfigurationOverrides {
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
         maxOpenPartitions = -1;
-        walApplyTableTimeQuote = -1;
+        walApplyTableTimeQuota = -1;
+        walMaxLagTxnCount = -1;
         repeatMigrationsFromVersion = -1;
         factoryProvider = null;
     }
@@ -713,8 +720,13 @@ public class Overrides implements ConfigurationOverrides {
         this.testMicrosClock = testMicrosClock;
     }
 
-    public void setWalApplyTableTimeQuote(long walApplyTableTimeQuote) {
-        this.walApplyTableTimeQuote = walApplyTableTimeQuote;
+    @Override
+    public void setWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
+        this.walApplyTableTimeQuota = walApplyTableTimeQuota;
+    }
+
+    public void setWalMaxLagTxnCount(int walMaxLagTxnCount) {
+        this.walMaxLagTxnCount = walMaxLagTxnCount;
     }
 
     @Override

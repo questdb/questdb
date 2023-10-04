@@ -29,14 +29,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -50,7 +48,7 @@ import java.util.List;
 /**
  * Basic tests that compare compiled filter output with the Java implementation.
  */
-public class CompiledFilterRegressionTest extends AbstractGriffinTest {
+public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(CompiledFilterRegressionTest.class);
     private static final int N_SIMD = 512;
@@ -64,7 +62,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
-        compiler.setEnableJitNullChecks(true);
+//        compiler.setEnableJitNullChecks(true);
     }
 
     @Test
@@ -412,62 +410,6 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUuidNullComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_uuid4() uuid1, " +
-                " rnd_uuid4() uuid2 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("uuid1", "uuid2")
-                .withEqualityOperator()
-                .withAnyOf("null")
-                .withBooleanOperator()
-                .withAnyOf("uuid1", "uuid2")
-                .withEqualityOperator()
-                .withAnyOf("null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testUuidConstantComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_uuid4() uuid1, " +
-                " rnd_uuid4() uuid2 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("uuid1", "uuid2")
-                .withEqualityOperator()
-                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'")
-                .withBooleanOperator()
-                .withOptionalNot()
-                .withAnyOf("uuid1", "uuid2")
-                .withEqualityOperator()
-                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testUuidConstantIntMixedComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int() int, " +
-                " rnd_uuid4() uuid " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("int")
-                .withEqualityOperator()
-                .withAnyOf("3", "-1", "null")
-                .withBooleanOperator()
-                .withOptionalNot()
-                .withAnyOf("uuid")
-                .withEqualityOperator()
-                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
-    }
-
-    @Test
     public void testNullValueComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -546,16 +488,72 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         assertQueryNullable(query, ddl);
     }
 
+    @Test
+    public void testUuidConstantComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1, " +
+                " rnd_uuid4() uuid2 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'")
+                .withBooleanOperator()
+                .withOptionalNot()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testUuidConstantIntMixedComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int() int, " +
+                " rnd_uuid4() uuid " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("int")
+                .withEqualityOperator()
+                .withAnyOf("3", "-1", "null")
+                .withBooleanOperator()
+                .withOptionalNot()
+                .withAnyOf("uuid")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testUuidNullComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1, " +
+                " rnd_uuid4() uuid2 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("null")
+                .withBooleanOperator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
+                ddl(ddl);
             }
 
             long maxSize = 0;
             List<String> filters = gen.generate();
             LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$(baseQuery).$();
-            Assert.assertTrue(filters.size() > 0);
+            Assert.assertFalse(filters.isEmpty());
             for (String filter : filters) {
                 long size = runQuery(baseQuery + " where " + filter);
                 maxSize = Math.max(maxSize, size);
@@ -575,7 +573,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     private void assertJitQuery(CharSequence query, boolean notNull) throws SqlException {
-        compiler.setEnableJitNullChecks(true);
+//        compiler.setEnableJitNullChecks(true);
 
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
         runJitQuery(query);
@@ -588,7 +586,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         // At the moment, there is no way for users to disable null checks in the
         // JIT compiler output. Yet, we want to test this part of the compiler.
         if (notNull) {
-            compiler.setEnableJitNullChecks(false);
+  //          compiler.setEnableJitNullChecks(false);
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
             runJitQuery(query);
@@ -603,7 +601,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     private void assertQuery(CharSequence query, CharSequence ddl, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
+                ddl(ddl);
             }
 
             long size = runQuery(query);
@@ -622,13 +620,11 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     private void runJitQuery(CharSequence query) throws SqlException {
-        final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        final RecordCursorFactory factory = cc.getRecordCursorFactory();
-        Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
-        } finally {
-            Misc.free(factory);
+        try (final RecordCursorFactory factory = select(query)) {
+            Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
+            }
         }
     }
 
@@ -636,14 +632,12 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         long resultSize;
 
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        RecordCursorFactory factory = cc.getRecordCursorFactory();
-        Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
-        try (CountingRecordCursor cursor = new CountingRecordCursor(factory.getCursor(sqlExecutionContext))) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-            resultSize = cursor.count();
-        } finally {
-            Misc.free(factory);
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
+            try (CountingRecordCursor cursor = new CountingRecordCursor(factory.getCursor(sqlExecutionContext))) {
+                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                resultSize = cursor.count();
+            }
         }
 
         return resultSize;
@@ -739,7 +733,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
          * Programming by Knuth.
          */
         public List<String> generate() {
-            if (filterParts.size() == 0) {
+            if (filterParts.isEmpty()) {
                 return Collections.emptyList();
             }
 

@@ -28,11 +28,17 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public interface TableWriterAPI extends Closeable {
-    void addColumn(@NotNull CharSequence columnName, int columnType);
+
+    default void addColumn(@NotNull CharSequence columnName, int columnType) {
+        addColumn(columnName, columnType, null);
+    }
+
+    void addColumn(@NotNull CharSequence columnName, int columnType, @Nullable SecurityContext securityContext);
 
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
@@ -62,6 +68,7 @@ public interface TableWriterAPI extends Closeable {
      * @param columnType              {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
+     * @param isSequential            unused, should be false
      */
     void addColumn(
             CharSequence columnName,
@@ -69,7 +76,8 @@ public interface TableWriterAPI extends Closeable {
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            boolean isSequential
     );
 
     long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
@@ -121,6 +129,8 @@ public interface TableWriterAPI extends Closeable {
     void ic(long o3MaxLag);
 
     TableWriter.Row newRow();
+
+    TableWriter.Row newRowDeferTimestamp();
 
     TableWriter.Row newRow(long timestamp);
 

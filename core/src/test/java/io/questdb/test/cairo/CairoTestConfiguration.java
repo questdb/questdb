@@ -34,6 +34,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.NotNull;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
@@ -52,7 +53,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public String getAttachPartitionSuffix() {
+    public @NotNull String getAttachPartitionSuffix() {
         return overrides.getAttachableDirSuffix() == null ? super.getAttachPartitionSuffix() : overrides.getAttachableDirSuffix();
     }
 
@@ -72,7 +73,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
     }
 
@@ -102,17 +103,17 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public CharSequence getDefaultMapType() {
+    public @NotNull CharSequence getDefaultMapType() {
         return overrides.getDefaultMapType() == null ? super.getDefaultMapType() : overrides.getDefaultMapType();
     }
 
     @Override
-    public FactoryProvider getFactoryProvider() {
+    public @NotNull FactoryProvider getFactoryProvider() {
         return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
     }
 
     @Override
-    public FilesFacade getFilesFacade() {
+    public @NotNull FilesFacade getFilesFacade() {
         // This method gets called in super constructor, hence the extra null check.
         return overrides != null && overrides.getFilesFacade() != null ? overrides.getFilesFacade() : super.getFilesFacade();
     }
@@ -143,23 +144,28 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public MicrosecondClock getMicrosecondClock() {
+    public @NotNull MicrosecondClock getMicrosecondClock() {
         return overrides.getTestMicrosClock();
     }
 
     @Override
-    public MillisecondClock getMillisecondClock() {
+    public @NotNull MillisecondClock getMillisecondClock() {
         return () -> overrides.getTestMicrosClock().getTicks() / 1000L;
     }
 
     @Override
-    public NanosecondClock getNanosecondClock() {
+    public @NotNull NanosecondClock getNanosecondClock() {
         return () -> overrides.getTestMicrosClock().getTicks() * 1000L;
     }
 
     @Override
     public int getO3ColumnMemorySize() {
         return overrides.getO3ColumnMemorySize() < 0 ? super.getO3ColumnMemorySize() : overrides.getO3ColumnMemorySize();
+    }
+
+    @Override
+    public int getO3LastPartitionMaxSplits() {
+        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3LastPartitionMaxSplits();
     }
 
     @Override
@@ -173,11 +179,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getO3LastPartitionMaxSplits() {
-        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3LastPartitionMaxSplits();
-    }
-
-    @Override
     public int getPageFrameReduceQueueCapacity() {
         return overrides.getPageFrameReduceQueueCapacity() < 0 ? super.getPageFrameReduceQueueCapacity() : overrides.getPageFrameReduceQueueCapacity();
     }
@@ -185,6 +186,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getPageFrameReduceShardCount() {
         return overrides.getPageFrameReduceShardCount() < 0 ? super.getPageFrameReduceShardCount() : overrides.getPageFrameReduceShardCount();
+    }
+
+    @Override
+    public long getPartitionO3SplitMinSize() {
+        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
     }
 
     @Override
@@ -214,7 +220,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public RostiAllocFacade getRostiAllocFacade() {
+    public @NotNull RostiAllocFacade getRostiAllocFacade() {
         return overrides.getRostiAllocFacade() != null ? overrides.getRostiAllocFacade() : super.getRostiAllocFacade();
     }
 
@@ -224,7 +230,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public CharSequence getSnapshotInstanceId() {
+    public @NotNull CharSequence getSnapshotInstanceId() {
         return overrides.getSnapshotInstanceId() != null ? overrides.getSnapshotInstanceId() : super.getSnapshotInstanceId();
     }
 
@@ -279,23 +285,28 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public TelemetryConfiguration getTelemetryConfiguration() {
+    public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }
 
     @Override
-    public VolumeDefinitions getVolumeDefinitions() {
+    public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
     }
 
     @Override
     public long getWalApplyTableTimeQuota() {
-        return overrides.getWalApplyTableTimeQuote() >= 0 ? overrides.getWalApplyTableTimeQuote() : super.getWalApplyTableTimeQuota();
+        return overrides.getWalApplyTableTimeQuota() >= 0 ? overrides.getWalApplyTableTimeQuota() : super.getWalApplyTableTimeQuota();
     }
 
     @Override
     public boolean getWalEnabledDefault() {
         return overrides.getDefaultTableWriteMode() < 0 ? super.getWalEnabledDefault() : overrides.getDefaultTableWriteMode() == 1;
+    }
+
+    @Override
+    public int getWalMaxLagTxnCount() {
+        return overrides.getWalMaxLagTxnCount() >= 0 ? overrides.getWalMaxLagTxnCount() : super.getWalMaxLagTxnCount();
     }
 
     @Override
@@ -316,11 +327,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getWalTxnNotificationQueueCapacity() {
         return overrides.getWalTxnNotificationQueueCapacity() > 0 ? overrides.getWalTxnNotificationQueueCapacity() : 256;
-    }
-
-    @Override
-    public long getPartitionO3SplitMinSize() {
-        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
     }
 
     @Override
@@ -349,6 +355,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public boolean isMultiKeyDedupEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return overrides.isO3QuickSortEnabled();
     }
@@ -366,11 +377,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
-    }
-
-    @Override
-    public boolean isWalSupported() {
-        return true;
     }
 
     @Override

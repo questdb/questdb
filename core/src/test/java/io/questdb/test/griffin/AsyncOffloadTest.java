@@ -25,11 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.*;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -38,7 +37,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
@@ -46,7 +46,7 @@ import org.junit.*;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class AsyncOffloadTest extends AbstractGriffinTest {
+public class AsyncOffloadTest extends AbstractCairoTest {
 
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
@@ -111,7 +111,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
 
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Before
@@ -120,6 +120,19 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
         super.setUp();
+    }
+
+    @Test
+    public void testAsyncOffloadNegativeLimitTimeoutWithJitEnabled() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        configOverrideJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        testAsyncOffloadNegativeLimitTimeout();
+    }
+
+    @Test
+    public void testAsyncOffloadNegativeLimitTimeoutWithoutJit() throws Exception {
+        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        testAsyncOffloadNegativeLimitTimeout();
     }
 
     @Test
@@ -164,7 +177,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         WorkerPool pool = new WorkerPool((() -> workerCount));
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("CREATE TABLE 'test1' " +
+                    engine.ddl(
+                            "CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
                                     "timestamp (timestamp) PARTITION BY HOUR",
                             sqlExecutionContext
@@ -173,25 +187,21 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     final int numOfRows = 2000;
                     for (int i = 0; i < numOfRows; i++) {
                         final int seconds = i % 60;
-                        final CompiledQuery cq = compiler.compile("INSERT INTO test1 (column1, timestamp) " +
+                        engine.insert(
+                                "INSERT INTO test1 (column1, timestamp) " +
                                         "VALUES ('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '2022-08-28T06:25:"
-                                        + (seconds < 10 ? "0" + seconds : "" + seconds) + "Z')",
+                                        + (seconds < 10 ? "0" + seconds : String.valueOf(seconds)) + "Z')",
                                 sqlExecutionContext
                         );
-                        try (final OperationFuture fut = cq.execute(null)) {
-                            fut.await();
-                        }
                     }
 
                     final String query = "SELECT column1 FROM test1 WHERE to_lowercase(column1) = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'";
 
-                    final SqlCompiler[] compilers = new SqlCompiler[threadCount];
                     final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
                     for (int i = 0; i < threadCount; i++) {
                         // Each factory should use a dedicated compiler instance, so that they don't
                         // share the same reduce task local pool in the SqlCodeGenerator.
-                        compilers[i] = new SqlCompiler(engine);
-                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        factories[i] = engine.select(query, sqlExecutionContext);
                     }
 
                     final AtomicInteger errors = new AtomicInteger();
@@ -224,9 +234,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     haltLatch.await();
 
-                    Misc.free(compilers);
                     Misc.free(factories);
-
                     Assert.assertEquals(0, errors.get());
                 },
                 configuration,
@@ -378,6 +386,63 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         );
     }
 
+    private void testAsyncOffloadNegativeLimitTimeout() throws SqlException {
+        SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+        currentMicros = 0;
+        SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    @NotNull
+                    public MillisecondClock getClock() {
+                        return () -> Long.MAX_VALUE;
+                    }
+
+                    @Override
+                    public long getTimeout() {
+                        return 1;
+                    }
+                },
+                MemoryTag.NATIVE_DEFAULT
+        );
+
+        ddl("create table x ( " +
+                "v long, " +
+                "s symbol capacity 4 cache " +
+                ")"
+        );
+        ddl("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
+
+        context.with(
+                context.getSecurityContext(),
+                context.getBindVariableService(),
+                context.getRandom(),
+                context.getRequestFd(),
+                circuitBreaker
+        );
+
+        try {
+            assertSql(
+                    "s\n" +
+                            "A\n" +
+                            "A\n" +
+                            "A\n" +
+                            "A\n" +
+                            "A\n", "select s from x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' limit -5"
+            );
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+        } finally {
+            context.with(
+                    context.getSecurityContext(),
+                    context.getBindVariableService(),
+                    context.getRandom(),
+                    context.getRequestFd(),
+                    null
+            );
+        }
+    }
+
     private void testAsyncOffloadTimeout() throws SqlException {
         SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
         currentMicros = 0;
@@ -397,15 +462,12 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 MemoryTag.NATIVE_DEFAULT
         );
 
-        compiler.compile("create table x ( " +
-                        "v long, " +
-                        "s symbol capacity 4 cache " +
-                        ")",
-                sqlExecutionContext
+        ddl("create table x ( " +
+                "v long, " +
+                "s symbol capacity 4 cache " +
+                ")"
         );
-        compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
-                sqlExecutionContext
-        );
+        ddl("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
 
         context.with(
                 context.getSecurityContext(),
@@ -417,9 +479,14 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
         try {
             assertSql(
-                    "x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
                     "v\ts\n" +
-                            "3393210801760647293\tA\n"
+                            "3393210801760647293\tA\n" +
+                            "3433721896286859656\tA\n" +
+                            "3619114107112892010\tA\n" +
+                            "3669882909701240516\tA\n" +
+                            "3820631780839257855\tA\n" +
+                            "4039070554630775695\tA\n" +
+                            "4290477379978201771\tA\n", "x where v > 3326086085493629941L and v < 4326086085493629941L and s = 'A' order by v"
             );
             Assert.fail();
         } catch (CairoException ex) {
@@ -438,25 +505,25 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testAsyncSubQueryWithFilter(String query) throws Exception {
         WorkerPool pool = new WorkerPool((() -> 4));
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("CREATE TABLE price (\n" +
+                    ddl(compiler, "CREATE TABLE price (\n" +
                             "  ts TIMESTAMP," +
                             "  type SYMBOL," +
                             "  value DOUBLE ) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
-                    compiler.compile("insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
-                    compiler.compile("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
-                    compiler.compile("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
+                    insert(compiler, "insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
+                    ddl(compiler, "CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
+                    ddl(compiler, "insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
 
-                    assertQuery6(
-                            compiler,
-                            "count\n20000\n",
-                            query,
-                            null,
+                    TestUtils.assertSql(
+                            engine,
                             sqlExecutionContext,
-                            false,
-                            true);
+                            query,
+                            sink,
+                            "count\n20000\n"
+                    );
                 },
                 configuration,
-                LOG);
+                LOG
+        );
     }
 
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
@@ -465,24 +532,24 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         WorkerPool pool = new WorkerPool(() -> workerCount);
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("create table x ( " +
+                    engine.ddl(
+                            "create table x ( " +
                                     "v long, " +
                                     "s symbol capacity 4 cache " +
                                     ")",
                             sqlExecutionContext
                     );
-                    compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
+                    engine.insert(
+                            "insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
 
-                    SqlCompiler[] compilers = new SqlCompiler[threadCount];
                     RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
 
                     for (int i = 0; i < threadCount; i++) {
                         // Each factory should use a dedicated compiler instance, so that they don't
                         // share the same reduce task local pool in the SqlCodeGenerator.
-                        compilers[i] = new SqlCompiler(engine);
-                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        factories[i] = engine.select(query, sqlExecutionContext);
                         Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
                     }
 
@@ -508,9 +575,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     haltLatch.await();
 
-                    Misc.free(compilers);
                     Misc.free(factories);
-
                     Assert.assertEquals(0, errors.get());
                 },
                 configuration,

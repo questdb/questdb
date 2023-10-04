@@ -39,6 +39,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -560,7 +561,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
         }, new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
 
@@ -706,7 +707,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             CyclicBarrier barrier = new CyclicBarrier(2);
             CountDownLatch stopLatch = new CountDownLatch(2);
 
-            TableToken xTableToken = new TableToken("x", "x", 123, false);
+            TableToken xTableToken = new TableToken("x", "x", 123, false, false);
 
             final Runnable runnable = () -> {
                 try {
@@ -908,7 +909,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testUnlockByAnotherThread() throws Exception {
         assertWithPool(pool -> {
-            TableToken tableToken = new TableToken("Ургант", "Ургант", 123, false);
+            TableToken tableToken = new TableToken("Ургант", "Ургант", 123, false, false);
             Assert.assertTrue(pool.lock(tableToken));
             AtomicInteger errors = new AtomicInteger();
 
@@ -951,7 +952,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 }
             });
 
-            TableToken tableToken = new TableToken("xyz", "xyz", 123, false);
+            TableToken tableToken = new TableToken("xyz", "xyz", 123, false, false);
             pool.unlock(tableToken);
             Assert.assertEquals(1, counter.get());
         });

@@ -72,19 +72,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void bumpMetadataAndColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
-        recordStructureVersion++;
-        structureVersion = Numbers.decodeHighInt(structureVersion) != 0 ? Numbers.encodeLowHighInts(getMetadataVersion() + 1, getColumnStructureVersion() + 1) : structureVersion + 1;
-        commit(denseSymbolMapWriters);
-    }
-
-    public void resetStructureVersionUnsafe() {
-        txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
-    }
-
     public void bumpColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion = Numbers.encodeLowHighInts(getMetadataVersion(), getColumnStructureVersion() + 1);
+        commit(denseSymbolMapWriters);
+    }
+
+    public void bumpMetadataAndColumnStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
+        recordStructureVersion++;
+        structureVersion = Numbers.decodeHighInt(structureVersion) != 0 ? Numbers.encodeLowHighInts(getMetadataVersion() + 1, getColumnStructureVersion() + 1) : structureVersion + 1;
         commit(denseSymbolMapWriters);
     }
 
@@ -223,6 +219,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
     }
 
+    public void initLastPartition(long timestamp) {
+        txPartitionCount = 1;
+        updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
+    }
+
     public boolean isActivePartition(long timestamp) {
         return getPartitionTimestampByTimestamp(maxTimestamp) == timestamp;
     }
@@ -248,11 +249,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             throw e;
         }
         return this;
-    }
-
-    public void initLastPartition(long timestamp) {
-        txPartitionCount = 1;
-        updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
     }
 
     public void removeAllPartitions() {
@@ -296,6 +292,19 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         this.maxTimestamp = maxTimestamp;
         this.transientRowCount = transientRowCount;
         commit(symbolCountProviders);
+    }
+
+    public void resetLagValuesUnsafe() {
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_SEQ_TXN_64, 0);
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_CHECKSUM_32, 0);
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, 0);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, 0);
+    }
+
+    public void resetStructureVersionUnsafe() {
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
     }
 
     public void resetTimestamp() {

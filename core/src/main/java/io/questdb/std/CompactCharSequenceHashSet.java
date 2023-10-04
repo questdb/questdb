@@ -71,27 +71,9 @@ public class CompactCharSequenceHashSet extends AbstractCharSequenceHashSet {
         }
     }
 
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
-    }
-
-    public boolean excludes(CharSequence key) {
-        return keyIndex(key) > -1;
-    }
-
     public CharSequence keyAt(int index) {
         int index1 = -index - 1;
         return keys[index1];
-    }
-
-    @Override
-    public int remove(CharSequence key) {
-        int keyIndex = keyIndex(key);
-        if (keyIndex < 0) {
-            removeAt(keyIndex);
-            return -keyIndex - 1;
-        }
-        return -1;
     }
 
     @Override

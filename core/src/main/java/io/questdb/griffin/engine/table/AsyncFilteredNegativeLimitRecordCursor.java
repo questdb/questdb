@@ -24,8 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
@@ -156,46 +157,73 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 
-        do {
-            final long cursor = frameSequence.next();
-            if (cursor > -1) {
-                PageFrameReduceTask task = frameSequence.getTask(cursor);
-                LOG.debug()
-                        .$("collected [shard=").$(frameSequence.getShard())
-                        .$(", frameIndex=").$(task.getFrameIndex())
-                        .$(", frameCount=").$(frameSequence.getFrameCount())
-                        .$(", active=").$(frameSequence.isActive())
-                        .$(", cursor=").$(cursor)
-                        .I$();
+        boolean allFramesActive = true;
+        try {
+            do {
+                final long cursor = frameSequence.next();
+                if (cursor > -1) {
+                    PageFrameReduceTask task = frameSequence.getTask(cursor);
+                    LOG.debug()
+                            .$("collected [shard=").$(frameSequence.getShard())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", active=").$(frameSequence.isActive())
+                            .$(", cursor=").$(cursor)
+                            .I$();
+                    if (task.hasError()) {
+                        throw CairoException.nonCritical().put(task.getErrorMsg());
+                    }
 
-                final DirectLongList frameRows = task.getRows();
-                final long frameRowCount = frameRows.size();
-                frameIndex = task.getFrameIndex();
+                    // Consider frame sequence status only if we haven't accumulated enough rows.
+                    allFramesActive &= frameSequence.isActive() || rowCount >= rowLimit;
+                    final DirectLongList frameRows = task.getRows();
+                    final long frameRowCount = frameRows.size();
+                    frameIndex = task.getFrameIndex();
 
-                if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isActive()) {
-                    // Copy rows into the buffer.
-                    if (hasDescendingOrder) {
-                        for (long i = 0; i < frameRowCount && rowCount < rowLimit; i++, rowCount++) {
-                            rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                    if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isActive()) {
+                        // Copy rows into the buffer.
+                        if (hasDescendingOrder) {
+                            for (long i = 0; i < frameRowCount && rowCount < rowLimit; i++, rowCount++) {
+                                rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                            }
+                        } else {
+                            for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
+                                rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                            }
                         }
-                    } else {
-                        for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
-                            rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+
+                        if (rowCount >= rowLimit) {
+                            frameSequence.cancel();
                         }
                     }
 
-                    if (rowCount >= rowLimit) {
-                        frameSequence.cancel();
-                    }
+                    frameSequence.collect(cursor, false);
+                } else if (cursor == -2) {
+                    break; // No frames to filter.
+                } else {
+                    Os.pause();
                 }
-
-                frameSequence.collect(cursor, false);
-            } else if (cursor == -2) {
-                break; // No frames to filter.
-            } else {
-                Os.pause();
+            } while (frameIndex < frameLimit);
+        } catch (Throwable e) {
+            LOG.error().$("negative limit filter error [ex=").$(e).I$();
+            if (e instanceof CairoException) {
+                CairoException ce = (CairoException) e;
+                if (ce.isInterruption()) {
+                    throwTimeoutException();
+                } else {
+                    throw ce;
+                }
             }
-        } while (frameIndex < frameLimit);
+            throw CairoException.nonCritical().put(e.getMessage());
+        }
+
+        if (!allFramesActive) {
+            throwTimeoutException();
+        }
+    }
+
+    private void throwTimeoutException() {
+        throw CairoException.nonCritical().put(AsyncFilteredRecordCursor.exceptionMessage).setInterruption(true);
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {

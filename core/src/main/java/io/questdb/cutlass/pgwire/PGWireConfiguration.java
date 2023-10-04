@@ -56,11 +56,15 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
         return false;
     }
 
+    FactoryProvider getFactoryProvider();
+
+    int getForceRecvFragmentationChunkSize();
+
+    int getForceSendFragmentationChunkSize();
+
     int getInsertCacheBlockCount();
 
     int getInsertCacheRowCount();
-
-    int getInsertPoolCapacity();
 
     int getMaxBlobSizeOnQuery();
 
@@ -104,6 +108,4 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     boolean isUpdateCacheEnabled();
 
     boolean readOnlySecurityContext();
-
-    FactoryProvider getFactoryProvider();
 }

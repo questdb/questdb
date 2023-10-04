@@ -121,6 +121,7 @@ public class FuzzTransactionGenerator {
                 }
                 long size = (maxTimestamp - minTimestamp) / transactionCount;
                 if (o3) {
+                    //noinspection lossy-conversions
                     size *= rnd.nextDouble();
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
@@ -272,7 +273,8 @@ public class FuzzTransactionGenerator {
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 null,
-                newMeta.getColumnCount()
+                newMeta.getColumnCount(),
+                false
         ));
         newMeta.setTimestampIndex(tableMetadata.getTimestampIndex());
         return newMeta;

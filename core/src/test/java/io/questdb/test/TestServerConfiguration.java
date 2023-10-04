@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
@@ -45,6 +46,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.function.LongSupplier;
 
@@ -98,6 +100,16 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return factoryProvider;
         }
     }) {
+        @Override
+        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+            return new DefaultJsonQueryProcessorConfiguration() {
+                @Override
+                public FactoryProvider getFactoryProvider() {
+                    return factoryProvider;
+                }
+            };
+        }
+
         @Override
         public int getWorkerCount() {
             return workerCountHttp;
@@ -176,13 +188,13 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         };
         this.cairoConfiguration = new DefaultCairoConfiguration(root) {
             @Override
-            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
             }
 
             // fix import ID
             @Override
-            public LongSupplier getCopyIDSupplier() {
+            public @NotNull LongSupplier getCopyIDSupplier() {
                 return () -> importID;
             }
 

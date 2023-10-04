@@ -29,32 +29,28 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TableRepairTest extends AbstractGriffinTest {
+public class TableRepairTest extends AbstractCairoTest {
 
     @Test
     public void testDeleteActivePartition() throws Exception {
-
         // this delete partition actually deletes files, simulating manual intervention
-
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY",
-                    sqlExecutionContext
-            );
-            engine.releaseAllWriters();
-            try (TableReader reader = newTableReader(configuration, "tst")) {
+            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
 
+            engine.releaseAllWriters();
+
+            try (TableReader reader = newTableReader(configuration, "tst")) {
                 Assert.assertEquals(100000, reader.size());
 
                 // last and "active" partition is "1970-01-12"
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tst");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-12").$();
-                    Assert.assertEquals(0, Files.rmdir(path));
+                    Assert.assertTrue(Files.rmdir(path, true));
                 }
 
                 Assert.assertEquals(100000, reader.size());
@@ -82,11 +78,10 @@ public class TableRepairTest extends AbstractGriffinTest {
     public void testDeletePartitionInTheMiddle() throws Exception {
         // this delete partition actually deletes files, simulating manual intervention
         assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY",
-                    sqlExecutionContext
-            );
+            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
+
             engine.releaseAllWriters();
+
             try (TableReader reader = newTableReader(configuration, "tst")) {
 
                 Assert.assertEquals(100000, reader.size());
@@ -94,7 +89,7 @@ public class TableRepairTest extends AbstractGriffinTest {
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tst");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-09").$();
-                    Assert.assertEquals(0, Files.rmdir(path));
+                    Assert.assertTrue(Files.rmdir(path, true));
                 }
 
                 Assert.assertEquals(100000, reader.size());

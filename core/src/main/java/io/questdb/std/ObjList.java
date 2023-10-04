@@ -74,6 +74,14 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
     }
 
+    public void addAll(ReadOnlyObjList<? extends T> that, int lo, int hi) {
+        int n = hi - lo;
+        ensureCapacity(pos + n);
+        for (int i = lo; i < hi; i++) {
+            buffer[pos++] = that.getQuick(i);
+        }
+    }
+
     /**
      * {@inheritDoc}
      */
@@ -215,6 +223,15 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             }
             return -1;
         }
+    }
+
+    public int indexOfNull() {
+        for (int i = 0, n = pos; i < n; i++) {
+            if (null == getQuick(i)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     public void insert(int index, int length, T defaultValue) {
@@ -361,14 +378,5 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             return true;
         }
         return false;
-    }
-
-    private int indexOfNull() {
-        for (int i = 0, n = pos; i < n; i++) {
-            if (null == getQuick(i)) {
-                return i;
-            }
-        }
-        return -1;
     }
 }

@@ -90,7 +90,7 @@ public class OooCppBenchmarkSetMemoryVanilla {
             double timeout1 = runDoubleKs(iterations, i);
             double timeout2 = runLongsKs(iterations, i, Long.MIN_VALUE);
             double timeout3 = runLongsKs(iterations, i, -1L);
-            System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
+            System.out.println(i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
         }
         r.freeBuffer();
     }

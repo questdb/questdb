@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -43,7 +44,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -58,7 +59,8 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
-public class WalTableFailureTest extends AbstractGriffinTest {
+public class WalTableFailureTest extends AbstractCairoTest {
+
     @Test
     public void testAddColumnFailToApplySequencerMetadataStructureChangeTransaction() throws Exception {
         assertMemoryLeak(() -> {
@@ -72,7 +74,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                         if (counter.decrementAndGet() == 0) {
                             throw new IndexOutOfBoundsException();
                         }
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
                         return 0;
                     }
 
@@ -95,9 +97,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableName.getTableName());
         });
     }
 
@@ -110,7 +112,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
                         return 0;
                     }
 
@@ -137,9 +139,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableName.getTableName());
         });
     }
 
@@ -178,15 +180,15 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'ef')");
 
             // Data is not there, job failed to apply the data.
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName.getTableName());
 
             drainWalQueue();
 
             // Second time lucky, 2 line in.
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-25T00:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-25T00:00:00.000000Z\tef\n", tableName.getTableName());
         });
     }
 
@@ -349,9 +351,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableToken.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
             drainWalQueue();
 
-            assertSql(tableToken.getTableName(), "x2\tsym\tts\tsym2\n" +
+            assertSql("x2\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n");
+                    "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n", tableToken.getTableName());
         });
     }
 
@@ -368,7 +370,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                         if (counter.decrementAndGet() == 0) {
                             return 0;
                         }
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
                         return 0;
                     }
 
@@ -390,9 +392,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableToken.getTableName());
         });
     }
 
@@ -406,7 +408,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
                         return 0;
                     }
 
@@ -433,9 +435,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableName);
         });
     }
 
@@ -521,9 +523,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableToken.getTableName());
         });
     }
 
@@ -577,9 +579,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableName.getTableName());
         });
     }
 
@@ -620,7 +622,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("alter table " + tableName + " add column new_column int");
 
             try {
-                executeInsert("insert into " + tableName +
+                insert("insert into " + tableName +
                         " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
                 Assert.fail();
             } catch (CairoException ex) {
@@ -630,16 +632,16 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             }
 
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\tnew_column\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n");
+            assertSql("x\tsym\tts\tsym2\tnew_column\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n", tableName);
 
             fail.set(false);
-            executeInsert("insert into " + tableName +
+            insert("insert into " + tableName +
                     " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\tnew_column\n" +
+            assertSql("x\tsym\tts\tsym2\tnew_column\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n" +
-                    "102\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n");
+                    "102\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n", tableName);
         });
     }
 
@@ -664,17 +666,17 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
                 compile("alter table " + tableName + " add column new_column int");
 
-                executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
+                insert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
                 drainWalQueue(walApplyJob);
-                assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+                assertSql("x\tsym\tts\tsym2\n" +
+                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
 
                 fail.set(false);
 
-                executeInsert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
+                insert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
                 drainWalQueue(walApplyJob);
-                assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+                assertSql("x\tsym\tts\tsym2\n" +
+                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
             }
         });
     }
@@ -683,18 +685,18 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testNonWalTableTransactionNotificationIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            TableToken ignored = new TableToken(tableName, tableName, 123, false);
+            TableToken ignored = new TableToken(tableName, tableName, 123, false, false);
             createStandardWalTable(tableName);
 
             drainWalQueue();
-            engine.notifyWalTxnCommitted(ignored, 1);
+            engine.notifyWalTxnCommitted(ignored);
 
             compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableName);
         });
     }
 
@@ -719,9 +721,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableName.getTableName());
         });
     }
 
@@ -791,8 +793,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             drainWalQueue();
 
             // No SQL applied
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\tabcd\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n");
+            assertSql("x\tsym\tts\tsym2\tabcd\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n", tableName.getTableName());
         });
     }
 
@@ -815,10 +817,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcdt', 123L)");
 
             drainWalQueue();
-            assertSql(tableName.getTableName(), "ts\tsym2\n" +
+            assertSql("ts\tsym2\n" +
                     "2022-02-24T00:00:00.000000Z\tEF\n" +
                     "2022-02-25T00:00:00.000000Z\tabcde\n" +
-                    "2022-02-25T00:00:00.000000Z\tabcdr\n");
+                    "2022-02-25T00:00:00.000000Z\tabcdr\n", tableName.getTableName());
         });
     }
 
@@ -878,9 +880,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableName.getTableName());
         });
     }
 
@@ -917,26 +919,85 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            executeInsert("insert into " + tableToken.getTableName() +
+            insert("insert into " + tableToken.getTableName() +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
             try {
                 compile("alter table " + tableToken.getTableName() + " add column jjj int, column2 long");
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(),
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
                         "statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                " are currently not supported for WAL tables");
+                                " are currently not supported for WAL tables"
+                );
             }
 
-            executeInsert("insert into " + tableToken.getTableName() +
+            insert("insert into " + tableToken.getTableName() +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
             drainWalQueue();
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n", tableToken.getTableName());
 
+        });
+    }
+
+    @Test
+    public void testWalTableResumeContinuesAfterEject() throws Exception {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
+
+            //1
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            //2 fail
+            compile("update " + tableToken.getTableName() + " set x = 1111");
+            //3
+            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (1, 'AB', 'EF', '2022-02-24T01')");
+            //4
+            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (2, 'AB', 'EF', '2022-02-24T02')");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            engine.getTableSequencerAPI().releaseAll();
+
+            drainWalQueue();
+
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            engine.getTableSequencerAPI().releaseAll();
+            compile("alter table " + tableToken.getTableName() + " resume wal");
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            drainWalQueue();
+
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1111\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tAB\t2022-02-24T01:00:00.000000Z\tEF\n" +
+                    "2\tAB\t2022-02-24T02:00:00.000000Z\tEF\n", tableToken.getTableName());
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t0\t4\n", "wal_tables()");
         });
     }
 
@@ -957,21 +1018,21 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(filesFacade, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            compile("update " + tableToken.getTableName() + " set x = 1111");
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
+            compile("update " + tableToken.getTableName() + " set x = 1111;");
+            compile("update " + tableToken.getTableName() + " set sym = 'XXX';");
+            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
 
             drainWalQueue();
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
 
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            compile("alter table " + tableToken.getTableName() + " resume wal");
+            compile("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
 
             drainWalQueue();
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
+            assertSql("x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
         });
     }
 
@@ -990,7 +1051,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(filesFacade, () -> {
-
             //1
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             //2 fail
@@ -1004,20 +1064,20 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
 
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
             try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from transaction 999"); // fails
+                compile("alter table " + tableToken.getTableName() + " resume wal from transaction 999;"); // fails
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
             }
 
-            compile("alter table " + tableToken.getTableName() + " resume wal from txn 3");
+            compile("alter table " + tableToken.getTableName() + " resume wal from txn 3;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n1\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
+            assertSql("x\tsym\tts\tsym2\n1\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
         });
     }
 
@@ -1040,8 +1100,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             engine.getTableSequencerAPI().suspendTable(tableToken);
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
-                    "table does not exist [table=" + tableToken.getTableName() + "ererer]");
+            assertAlterTableTypeFail(
+                    "alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
+                    "table does not exist [table=" + tableToken.getTableName() + "ererer]"
+            );
         });
     }
 
@@ -1073,9 +1135,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
 
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableToken.getTableName() + "\ttrue\t1\t4\n");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\ttrue\t1\t0\t4\n", "wal_tables()");
 
             compile("alter table " + tableToken.getTableName() + " resume wal");
             compile("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
@@ -1083,8 +1145,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
-            assertSql(tableToken.getTableName(), "x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
-            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t4\n");
+            assertSql("x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t0\t4\n", "wal_tables()");
         });
     }
 
@@ -1152,7 +1214,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 Misc.free(alterOperation);
             }
         });
-
     }
 
     private void failToApplyDoubleAlter(Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
@@ -1171,7 +1232,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     alterWriter2.apply(alterOperation, true);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exists");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exist");
                 }
             } finally {
                 Misc.free(alterOperation);
@@ -1210,34 +1271,36 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
-                    " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
-            try (
-                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
-            ) {
-                insertMethod.execute();
-                insertMethod.execute();
-                insertMethod.commit();
-
-                insertMethod.execute();
-                compile("alter table " + tableName + " add column new_column int");
-
-                try {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
+                    insertMethod.execute();
+                    insertMethod.execute();
                     insertMethod.commit();
-                } catch (CairoException e) {
-                    // todo: check all assertContains() usages
-                    TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy column file to new segment");
+
+                    insertMethod.execute();
+                    compile("alter table " + tableName + " add column new_column int");
+
+                    try {
+                        insertMethod.commit();
+                    } catch (CairoException e) {
+                        // todo: check all assertContains() usages
+                        TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy column file to new segment");
+                    }
                 }
             }
 
-            executeInsert("insert into " + tableName + " values (103, 'dfd', 'str-2', '2022-02-24T02', 'asdd', 1234)");
+            insert("insert into " + tableName + " values (103, 'dfd', 'str-2', '2022-02-24T02', 'asdd', 1234)");
 
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tstr\tts\tsym2\tnew_column\n" +
+            assertSql("x\tsym\tstr\tts\tsym2\tnew_column\n" +
                     "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
                     "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
-                    "103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234\n");
+                    "103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234\n", tableName);
         });
     }
 
@@ -1249,14 +1312,14 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile(query);
 
             // Table should not be suspended
-            executeInsert("insert into " + tableName +
+            insert("insert into " + tableName +
                     " values (101, 'dfd', '2022-02-25T01', 'asd')");
 
             drainWalQueue();
 
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "101\tdfd\t2022-02-25T01:00:00.000000Z\tasd\n");
+                    "101\tdfd\t2022-02-25T01:00:00.000000Z\tasd\n", tableName);
         });
     }
 
@@ -1274,8 +1337,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
 
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
 
         });
     }
@@ -1319,10 +1382,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
             drainWalQueue();
 
-            assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
+            assertSql("x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n" +
-                    "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n");
+                    "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n", tableName.getTableName());
         });
     }
 }

@@ -25,12 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.Vm;
@@ -69,9 +67,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull RecordCursorFactory base,
             @NotNull ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
+            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull CompiledFilter compiledFilter,
-            @NotNull @Transient WeakClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             boolean preTouchColumns,
@@ -83,8 +81,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.base = base;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
-        MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
-                configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
+        MemoryCARW bindVarMemory = Vm.getCARWInstance(
+                configuration.getSqlJitBindVarsMemoryPageSize(),
+                configuration.getSqlJitBindVarsMemoryMaxPages(),
+                MemoryTag.NATIVE_JIT
+        );
         IntList preTouchColumnTypes = null;
         if (preTouchColumns) {
             preTouchColumnTypes = new IntList();
@@ -102,7 +103,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 bindVarFunctions,
                 preTouchColumnTypes
         );
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, reduceTaskFactory);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
@@ -178,6 +179,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async JIT Filter");
+        sink.meta("workers").val(workerCount);
         //calc order and limit if possible 
         long rowsRemaining;
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
@@ -203,7 +205,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             sink.attr("limit").val(rowsRemaining);
         }
         sink.attr("filter").val(filterAtom);
-        sink.attr("workers").val(workerCount);
         sink.child(base, order);
     }
 
@@ -361,6 +362,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     return;
                 case ColumnType.INT:
                     bindVarMemory.putLong(function.getInt(null));
+                    return;
+                case ColumnType.IPv4:
+                    bindVarMemory.putLong(function.getIPv4(null));
                     return;
                 case ColumnType.GEOINT:
                     bindVarMemory.putLong(function.getGeoInt(null));

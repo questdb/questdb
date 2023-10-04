@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,7 +36,39 @@ import org.junit.Test;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-public class LikeFunctionFactoryTest extends AbstractGriffinTest {
+public class LikeFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testBindVariableConcatIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+
+            bindVariableService.setStr(0, "H");
+            try (RecordCursorFactory factory = select("select * from x where name like '%' || $1 || '%'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableConcatNamed() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+
+            bindVariableService.setStr("str", "H");
+            try (RecordCursorFactory factory = select("select * from x where name like '%' || :str || '%'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
+                }
+            }
+        });
+    }
 
     @Test
     public void testEmptyLikeString() throws Exception {
@@ -50,9 +82,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like ''", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name like ''")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -74,9 +106,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like '[][n'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name like '[][n'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -89,8 +121,8 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeCharacterNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-            try (RecordCursorFactory factory = compiler.compile("select * from x where  name like 'H'", sqlExecutionContext).getRecordCursorFactory()) {
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            try (RecordCursorFactory factory = select("select * from x where  name like 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -102,10 +134,73 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLikeEscapeAtEnd() {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";
+        String expected1 = "name\n";
+        String expected2 = "";
+        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
+
+        String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
+        String actualMessage = e.getMessage();
+        assertTrue(actualMessage.contains(expectedMessage));
+    }
+
+    @Test
+    public void testLikeEscapeOneSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\_ignore';";
+        String expected1 = "name\n";
+        String expected2 = "name\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testLikeEscapeThreeSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\\\_ignore';";
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is \\_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testLikeEscapeTwoSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\_ignore';";
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is \\_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testLikeNotRealEscape() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('\\\\?\\D:\\path');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE '\\\\\\\\_\\\\%';";
+        String expected1 = "name\n";
+        String expected2 = "name\n\\\\?\\D:\\path\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
     public void testLikeStringNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-                    compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-                    try (RecordCursorFactory factory = compiler.compile("select * from x where name like 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
+                    ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+                    try (RecordCursorFactory factory = select("select * from x where name like 'XJ'")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             sink.clear();
                             printer.print(cursor, factory.getMetadata(), true, sink);
@@ -128,15 +223,14 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like 'ABC%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name like 'ABC%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
                     Assert.assertEquals(sink.toString().replace("\n", ""), "ABCGE");
                     sink.clear();
-
                 }
             }
         });
@@ -154,9 +248,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like '%GGG'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name like '%GGG'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -178,9 +272,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like '%BCG%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name like '%BCG%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -202,9 +296,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like '_B%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name like '_B%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -226,9 +320,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     "union\n" +
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
-            compiler.compile(sql, sqlExecutionContext);
+            ddl(sql);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like '_BC__'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where name like '_BC__'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -241,10 +335,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                compiler.compile("select * from x where name like rnd_str('foo','bar')", sqlExecutionContext);
-                Assert.fail();
+                assertException("select * from x where name like rnd_str('foo','bar')");
             } catch (SqlException e) {
                 Assert.assertEquals(32, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
@@ -255,9 +348,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where not name like 'H'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where not name like 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -270,9 +363,9 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where not name like 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = select("select * from x where not name like 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
@@ -298,69 +391,4 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(expected, query, null, true, false);
         assertQuery(expected, query.replace("like", "ilike"), null, true, false);
     }
-
-    @Test
-    public void testLikeEscapeOneSlashes() throws Exception {
-        String createTable = "CREATE TABLE myTable (name string)";
-        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
-
-        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\_ignore';";
-        String expected1 = "name\n";
-        String expected2 = "name\n";
-
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
-    }
-
-    @Test
-    public void testLikeEscapeTwoSlashes() throws Exception {
-        String createTable = "CREATE TABLE myTable (name string)";
-        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
-
-        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\_ignore';";
-        String expected1 = "name\n";
-        String expected2 = "name\nThe path is \\_ignore\n";
-
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
-    }
-
-    @Test
-    public void testLikeEscapeThreeSlashes() throws Exception {
-        String createTable = "CREATE TABLE myTable (name string)";
-        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
-
-        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\\\_ignore';";
-        String expected1 = "name\n";
-        String expected2 = "name\nThe path is \\_ignore\n";
-
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
-    }
-
-    @Test
-    public void testLikeNotRealEscape() throws Exception {
-        String createTable = "CREATE TABLE myTable (name string)";
-        String insertRow = "INSERT INTO myTable  (name) VALUES ('\\\\?\\D:\\path');";
-
-        String query = "SELECT * FROM myTable WHERE name LIKE '\\\\\\\\_\\\\%';";
-        String expected1 = "name\n";
-        String expected2 = "name\n\\\\?\\D:\\path\n";
-
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
-    }
-
-    @Test
-    public void testLikeEscapeAtEnd() {
-        String createTable = "CREATE TABLE myTable (name string)";
-        String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
-
-        String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";
-        String expected1 = "name\n";
-        String expected2 = "";
-        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
-
-        String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
-        String actualMessage = e.getMessage();
-        assertTrue(actualMessage.contains(expectedMessage));
-    }
-
-
 }
