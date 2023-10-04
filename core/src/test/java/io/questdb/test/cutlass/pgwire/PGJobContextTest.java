@@ -2578,6 +2578,37 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testContextClearsTransactionFlag() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2, 60);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), true, -2)) {
+                    connection.setAutoCommit(true);
+                    try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                            "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
+                        pstmt.execute();
+                    }
+                    connection.prepareStatement("BEGIN").execute();
+                }
+
+                for (int i = 0; i < 100; i++) {
+                    try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                        connection.prepareStatement("insert into t values (1, 1)").execute();
+                    }
+                }
+
+                assertSql("count\n" +
+                        "100\n", "select count(*) from t");
+            }
+        });
+    }
+
+    @Test
     @Ignore
     public void testCopyIn() throws SQLException, SqlException {
         try (
@@ -2783,6 +2814,37 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDiscardClearsTransactionFlag() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2, 60);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                    try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                            "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
+                        pstmt.execute();
+                    }
+                    connection.prepareStatement("insert into t values (1, 1)").execute();
+                    connection.prepareStatement("COMMIT").execute();
+                    connection.prepareStatement("DISCARD ALL").execute();
+
+                    try (final Connection conn2 = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
+                        for (int i = 0; i < 100; i++) {
+                            conn2.prepareStatement("insert into t values (1, 1)").execute();
+                        }
+                    }
+                }
+                assertSql("count\n" +
+                        "101\n", "select count(*) from t");
+            }
+        });
+    }
+
+    @Test
     public void testDisconnectDuringAuth() throws Exception {
         skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
         for (int i = 0; i < 3; i++) {
@@ -2823,7 +2885,7 @@ if __name__ == "__main__":
                 {"drop doesnt", "ERROR: 'table' or 'all tables' expected"},
                 {"drop", "ERROR: 'table' or 'all tables' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
-                {"drop table exists doesnt", "ERROR: table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
+                {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
                 {"drop all table if exists;", "ERROR: 'tables' expected"},
@@ -3819,12 +3881,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testInsertBinaryOverHalfMb() throws Exception {
-        final int maxLength = 524287;
-        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
-    }
-
-    @Test
     public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
         testBinaryInsert(maxLength, true, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
@@ -3833,6 +3889,12 @@ if __name__ == "__main__":
     @Test
     public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
+        testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
+    }
+
+    @Test
+    public void testInsertBinaryOverHalfMb() throws Exception {
+        final int maxLength = 524287;
         testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
@@ -7155,7 +7217,6 @@ nodejs code:
             testAddColumnBusyWriter(false, queryStartedCountDown);
         });
     }
-
 
     @Test
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {

@@ -130,7 +130,7 @@ public class WriterPool extends AbstractPool {
      * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.
      */
-    public TableWriter get(TableToken tableToken, String lockReason) {
+    public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
         return getWriterEntry(tableToken, lockReason, null);
     }
 
@@ -160,7 +160,7 @@ public class WriterPool extends AbstractPool {
      */
     public TableWriter getWriterOrPublishCommand(
             TableToken tableToken,
-            String lockReason,
+            @NotNull String lockReason,
             @NotNull AsyncWriterCommand asyncWriterCommand
     ) {
         while (true) {
@@ -265,13 +265,13 @@ public class WriterPool extends AbstractPool {
                         e,
                         root,
                         engine.getDdlListener(tableToken),
+                        engine.getSnapshotAgent(),
                         engine.getMetrics()
                 );
             }
 
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
-
                 if (e.lockFd != -1) {
                     Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
                     TableUtils.lockName(path);
@@ -385,6 +385,7 @@ public class WriterPool extends AbstractPool {
                     e,
                     root,
                     engine.getDdlListener(tableToken),
+                    engine.getSnapshotAgent(),
                     engine.getMetrics()
             );
             e.ownershipReason = lockReason;
@@ -415,10 +416,9 @@ public class WriterPool extends AbstractPool {
 
     private TableWriter getWriterEntry(
             TableToken tableToken,
-            String lockReason,
+            @NotNull String lockReason,
             @Nullable AsyncWriterCommand asyncWriterCommand
     ) {
-        assert null != lockReason;
         checkClosed();
 
         long thread = Thread.currentThread().getId();
@@ -643,19 +643,9 @@ public class WriterPool extends AbstractPool {
             return !WriterPool.this.returnToPool(this);
         }
 
-        public TableWriter goodbye() {
-            TableWriter w = writer;
-            if (writer != null) {
-                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
-                writer = null;
-            }
-            return w;
-        }
-
         public long getLastReleaseTime() {
             return lastReleaseTime;
         }
-
 
         public long getOwnerThread() {
             return owner;
@@ -667,6 +657,15 @@ public class WriterPool extends AbstractPool {
 
         public TableToken getTableToken() {
             return writer != null ? writer.getTableToken() : null;
+        }
+
+        public TableWriter goodbye() {
+            TableWriter w = writer;
+            if (writer != null) {
+                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
+                writer = null;
+            }
+            return w;
         }
     }
 }

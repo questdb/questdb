@@ -1814,15 +1814,17 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
-    private boolean removeAndIntrinsics(AliasTranslator translator,
-                                        IntrinsicModel model,
-                                        ExpressionNode node,
-                                        RecordMetadata m,
-                                        FunctionParser functionParser,
-                                        RecordMetadata metadata,
-                                        SqlExecutionContext executionContext,
-                                        boolean latestByMultiColumn,
-                                        TableReader reader) throws SqlException {
+    private boolean removeAndIntrinsics(
+            AliasTranslator translator,
+            IntrinsicModel model,
+            ExpressionNode node,
+            RecordMetadata m,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            TableReader reader
+    ) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN:
                 return analyzeIn(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);

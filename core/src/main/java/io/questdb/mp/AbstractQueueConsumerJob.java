@@ -37,8 +37,15 @@ public abstract class AbstractQueueConsumerJob<T> implements Job {
 
     @Override
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        if (!canRun()) {
+            return false;
+        }
         final long cursor = subSeq.next();
         return cursor == -2 || (cursor > -1 && doRun(workerId, cursor, runStatus));
+    }
+
+    protected boolean canRun() {
+        return true;
     }
 
     protected abstract boolean doRun(int workerId, long cursor, RunStatus runStatus);

@@ -103,7 +103,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAssignServiceAccount() {
+    public void authorizeAssignServiceAccount(CharSequence serviceAccountName) {
     }
 
     @Override
@@ -263,7 +263,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignServiceAccount() {
+    public void authorizeUnassignServiceAccount(CharSequence serviceAccountName) {
     }
 
     @Override
@@ -273,5 +273,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     @Override
     public String getPrincipal() {
         return Constants.USER_NAME;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
     }
 }

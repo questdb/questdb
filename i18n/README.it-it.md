@@ -8,23 +8,31 @@
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) |
+Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md)
 
 # QuestDB
 
-QuestDB è un [database open-source per serie temporali](https://questdb.io/glossary/time-series-database/) progettato l’ingestione di dati ad alto throughput e query SQL veloci, il tutto garantendo semplicità operazionale. 
-QuestDB supporta l’inserimento di data agnostici ed utilizza l’InlfuxDB line protocol, PostgreSQL wire protocol, ed API REST per l’importazione e l’esportazione in blocco dei dati. 
+QuestDB è un [database open-source per serie temporali](https://questdb.io/glossary/time-series-database/) progettato
+l’ingestione di dati ad alto throughput e query SQL veloci, il tutto garantendo semplicità operazionale.
+QuestDB supporta l’inserimento di data agnostici ed utilizza l’InlfuxDB line protocol, PostgreSQL wire protocol, ed API
+REST per l’importazione e l’esportazione in blocco dei dati.
 
-QuestDB è ideale per dati relativi ai mercati finanziari, alle metriche delle applicazioni, ai dati dei sensori, analisi in tempo reale, dashboard, ed il monitoraggio delle infrastutture. 
+QuestDB è ideale per dati relativi ai mercati finanziari, alle metriche delle applicazioni, ai dati dei sensori, analisi
+in tempo reale, dashboard, ed il monitoraggio delle infrastutture.
 
-QuestDB implementa ANSI SQL con estensioni SQL native alle serie temporali. Queste estensioni SQL utilizzano join sia relezionali che basati sulle serie temportali e rendono semplice la correllazioni dei dati da multiple fonti. Grazie all’adozione di modello d’archiviazione dei dati orientato alle colonne,  esecuzione vettoriale parallelizzata, istruzioni SIMD e tecniche a bassa latenza. L’intero codice è stato sviluppato partendo da zero in Java e C++, senza dipendenze e senza garbage collection.
+QuestDB implementa ANSI SQL con estensioni SQL native alle serie temporali. Queste estensioni SQL utilizzano join sia
+relezionali che basati sulle serie temportali e rendono semplice la correllazioni dei dati da multiple fonti. Grazie
+all’adozione di modello d’archiviazione dei dati orientato alle colonne, esecuzione vettoriale parallelizzata,
+istruzioni SIMD e tecniche a bassa latenza. L’intero codice è stato sviluppato partendo da zero in Java e C++, senza
+dipendenze e senza garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -36,19 +44,19 @@ QuestDB implementa ANSI SQL con estensioni SQL native alle serie temporali. Ques
 
 Forniamo una [demo live](https://demo.questdb.io/) con l'ultima versione di QuestDB ed alcuni set di dati come esempi:
 
-- Viaggi: oltre 1,6 miliardi di righe di dati relativi agli ultimi 10 anni di viaggi in taxi a New York. - Operazioni finanziare: oltre 30 milioni di righe di dati in tempo reale relativi al mercato cripto.
+- Viaggi: oltre 1,6 miliardi di righe di dati relativi agli ultimi 10 anni di viaggi in taxi a New York. - Operazioni
+  finanziare: oltre 30 milioni di righe di dati in tempo reale relativi al mercato cripto.
 - Posizionamento: dati relativi alla geolocalizzazione di 250.000 navi nel corso del tempo.
 
-| Query                                                                         | Tempi di esecuzione                                                                                                                                                                                      |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Query                                                                         | Tempi di esecuzione                                                                                                                                                                                 |
+|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
 | `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
 | `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
 | `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
 | `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
-
-La nostra demo è in esecuzione su un'istanza `c5.metal` e sta utilizzando 24 core su 96. 
+La nostra demo è in esecuzione su un'istanza `c5.metal` e sta utilizzando 24 core su 96.
 
 ## Per iniziare
 
@@ -70,18 +78,22 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-La nostra [pagina di download](https://questdb.io/get-questdb/) fornisce la possibilità di scaricare immediatamente i file binari e fornisce dettagli su ulteriori metodi di installazione e distribuzione. 
+La nostra [pagina di download](https://questdb.io/get-questdb/) fornisce la possibilità di scaricare immediatamente i
+file binari e fornisce dettagli su ulteriori metodi di installazione e distribuzione.
 
 ### Connettiti a QuestDB
 
 Puoi interagire con QuestDB utilizzando le seguenti interfacce:
 
-- La[Console Web](https://questdb.io/docs/develop/web-console/) che fornisce un editor SQL interattivo sulla porta `9000`
-- Il [protocollo di linea InfluxDB](https://questdb.io/docs/reference/api/influxdb/) per l'ingestione ad alto throughput sulla porta `9009`
+- La[Console Web](https://questdb.io/docs/develop/web-console/) che fornisce un editor SQL interattivo sulla
+  porta `9000`
+- Il [protocollo di linea InfluxDB](https://questdb.io/docs/reference/api/influxdb/) per l'ingestione ad alto throughput
+  sulla porta `9009`
 - L’[API REST](https://questdb.io/docs/reference/api/rest/) sulla porta `9000`
 - Il [protocollo di rete PostgreSQL](https://questdb.io/docs/reference/api/postgres/) sulla porta `8812`
 
 ### Inserisci i tuoi dati
+
 Di seguito riportiamo i client ufficiali di QuestDB per alcuni dei linguaggi di programmazione più popolari:
 
 - [.NET](https://github.com/questdb/net-questdb-client)
@@ -93,13 +105,17 @@ Di seguito riportiamo i client ufficiali di QuestDB per alcuni dei linguaggi di 
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
 ### Avvio rapido end-to-end
-Se desideri eseguire tutto quello di cui hai bisogno, dall'ingestione in streaming dei dati alla loro visualizzazione con Grafana, dai un'occhiata al nostro [repository di avvio rapido.](https://github.com/questdb/questdb-quickstart).
 
-## QuestDB a confronto con altri database open-source per serie temporali 
+Se desideri eseguire tutto quello di cui hai bisogno, dall'ingestione in streaming dei dati alla loro visualizzazione
+con Grafana, dai un'occhiata al nostro [repository di avvio rapido.](https://github.com/questdb/questdb-quickstart).
 
-[Questo articolo](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/) mette a confronto QuestDB con altri database di serie temporali open source in termini di funzionalità, maturità e prestazioni.
+## QuestDB a confronto con altri database open-source per serie temporali
 
-Ecco i risultati dell'High-Cardinality Time Series Benchmark Suite che utilizza il caso d'uso "solo CPU" con 6-16 lavoratori su 32 CPU e 64 GB di RAM::
+[Questo articolo](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/) mette a confronto QuestDB
+con altri database di serie temporali open source in termini di funzionalità, maturità e prestazioni.
+
+Ecco i risultati dell'High-Cardinality Time Series Benchmark Suite che utilizza il caso d'uso "solo CPU" con 6-16
+lavoratori su 32 CPU e 64 GB di RAM::
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
@@ -107,14 +123,15 @@ Ecco i risultati dell'High-Cardinality Time Series Benchmark Suite che utilizza 
   </a>
 </div>
 
-
 ## Risorse utili
 
 ### 📚 Leggi la documentazione
 
-- [Documentazione di QuestDB:](https://questdb.io/docs/introduction/) impara come eseguire e configurare correttamente QuestDB.
+- [Documentazione di QuestDB:](https://questdb.io/docs/introduction/) impara come eseguire e configurare correttamente
+  QuestDB.
 - [Tutorial:](https://questdb.io/tutorial/) scopri passo dopo passo cosa sei in grado di fare utilizzando QuestDB.
-- [Roadmap del prodotto:](https://github.com/questdb/questdb/projects) dai un'occhiata al nostro piano di sviluppo per le prossime versioni.
+- [Roadmap del prodotto:](https://github.com/questdb/questdb/projects) dai un'occhiata al nostro piano di sviluppo per
+  le prossime versioni.
 
 ### ❓ Ottieni supporto
 
@@ -134,16 +151,21 @@ Ecco i risultati dell'High-Cardinality Time Series Benchmark Suite che utilizza 
 
 ## Collabora
 
-Siamo sempre felici di ricevere contribuzioni al nostro progetto, che si tratti di codice, documentazione, segnalazioni di bug, richieste di nuove funzionalità o feedback. 
+Siamo sempre felici di ricevere contribuzioni al nostro progetto, che si tratti di codice, documentazione, segnalazioni
+di bug, richieste di nuove funzionalità o feedback.
 
-### Vuoi contribuire? 
+### Vuoi contribuire?
 
-- su GitHub contrassegnate come[Good first issue.](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+- su GitHub contrassegnate
+  come[Good first issue.](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
 - Leggi la nostra[nostra guida](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-- Per dettagli sulla compilazione di QuestDB, consulta [le istruzioni.](https://github.com/questdb/questdb/blob/master/core/README.md).
-- [Crea un fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) di QuestDB e invia una pull request con le tue modifiche.
+- Per dettagli sulla compilazione di QuestDB,
+  consulta [le istruzioni.](https://github.com/questdb/questdb/blob/master/core/README.md).
+- [Crea un fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) di QuestDB e invia una pull
+  request con le tue modifiche.
 
-✨ Come segno della nostra gratitudine, inviamo dei gadget QuestDB ai nostri contributori. Una volta contribuito, puoi richiedre il tuo gadget [qui.](https://questdb.io/community)
+✨ Come segno della nostra gratitudine, inviamo dei gadget QuestDB ai nostri contributori. Una volta contribuito, puoi
+richiedre il tuo gadget [qui.](https://questdb.io/community)
 
 Uno speciale ringraziamento va alle persone meravigliose che contribuiscono a QuestDB ❤️
 
