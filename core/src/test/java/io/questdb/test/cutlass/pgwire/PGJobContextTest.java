@@ -2885,7 +2885,7 @@ if __name__ == "__main__":
                 {"drop doesnt", "ERROR: 'table' or 'all tables' expected"},
                 {"drop", "ERROR: 'table' or 'all tables' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
-                {"drop table exists doesnt", "ERROR: table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
+                {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table-name expected"},
                 {"drop table if exists;", "ERROR: table-name expected"},
                 {"drop all table if exists;", "ERROR: 'tables' expected"},
