@@ -175,10 +175,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     public IOContextResult handleIO(NetworkIOJob netIoJob) {
         if (authenticator.isAuthenticated()) {
-            if (!securityContext.isEnabled()) {
-                return IOContextResult.NEEDS_DISCONNECT;
-            }
-
             read();
             try {
                 IOContextResult parseResult = parseMeasurements(netIoJob);
@@ -338,7 +334,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         long i = 0;
         while (true) {
             try {
-                if ((++i & 4096) == 4096 && !securityContext.isEnabled()) {
+                if ((i++ & 8191) == 0 && !securityContext.isEnabled()) {
                     return IOContextResult.NEEDS_DISCONNECT;
                 }
 
