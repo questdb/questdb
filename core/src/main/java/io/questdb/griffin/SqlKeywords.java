@@ -2162,7 +2162,7 @@ public class SqlKeywords {
     static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
         final boolean quoted = Chars.isQuoted(keyword);
         if (!quoted && SqlKeywords.isKeyword(keyword)) {
-            throw SqlException.$(position, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"").put(keyword).put('"');
+            throw SqlException.$(position, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"").put(keyword).put('"');
         }
     }
 
