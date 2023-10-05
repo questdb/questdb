@@ -72,7 +72,12 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long nextCommitTime;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
-        super(configuration.getFactoryProvider().getLineSocketFactory(), configuration.getNetworkFacade(), LOG);
+        super(
+                configuration.getFactoryProvider().getLineSocketFactory(),
+                configuration.getNetworkFacade(),
+                LOG,
+                metrics.line().connectionCountGauge()
+        );
         this.configuration = configuration;
         nf = configuration.getNetworkFacade();
         disconnectOnError = configuration.getDisconnectOnError();
