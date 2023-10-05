@@ -26,7 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
@@ -380,7 +379,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     }
                     partitionBy = tablePartitionBy;
                     tableStructureAdapter.of(names, detectedTypes);
-                    securityContext.authorizeInsert(tableToken, names);
+                    securityContext.authorizeInsert(tableToken);
                 }
                 break;
             default:

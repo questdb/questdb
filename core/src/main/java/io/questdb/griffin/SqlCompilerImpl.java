@@ -1253,6 +1253,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         }
     }
 
+
+    private CharSequence authorizeInsertForCopy(SecurityContext securityContext, CopyModel model) {
+        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final TableToken tt = engine.getTableTokenIfExists(tableName);
+        if (tt != null) {
+            // for existing table user have to have INSERT permission
+            // if the table is to be created, later we will check for CREATE TABLE permission instead
+            securityContext.authorizeInsert(tt);
+        }
+        return tableName;
+    }
+
     private void compileBegin(SqlExecutionContext executionContext) {
         compiledQuery.ofBegin();
     }
@@ -1264,7 +1276,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private RecordCursorFactory compileCopy(SecurityContext securityContext, CopyModel model) throws SqlException {
         assert !model.isCancel();
 
-        securityContext.authorizeCopy();
+        final CharSequence tableName = authorizeInsertForCopy(securityContext, model);
 
         if (model.getTimestampColumnName() == null &&
                 ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
@@ -1274,7 +1286,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             model.setDelimiter((byte) ',');
         }
 
-        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
         final ExpressionNode fileNameNode = model.getFileName();
         final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
         assert fileName != null;
@@ -1346,7 +1357,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     lightlyValidateInsertModel(insertModel);
                 }
                 final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
-                executionContext.getSecurityContext().authorizeInsert(tableToken, insertModel.getColumnNameList());
+                executionContext.getSecurityContext().authorizeInsert(tableToken);
                 return insertModel;
             }
             case ExecutionModel.UPDATE:
@@ -1466,10 +1477,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private void copy(SqlExecutionContext executionContext, CopyModel copyModel) throws SqlException {
         if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
             // no-op implementation
-            executionContext.getSecurityContext().authorizeCopy();
+            authorizeInsertForCopy(executionContext.getSecurityContext(), copyModel);
             compiledQuery.ofCopyRemote();
         } else {
-
             final RecordCursorFactory copyFactory;
             if (copyModel.isCancel()) {
                 copyFactory = compileCopyCancel(executionContext, copyModel);
