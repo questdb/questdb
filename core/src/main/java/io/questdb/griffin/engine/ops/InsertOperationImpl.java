@@ -36,7 +36,10 @@ import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 
 public class InsertOperationImpl implements InsertOperation {
 
@@ -69,7 +72,7 @@ public class InsertOperationImpl implements InsertOperation {
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         SecurityContext securityContext = executionContext.getSecurityContext();
-        securityContext.authorizeInsert(tableToken, columnNames);
+        securityContext.authorizeInsert(tableToken);
 
         initContext(executionContext);
         if (insertMethod.writer == null) {
