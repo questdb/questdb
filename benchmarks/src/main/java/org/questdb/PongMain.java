@@ -26,6 +26,7 @@ package org.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.NullLongGauge;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.Chars;
@@ -69,7 +70,7 @@ public class PongMain {
         private int writtenLen;
 
         protected PongConnectionContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
-            super(socketFactory, nf, log);
+            super(socketFactory, nf, log, NullLongGauge.INSTANCE);
         }
 
         @Override
