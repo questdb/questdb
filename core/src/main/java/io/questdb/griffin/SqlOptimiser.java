@@ -134,13 +134,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     public void clear() {
+        clearForUnionModelInJoin();
         contextPool.clear();
         intHashSetPool.clear();
         joinClausesSwap1.clear();
         joinClausesSwap2.clear();
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
         literalCollectorANames.clear();
@@ -157,6 +155,12 @@ public class SqlOptimiser implements Mutable {
         groupByUsed.clear();
         tempColumnAlias = null;
         tempQueryModel = null;
+    }
+
+    public void clearForUnionModelInJoin() {
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
     }
 
     public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
@@ -180,8 +184,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel baseModel) {
-        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1 &&
-                Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
+        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1
+                && Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
     }
 
     private static void linkDependencies(QueryModel model, int parent, int child) {
@@ -1649,7 +1653,6 @@ public class SqlOptimiser implements Mutable {
             QueryModel validatingModel,
             boolean analyticCall
     ) throws SqlException {
-
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -1966,7 +1969,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private boolean hasAggregates(ExpressionNode node) {
-
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -2717,6 +2719,7 @@ public class SqlOptimiser implements Mutable {
 
             m = model.getJoinModels().getQuick(i).getUnionModel();
             if (m != null) {
+                clearForUnionModelInJoin();
                 optimiseJoins(m);
             }
         }
@@ -2821,7 +2824,13 @@ public class SqlOptimiser implements Mutable {
      *
      * @param node expression n
      */
-    private void processJoinConditions(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel, int joinIndex) throws SqlException {
+    private void processJoinConditions(
+            QueryModel parent,
+            ExpressionNode node,
+            boolean innerPredicate,
+            QueryModel joinModel,
+            int joinIndex
+    ) throws SqlException {
         ExpressionNode n = node;
         // pre-order traversal
         sqlNodeStack.clear();

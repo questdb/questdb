@@ -126,7 +126,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
         metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics);
         serverConf.init(engine, freeOnExit);
-        engine.initialized();
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
     }

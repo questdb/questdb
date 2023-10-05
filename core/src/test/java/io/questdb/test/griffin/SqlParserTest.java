@@ -973,7 +973,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' : ");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
-        assertSyntaxError("select 'a' ) ", 11, "unexpected token: )");
+        assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");
         assertIdentifierError("select 'a' $ ");
         assertIdentifierError("select 'a' 0 ");
         assertIdentifierError("select 'a' 12 ");
@@ -1393,7 +1393,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like y), index(s1)",
                 23,
-                "unexpected token: "
+                "unexpected token [,]"
         );
     }
 
@@ -1420,7 +1420,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like Y.z)",
                 22,
-                "unexpected token: ."
+                "unexpected token [.]"
         );
     }
 
@@ -1455,7 +1455,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table X.y as ( select a, b, c from tab )",
                 14,
-                "unexpected token: .",
+                "unexpected token [.]",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
@@ -1858,7 +1858,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException(
                 "create table if not exists from (a int)",
                 27,
-                "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
         );
     }
 
@@ -2180,7 +2180,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR VOLUME peterson",
                 86,
-                "unexpected token: VOLUME"
+                "unexpected token [VOLUME]"
         );
 
         assertSyntaxError(
@@ -2740,7 +2740,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException(
                 "create table from (a int)",
                 13,
-                "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
         );
     }
 
@@ -2888,7 +2888,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
                 96,
-                "unexpected token: x"
+                "unexpected token [x]"
         );
     }
 
@@ -2923,7 +2923,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000,",
                 95,
-                "unexpected token: ,"
+                "unexpected token [,]"
         );
     }
 
@@ -3478,6 +3478,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testEraseColumnPrefixInJoinWithNestedUnion() throws Exception {
+        assertQuery(
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c left join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                "customers c" +
+                        " left join ((orders union orders) o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testEraseColumnPrefixInJoinWithOuterUnion() throws Exception {
+        assertQuery(
+                "select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join select [customerId] from (select-choose [customerId] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c)" +
+                        " union all" +
+                        " select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where customerId = 100) c)",
+                "(select c.customerId" +
+                        " from customers c" +
+                        " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100)" +
+                        " union all" +
+                        " (select c.customerId " +
+                        "  from customers c" +
+                        "  left join orders o on c.customerId = o.customerId" +
+                        "  where c.customerId = 100)",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testExcelODBCQ2() throws Exception {
         assertQuery(
                 "select-choose" +
@@ -3622,21 +3658,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 14, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
+        assertSyntaxError("explain (xyz) select * from x", 14, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql1() throws Exception {
-        assertSyntaxError("explain select 1)", 16, "unexpected token: )",
+        assertSyntaxError("explain select 1)", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql2() throws Exception {
-        assertSyntaxError("explain select 1))", 16, "unexpected token: )",
+        assertSyntaxError("explain select 1))", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
@@ -4881,8 +4917,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(select country, sum(quantity) sum " +
                         "from orders o " +
                         "join customers c on c.customerId = o.customerId " +
-                        "join orderDetails d on o.orderId = d.orderId" +
-                        " where country ~ '^Z') where sum > 2",
+                        "join orderDetails d on o.orderId = d.orderId " +
+                        "where country ~ '^Z') where sum > 2",
                 modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE),
                 modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("comment", ColumnType.STRING)
@@ -5466,7 +5502,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest by x+1",
                 29,
-                "unexpected token: +"
+                "unexpected token [+]"
         );
     }
 
@@ -5602,7 +5638,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest on ts partition by x+1",
                 45,
-                "unexpected token: +"
+                "unexpected token [+]"
         );
     }
 
@@ -8471,7 +8507,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
             TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false, false);
-            CharSequence lockedReason = engine.lock(tableToken, "testing");
+            CharSequence lockedReason = engine.lockAll(tableToken, "testing", true);
             Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};

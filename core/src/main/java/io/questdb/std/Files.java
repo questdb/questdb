@@ -38,7 +38,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Files {
-
+    public static boolean VIRTIO_FS_DETECTED = false;
+    private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     public static final int DT_DIR = 4;
     public static final int DT_FILE = 8;
     public static final int DT_LNK = 10; // soft link
@@ -219,7 +220,11 @@ public final class Files {
      */
     public static int getFileSystemStatus(LPSZ lpszName) {
         assert lpszName.capacity() > 127;
-        return getFileSystemStatus(lpszName.address());
+        int status = getFileSystemStatus(lpszName.address());
+        if (status == VIRTIO_FS_MAGIC) {
+            VIRTIO_FS_DETECTED = true;
+        }
+        return status;
     }
 
     public static long getLastModified(LPSZ lpsz) {
@@ -456,10 +461,10 @@ public final class Files {
      * The function can operate in two modes, eager and haltOnFail. In haltOnFail mode function fails fast, providing precise
      * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
      * directory, should some files remain. Thus, not providing correct diagnostics.
-     *
+     * <p>
      * rmdir() will fail if directory does not exist
      *
-     * @param path   path to the directory, must include trailing slash (/)
+     * @param path       path to the directory, must include trailing slash (/)
      * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
      *                   false, the function will remove as many files and subdirectories as possible. That might be useful
      *                   when the intent is too free up as much disk space as possible.
@@ -484,7 +489,7 @@ public final class Files {
                         }
                     } else if (notDots(nameUtf8Ptr)) {
                         res = type == Files.DT_LNK ? unlink(pathUtf8Ptr) == 0 : rmdir(path, haltOnFail);
-                        if (!res  && haltOnFail) {
+                        if (!res && haltOnFail) {
                             return res;
                         }
                     }

@@ -111,7 +111,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException unexpectedToken(int position, CharSequence token) {
-        return position(position).put("unexpected token: ").put(token);
+        return position(position).put("unexpected token [").put(token).put(']');
     }
 
     public static SqlException unsupportedCast(int position, CharSequence columnName, int fromType, int toType) {

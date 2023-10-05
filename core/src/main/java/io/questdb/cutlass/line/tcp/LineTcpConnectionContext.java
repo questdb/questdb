@@ -177,9 +177,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (authenticator.isAuthenticated()) {
             read();
             try {
-                IOContextResult parasResult = parseMeasurements(netIoJob);
+                IOContextResult parseResult = parseMeasurements(netIoJob);
                 doMaintenance(milliClock.getTicks());
-                return parasResult;
+                return parseResult;
             } finally {
                 netIoJob.releaseWalTableDetails();
             }
@@ -331,8 +331,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
+        long i = 0;
         while (true) {
             try {
+                if ((i++ & 8191) == 0 && !securityContext.isEnabled()) {
+                    return IOContextResult.NEEDS_DISCONNECT;
+                }
+
                 ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {

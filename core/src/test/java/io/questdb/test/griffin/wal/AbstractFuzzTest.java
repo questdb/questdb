@@ -391,7 +391,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob();
-             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
+             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1);
              TableReader rdr1 = getReader(tableName);
              TableReader rdr2 = getReader(tableName)
         ) {
@@ -441,7 +441,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         ObjList<TableReader> readers = new ObjList<>();
         try {
             node1.getConfigurationOverrides().setWalPurgeInterval(0L);
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)) {
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
                     readers.add(getReader(tableNameWal));
@@ -484,7 +484,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 TableReader rdr1 = getReader(tableName);
                 TableReader rdr2 = getReader(tableName);
                 TableWriter writer = getWriter(tableName);
-                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)
         ) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
