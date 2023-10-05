@@ -65,6 +65,7 @@ public class LogFactory implements Closeable {
     private final MicrosecondClock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
+    private final ObjList<CharSequence> guaranteedLoggers = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final AtomicBoolean running = new AtomicBoolean();
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
@@ -261,20 +262,37 @@ public class LogFactory implements Closeable {
         final Holder cri = scopeConfiguration.getHolder(Numbers.msb(LogLevel.CRITICAL));
         final Holder adv = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ADVISORY));
         if (!overwriteWithSyncLogging) {
-            return new Logger(
-                    clock,
-                    compressScope(key, sink),
-                    dbg == null ? null : dbg.ring,
-                    dbg == null ? null : dbg.lSeq,
-                    inf == null ? null : inf.ring,
-                    inf == null ? null : inf.lSeq,
-                    err == null ? null : err.ring,
-                    err == null ? null : err.lSeq,
-                    cri == null ? null : cri.ring,
-                    cri == null ? null : cri.lSeq,
-                    adv == null ? null : adv.ring,
-                    adv == null ? null : adv.lSeq
-            );
+            if (!guaranteedLoggers.contains(key)) {
+                return new Logger(
+                        clock,
+                        compressScope(key, sink),
+                        dbg == null ? null : dbg.ring,
+                        dbg == null ? null : dbg.lSeq,
+                        inf == null ? null : inf.ring,
+                        inf == null ? null : inf.lSeq,
+                        err == null ? null : err.ring,
+                        err == null ? null : err.lSeq,
+                        cri == null ? null : cri.ring,
+                        cri == null ? null : cri.lSeq,
+                        adv == null ? null : adv.ring,
+                        adv == null ? null : adv.lSeq
+                );
+            } else {
+                return new GuaranteedLogger(
+                        clock,
+                        compressScope(key, sink),
+                        dbg == null ? null : dbg.ring,
+                        dbg == null ? null : dbg.lSeq,
+                        inf == null ? null : inf.ring,
+                        inf == null ? null : inf.lSeq,
+                        err == null ? null : err.ring,
+                        err == null ? null : err.lSeq,
+                        cri == null ? null : cri.ring,
+                        cri == null ? null : cri.lSeq,
+                        adv == null ? null : adv.ring,
+                        adv == null ? null : adv.lSeq
+                );
+            }
         }
 
         return new SyncLogger(
@@ -586,6 +604,15 @@ public class LogFactory implements Closeable {
             LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
             if (conf != null) {
                 add(conf);
+            }
+        }
+
+        String syncLoggers = getProperty(properties, "guaranteedLoggers");
+        if (syncLoggers != null && !syncLoggers.isEmpty()) {
+            for (String gl : syncLoggers.split(",")) {
+                if (gl != null && !gl.isEmpty()) {
+                    guaranteedLoggers.add(gl.trim());
+                }
             }
         }
 
