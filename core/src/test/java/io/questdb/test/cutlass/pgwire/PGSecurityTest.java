@@ -109,6 +109,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowCopy() throws Exception {
+        ddl("create table testDisallowCopySerial (l long)");
         assertMemoryLeak(() -> assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true"));
     }
 
