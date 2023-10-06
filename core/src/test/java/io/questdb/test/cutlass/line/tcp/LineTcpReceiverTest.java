@@ -1198,62 +1198,62 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-                ddl("create table test (" +
-                        "col ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day");
+            ddl("create table test (" +
+                    "col ipv4, " +
+                    "ts timestamp " +
+                    ") timestamp(ts) partition by day");
 
-                engine.releaseInactive();
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"0.0.0.0\" 631150000000000000\n" +
-                                    "test col=\"0.0.0.0\" 31152000000000000\n" +
-                                    "test col=\"0.0.0.0\" 631160000000000000\n" +
-                                    "test col=\"0.0.0.0\" 631170000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-                mayDrainWalQueue();
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("test"));
-                }
+            engine.releaseInactive();
+            runInContext((receiver) -> {
+                String lineData =
+                        "test col=\"0.0.0.0\" 631150000000000000\n" +
+                                "test col=\"0.0.0.0\" 31152000000000000\n" +
+                                "test col=\"0.0.0.0\" 631160000000000000\n" +
+                                "test col=\"0.0.0.0\" 631170000000000000\n";
+                sendLinger(lineData, "test");
+            });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("test"));
+            }
 
-                String expected = "col\tts\n" +
-                        "\t1970-12-27T13:20:00.000000Z\n" +
-                        "\t1989-12-31T23:26:40.000000Z\n" +
-                        "\t1990-01-01T02:13:20.000000Z\n" +
-                        "\t1990-01-01T05:00:00.000000Z\n";
-                assertTable(expected, "test");
+            String expected = "col\tts\n" +
+                    "\t1970-12-27T13:20:00.000000Z\n" +
+                    "\t1989-12-31T23:26:40.000000Z\n" +
+                    "\t1990-01-01T02:13:20.000000Z\n" +
+                    "\t1990-01-01T05:00:00.000000Z\n";
+            assertTable(expected, "test");
         });
     }
 
     @Test
     public void testTcpIPv4Null2() throws Exception {
         assertMemoryLeak(() -> {
-                ddl("create table test (" +
-                        "col ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day");
+            ddl("create table test (" +
+                    "col ipv4, " +
+                    "ts timestamp " +
+                    ") timestamp(ts) partition by day");
 
-                engine.releaseInactive();
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"\" 631150000000000000\n" +
-                                    "test col=\"\" 31152000000000000\n" +
-                                    "test col=\"\" 631160000000000000\n" +
-                                    "test col=\"\" 631170000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-                mayDrainWalQueue();
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("test"));
-                }
+            engine.releaseInactive();
+            runInContext((receiver) -> {
+                String lineData =
+                        "test col=\"\" 631150000000000000\n" +
+                                "test col=\"\" 31152000000000000\n" +
+                                "test col=\"\" 631160000000000000\n" +
+                                "test col=\"\" 631170000000000000\n";
+                sendLinger(lineData, "test");
+            });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("test"));
+            }
 
-                String expected = "col\tts\n" +
-                        "\t1970-12-27T13:20:00.000000Z\n" +
-                        "\t1989-12-31T23:26:40.000000Z\n" +
-                        "\t1990-01-01T02:13:20.000000Z\n" +
-                        "\t1990-01-01T05:00:00.000000Z\n";
-                assertTable(expected, "test");
+            String expected = "col\tts\n" +
+                    "\t1970-12-27T13:20:00.000000Z\n" +
+                    "\t1989-12-31T23:26:40.000000Z\n" +
+                    "\t1990-01-01T02:13:20.000000Z\n" +
+                    "\t1990-01-01T05:00:00.000000Z\n";
+            assertTable(expected, "test");
         });
     }
 
@@ -1313,13 +1313,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testTimestampColumn() throws Exception {
         String table = "Timestamp";
         runInContext((receiver) -> {
-            String lineData = table + ",location=us-midwest timestamp=1465839830100400200t,temperature=82\n" +
-                    table + ",location=us-midwest timestamp=1465839830100500200t,temperature=83\n" +
-                    table + ",location=us-eastcoast timestamp=1465839830101600200t,temperature=81\n" +
-                    table + ",location=us-midwest timestamp=1465839830102300200t,temperature=85\n" +
-                    table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=89\n" +
-                    table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=80\n" +
-                    table + ",location=us-westcost timestamp=1465839830102500200t,temperature=82\n";
+            String lineData = table + ",location=us-midwest timestamp=1465839830100400t,temperature=82\n" +
+                    table + ",location=us-midwest timestamp=1465839830100500t,temperature=83\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830101600t,temperature=81\n" +
+                    table + ",location=us-midwest timestamp=1465839830102300t,temperature=85\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830102400t,temperature=89\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830102400t,temperature=80\n" +
+                    table + ",location=us-westcost timestamp=1465839830102500t,temperature=82\n";
 
             sendLinger(lineData, table);
 

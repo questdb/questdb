@@ -33,7 +33,6 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-import java.nio.file.Paths;
 import java.util.concurrent.BrokenBarrierException;
 
 public class SendAndReceiveRequestBuilder {
@@ -198,7 +197,7 @@ public class SendAndReceiveRequestBuilder {
                 }
             }
         } else {
-            TestUtils.unchecked(() -> java.nio.file.Files.write(Paths.get("actual.txt"), receivedBytes));
+            LOG.info().$("received: ").$(new String(receivedBytes, Files.UTF_8)).$();
         }
 
         if (disconnected && !expectReceiveDisconnect && !expectSendDisconnect) {

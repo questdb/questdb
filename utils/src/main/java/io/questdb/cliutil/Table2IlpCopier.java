@@ -34,6 +34,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 import java.sql.*;
+import java.time.temporal.ChronoUnit;
 import java.util.Properties;
 
 public class Table2IlpCopier {
@@ -210,7 +211,7 @@ public class Table2IlpCopier {
                         if (i != timestampIndex) {
                             long microEpoch = getMicroEpoch(resultSet, i + 1);
                             if (microEpoch != Numbers.LONG_NaN && !resultSet.wasNull()) {
-                                sender.timestampColumn(columnName, microEpoch);
+                                sender.timestampColumn(columnName, microEpoch, ChronoUnit.MICROS);
                             }
                         }
                         break;
@@ -231,6 +232,6 @@ public class Table2IlpCopier {
         }
 
         long microEpoch = getMicroEpoch(resultSet, timestampIndex + 1);
-        sender.at(microEpoch * 1000);
+        sender.at(microEpoch, ChronoUnit.MICROS);
     }
 }

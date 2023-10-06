@@ -95,7 +95,10 @@ public class JsonPlanSink extends BasePlanSink {
         switch (lastNodeType) {
             case NODE_TYPE:
             case NODE_VALUE:
-                sink.putNoEsc("\",\n");
+                if (quoteValue) {
+                    sink.putNoEsc("\"");
+                }
+                sink.putNoEsc("\n");
                 break;
             case NODE_META:
             case NODE_ATTR:
