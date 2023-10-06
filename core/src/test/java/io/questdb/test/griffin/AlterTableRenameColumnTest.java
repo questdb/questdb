@@ -27,6 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -253,6 +255,145 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     @Test
     public void testRenameExpectColumnName() throws Exception {
         assertFailure("alter table x rename column", 27, "column name expected");
+    }
+
+    @Test
+    public void testRenameSymbolColumnReloadReader() throws Exception {
+
+        FilesFacade ff = new FilesFacadeImpl();
+        assertMemoryLeak(
+                ff,
+                () -> {
+                    try {
+                        ddl(
+                                "create table x as (" +
+                                        "select" +
+                                        " cast(x as int) i," +
+                                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                                        " rnd_symbol('msft','ibm', 'googl') new_col_0," +
+                                        " round(rnd_double(0)*100, 3) amt," +
+                                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                        " rnd_boolean() b," +
+                                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                        " rnd_double(2) d," +
+                                        " rnd_float(2) e," +
+                                        " rnd_short(10,1024) f," +
+                                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                        " rnd_symbol(4,4,4,2) ik," +
+                                        " rnd_long() j," +
+                                        " timestamp_sequence(0, 1000000000) k," +
+                                        " rnd_byte(2,50) l," +
+                                        " rnd_bin(10, 20, 2) m," +
+                                        " rnd_str(5,16,2) n" +
+                                        " from long_sequence(100)" +
+                                        ") timestamp (timestamp) PARTITION BY DAY WAL"
+                        );
+
+                        try (TableReader rdr1 = getReader("x")) {
+
+                            rdr1.goPassive();
+
+                            ddl("alter table x rename column new_col_0 to new_col_1");
+                            ddl("alter table x rename column n to new_col_0");
+                            ddl("alter table x drop column sym");
+                            ddl("alter table x drop column i");
+                            ddl("alter table x rename column new_col_1 to new_col_2");
+                            ddl("alter table x rename column new_col_0 to new_col_1");
+                            ddl("alter table x rename column new_col_2 to new_col_0");
+                            ddl("alter table x rename column ik to new_col_3");
+
+                            drainWalQueue();
+
+
+                            rdr1.reload();
+
+                            String expected = "{\"columnCount\":15,\"columns\":[{\"index\":0,\"name\":\"new_col_0\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":4,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":6,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":7,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":8,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":9,\"name\":\"new_col_3\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":11,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":12,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":13,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":14,\"name\":\"new_col_1\",\"type\":\"STRING\"}],\"timestampIndex\":2}";
+                            sink.clear();
+                            rdr1.getMetadata().toJson(sink);
+                            TestUtils.assertEquals(expected, sink);
+                        }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.clear();
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testRenameSymbolColumnReloadReader2() throws Exception {
+
+        // Don't use TestFilesFacadeImpl because we want to remove renamed columns file
+        // while they are opened by passive table reader.
+        FilesFacade ff = new FilesFacadeImpl();
+        assertMemoryLeak(
+                ff,
+                () -> {
+                    try {
+                        ddl(
+                                "create table x as (" +
+                                        "select" +
+                                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                        " timestamp_sequence(0, 1000000000) k," +
+                                        " from long_sequence(1)" +
+                                        ") timestamp (timestamp) PARTITION BY DAY WAL"
+                        );
+
+                        try (TableReader rdr1 = getReader("x")) {
+
+                            rdr1.goPassive();
+
+                            // Circle rename symbol column
+                            ddl("alter table x rename column sym to new_col_1");
+                            ddl("alter table x rename column new_col_1 to sym");
+
+                            drainWalQueue();
+                            rdr1.reload();
+
+                            String expected = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"k\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}";
+                            sink.clear();
+                            rdr1.getMetadata().toJson(sink);
+                            TestUtils.assertEquals(expected, sink);
+
+                            rdr1.goPassive();
+
+                            // Circle rename non-symbol column
+                            ddl("alter table x rename column k to new_col_1");
+                            ddl("alter table x rename column new_col_1 to k");
+
+                            drainWalQueue();
+
+                            rdr1.reload();
+                            sink.clear();
+                            rdr1.getMetadata().toJson(sink);
+                            TestUtils.assertEquals(expected, sink);
+
+                            assertSql("sym\ttimestamp\tk\n" +
+                                    "msft\t2018-01-01T00:12:00.000000Z\t1970-01-01T00:00:00.000000Z\n", "select * from x");
+
+                            rdr1.goPassive();
+
+                            // Symple rename symbol column
+                            ddl("alter table x rename column sym to new_col_1");
+                            drainWalQueue();
+                            rdr1.reload();
+
+                            String expected2 = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"new_col_1\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"k\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}";
+                            sink.clear();
+                            rdr1.getMetadata().toJson(sink);
+                            TestUtils.assertEquals(expected2, sink);
+                        }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.clear();
+                    }
+                }
+        );
     }
 
     @Test

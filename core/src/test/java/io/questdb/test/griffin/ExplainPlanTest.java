@@ -1416,6 +1416,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainPlanNoTrailingQuote() throws Exception {
+        assertQuery("QUERY PLAN\n" +
+                "[\n" +
+                "  {\n" +
+                "    \"Plan\": {\n" +
+                "        \"Node Type\": \"long_sequence\",\n" +
+                "        \"count\":  1\n" +
+                "    }\n" +
+                "  }\n" +
+                "]\n", "explain (format json) select * from long_sequence(1)", null, null, false, true);
+    }
+
+    @Test
     public void testExplainWithJsonFormat2() throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(true);

@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
@@ -94,9 +95,9 @@ public class LineTCPSenderMain {
         Rnd rnd = new Rnd();
         String[] ccy = createValues(rnd, 30, 6);
         int[] ccyDist = computeDiminishingFrequencyDistribution(ccy.length, 0.8, 10.0);
-        String[] venue = createValues(rnd,10, 8);
+        String[] venue = createValues(rnd, 10, 8);
         int[] venueDist = computeDiminishingFrequencyDistribution(venue.length, 0.7, 20.0);
-        String[] pool = createValues(rnd,6, 3);
+        String[] pool = createValues(rnd, 6, 3);
         int[] poolDist = computeDiminishingFrequencyDistribution(pool.length, 0.9, 30.0);
 
 
@@ -128,20 +129,24 @@ public class LineTCPSenderMain {
         long start = System.nanoTime();
         MicrosecondClock clock = new MicrosecondClockImpl();
         String tab = "quotes";
-        try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
+        try (Sender sender = Sender.builder()
+                .address("wet-crimson-879-30b0c6db.ilp.c7at.questdb.com:32495")
+                .enableTls()
+                .enableAuth("admin").authToken("eRNONc_PZfJTwVuFoOr_YZJRfVnyfCRYZvJ9asABFzs")
+                .build()) {
             for (int i = 0; i < count; i++) {
-                sender.metric(tab);
+                sender.table(tab);
                 sender
-                        .tag("ccy", ccy[ccyDist[rnd.nextInt(ccyDist.length)]])
-                        .tag("venue", venue[venueDist[rnd.nextInt(venueDist.length)]])
-                        .tag("pool", pool[poolDist[rnd.nextInt(poolDist.length)]])
-                        .field("qty", rnd.nextDouble())
-                        .field("bid", rnd.nextDouble())
-                        .field("ask", rnd.nextDouble());
-                sender.$(clock.getTicks() * 1000);
+                        .symbol("ccy", ccy[ccyDist[rnd.nextInt(ccyDist.length)]])
+                        .symbol("venue", venue[venueDist[rnd.nextInt(venueDist.length)]])
+                        .symbol("pool", pool[poolDist[rnd.nextInt(poolDist.length)]])
+                        .doubleColumn("qty", rnd.nextDouble())
+                        .doubleColumn("bid", rnd.nextDouble())
+                        .doubleColumn("ask", rnd.nextDouble());
+                sender.at(clock.getTicks() * 1000);
             }
         } finally {
-            System.out.println("time: "+ (System.nanoTime() - start));
+            System.out.println("time: " + (System.nanoTime() - start));
             haltLatch.countDown();
         }
     }
