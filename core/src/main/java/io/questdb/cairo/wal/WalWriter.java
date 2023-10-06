@@ -274,7 +274,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.getWalMetrics().addRowsWritten(rowsToCommit);
+                metrics.walMetrics().addRowsWritten(rowsToCommit);
                 return seqTxn;
             }
         } catch (CairoException ex) {

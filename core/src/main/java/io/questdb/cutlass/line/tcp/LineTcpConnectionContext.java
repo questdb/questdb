@@ -72,7 +72,12 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long nextCommitTime;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
-        super(configuration.getFactoryProvider().getLineSocketFactory(), configuration.getNetworkFacade(), LOG);
+        super(
+                configuration.getFactoryProvider().getLineSocketFactory(),
+                configuration.getNetworkFacade(),
+                LOG,
+                metrics.line().connectionCountGauge()
+        );
         this.configuration = configuration;
         nf = configuration.getNetworkFacade();
         disconnectOnError = configuration.getDisconnectOnError();
@@ -176,10 +181,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     public IOContextResult handleIO(NetworkIOJob netIoJob) {
         if (authenticator.isAuthenticated()) {
-            if (!securityContext.isEnabled()) {
-                return IOContextResult.NEEDS_DISCONNECT;
-            }
-
             read();
             try {
                 IOContextResult parseResult = parseMeasurements(netIoJob);
@@ -336,13 +337,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
-        long i = 0;
         while (true) {
             try {
-                if ((++i & 4096) == 4096 && !securityContext.isEnabled()) {
-                    return IOContextResult.NEEDS_DISCONNECT;
-                }
-
                 final ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {

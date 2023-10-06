@@ -27,6 +27,7 @@ package io.questdb.test.cutlass;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.NullLongGauge;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -453,7 +454,7 @@ public class IODispatcherHeartbeatTest {
         YieldEvent yieldEvent;
 
         public TestContext(int fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
-            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
             socket.of(fd);
             this.dispatcher = dispatcher;
             this.heartbeatInterval = heartbeatInterval;
