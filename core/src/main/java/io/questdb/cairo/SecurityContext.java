@@ -67,8 +67,6 @@ public interface SecurityContext {
 
     void authorizeAssignServiceAccount(CharSequence serviceAccountName);
 
-    void authorizeCopy();
-
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeCreateGroup();
@@ -95,17 +93,7 @@ public interface SecurityContext {
 
     void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
-    // columnNames - empty means all columns
-    void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
-
-    // Add column over ILP/TCP.
-    void authorizeLineAlterTableAddColumn(TableToken tableToken);
-
-    // Insert over ILP/TCP.
-    void authorizeLineInsert(TableToken tableToken);
-
-    // Create table over ILP/TCP.
-    void authorizeLineTableCreate();
+    void authorizeInsert(TableToken tableToken);
 
     void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 

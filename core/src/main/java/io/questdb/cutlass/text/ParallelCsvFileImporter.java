@@ -857,7 +857,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.writer = writer;//next call can throw exception
 
         // authorize only columns present in the file 
-        securityContext.authorizeInsert(tableToken, names);
+        securityContext.authorizeInsert(tableToken);
 
         // add table columns missing in input file
         if (names.size() < metadata.getColumnCount()) {
