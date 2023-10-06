@@ -95,6 +95,7 @@ public class WalWriter implements TableWriterAPI {
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
     private int lastSegmentTxn = -1;
+    private long lastSeqTxn = NO_TXN;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
@@ -106,7 +107,6 @@ public class WalWriter implements TableWriterAPI {
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
     private int walLockFd = -1;
-    private long lastSeqTxn = NO_TXN;
 
     public WalWriter(
             CairoConfiguration configuration,
@@ -270,7 +270,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.getWalMetrics().addRowsWritten(rowsToCommit);
+                metrics.walMetrics().addRowsWritten(rowsToCommit);
                 return seqTxn;
             }
         } catch (CairoException ex) {

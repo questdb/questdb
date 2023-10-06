@@ -171,6 +171,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getCairoConfiguration().getIndexValueBlockSize());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getMaxSwapFileCount());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
+        Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
@@ -298,7 +299,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getSndBufSize());
         Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
-        Assert.assertEquals(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(LineNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
@@ -757,31 +758,31 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.enabled", "false");
         properties.setProperty("line.udp.timestamp", "");
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertSame(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertSame(LineNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "n");
         configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertSame(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertSame(LineNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "u");
         configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertSame(LineProtoMicroTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertSame(LineMicroTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "ms");
         configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertSame(LineProtoMilliTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertSame(LineMilliTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "s");
         configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertSame(LineProtoSecondTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertSame(LineSecondTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "m");
         configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertSame(LineProtoMinuteTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertSame(LineMinuteTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "h");
         configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertSame(LineProtoHourTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertSame(LineHourTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
     }
 
     @Test
@@ -997,6 +998,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1024, configuration.getCairoConfiguration().getIndexValueBlockSize());
             Assert.assertEquals(23, configuration.getCairoConfiguration().getMaxSwapFileCount());
             Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
+            Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
             Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeout());
@@ -1107,7 +1109,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRcvBufSize());
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(32, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
-            Assert.assertEquals(LineProtoMicroTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter());
+            Assert.assertEquals(LineMicroTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
             Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
             Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
             Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());

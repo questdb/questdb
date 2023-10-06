@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.NullLongGauge;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -8392,7 +8393,7 @@ public class IODispatcherTest extends AbstractTest {
                 private long heartbeatId;
 
                 public TestIOContext(int fd, IntHashSet serverConnectedFds) {
-                    super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
+                    super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
                     socket.of(fd);
                     this.serverConnectedFds = serverConnectedFds;
                 }
@@ -8655,7 +8656,7 @@ public class IODispatcherTest extends AbstractTest {
         private final SOCountDownLatch closeLatch;
 
         public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
-            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
             socket.of(fd);
             this.closeLatch = closeLatch;
             this.dispatcher = dispatcher;

@@ -379,7 +379,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     }
                     partitionBy = tablePartitionBy;
                     tableStructureAdapter.of(columnNames, detectedColumnTypes);
-                    securityContext.authorizeInsert(tableToken, columnNames);
+                    securityContext.authorizeInsert(tableToken);
                 }
                 break;
             default:

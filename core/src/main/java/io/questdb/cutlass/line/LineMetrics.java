@@ -22,17 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.line;
+package io.questdb.cutlass.line;
 
-import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
-import io.questdb.std.NumericException;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.MetricsRegistry;
 
-public class LineProtoMicroTimestampAdapterTest {
+public class LineMetrics {
 
-    @Test
-    public void testRounding() throws NumericException {
-        Assert.assertEquals(5679L, LineProtoMicroTimestampAdapter.INSTANCE.getMicros("5679"));
+    private final LongGauge connectionCountGauge;
+
+    public LineMetrics(MetricsRegistry metricsRegistry) {
+        this.connectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
+    }
+
+    public LongGauge connectionCountGauge() {
+        return connectionCountGauge;
     }
 }

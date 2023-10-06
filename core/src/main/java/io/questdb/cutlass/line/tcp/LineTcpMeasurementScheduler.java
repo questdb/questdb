@@ -31,7 +31,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
@@ -346,7 +346,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             TableUpdateDetails tud
     ) throws CommitFailedException, MetadataChangedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
-        LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
+        final LineTcpTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
         final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());
         ld.resetStateIfNecessary();
@@ -359,7 +359,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = timestampAdapter.getMicros(timestamp);
+            timestamp = timestampAdapter.getMicros(timestamp, parser.getTimestampUnit());
         } else {
             timestamp = configuration.getMicrosecondClock().getTicks();
         }
@@ -374,7 +374,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     final int columnType = metadata.getColumnType(columnWriterIndex);
                     if (columnType > -1) {
                         if (columnWriterIndex == tud.getTimestampIndex()) {
-                            timestamp = timestampAdapter.getMicros(ent.getLongValue());
+                            timestamp = timestampAdapter.getMicros(ent.getLongValue(), ent.getUnit());
                             ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
                         } else {
                             ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
@@ -390,7 +390,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
                         columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         if (columnWriterIndex < 0) {
-                            securityContext.authorizeLineAlterTableAddColumn(writer.getTableToken());
+                            securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
                             tud.commit(false);
                             try {
                                 writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
@@ -449,7 +449,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.LONG:
                                 r.putLong(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.INT: {
                                 final long entityValue = ent.getLongValue();
                                 if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
@@ -486,23 +485,18 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.TIMESTAMP:
                                 r.putTimestamp(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.DATE:
                                 r.putDate(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.SYMBOL:
                                 r.putSym(columnIndex, ent.getValue());
                                 break;
-
                             default:
                                 throw castError("integer", i, colType, ent.getName());
                         }
@@ -513,15 +507,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getFloatValue());
                                 break;
-
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
-
                             case ColumnType.SYMBOL:
                                 r.putSym(columnIndex, ent.getValue());
                                 break;
-
                             default:
                                 throw castError("float", i, colType, ent.getName());
                         }
@@ -540,11 +531,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         throw castError("string", i, colType, ent.getName());
                                     }
                                     break;
-
                                 case ColumnType.STRING:
                                     r.putStrUtf8AsUtf16(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;
-
                                 case ColumnType.CHAR:
                                     if (entityValue.length() == 1 && entityValue.byteAt(0) > -1) {
                                         r.putChar(columnIndex, entityValue.charAt(0));
@@ -559,7 +548,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         throw castError("string", i, colType, ent.getName());
                                     }
                                     break;
-
                                 case ColumnType.SYMBOL:
                                     r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;
@@ -586,11 +574,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.LONG256:
                                 r.putLong256(columnIndex, ent.getValue());
                                 break;
-
                             case ColumnType.SYMBOL:
                                 r.putSym(columnIndex, ent.getValue());
                                 break;
-
                             default:
                                 throw castError("long256", i, colType, ent.getName());
                         }
@@ -601,35 +587,27 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.BOOLEAN:
                                 r.putBool(columnIndex, ent.getBooleanValue());
                                 break;
-
                             case ColumnType.BYTE:
                                 r.putByte(columnIndex, (byte) (ent.getBooleanValue() ? 1 : 0));
                                 break;
-
                             case ColumnType.SHORT:
                                 r.putShort(columnIndex, (short) (ent.getBooleanValue() ? 1 : 0));
                                 break;
-
                             case ColumnType.INT:
                                 r.putInt(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
-
                             case ColumnType.LONG:
                                 r.putLong(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
-
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
-
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
-
                             case ColumnType.SYMBOL:
                                 r.putSym(columnIndex, ent.getValue());
                                 break;
-
                             default:
                                 throw castError("boolean", i, colType, ent.getName());
                         }
@@ -638,17 +616,16 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.TIMESTAMP:
-                                r.putTimestamp(columnIndex, ent.getLongValue());
+                                long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
+                                r.putTimestamp(columnIndex, timestampValue);
                                 break;
-
                             case ColumnType.DATE:
-                                r.putTimestamp(columnIndex, ent.getLongValue() / 1000);
+                                long dateValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
+                                r.putTimestamp(columnIndex, dateValue / 1000);
                                 break;
-
                             case ColumnType.SYMBOL:
                                 r.putSym(columnIndex, ent.getValue());
                                 break;
-
                             default:
                                 throw castError("timestamp", i, colType, ent.getName());
                         }
@@ -759,7 +736,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
-                    securityContext.authorizeLineTableCreate();
+                    securityContext.authorizeTableCreate();
                     tableToken = engine.createTableAsRoot(securityContext, ddlMem, path, true, tsa, false, false);
                     LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
                 }

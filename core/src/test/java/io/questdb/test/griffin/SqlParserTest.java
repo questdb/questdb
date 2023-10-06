@@ -1372,7 +1372,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException(
                 "create table if not exists from (a int)",
                 27,
-                "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
         );
     }
 
@@ -2254,7 +2254,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException(
                 "create table from (a int)",
                 13,
-                "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
         );
     }
 
@@ -3172,7 +3172,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 14, "table and columns names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
+        assertSyntaxError("explain (xyz) select * from x", 14, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }

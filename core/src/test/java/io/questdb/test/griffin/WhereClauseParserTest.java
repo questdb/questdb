@@ -2322,13 +2322,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNotInIntervalNonLiteral() {
-        try {
-            modelOf("not (timestamp() in  ('2015-05-11T15:00:00.000Z')) and timestamp = '2015-05-11'");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Column name");
-        }
+    public void testNotInIntervalNonLiteral() throws SqlException {
+        IntrinsicModel m = modelOf("not (timestamp() in  ('2015-05-11T15:00:00.000Z')) and timestamp = '2015-05-11'");
+
+        TestUtils.assertEquals("[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T00:00:00.000000Z}]", intervalToString(m));
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "'2015-05-11T15:00:00.000Z' timestamp in not");
     }
 
     @Test

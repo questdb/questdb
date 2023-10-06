@@ -141,6 +141,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    int getDetachedMkDirMode();
+
     int getDoubleToStrCastScale();
 
     int getExplainPoolCapacity();

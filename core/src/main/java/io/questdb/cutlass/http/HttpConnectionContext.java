@@ -78,7 +78,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         super(
                 socketFactory,
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
-                LOG
+                LOG,
+                metrics.jsonQuery().connectionCountGauge()
         );
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.configuration = contextConfiguration;

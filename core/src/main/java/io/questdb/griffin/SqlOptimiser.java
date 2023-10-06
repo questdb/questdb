@@ -4794,7 +4794,7 @@ public class SqlOptimiser implements Mutable {
             TableToken tableToken = metadata.getTableToken();
             sqlExecutionContext.getSecurityContext().authorizeTableUpdate(tableToken, literalCollectorANames);
 
-            if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName())) {
+            if (!sqlExecutionContext.isWalApplication() && !Chars.equalsIgnoreCase(tableToken.getTableName(), updateQueryModel.getTableName())) {
                 // Table renamed
                 throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
             }
