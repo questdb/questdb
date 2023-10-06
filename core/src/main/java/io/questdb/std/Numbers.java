@@ -2506,7 +2506,6 @@ public final class Numbers {
     }
 
     private static long parseLong0(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
