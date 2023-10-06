@@ -39,6 +39,8 @@ import io.questdb.std.NumericException;
 import javax.security.auth.DestroyFailedException;
 import java.io.Closeable;
 import java.security.PrivateKey;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 /**
  * ILP client to feed data to a remote QuestDB instance.
@@ -52,8 +54,8 @@ import java.security.PrivateKey;
  *     <li>Use {@link #symbol(CharSequence, CharSequence)} to add all symbols. You must add symbols before adding other columns.</li>
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
  *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
- *     {@link #timestampColumn(CharSequence, long)} to add remaining columns columns</li>
- *     <li>Use {@link #at(long)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
+ *     {@link #timestampColumn(CharSequence, long, ChronoUnit)} to add remaining columns columns</li>
+ *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
@@ -81,20 +83,23 @@ public interface Sender extends Closeable {
     /**
      * Finalize the current row and assign an explicit timestamp.
      * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
-     * <br>
-     * From a client perspective timestamp is an opaque number, and it's interpreted only on a QuestDB server.
-     * QuestDB server default behaviour is to treat the timestamp as a number of nanoseconds since 1st Jan 1970 UTC.
-     * This behavior can be adjusted by QuestDB server configuration. See <code>line.tcp.timestamp</code> in
-     * <a href="https://questdb.io/docs/reference/configuration/">QuestDB server documentation</a>
      *
-     * @param timestamp timestamp value since epoch (in nanoseconds by default; see "line.tcp.timestamp" configuration
-     *                  option to learn how to change the unit on the server side)
+     * @param timestamp timestamp value since epoch
+     * @param unit      timestamp unit
      */
-    void at(long timestamp);
+    void at(long timestamp, ChronoUnit unit);
+
+    /**
+     * Finalize the current row and assign an explicit timestamp.
+     * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
+     *
+     * @param timestamp timestamp value
+     */
+    void at(Instant timestamp);
 
     /**
      * Finalize the current row and let QuestDB server assign a timestamp. If you need to set timestamp
-     * explicitly then see {@link #at(long)}.
+     * explicitly then see {@link #at(long, ChronoUnit)}.
      * <br>
      * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      */
@@ -185,10 +190,20 @@ public interface Sender extends Closeable {
      * Add a column with a non-designated timestamp value.
      *
      * @param name  name of the column
-     * @param value timestamp value since epoch (in microseconds)
+     * @param value timestamp value since epoch
+     * @param unit  timestamp value unit
      * @return this instance for method chaining
      */
-    Sender timestampColumn(CharSequence name, long value);
+    Sender timestampColumn(CharSequence name, long value, ChronoUnit unit);
+
+    /**
+     * Add a column with a non-designated timestamp value.
+     *
+     * @param name  name of the column
+     * @param value timestamp value
+     * @return this instance for method chaining
+     */
+    Sender timestampColumn(CharSequence name, Instant value);
 
     /**
      * Configure TLS mode.

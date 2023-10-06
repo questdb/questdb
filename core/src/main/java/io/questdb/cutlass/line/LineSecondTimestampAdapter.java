@@ -26,17 +26,18 @@ package io.questdb.cutlass.line;
 
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.microtime.Timestamps;
 
-public class LineProtoMilliTimestampAdapter implements LineProtoTimestampAdapter {
-    public static final LineProtoMilliTimestampAdapter INSTANCE = new LineProtoMilliTimestampAdapter();
+public class LineSecondTimestampAdapter implements LineTimestampAdapter {
+    public static final LineSecondTimestampAdapter INSTANCE = new LineSecondTimestampAdapter();
 
     @Override
     public long getMicros(CharSequence value) throws NumericException {
-        return Numbers.parseLong(value) * 1000L;
+        return Numbers.parseLong(value) * Timestamps.SECOND_MICROS;
     }
 
     @Override
-    public long getMicros(long lineProtoTimestamp) {
-        return lineProtoTimestamp * 1000;
+    public long getMicros(long timestamp) {
+        return timestamp * Timestamps.SECOND_MICROS;
     }
 }

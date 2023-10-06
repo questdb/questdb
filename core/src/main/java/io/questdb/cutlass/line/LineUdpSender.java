@@ -27,6 +27,10 @@ package io.questdb.cutlass.line;
 import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 public class LineUdpSender extends AbstractLineSender {
 
@@ -36,5 +40,29 @@ public class LineUdpSender extends AbstractLineSender {
 
     public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
         super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
+    }
+
+    @Override
+    public final void at(long timestamp, ChronoUnit unit) {
+        put(' ').put(timestamp * unitToNanos(unit));
+        atNow();
+    }
+
+    @Override
+    public final void at(Instant timestamp) {
+        put(' ').put(timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano());
+        atNow();
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
+        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000);
+        return this;
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+        writeFieldName(name).put(value * unitToNanos(unit) / 1000);
+        return this;
     }
 }
