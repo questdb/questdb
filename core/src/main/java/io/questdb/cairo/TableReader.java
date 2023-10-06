@@ -647,21 +647,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         toIndexReaders.setQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
     }
 
-    private void copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
-        if (reader != null) {
-            if (reader.isDeleted()) {
-                reader = reloadSymbolMapReader(columnIndex, reader);
-            } else if (reader instanceof SymbolMapReaderImpl) {
-                final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-                final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
-                if (((SymbolMapReaderImpl) reader).needsReopen(columnNameTxn)) {
-                    reader = reloadSymbolMapReader(columnIndex, reader);
-                }
-            }
-        }
-        symbolMapReaders.setQuick(columnIndex, reader);
-    }
-
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
         BitmapIndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
@@ -1282,6 +1267,29 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private void renewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
+        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+            final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
+            final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
+            String columnName = metadata.getColumnName(columnIndex);
+            if (!(reader instanceof SymbolMapReaderImpl)) {
+                reader = new SymbolMapReaderImpl(configuration, path, columnName, columnNameTxn, 0);
+            } else {
+                SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) reader;
+                // Fully reopen the symbol map reader only when necessary
+                if (symbolMapReader.needsReopen(columnNameTxn)) {
+                    ((SymbolMapReaderImpl) reader).of(configuration, path, columnName, columnNameTxn, 0);
+                }
+            }
+        } else {
+            if (reader instanceof SymbolMapReaderImpl) {
+                ((SymbolMapReaderImpl) reader).close();
+                reader = null;
+            }
+        }
+        symbolMapReaders.setQuick(columnIndex, reader);
+    }
+
     private void reopenPartition(int offset, int partitionIndex, long txPartitionNameTxn) {
         openPartition0(partitionIndex);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
@@ -1379,10 +1387,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             if (copyFrom > -1) {
                 SymbolMapReader rdr = symbolMapReaders.getQuick(copyFrom);
-                copyOrRenewSymbolMapReader(rdr, i);
+                renewSymbolMapReader(rdr, i);
             } else if (copyFrom != Integer.MIN_VALUE) {
                 // New instance
-                symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));
+                renewSymbolMapReader(null, i);
             }
         }
     }
