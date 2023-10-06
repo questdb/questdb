@@ -1474,7 +1474,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private void clearExcludedKeys() {
-        tempKeyExcludedValues.clear();//here
+        tempKeyExcludedValues.clear();
         tempKeyExcludedValuePos.clear();
         tempKeyExcludedValueType.clear();
         allKeyExcludedValuesAreKnown = true;
