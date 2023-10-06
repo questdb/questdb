@@ -84,6 +84,11 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean implementsLimit() {
+        return baseFactory.implementsLimit();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
     }

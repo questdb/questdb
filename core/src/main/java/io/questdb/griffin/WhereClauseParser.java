@@ -853,12 +853,11 @@ public final class WhereClauseParser implements Mutable {
 
             // clear values if this is new column and reset intrinsic values on nodes associated with old column
             if (newColumn) {
-                clearKeys();
+                clearAllKeys();
                 tempKeyValues.addAll(tempKeys);
                 tempKeyValuePos.addAll(tempPos);
                 tempKeyValueType.addAll(tempType);
                 allKeyValuesAreKnown = tmpAllKeyValuesAreKnown;
-                revertNodes(keyNodes);
                 model.keyColumn = columnName;
                 keyNodes.add(node);
                 node.intrinsicValue = IntrinsicModel.TRUE;
@@ -1203,10 +1202,7 @@ public final class WhereClauseParser implements Mutable {
 
             // clear values if this is new column and reset intrinsic values on nodes associated with old column
             if (newColumn) {
-                clearKeys();
-                revertNodes(keyNodes);
-                clearExcludedKeys();
-                revertNodes(keyExclNodes);
+                clearAllKeys();
 
                 model.keyColumn = columnName;
                 keyExclNodes.add(notNode);
@@ -1468,6 +1464,13 @@ public final class WhereClauseParser implements Mutable {
             return true;
         }
         return ColumnType.isString(type);
+    }
+
+    private void clearAllKeys() {
+        clearKeys();
+        revertNodes(keyNodes);
+        clearExcludedKeys();
+        revertNodes(keyExclNodes);
     }
 
     private void clearExcludedKeys() {
