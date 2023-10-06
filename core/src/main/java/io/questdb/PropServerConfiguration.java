@@ -108,6 +108,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CharSequence defaultMapType;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
+    private final int detachedMkdirMode;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
@@ -955,6 +956,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_TMP_NAME, "tmp");
             this.backupMkdirMode = getInt(properties, env, PropertyKey.CAIRO_SQL_BACKUP_MKDIR_MODE, 509);
+            this.detachedMkdirMode = getInt(properties, env, PropertyKey.CAIRO_DETACHED_MKDIR_MODE, 509);
             this.columnIndexerQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY, 64);
             this.vectorAggregateQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, 128);
             this.o3CallbackQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY, 128);
@@ -1894,6 +1896,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDefaultSymbolCapacity() {
             return defaultSymbolCapacity;
+        }
+
+        @Override
+        public int getDetachedMkDirMode() {
+            return detachedMkdirMode;
         }
 
         @Override
