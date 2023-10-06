@@ -41,7 +41,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TestInterop {
+import java.time.temporal.ChronoUnit;
+
+public class ClientInteropTest {
 
     @Test
     public void testInterop() throws Exception {
@@ -195,7 +197,7 @@ public class TestInterop {
                                         break;
                                     case ColumnType.TIMESTAMP:
                                         try {
-                                            sender.timestampColumn(name, Numbers.parseLong(tag));
+                                            sender.timestampColumn(name, Numbers.parseLong(tag), ChronoUnit.NANOS);
                                         } catch (NumericException e) {
                                             throw JsonException.$(position, "bad long");
                                         } catch (LineSenderException e) {

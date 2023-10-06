@@ -96,11 +96,9 @@ public class JsonPlanSink extends BasePlanSink {
             case NODE_TYPE:
             case NODE_VALUE:
                 if (quoteValue) {
-                    sink.setCharAt(valueStartPos, '"');
-                    sink.putNoEsc("\"\n");
-                } else {
-                    sink.putNoEsc("\n");
+                  sink.putNoEsc("\"");
                 }
+                sink.putNoEsc("\n");
                 break;
             case NODE_META:
             case NODE_ATTR:

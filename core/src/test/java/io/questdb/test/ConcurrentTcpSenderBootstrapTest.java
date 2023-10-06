@@ -1,8 +1,33 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2023 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.test;
 
 import io.questdb.ServerMain;
 import io.questdb.client.Sender;
 import io.questdb.std.Files;
+import io.questdb.std.ObjList;
 import io.questdb.test.cutlass.line.tcp.AbstractLineTcpReceiverTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -11,6 +36,7 @@ import org.junit.Test;
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
 import java.io.UnsupportedEncodingException;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
 
@@ -49,12 +75,14 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void testConcurrentSenders(int nThreads, int startingOffset) {
+    private static void testConcurrentSenders(int nThreads, int startingOffset) throws InterruptedException {
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
+            AtomicReference<Throwable> error = new AtomicReference<>();
+            ObjList<Thread> threads = new ObjList<>();
             for (int i = startingOffset; i < nThreads + startingOffset; i++) {
                 int threadNo = i;
-                new Thread(() -> {
+                Thread th = new Thread(() -> {
                     try (Sender sender = Sender.builder()
                             .address("localhost")
                             .port(serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort())
@@ -63,13 +91,25 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
                             .build()) {
                         sender.table("test" + threadNo).stringColumn("value", "test").atNow();
                         sender.flush();
+                    } catch (Throwable e) {
+                        error.set(e);
+                        throw new RuntimeException(e);
                     }
-                }).start();
+                });
+                threads.add(th);
+                th.start();
             }
             for (int i = startingOffset; i < nThreads + startingOffset; i++) {
                 while (serverMain.getEngine().getTableTokenIfExists("test" + i) == null) {
                     // intentionally empty
                 }
+            }
+
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
+            }
+            if (error.get() != null) {
+                throw new RuntimeException(error.get());
             }
         }
     }

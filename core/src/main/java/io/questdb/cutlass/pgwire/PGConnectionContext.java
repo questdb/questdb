@@ -210,7 +210,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             SqlExecutionContextImpl sqlExecutionContext,
             NetworkSqlExecutionCircuitBreaker circuitBreaker
     ) {
-        super(configuration.getFactoryProvider().getPGWireSocketFactory(), configuration.getNetworkFacade(), LOG);
+        super(
+                configuration.getFactoryProvider().getPGWireSocketFactory(),
+                configuration.getNetworkFacade(),
+                LOG,
+                engine.getMetrics().pgWire().connectionCountGauge()
+        );
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
