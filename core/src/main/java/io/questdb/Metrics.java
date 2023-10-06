@@ -68,6 +68,10 @@ public class Metrics implements Scrapable {
         return new Metrics(true, new MetricsRegistryImpl());
     }
 
+    public MetricsRegistry getRegistry() {
+        return metricsRegistry;
+    }
+
     public WalMetrics getWalMetrics() {
         return walMetrics;
     }
