@@ -25,12 +25,12 @@
 package org.questdb;
 
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.network.Net;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+
+import java.time.temporal.ChronoUnit;
 
 public class LineTCPSenderMain {
     /**
@@ -143,7 +143,7 @@ public class LineTCPSenderMain {
                         .doubleColumn("qty", rnd.nextDouble())
                         .doubleColumn("bid", rnd.nextDouble())
                         .doubleColumn("ask", rnd.nextDouble());
-                sender.at(clock.getTicks() * 1000);
+                sender.at(clock.getTicks(), ChronoUnit.MICROS);
             }
         } finally {
             System.out.println("time: " + (System.nanoTime() - start));
