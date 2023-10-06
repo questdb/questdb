@@ -1265,6 +1265,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainPlanNoTrailingQuote() throws Exception {
+        assertQuery("QUERY PLAN\n" +
+                "[\n" +
+                "  {\n" +
+                "    \"Plan\": {\n" +
+                "        \"Node Type\": \"long_sequence\",\n" +
+                "        \"count\":  1\n" +
+                "    }\n" +
+                "  }\n" +
+                "]\n", "explain (format json) select * from long_sequence(1)", null, null, false, true);
+    }
+
+    @Test
     public void testExplainPlanWithEOLs1() throws Exception {
         assertPlan(
                 "create table a (s string)",
@@ -1413,19 +1426,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "    }\n" +
                 "  }\n" +
                 "]\n", "explain (format json) select count (*) from long_sequence(10)", null, null, false, true);
-    }
-
-    @Test
-    public void testExplainPlanNoTrailingQuote() throws Exception {
-        assertQuery("QUERY PLAN\n" +
-                "[\n" +
-                "  {\n" +
-                "    \"Plan\": {\n" +
-                "        \"Node Type\": \"long_sequence\",\n" +
-                "        \"count\":  1\n" +
-                "    }\n" +
-                "  }\n" +
-                "]\n", "explain (format json) select * from long_sequence(1)", null, null, false, true);
     }
 
     @Test
@@ -4314,6 +4314,168 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByAdvicePushdown() throws SqlException {
+        // TODO: improve :
+        // - limit propagation to async filter factory
+        // - negative limit rewrite
+        // if order by is via alias of designated timestamp
+        ddl("create table device_data " +
+                "( " +
+                "  timestamp timestamp, " +
+                "  val double, " +
+                "  id symbol " +
+                ") timestamp(timestamp)");
+
+        insert("insert into device_data select x::timestamp, x, '12345678' from long_sequence(10)");
+
+        // use column name in order by
+        assertSqlAndPlan("SELECT timestamp AS date, val, val + 1 " +
+                        "FROM device_data " +
+                        "WHERE device_data.id = '12345678' " +
+                        "ORDER BY timestamp DESC " +
+                        "LIMIT 1",
+                "Limit lo: 1\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [date,val,val+1]\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter workers: 1\n" +
+                        "              limit: 1\n" +
+                        "              filter: id='12345678'\n" +
+                        "                DataFrame\n" +
+                        "                    Row backward scan\n" +
+                        "                    Frame backward scan on: device_data\n",
+                "date\tval\tcolumn\n" +
+                        "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
+
+        assertSqlAndPlan("SELECT timestamp AS date, val, val + 1 " +
+                        "FROM device_data " +
+                        "WHERE device_data.id = '12345678' " +
+                        "ORDER BY timestamp  " +
+                        "LIMIT -1",
+                "Limit lo: -1\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [date,val,val+1]\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter workers: 1\n" +
+                        "              limit: 1\n" +
+                        "              filter: id='12345678'\n" +
+                        "                DataFrame\n" +
+                        "                    Row backward scan\n" +
+                        "                    Frame backward scan on: device_data\n",
+                "date\tval\tcolumn\n" +
+                        "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
+
+        assertSqlAndPlan("SELECT timestamp AS date, val, val + 1 " +
+                        "FROM device_data " +
+                        "WHERE device_data.id = '12345678' " +
+                        "ORDER BY timestamp DESC " +
+                        "LIMIT -2",
+                "Limit lo: -2\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [date,val,val+1]\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter workers: 1\n" +
+                        "              limit: 2\n" +
+                        "              filter: id='12345678'\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: device_data\n",
+                "date\tval\tcolumn\n" +
+                        "1970-01-01T00:00:00.000002Z\t2.0\t3.0\n" +
+                        "1970-01-01T00:00:00.000001Z\t1.0\t2.0\n");
+
+        assertSqlAndPlan("SELECT timestamp AS date, val, val + 1 " +
+                        "FROM device_data " +
+                        "WHERE device_data.id = '12345678' " +
+                        "ORDER BY timestamp DESC " +
+                        "LIMIT 1,3",
+                "Limit lo: 1 hi: 3\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [date,val,val+1]\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter workers: 1\n" +
+                        "              filter: id='12345678'\n" +
+                        "                DataFrame\n" +
+                        "                    Row backward scan\n" +
+                        "                    Frame backward scan on: device_data\n",
+                "date\tval\tcolumn\n" +
+                        "1970-01-01T00:00:00.000009Z\t9.0\t10.0\n" +
+                        "1970-01-01T00:00:00.000008Z\t8.0\t9.0\n");
+
+        // use alias in order by
+        assertSqlAndPlan("SELECT timestamp AS date, val, val + 1 " +
+                        "FROM device_data " +
+                        "WHERE device_data.id = '12345678' " +
+                        "ORDER BY date DESC " +
+                        "LIMIT 1",
+                "Limit lo: 1\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [date,val,val+1]\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter workers: 1\n" +
+                        "              filter: id='12345678'\n" +
+                        "                DataFrame\n" +
+                        "                    Row backward scan\n" +
+                        "                    Frame backward scan on: device_data\n",
+                "date\tval\tcolumn\n" +
+                        "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
+
+        assertSqlAndPlan("SELECT timestamp AS date, val, val + 1 " +
+                        "FROM device_data " +
+                        "WHERE device_data.id = '12345678' " +
+                        "ORDER BY date  " +
+                        "LIMIT -1",
+                "Limit lo: -1\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [date,val,val+1]\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter workers: 1\n" +
+                        "              filter: id='12345678'\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: device_data\n",
+                "date\tval\tcolumn\n" +
+                        "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
+
+        assertSqlAndPlan("SELECT timestamp AS date, val, val + 1 " +
+                        "FROM device_data " +
+                        "WHERE device_data.id = '12345678' " +
+                        "ORDER BY date DESC " +
+                        "LIMIT -2",
+                "Limit lo: -2\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [date,val,val+1]\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter workers: 1\n" +
+                        "              filter: id='12345678'\n" +
+                        "                DataFrame\n" +
+                        "                    Row backward scan\n" +
+                        "                    Frame backward scan on: device_data\n",
+                "date\tval\tcolumn\n" +
+                        "1970-01-01T00:00:00.000002Z\t2.0\t3.0\n" +
+                        "1970-01-01T00:00:00.000001Z\t1.0\t2.0\n");
+
+        assertSqlAndPlan("SELECT timestamp AS date, val, val + 1 " +
+                        "FROM device_data " +
+                        "WHERE device_data.id = '12345678' " +
+                        "ORDER BY date DESC " +
+                        "LIMIT 1,3",
+                "Limit lo: 1 hi: 3\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [date,val,val+1]\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter workers: 1\n" +
+                        "              filter: id='12345678'\n" +
+                        "                DataFrame\n" +
+                        "                    Row backward scan\n" +
+                        "                    Frame backward scan on: device_data\n",
+                "date\tval\tcolumn\n" +
+                        "1970-01-01T00:00:00.000009Z\t9.0\t10.0\n" +
+                        "1970-01-01T00:00:00.000008Z\t8.0\t9.0\n");
+
+    }
+
+    @Test
     public void testOrderByIsMaintainedInLtAndAsofSubqueries() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
@@ -5643,7 +5805,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01a() throws Exception {
-        //if query is ordered by symbol and there's only one partition to scan, there's no need to sort   
+        //if query is ordered by symbol and there's only one partition to scan, there's no need to sort
         testSelectIndexedSymbol("");
         testSelectIndexedSymbol("timestamp(ts)");
         testSelectIndexedSymbolWithIntervalFilter();
@@ -5651,7 +5813,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01b() throws Exception {
-        //if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan 
+        //if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan
         assertMemoryLeak(() -> {
             ddl("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
             insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
@@ -7962,6 +8124,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             compile(ddl);
             assertPlan(query, expectedPlan);
         });
+    }
+
+    private void assertSqlAndPlan(String sql, String expectedPlan, String expectedResult) throws SqlException {
+        assertPlan(sql, expectedPlan);
+        assertSql(expectedResult, sql);
     }
 
     private Function getConst(IntObjHashMap<ObjList<Function>> values, int type, int paramNo, int iteration) {
