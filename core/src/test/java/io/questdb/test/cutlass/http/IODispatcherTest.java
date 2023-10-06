@@ -1814,6 +1814,39 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportIntoExistingNoHeuristics() throws Exception {
+        testImport(
+                engine -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.ddl("create table test (col_a int, col_b long)", executionContext);
+
+                        testHttpClient.assertSendMultipart(
+                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                        "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                        "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                                        "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                        "|              0  |                                             col_b  |                     LONG  |           0  |\r\n" +
+                                        "|              1  |                                             col_a  |                     LONG  |           0  |\r\n" +
+                                        "+-----------------------------------------------------------------------------------------------------------------+\r\n",
+                                null,
+                                "1000,1000\r\n" +
+                                        "2000,2000\r\n",
+                                null,
+                                "test",
+                                null,
+                                null,
+                                null
+                        );
+                    }
+                }
+        );
+    }
+
+    @Test
     public void testImportMultipleOnSameConnection()
             throws Exception {
         testImport(

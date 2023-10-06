@@ -217,7 +217,7 @@ public class TestHttpClient implements QuietCloseable {
                 .query("fmt", responseFormat)
                 .query("timestamp", timestampColumnName)
                 .query("partitionBy", partitionBy)
-//                .query("overwrite", "false")
+                .query("overwrite", "false")
 //                .query("skipLev", "false")
 //                .query("delimiter", "")
 //                .query("atomicitiy", "skipCol")

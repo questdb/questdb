@@ -760,7 +760,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     securityContext.authorizeLineTableCreate();
-                    tableToken = engine.createTableInsecure(securityContext, ddlMem, path, true, tsa, false, false);
+                    tableToken = engine.createTableAsRoot(securityContext, ddlMem, path, true, tsa, false, false);
                     LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
                 }
 

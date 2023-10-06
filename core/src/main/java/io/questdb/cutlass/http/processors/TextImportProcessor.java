@@ -114,12 +114,16 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         if (Chars.equalsNc("data", contentDisposition)) {
 
             final HttpRequestHeader rh = transientContext.getRequestHeader();
-            CharSequence name = rh.getUrlParam("name");
-            if (Chars.isBlank(name)) {
-                name = partHeader.getContentDispositionFilename();
+            CharSequence tableName = rh.getUrlParam("tableName");
+            if (Chars.isBlank(tableName)) {
+                // "name" query parameter name is handled for backward compatibility
+                tableName = rh.getUrlParam("name");
+                if (Chars.isBlank(tableName)) {
+                    tableName = partHeader.getContentDispositionFilename();
 
-                if (Chars.isBlank(name)) {
-                    sendErrorAndThrowDisconnect("no file name given");
+                    if (Chars.isBlank(tableName)) {
+                        sendErrorAndThrowDisconnect("no file name given");
+                    }
                 }
             }
 
@@ -142,7 +146,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
             transientState.analysed = false;
             transientState.textLoader.configureDestination(
-                    name,
+                    tableName,
                     Chars.equalsNc("true", rh.getUrlParam("overwrite")),
                     getAtomicity(rh.getUrlParam("atomicity")),
                     partitionBy,
