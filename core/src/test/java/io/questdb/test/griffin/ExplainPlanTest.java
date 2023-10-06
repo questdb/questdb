@@ -1659,6 +1659,57 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
         );
     }
+    
+    @Test
+    public void testFiltersOnIndexedSymbolColumns() throws SqlException {
+        ddl("CREATE TABLE reference_prices (\n" +
+                "  venue SYMBOL index ,\n" +
+                "  symbol SYMBOL index,\n" +
+                "  instrumentType SYMBOL index,\n" +
+                "  referencePriceType SYMBOL index,\n" +
+                "  resolutionType SYMBOL ,\n" +
+                "  ts TIMESTAMP,\n" +
+                "  referencePrice DOUBLE\n" +
+                ") timestamp (ts)");
+
+        insert("insert into reference_prices \n" +
+                "select rnd_symbol('VENUE1', 'VENUE2', 'VENUE3'), \n" +
+                "          'symbol', \n" +
+                "          'instrumentType', \n" +
+                "          rnd_symbol('TYPE1', 'TYPE2'), \n" +
+                "          'resolutionType', \n" +
+                "          cast(x as timestamp), \n" +
+                "          rnd_double()\n" +
+                "from long_sequence(10000)");
+
+        String query1 = "select referencePriceType,count(*) " +
+                "from reference_prices " +
+                "where referencePriceType not in ('TYPE1') " +
+                "and venue in ('VENUE1', 'VENUE2')";
+        String expectedResult = "referencePriceType\tcount\n" +
+                "TYPE2\t3344\n";
+        String expectedPlan = "GroupBy vectorized: false\n" +
+                "  keys: [referencePriceType]\n" +
+                "  values: [count(*)]\n" +
+                "    FilterOnValues symbolOrder: desc\n" +
+                "        Cursor-order scan\n" +
+                "            Index forward scan on: referencePriceType\n" +
+                "              filter: referencePriceType=1 and not (referencePriceType in [TYPE1])\n" +
+                "            Index forward scan on: referencePriceType\n" +
+                "              filter: referencePriceType=3 and not (referencePriceType in [TYPE1])\n" +
+                "        Frame forward scan on: reference_prices\n";
+
+        assertPlan(query1, expectedPlan);
+        assertSql(expectedResult, query1);
+
+        String query2 = "select referencePriceType, count(*) \n" +
+                "from reference_prices \n" +
+                "where venue in ('VENUE1', 'VENUE2') \n" +
+                "and referencePriceType not in ('TYPE1')";
+
+        assertPlan(query2, expectedPlan);
+        assertSql(expectedResult, query2);
+    }
 
     @Test
     public void testFullFatHashJoin0() throws Exception {
@@ -2078,7 +2129,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test//repeated group by keys get merged at group by level 
+    @Test//repeated group by keys get merged at group by level
     public void testGroupByInt2() throws Exception {
         assertPlan("create table a ( i int, d double)", "select i, i, min(d) from a group by i, i",
                 "VirtualRecord\n" +
@@ -5643,7 +5694,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01a() throws Exception {
-        //if query is ordered by symbol and there's only one partition to scan, there's no need to sort   
+        //if query is ordered by symbol and there's only one partition to scan, there's no need to sort
         testSelectIndexedSymbol("");
         testSelectIndexedSymbol("timestamp(ts)");
         testSelectIndexedSymbolWithIntervalFilter();
@@ -5651,7 +5702,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01b() throws Exception {
-        //if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan 
+        //if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan
         assertMemoryLeak(() -> {
             ddl("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
             insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
@@ -8067,8 +8118,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.setStr("s1", "S1");
             bindVariableService.setStr("s2", "S2");
 
-            // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution 
-            // actual order is S2, S1 
+            // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
+            // actual order is S2, S1
             assertPlan(
                     query,
                     "Limit lo: 5\n" +
@@ -8120,8 +8171,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.setStr("s1", "S1");
             bindVariableService.setStr("s2", "S2");
 
-            // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution 
-            // actual order is S2, S1 
+            // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
+            // actual order is S2, S1
             assertPlan(
                     query,
                     "Limit lo: 5\n" +
