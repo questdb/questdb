@@ -107,10 +107,6 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCopy() {
-    }
-
-    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
     }
 
@@ -163,19 +159,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-    }
-
-    @Override
-    public void authorizeLineAlterTableAddColumn(TableToken tableToken) {
-    }
-
-    @Override
-    public void authorizeLineInsert(TableToken tableToken) {
-    }
-
-    @Override
-    public void authorizeLineTableCreate() {
+    public void authorizeInsert(TableToken tableToken) {
     }
 
     @Override

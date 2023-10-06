@@ -907,14 +907,24 @@ public final class TableUtils {
     }
 
     public static int lock(FilesFacade ff, Path path, boolean verbose) {
-        final int fd = ff.openRW(path, CairoConfiguration.O_NONE);
+
+        // workaround for https://github.com/docker/for-mac/issues/7004
+        if (Files.VIRTIO_FS_DETECTED) {
+            if (!ff.touch(path)) {
+                if (verbose) {
+                    LOG.error().$("cannot touch '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
+                }
+                return -1;
+            }
+        }
+
+        int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (verbose) {
                 LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
             }
             return -1;
         }
-
         if (ff.lock(fd) != 0) {
             if (verbose) {
                 LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();

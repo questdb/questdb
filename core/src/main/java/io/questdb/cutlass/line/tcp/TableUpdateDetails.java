@@ -265,7 +265,7 @@ public class TableUpdateDetails implements Closeable {
 
     private void authorizeWalCommit() {
         if (ownSecurityContext != null) {
-            ownSecurityContext.authorizeLineInsert(tableToken);
+            ownSecurityContext.authorizeInsert(tableToken);
         }
     }
 

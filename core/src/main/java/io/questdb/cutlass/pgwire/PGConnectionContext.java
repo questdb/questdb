@@ -210,7 +210,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             SqlExecutionContextImpl sqlExecutionContext,
             NetworkSqlExecutionCircuitBreaker circuitBreaker
     ) {
-        super(configuration.getFactoryProvider().getPGWireSocketFactory(), configuration.getNetworkFacade(), LOG);
+        super(
+                configuration.getFactoryProvider().getPGWireSocketFactory(),
+                configuration.getNetworkFacade(),
+                LOG,
+                engine.getMetrics().pgWire().connectionCountGauge()
+        );
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
@@ -424,7 +429,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(TableToken tableToken, @NotNull String lockReason) {
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             return pendingWriters.valueAt(index);
@@ -433,7 +438,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(CharSequence tableName, @NotNull String lockReason) {
         return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
     }
 
@@ -518,6 +523,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 handleException(-1, e.getFlyweightMessage(), false, -1, true);
             } catch (CairoException e) {
                 handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
+                if (e.isEntityDisabled()) {
+                    throw PeerDisconnectedException.INSTANCE;
+                }
             }
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // BAU, not error metric
@@ -1804,6 +1812,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     .$(", totalReceived=").$(totalReceived)
                     .I$();
             throw BadProtocolException.INSTANCE;
+        }
+
+        if (!sqlExecutionContext.getSecurityContext().isEnabled()) {
+            throw CairoException.entityIsDisabled(sqlExecutionContext.getSecurityContext().getPrincipal());
         }
 
         // msgLen does not take into account type byte
