@@ -41,6 +41,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.time.temporal.ChronoUnit;
+
 import static io.questdb.test.tools.TestUtils.*;
 
 public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
@@ -72,7 +74,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -101,7 +103,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -135,7 +137,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -168,7 +170,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {

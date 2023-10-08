@@ -47,7 +47,7 @@ public class JsonPlanSinkTest {
                 "        \"double\": \"0.0\",\n" +
                 "        \"float\": \"1.0\",\n" +
                 "        \"uuid\": \"00000000-0000-0002-0000-000000000001\",\n" +
-                "        \"uuid_null\": \"null\",\n" +
+                "        \"uuid_null\": \"null\"\n" +
                 "    }\n" +
                 "  }\n" +
                 "]";

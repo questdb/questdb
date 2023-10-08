@@ -22,50 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package io.questdb.test.cutlass.line;
 
-import io.questdb.cutlass.line.LineTimestampAdapter;
-import io.questdb.network.NetworkFacade;
+import io.questdb.cutlass.line.LineNanoTimestampAdapter;
+import io.questdb.std.NumericException;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface LineUdpReceiverConfiguration {
+public class LineNanoTimestampAdapterTest {
 
-    boolean getAutoCreateNewColumns();
-
-    boolean getAutoCreateNewTables();
-
-    int getBindIPv4Address();
-
-    int getCommitMode();
-
-    int getCommitRate();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
-
-    int getDefaultPartitionBy();
-
-    int getGroupIPv4Address();
-
-    int getMaxFileNameLength();
-
-    int getMsgBufferSize();
-
-    int getMsgCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getPort();
-
-    int getReceiveBufferSize();
-
-    LineTimestampAdapter getTimestampAdapter();
-
-    boolean isEnabled();
-
-    boolean isUnicast();
-
-    boolean ownThread();
-
-    int ownThreadAffinity();
+    @Test
+    public void testRounding() throws NumericException {
+        Assert.assertEquals(56799L, LineNanoTimestampAdapter.INSTANCE.getMicros("56799000"));
+    }
 }

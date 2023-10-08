@@ -123,6 +123,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return SymbolTable.VALUE_IS_NULL;
     }
 
+    public boolean needsReopen(long columnNameTxn) {
+        return this.columnNameTxn != columnNameTxn;
+    }
+
     public StaticSymbolTable newSymbolTableView() {
         return new SymbolTableView();
     }

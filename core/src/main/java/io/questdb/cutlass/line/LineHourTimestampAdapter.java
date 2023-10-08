@@ -28,16 +28,16 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 
-public class LineProtoMinuteTimestampAdapter implements LineProtoTimestampAdapter {
-    public static final LineProtoMinuteTimestampAdapter INSTANCE = new LineProtoMinuteTimestampAdapter();
+public class LineHourTimestampAdapter implements LineTimestampAdapter {
+    public static final LineHourTimestampAdapter INSTANCE = new LineHourTimestampAdapter();
 
     @Override
     public long getMicros(CharSequence value) throws NumericException {
-        return Numbers.parseLong(value) * Timestamps.MINUTE_MICROS;
+        return Numbers.parseLong(value) * Timestamps.HOUR_MICROS;
     }
 
     @Override
-    public long getMicros(long lineProtoTimestamp) {
-        return lineProtoTimestamp * Timestamps.MINUTE_MICROS;
+    public long getMicros(long timestamp) {
+        return timestamp * Timestamps.HOUR_MICROS;
     }
 }
