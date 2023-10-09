@@ -28,7 +28,6 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 
 public final class PlainTcpLineChannel implements LineChannel {
@@ -43,7 +42,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (fd < 0) {
             throw new LineSenderException("could not allocate a file descriptor").errno(nf.errno());
         }
-        Net.configureKeepAlive(fd);
+        nf.configureKeepAlive(fd);
         this.sockaddr = nf.sockaddr(address, port);
         if (nf.connect(fd, sockaddr) != 0) {
             int errno = nf.errno();
@@ -63,7 +62,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (fd < 0) {
             throw new LineSenderException("could not allocate a file descriptor").errno(nf.errno());
         }
-        Net.configureKeepAlive(fd);
+        nf.configureKeepAlive(fd);
         long addrInfo = nf.getAddrInfo(host, port);
         if (addrInfo == -1) {
             nf.close(fd, LOG);

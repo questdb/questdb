@@ -265,6 +265,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public void configureKeepAlive(int fd) {
+        Net.configureKeepAlive(fd);
+    }
+
+    @Override
     public int socketUdp() {
         return Net.socketUdp();
     }

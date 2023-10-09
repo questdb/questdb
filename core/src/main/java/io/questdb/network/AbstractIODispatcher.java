@@ -333,7 +333,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             if (rcvBufSize > 0) {
                 nf.setRcvBuf(fd, rcvBufSize);
             }
-            Net.configureKeepAlive(fd);
+            nf.configureKeepAlive(fd);
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).I$();
             tlConCount = connectionCount.incrementAndGet();
