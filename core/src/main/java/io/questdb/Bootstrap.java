@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -62,6 +63,7 @@ public class Bootstrap {
     private final Log log;
     private final Metrics metrics;
     private final String rootDirectory;
+    private final MicrosecondClock microsecondClock;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -72,6 +74,7 @@ public class Bootstrap {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
         banner = bootstrapConfiguration.getBanner();
+        microsecondClock = bootstrapConfiguration.getMicrosecondClock();
         buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
 
         // non /server.conf properties
@@ -148,7 +151,7 @@ public class Bootstrap {
                 extractSite();
             }
 
-            ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
+            final ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
             if (configuration == null) {
                 // /server.conf properties
                 final Properties properties = loadProperties();
@@ -311,6 +314,10 @@ public class Bootstrap {
                 log.infoW().$("Web Console is up to date").$();
             }
         }
+    }
+
+    public MicrosecondClock getMicrosecondClock() {
+        return microsecondClock;
     }
 
     public String getBanner() {
