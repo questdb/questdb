@@ -155,8 +155,8 @@ public class TextDelimiterScanner implements Closeable {
         byte delimiter = Byte.MIN_VALUE;
 
         if (lineCount < 2) {
-            LOG.info().$("not enough lines [table=").$(tableName).$(']').$();
-            throw NotEnoughLinesException.$("not enough lines [table=").put(tableName).put(']');
+            LOG.info().$("not enough lines to determine column delimiter [table=").$(tableName).I$();
+            throw NotEnoughLinesException.$("not enough lines to determine column delimiter, please provide delimiter [table=").put(tableName).put(']');
         }
 
         double lastDelimiterStdDev = Double.POSITIVE_INFINITY;
