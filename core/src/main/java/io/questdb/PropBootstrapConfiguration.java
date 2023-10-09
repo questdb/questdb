@@ -37,6 +37,7 @@ public class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
                 bootstrap.getLog(),
                 bootstrap.getBuildInformation(),
                 FilesFacadeImpl.INSTANCE,
+                bootstrap.getMicrosecondClock(),
                 FactoryProviderFactoryImpl.INSTANCE
         );
     }
