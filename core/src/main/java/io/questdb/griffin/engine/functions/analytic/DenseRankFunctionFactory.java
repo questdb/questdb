@@ -1,4 +1,4 @@
-/*******************************************************************************
+/******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,3 +45,39 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
+public class DenseRankFucntionFactory Implements FunctionFactory {
+
+    private static final String SIGNATURE = "dense_rank()";
+
+@Override
+    public String getSignature() {
+	return SIGNATURE;
+    }
+
+    @Override
+    public boolean isWindow() {
+	return true;
+    }
+
+    @Override
+    public Function newInstance(
+    		int position,
+		ObjList<Function> args,
+		IntList argsPositions,
+		CairoConfiguration configuration,
+		SqlExecutionContext sqlExecutionXontext
+    ) throws SqlExeption {
+	final AnalyticContext.analyticContext = sqlExucitoinContext.getAnalyticContext();
+	if (analyticContext.isEmpty()) {
+	    throw SqlExeption.$(position. "analytic function call in non-anayltic context. make sure to add the OVER clause");
+	}
+
+	if (analyticContext.getPartitionByRecord() != null) {
+		ArrayColumnTypes ArrayColumnTypes = new ArrayColumnTypes();
+		arrayColumnTypes.add(ColumnType.LONG); // max index
+		arrayColumnTypes.add(ColumnType.LONG); // current offset
+		arrayColumnTypes.add(ColumnType.LONG); // offset
+}
+	}
+    )
+	
