@@ -182,9 +182,9 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
-    private static boolean isOrderedByDesignatedTimestamp(QueryModel baseModel) {
-        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1
-                && Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
+    private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
+        return model.getTimestamp() != null && model.getOrderBy().size() == 1
+                && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
     private static void linkDependencies(QueryModel model, int parent, int child) {
@@ -1861,21 +1861,27 @@ public class SqlOptimiser implements Mutable {
         return func;
     }
 
-    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) throws SqlException {
+    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model, int orderByMnemonic) {
         orderByAdvice.clear();
-        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
-        final int len = orderBy.size();
+        ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        int len = orderBy.size();
         if (len == 0) {
-            return orderByAdvice;
+            // propagate advice in case nested model can implement it efficiently (e.g. with backward scan)
+            if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && model.getOrderByAdvice().size() > 0) {
+                orderBy = model.getOrderByAdvice();
+                len = orderBy.size();
+            } else {
+                return orderByAdvice;
+            }
         }
 
         LowerCaseCharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
             ExpressionNode orderByNode = orderBy.getQuick(i);
             QueryColumn queryColumn = map.get(orderByNode.token);
-            if (queryColumn == null) {
-                throw SqlException.position(orderByNode.position)
-                        .put("Unexpected order by column: ").put(orderByNode.token);
+            if (queryColumn == null) { // order by can't be pushed down
+                orderByAdvice.clear();
+                break;
             }
 
             if (queryColumn.getAst().type == LITERAL) {
@@ -1886,6 +1892,15 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return orderByAdvice;
+    }
+
+    private IntList getOrderByAdviceDirection(QueryModel model, int orderByMnemonic) {
+        IntList orderByDirection = model.getOrderByDirection();
+        if (orderByDirection.size() == 0
+                && orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
+            return model.getOrderByDirectionAdvice();
+        }
+        return orderByDirection;
     }
 
     private QueryColumn getQueryColumn(QueryModel model, CharSequence columnName, int dot) {
@@ -2734,7 +2749,8 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
                 }
-                if (model.getSampleBy() == null) {
+                if (model.getSampleBy() == null
+                        && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
                         if (hasAggregates(col.getAst())) {
@@ -2754,7 +2770,7 @@ public class SqlOptimiser implements Mutable {
                 }
                 break;
             default:
-                // sub-query ordering is not needed
+                // sub-query ordering is not needed but we'd like to propagate order by advice (if possible)
                 model.getOrderBy().clear();
                 if (model.getSampleBy() != null) {
                     orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
@@ -2764,13 +2780,15 @@ public class SqlOptimiser implements Mutable {
                 break;
         }
 
-        final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model);
-        final IntList orderByDirectionAdvice = model.getOrderByDirection();
+        final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
+        final IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
         final ObjList<QueryModel> jm = model.getJoinModels();
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                if (model.getGroupBy().size() == 0 && model.getSampleBy() == null) { // order by should not copy through group by or sample by
+                if (model.getGroupBy().size() == 0
+                        && model.getSampleBy() == null
+                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT) { // order by should not copy through group by, sample by or distinct
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
@@ -4794,7 +4812,7 @@ public class SqlOptimiser implements Mutable {
             TableToken tableToken = metadata.getTableToken();
             sqlExecutionContext.getSecurityContext().authorizeTableUpdate(tableToken, literalCollectorANames);
 
-            if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName())) {
+            if (!sqlExecutionContext.isWalApplication() && !Chars.equalsIgnoreCase(tableToken.getTableName(), updateQueryModel.getTableName())) {
                 // Table renamed
                 throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
             }

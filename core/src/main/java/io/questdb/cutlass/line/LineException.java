@@ -24,20 +24,9 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.Timestamps;
+public class LineException extends RuntimeException {
+    public static final LineException INSTANCE = new LineException();
 
-public class LineProtoHourTimestampAdapter implements LineProtoTimestampAdapter {
-    public static final LineProtoHourTimestampAdapter INSTANCE = new LineProtoHourTimestampAdapter();
-
-    @Override
-    public long getMicros(CharSequence value) throws NumericException {
-        return Numbers.parseLong(value) * Timestamps.HOUR_MICROS;
-    }
-
-    @Override
-    public long getMicros(long lineProtoTimestamp) {
-        return lineProtoTimestamp * Timestamps.HOUR_MICROS;
+    private LineException() {
     }
 }

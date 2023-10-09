@@ -141,6 +141,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Metrics metrics;
     private final boolean mixedIOFlag;
     private final int mkDirMode;
+    private final int detachedMkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
@@ -266,6 +267,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.parallelIndexerEnabled = configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
+        this.detachedMkDirMode = configuration.getDetachedMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
@@ -1078,7 +1080,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!ff.exists(detachedPath.slash$())) {
                     // the detached and standard folders can have different roots
                     // (server.conf: cairo.sql.detached.root)
-                    if (0 != ff.mkdirs(detachedPath, mkDirMode)) {
+                    if (0 != ff.mkdirs(detachedPath, detachedMkDirMode)) {
                         LOG.error().$("could no create detached partition folder [errno=").$(ff.errno())
                                 .$(", path=").$(detachedPath).I$();
                         return AttachDetachStatus.DETACH_ERR_MKDIR;
@@ -1093,10 +1095,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // Hard link partition folder recursive to partition.detached
-                if (ff.hardLinkDirRecursive(path, detachedPath, mkDirMode) != 0) {
+                if (ff.hardLinkDirRecursive(path, detachedPath, detachedMkDirMode) != 0) {
                     if (ff.isCrossDeviceCopyError(ff.errno())) {
                         // Cross drive operation. Make full copy to another device.
-                        if (ff.copyRecursive(path, detachedPath, mkDirMode) != 0) {
+                        if (ff.copyRecursive(path, detachedPath, detachedMkDirMode) != 0) {
                             LOG.critical().$("could not copy detached partition [errno=").$(ff.errno())
                                     .$(", from=").$(path)
                                     .$(", to=").$(detachedPath)

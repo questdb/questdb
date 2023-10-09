@@ -296,6 +296,63 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCanApplyTransactionWhenWritingAnotherOne() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            ddl(
+                    "create table " + tableName + " (" +
+                            "x long," +
+                            "sym symbol," +
+                            "ts timestamp," +
+                            "sym2 symbol" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                        " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+                try (
+                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                ) {
+                    // 3 transactions
+                    for (int i = 0; i < 3; i++) {
+                        insertMethod.execute();
+                        insertMethod.commit();
+                    }
+                }
+            }
+
+            // Add indicator that _event file has more transaction than _event.i.
+            // Apply Job should handle inconsistencies between _event and _event.i files
+            // as long as both have the committed transactions.
+            try (Path path = new Path()) {
+                path.concat(configuration.getRoot()).concat(engine.verifyTableName(tableName))
+                        .concat(WalUtils.WAL_NAME_BASE).put("1").concat("0")
+                        .concat(WalUtils.EVENT_FILE_NAME).$();
+                FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+                long intAddr = Unsafe.getUnsafe().allocateMemory(4);
+                Unsafe.getUnsafe().putInt(intAddr, 10);
+                ff.write(fd, intAddr, 4, 0);
+
+                Unsafe.getUnsafe().freeMemory(intAddr);
+                ff.close(fd);
+            }
+
+            drainWalQueue();
+
+            assertSql(
+                    "x\tsym\tts\tsym2\n" +
+                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
+                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
+                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n",
+                    tableName
+            );
+        });
+    }
+
+    @Test
     public void testConvertToFromWalWithLagSet() throws Exception {
         String tableName = testName.getMethodName();
         ddl("create table " + tableName + " as (" +

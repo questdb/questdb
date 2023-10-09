@@ -124,11 +124,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCopy() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -194,22 +189,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeLineAlterTableAddColumn(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeLineInsert(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeLineTableCreate() {
+    public void authorizeInsert(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
