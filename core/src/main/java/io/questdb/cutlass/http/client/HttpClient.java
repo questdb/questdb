@@ -28,10 +28,7 @@ import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOOperation;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.Socket;
-import io.questdb.network.SocketFactory;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -279,6 +276,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (fd < 0) {
                 throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
             }
+            Net.configureKeepAlive(fd);
             long addrInfo = nf.getAddrInfo(host, port);
             if (addrInfo == -1) {
                 disconnect();

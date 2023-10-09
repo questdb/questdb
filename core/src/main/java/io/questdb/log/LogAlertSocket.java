@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -120,6 +121,7 @@ public class LogAlertSocket implements Closeable {
             logNetworkConnectError("Could not create addr info with");
         } else {
             socketFd = nf.socketTcp(true);
+            Net.configureKeepAlive(socketFd);
             if (socketFd > -1) {
                 if (nf.connectAddrInfo(socketFd, addressInfoAddr) != 0) {
                     logNetworkConnectError("Could not connect with");
