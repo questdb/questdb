@@ -252,11 +252,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);
     }
 
-    public void addFieldForNullAlias(QueryColumn column) {
-        bottomUpColumnNames.add(null);
-        bottomUpColumns.add(column);
-    }
-
     public void addGroupBy(ExpressionNode node) {
         groupBy.add(node);
     }
@@ -302,19 +297,34 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableColumnNames.add(columnName);
     }
 
-    /* Determines whether this model allows pushing columns from parent model(s).
-     * If this is a UNION, EXCEPT or INTERSECT or contains a select distinct then it can't be done safely. */
+    /**
+     * Determines whether this model allows pushing columns from parent model(s).
+     * If this is a UNION, EXCEPT or INTERSECT or contains a SELECT DISTINCT then it can't be done safely.
+     */
     public boolean allowsColumnsChange() {
         QueryModel union = this;
         while (union != null) {
-            if (union.getSetOperationType() != QueryModel.SET_OPERATION_UNION_ALL ||
-                    union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+            if (union.getSetOperationType() != QueryModel.SET_OPERATION_UNION_ALL
+                    || union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
                 return false;
             }
-
             union = union.getUnionModel();
         }
+        return true;
+    }
 
+    /**
+     * Determines whether this model allows pushing columns to nested models.
+     * If this is a SELECT DISTINCT then we should the parent model will contain the necessary columns.
+     */
+    public boolean allowsNestedColumnsChange() {
+        QueryModel union = this;
+        while (union != null) {
+            if (union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+                return false;
+            }
+            union = union.getUnionModel();
+        }
         return true;
     }
 
@@ -611,10 +621,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public int getColumnAliasIndex(CharSequence alias) {
         return columnAliasIndexes.get(alias);
-    }
-
-    public LowerCaseCharSequenceIntHashMap getColumnAliasIndexes() {
-        return columnAliasIndexes;
     }
 
     public LowerCaseCharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
@@ -947,6 +953,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isSelectTranslation;
     }
 
+    @SuppressWarnings("unused")
     public boolean isTemporalJoin() {
         return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
     }
@@ -960,7 +967,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void moveGroupByFrom(QueryModel model) {
-        this.groupBy.addAll(model.groupBy);
+        groupBy.addAll(model.groupBy);
         // clear the source
         model.groupBy.clear();
     }

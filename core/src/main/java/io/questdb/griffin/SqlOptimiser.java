@@ -2878,28 +2878,28 @@ public class SqlOptimiser implements Mutable {
         propagateTopDownColumns0(model, true, null, allowColumnChange);
     }
 
-    /*
-        Pushes columns from top to bottom models .
-
-        Adding or removing columns to/from union, except, intersect should not happen!
-        UNION/INTERSECT/EXCEPT-ed columns MUST be exactly as specified in the query, otherwise they might produce different result, e.g.
-
-        select a from (
-            select 1 as a, 'b' as status
-            union
-            select 1 as a, 'c' as status
-        )
-
-        Now if we push a top-to-bottom and remove b from union column list then we'll get a single '1' but we should get two !
-        Same thing applies to INTERSECT & EXCEPT
-        The only thing that'd be safe to add SET models is a constant literal (but what's the point?) .
-        Column/expression pushdown should (probably) ONLY happen for UNION with ALL!
-
-        allowColumnsChange - determines whether changing columns of given model is acceptable.
-        It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
-    */
+    /**
+     * Pushes columns from top to bottom models .
+     * <p>
+     * Adding or removing columns to/from union, except, intersect should not happen!
+     * UNION/INTERSECT/EXCEPT-ed columns MUST be exactly as specified in the query, otherwise they might produce different result, e.g.
+     * <p>
+     * select a from (
+     * select 1 as a, 'b' as status
+     * union
+     * select 1 as a, 'c' as status
+     * )
+     * <p>
+     * Now if we push a top-to-bottom and remove b from union column list then we'll get a single '1' but we should get two !
+     * Same thing applies to INTERSECT & EXCEPT
+     * The only thing that'd be safe to add SET models is a constant literal (but what's the point?) .
+     * Column/expression pushdown should (probably) ONLY happen for UNION with ALL!
+     * <p>
+     * allowColumnsChange - determines whether changing columns of given model is acceptable.
+     * It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
+     */
     private void propagateTopDownColumns0(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel, boolean allowColumnsChange) {
-        //copy columns to 'protect' column list that shouldn't be modified
+        // copy columns to 'protect' column list that shouldn't be modified
         if (!allowColumnsChange && model.getBottomUpColumns().size() > 0) {
             model.copyBottomToTopColumns();
         }
@@ -2908,10 +2908,10 @@ public class SqlOptimiser implements Mutable {
         final QueryModel nested = skipNoneTypeModels(model.getNestedModel());
         model.setNestedModel(nested);
         final boolean nestedIsFlex = modelIsFlex(nested);
-        final boolean nestedAllowsColumnChange = nested != null && nested.allowsColumnsChange();
+        final boolean nestedAllowsColumnChange = nested != null && nested.allowsColumnsChange()
+                && model.allowsNestedColumnsChange();
 
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
-
         if (!topLevel && modelIsFlex(union)) {
             emitColumnLiteralsTopDown(model.getColumns(), union);
         }
@@ -2974,17 +2974,13 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        // latest by
+        // latest on
         if (model.getLatestBy().size() > 0) {
             emitLiteralsTopDown(model.getLatestBy(), model);
         }
 
         // propagate explicit timestamp declaration
-        if (
-                model.getTimestamp() != null &&
-                        nestedIsFlex &&
-                        nestedAllowsColumnChange
-        ) {
+        if (model.getTimestamp() != null && nestedIsFlex && nestedAllowsColumnChange) {
             emitLiteralsTopDown(model.getTimestamp(), nested);
 
             QueryModel unionModel = nested.getUnionModel();
@@ -3044,7 +3040,7 @@ public class SqlOptimiser implements Mutable {
 
         final QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
-            //we've to use this value because union-ed models don't have a back-reference and might not know they participate in set operation
+            // we've to use this value because union-ed models don't have a back-reference and might not know they participate in set operation
             propagateTopDownColumns(unionModel, allowColumnsChange);
         }
     }
