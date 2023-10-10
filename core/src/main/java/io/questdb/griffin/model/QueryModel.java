@@ -315,7 +315,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     /**
      * Determines whether this model allows pushing columns to nested models.
-     * If this is a SELECT DISTINCT then we should the parent model will contain the necessary columns.
+     * If this is a SELECT DISTINCT then we don't push since the parent model contains the necessary columns.
      */
     public boolean allowsNestedColumnsChange() {
         QueryModel union = this;
