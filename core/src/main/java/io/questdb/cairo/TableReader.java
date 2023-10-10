@@ -647,13 +647,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         toIndexReaders.setQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
     }
 
-    private void copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
-        if (reader != null && reader.isDeleted()) {
-            reader = reloadSymbolMapReader(columnIndex, reader);
-        }
-        symbolMapReaders.setQuick(columnIndex, reader);
-    }
-
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
         BitmapIndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
@@ -1274,6 +1267,29 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private void renewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
+        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+            final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
+            final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
+            String columnName = metadata.getColumnName(columnIndex);
+            if (!(reader instanceof SymbolMapReaderImpl)) {
+                reader = new SymbolMapReaderImpl(configuration, path, columnName, columnNameTxn, 0);
+            } else {
+                SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) reader;
+                // Fully reopen the symbol map reader only when necessary
+                if (symbolMapReader.needsReopen(columnNameTxn)) {
+                    ((SymbolMapReaderImpl) reader).of(configuration, path, columnName, columnNameTxn, 0);
+                }
+            }
+        } else {
+            if (reader instanceof SymbolMapReaderImpl) {
+                ((SymbolMapReaderImpl) reader).close();
+                reader = null;
+            }
+        }
+        symbolMapReaders.setQuick(columnIndex, reader);
+    }
+
     private void reopenPartition(int offset, int partitionIndex, long txPartitionNameTxn) {
         openPartition0(partitionIndex);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
@@ -1351,6 +1367,14 @@ public class TableReader implements Closeable, SymbolTableSource {
             symbolMapReaders.setPos(columnCount);
         }
 
+        // index structure is
+        // [action: int, copy from:int]
+
+        // action: if -1 then current column in slave is deleted or renamed, else it's reused
+        // "copy from" >= 0 indicates that column is to be copied from slave position
+        // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
+        // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
+
         for (int i = 0, n = Math.max(columnCount, this.columnCount); i < n; i++) {
             long offset = pIndexBase + (long) i * Long.BYTES;
             final int action = Unsafe.getUnsafe().getInt(offset);
@@ -1361,18 +1385,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                 Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(i, null));
             }
 
-            // don't copy entries to themselves, unless symbol map was deleted
-            if (copyFrom == i) {
-                SymbolMapReader reader = symbolMapReaders.getQuick(copyFrom);
-                if (reader != null && reader.isDeleted()) {
-                    symbolMapReaders.setQuick(copyFrom, reloadSymbolMapReader(copyFrom, reader));
-                }
-            } else if (copyFrom > -1) {
-                SymbolMapReader tmp = symbolMapReaders.getQuick(copyFrom);
-                copyOrRenewSymbolMapReader(tmp, i);
+            if (copyFrom > -1) {
+                SymbolMapReader rdr = symbolMapReaders.getQuick(copyFrom);
+                renewSymbolMapReader(rdr, i);
             } else if (copyFrom != Integer.MIN_VALUE) {
                 // New instance
-                symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));
+                renewSymbolMapReader(null, i);
             }
         }
     }

@@ -260,9 +260,9 @@ class WalWriterEvents implements Closeable {
         this.symbolMapNullFlags = symbolMapNullFlags;
     }
 
-    void openEventFile(Path path, int pathLen) {
+    void openEventFile(Path path, int pathLen, boolean truncate) {
         if (eventMem.getFd() > -1) {
-            close();
+            close(truncate, Vm.TRUNCATE_TO_POINTER);
         }
         openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
         indexFd = ff.openRW(path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), CairoConfiguration.O_NONE);

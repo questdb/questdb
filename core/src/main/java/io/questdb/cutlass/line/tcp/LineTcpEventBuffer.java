@@ -105,7 +105,7 @@ public class LineTcpEventBuffer {
     }
 
     public void addDesignatedTimestamp(long address, long timestamp) {
-        checkCapacity(address, Long.BYTES);
+        checkCapacity(address, Long.BYTES + Byte.BYTES);
         Unsafe.getUnsafe().putLong(address, timestamp);
     }
 

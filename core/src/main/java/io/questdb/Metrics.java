@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
+import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
@@ -39,6 +40,7 @@ public class Metrics implements Scrapable {
     private final GCMetrics gcMetrics;
     private final HealthMetricsImpl healthCheck;
     private final JsonQueryMetrics jsonQuery;
+    private final LineMetrics line;
     private final MetricsRegistry metricsRegistry;
     private final PGWireMetrics pgWire;
     private final Runtime runtime = Runtime.getRuntime();
@@ -53,6 +55,7 @@ public class Metrics implements Scrapable {
         this.gcMetrics = new GCMetrics();
         this.jsonQuery = new JsonQueryMetrics(metricsRegistry);
         this.pgWire = new PGWireMetrics(metricsRegistry);
+        this.line = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
         this.tableWriter = new TableWriterMetrics(metricsRegistry);
         this.walMetrics = new WalMetrics(metricsRegistry);
@@ -72,10 +75,6 @@ public class Metrics implements Scrapable {
         return metricsRegistry;
     }
 
-    public WalMetrics getWalMetrics() {
-        return walMetrics;
-    }
-
     public HealthMetricsImpl health() {
         return healthCheck;
     }
@@ -86,6 +85,10 @@ public class Metrics implements Scrapable {
 
     public JsonQueryMetrics jsonQuery() {
         return jsonQuery;
+    }
+
+    public LineMetrics line() {
+        return line;
     }
 
     public PGWireMetrics pgWire() {
@@ -102,6 +105,10 @@ public class Metrics implements Scrapable {
 
     public TableWriterMetrics tableWriter() {
         return tableWriter;
+    }
+
+    public WalMetrics walMetrics() {
+        return walMetrics;
     }
 
     private void createMemoryGauges(MetricsRegistry metricsRegistry) {

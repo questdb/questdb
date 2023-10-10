@@ -3082,6 +3082,23 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFunctionNotIn() throws SqlException {
+        ddl("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
+        insert("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
+
+        assertSql("timestamp\tcol\tid\n" +
+                        "1970-01-01T00:00:00.000003Z\tdee\tC\n",
+                "SELECT * FROM tab\n" +
+                        "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n");
+
+        assertSql("timestamp\tcol\tid\n" +
+                        "1970-01-01T00:00:00.000003Z\tdee\tC\n",
+                "SELECT * FROM tab\n" +
+                        "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n" +
+                        "LATEST ON timestamp PARTITION BY id");
+    }
+
+    @Test
     public void testGeoLiteralAsColName() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");
@@ -3168,7 +3185,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "group by 1 " +
                 "order by 1 ");
     }
-
 
     @Test
     public void testGroupByLimit() throws SqlException {

@@ -270,7 +270,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.getWalMetrics().addRowsWritten(rowsToCommit);
+                metrics.walMetrics().addRowsWritten(rowsToCommit);
                 return seqTxn;
             }
         } catch (CairoException ex) {
@@ -1249,7 +1249,7 @@ public class WalWriter implements TableWriterAPI {
 
             segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
-            events.openEventFile(path, segmentPathLen);
+            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose());
             if (commitMode != CommitMode.NOSYNC) {
                 events.sync();
             }
@@ -1368,7 +1368,7 @@ public class WalWriter implements TableWriterAPI {
     private void rollLastWalEventRecord(int newSegmentId, long uncommittedRows) {
         events.rollback();
         path.trimTo(rootLen).slash().put(newSegmentId);
-        events.openEventFile(path, path.length());
+        events.openEventFile(path, path.length(), isTruncateFilesOnClose());
         lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
         events.sync();
     }
