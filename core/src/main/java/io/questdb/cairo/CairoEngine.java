@@ -286,7 +286,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        return createTableAsRoot(securityContext, mem, path, ifNotExists, struct, keepLock, false);
+        return createTableAsSu(securityContext, mem, path, ifNotExists, struct, keepLock, false);
     }
 
     public @NotNull TableToken createTableInVolume(
@@ -298,10 +298,10 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        return createTableAsRoot(securityContext, mem, path, ifNotExists, struct, keepLock, true);
+        return createTableAsSu(securityContext, mem, path, ifNotExists, struct, keepLock, true);
     }
 
-    public @NotNull TableToken createTableAsRoot(
+    public @NotNull TableToken createTableAsSu(
             SecurityContext securityContext,
             MemoryMARW mem,
             Path path,
