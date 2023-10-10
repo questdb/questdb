@@ -187,7 +187,7 @@ public class TimestampFormatCompiler {
             switch (op) {
                 case -1:
                     makeLastOpGreedy(ops);
-                    delimiters.add(Chars.toString(cs));
+                    delimiters.add(Chars.compactQuotes(cs));
                     ops.add(-(delimiters.size()));
                     break;
                 case OP_AM_PM:

@@ -142,6 +142,38 @@ public final class Chars {
         // base64 url does not use padding
     }
 
+    public static String compactQuotes(CharSequence cs) {
+        final int len = cs.length();
+        if (len > 1 && cs.charAt(0) == '\'' && cs.charAt(len - 1) == '\'') {
+            // this is a quoted string
+            final int start;
+            final int end;
+            start = 1;
+            end = start + len - 2;
+            CharSink b = Misc.getThreadLocalBuilder();
+            b.put('\'');
+            int x = start;
+            for (int i = start; i < end; ) {
+                char c = cs.charAt(i);
+                if (c == '\'' && i + 1 < end && cs.charAt(i + 1) == '\'') {
+                    b.put(cs, x, i + 1);
+                    x = i + 2;
+                    i += 2;
+                } else {
+                    i++;
+                }
+            }
+            if (x > start) {
+                if (x < end) {
+                    b.put(cs, x, end);
+                }
+                b.put('\'');
+                return b.toString();
+            }
+        }
+        return Chars.toString(cs);
+    }
+
     public static int compare(CharSequence l, CharSequence r) {
         if (l == r) {
             return 0;
@@ -716,7 +748,7 @@ public final class Chars {
             }
 
             @Override
-            public CharSequence subSequence(int start, int end) {
+            public @NotNull CharSequence subSequence(int start, int end) {
                 throw new UnsupportedOperationException();
             }
         };

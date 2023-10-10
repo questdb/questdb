@@ -35,6 +35,202 @@
     {
       "format": "yyyy-MM-ddTHH:mm:ss.N+z",
       "utf8": false
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.N+''''Z''''",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd'''T'''HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd'''T'''HH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd'''T'''HH:mm:ss''''Z''''",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd'''T'''HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd'''T'''HH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd'''T'''HH:mm:ss*N+Z",
+      "utf8": false
+    },
+    {
+      "format": "M/d/y h:m:s a",
+      "utf8": false
+    },
+    {
+      "format": "M/d/y h:m:s a:N+",
+      "utf8": false
+    },
+    {
+      "format": "MMdd_HH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "MMdd_HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "dd MMM yyyy HH:mm:ss*N+",
+      "utf8": false
+    },
+    {
+      "format": "dd MMM yyyy HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "dd-MMM-yyyy HH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "dd-MMM-yyyy HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "dd/MMM/yyyy HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "dd/MMM HH:mm:ss,N+",
+      "utf8": false
+    },
+    {
+      "format": "HH:mm:ss,N+",
+      "utf8": false
+    },
+    {
+      "format": "HH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "MM/dd/yyyy HH:mm:ss Z",
+      "utf8": false
+    },
+    {
+      "format": "MM/dd/yy HH:mm:ss Z",
+      "utf8": false
+    },
+    {
+      "format": "MM/dd/yyyy*HH:mm:ss*N+",
+      "utf8": false
+    },
+    {
+      "format": "MM/dd/yyyy*HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "MM/dd/yy*HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "yyyyMMdd HH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "yyMMdd HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "yy/MM/dd HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "yy-MM-dd HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "yy-MM-dd HH:mm:ss,N+",
+      "utf8": false
+    },
+    {
+      "format": "yy-MM-dd HH:mm:ss,N+ Z",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd*HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd*HH:mm:ss:N+",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd HH:mm:ss.N+Z",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd HH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd HH:mm:ss,N+Z",
+      "utf8": false
+    },
+    {
+      "format": "yyyy MMM dd HH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "yyyy MMM dd HH:mm:ss.N+*z",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd HH:mm:ss,N+",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-dd HH:mm:ss Z",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ssZ",
+      "utf8": false
+    },
+    {
+      "format": "MMM dd HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "MMM dd HH:mm:ss Z",
+      "utf8": false
+    },
+    {
+      "format": "MMM dd HH:mm:ss yyyy",
+      "utf8": false
+    },
+    {
+      "format": "MMM dd yyyy HH:mm:ss",
+      "utf8": false
+    },
+    {
+      "format": "dd/MMM/yyyy:HH:mm:ss Z",
+      "utf8": false
+    },
+    {
+      "format": "MMM dd HH:mm:ss Z yyyy",
+      "utf8": false
+    },
+    {
+      "format": "yyyy MMM dd HH:mm:ss.N+ z",
+      "utf8": false
+    },
+    {
+      "format": "MMM d, yyyy h:m:s a",
+      "utf8": false
     }
   ]
 }

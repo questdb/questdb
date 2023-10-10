@@ -108,6 +108,27 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testTZQuoted() throws Exception {
+        assertThat("yyyy-MM-dd'''T'''HH:mm:ss*SSSZ", "2023-08-20T13:20:10.633Z", "2023-08-20'T'13:20:10*633+0000");
+    }
+
+    @Test
+    public void testTZQuoted2() throws Exception {
+        assertThat("yyyy-MM-ddTHH:mm:ss.SSS''''Z''''", "2023-07-01T14:59:55.711Z", "2023-07-01T14:59:55.711'+0000'");
+    }
+
+    @Test
+    public void testGreedyNanos() throws Exception {
+        assertThat("yyyy-MM-ddTHH:mm:ss.N+''''Z''''", "2023-07-01T14:59:55.711Z", "2023-07-01T14:59:55.711111222'+0000'");
+    }
+
+
+    @Test
+    public void testAmPm() throws Exception {
+        assertThat("M/d/y h:m:s a", "2023-09-28T13:23:15.000Z", "9/28/2023 2:23:15 PM");
+    }
+
+    @Test
     public void testDayOneDigit() throws Exception {
         assertThat("dyyyy", "2014-01-03T00:00:00.000Z", "32014");
     }
