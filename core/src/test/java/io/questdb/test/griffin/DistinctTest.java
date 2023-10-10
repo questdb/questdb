@@ -57,11 +57,11 @@ public class DistinctTest extends AbstractCairoTest {
     public void testDuplicateColumnWithUnion() throws Exception {
         assertQuery(
                 "e1\te2\n" +
+                        "42\t42\n" +
                         "24814\t24814\n" +
                         "-13027\t-13027\n" +
-                        "-22955\t-22955\n" +
-                        "42\t42\n",
-                "(SELECT DISTINCT event e1, event e2 FROM x) UNION (SELECT 42, 42);",
+                        "-22955\t-22955\n",
+                "(SELECT 42 e1, 42 e2) UNION (SELECT DISTINCT event e1, event e2 FROM x);",
                 "create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
@@ -80,7 +80,7 @@ public class DistinctTest extends AbstractCairoTest {
         assertQuery(
                 "count\tcount1\n" +
                         "10\t10\n",
-                "SELECT count(*), count(*) FROM x;",
+                "SELECT DISTINCT count(*), count(*) FROM x;",
                 "create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
@@ -90,7 +90,7 @@ public class DistinctTest extends AbstractCairoTest {
                         ") timestamp(created);",
                 null,
                 false,
-                true
+                false
         );
     }
 
@@ -99,7 +99,7 @@ public class DistinctTest extends AbstractCairoTest {
         assertQuery(
                 "count\tcount1\n" +
                         "10\t10\n",
-                "SELECT * FROM ( SELECT DISTINCT count(*), count(*) FROM x );",
+                "SELECT * FROM (SELECT DISTINCT count(*), count(*) FROM x);",
                 "create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +

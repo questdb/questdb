@@ -2879,20 +2879,21 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Pushes columns from top to bottom models .
+     * Pushes columns from top to bottom models.
      * <p>
      * Adding or removing columns to/from union, except, intersect should not happen!
      * UNION/INTERSECT/EXCEPT-ed columns MUST be exactly as specified in the query, otherwise they might produce different result, e.g.
-     * <p>
-     * select a from (
-     * select 1 as a, 'b' as status
-     * union
-     * select 1 as a, 'c' as status
-     * )
-     * <p>
-     * Now if we push a top-to-bottom and remove b from union column list then we'll get a single '1' but we should get two !
+     * <pre>
+     * SELECT a
+     * FROM (
+     *   SELECT 1 as a, 'b' as status
+     *   UNION
+     *   SELECT 1 as a, 'c' as status
+     * );
+     * </pre>
+     * Now if we push a top-to-bottom and remove b from union column list then we'll get a single '1' but we should get two!
      * Same thing applies to INTERSECT & EXCEPT
-     * The only thing that'd be safe to add SET models is a constant literal (but what's the point?) .
+     * The only thing that'd be safe to add SET models is a constant literal (but what's the point?).
      * Column/expression pushdown should (probably) ONLY happen for UNION with ALL!
      * <p>
      * allowColumnsChange - determines whether changing columns of given model is acceptable.
@@ -2994,7 +2995,7 @@ public class SqlOptimiser implements Mutable {
             if (allowColumnsChange) {
                 emitLiteralsTopDown(model.getWhereClause(), model);
             }
-            if (nested != null && nestedAllowsColumnChange) {
+            if (nestedAllowsColumnChange) {
                 emitLiteralsTopDown(model.getWhereClause(), nested);
 
                 QueryModel unionModel = nested.getUnionModel();

@@ -2346,7 +2346,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.getUnionModel() != null) {
             return generateSetFactory(model, factory, executionContext);
         }
-
         return factory;
     }
 
@@ -3144,7 +3143,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && (tableNameEn = twoDeepNested.getTableNameExpr()) != null
                         && tableNameEn.type == ExpressionNode.LITERAL
                         && twoDeepNested.getWhereClause() == null
-                        && twoDeepNested.getJoinModels().size() == 1//no joins
+                        && twoDeepNested.getJoinModels().size() == 1 // no joins
         ) {
             CharSequence tableName = tableNameEn.token;
             TableToken tableToken = executionContext.getTableToken(tableName);
