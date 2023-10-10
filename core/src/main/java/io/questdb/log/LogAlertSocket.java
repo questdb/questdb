@@ -120,6 +120,7 @@ public class LogAlertSocket implements Closeable {
             logNetworkConnectError("Could not create addr info with");
         } else {
             socketFd = nf.socketTcp(true);
+            nf.configureKeepAlive(socketFd);
             if (socketFd > -1) {
                 if (nf.connectAddrInfo(socketFd, addressInfoAddr) != 0) {
                     logNetworkConnectError("Could not connect with");
