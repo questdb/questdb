@@ -1382,7 +1382,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportDelimiterNotDetected() throws Exception {
         testImport(
                 engine -> testHttpClient.assertSendMultipart(
-                        "not enough lines [table=fhv_tripdata_2017-02.csv]",
+                        "not enough lines to determine column delimiter, please provide delimiter [table=fhv_tripdata_2017-02.csv]",
                         null,
                         "9988",
                         "fhv_tripdata_2017-02.csv",
@@ -7947,6 +7947,7 @@ public class IODispatcherTest extends AbstractTest {
         String tableName = "test_table";
         String command = "POST /upload?fmt=json&" +
                 String.format("overwrite=%b&", overwrite) +
+                "wal=FALSE&" +
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 String.format("partitionBy=%s&", PartitionBy.toString(partitionBy)) +
@@ -8046,6 +8047,7 @@ public class IODispatcherTest extends AbstractTest {
         String tableName = "test_table";
         String command = "POST /upload?fmt=json&" +
                 "overwrite=false&" +
+                "wal=false&" +
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 "partitionBy=DAY&" +

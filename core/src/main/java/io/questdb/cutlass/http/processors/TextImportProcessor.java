@@ -69,7 +69,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int TO_STRING_COL3_PAD = 15;
     private static final int TO_STRING_COL4_PAD = 7;
     private static final int TO_STRING_COL5_PAD = 12;
-    private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
+    private static final LowerCaseCharSequenceIntHashMap atomicityParamMap = new LowerCaseCharSequenceIntHashMap();
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
@@ -147,7 +147,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             transientState.analysed = false;
             transientState.textLoader.configureDestination(
                     tableName,
-                    Chars.equalsNc("true", rh.getUrlParam("overwrite")),
+                    !Chars.equalsIgnoreCaseNc("false", rh.getUrlParam("wal")),
+                    Chars.equalsIgnoreCaseNc("true", rh.getUrlParam("overwrite")),
                     getAtomicity(rh.getUrlParam("atomicity")),
                     partitionBy,
                     isTimestampColumnNameBlank ? null : timestampColumnName,
@@ -178,17 +179,17 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             }
 
-            transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
-            transientState.textLoader.setSkipLinesWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));
+            transientState.textLoader.setForceHeaders(Chars.equalsIgnoreCaseNc("true", rh.getUrlParam("forceHeader")));
+            transientState.textLoader.setSkipLinesWithExtraValues(Chars.equalsIgnoreCaseNc("true", rh.getUrlParam("skipLev")));
             CharSequence delimiter = rh.getUrlParam("delimiter");
             if (delimiter != null && delimiter.length() == 1) {
                 transientState.textLoader.configureColumnDelimiter((byte) delimiter.charAt(0));
             }
             transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
 
-            transientState.forceHeader = Chars.equalsNc("true", rh.getUrlParam("forceHeader"));
+            transientState.forceHeader = Chars.equalsIgnoreCaseNc("true", rh.getUrlParam("forceHeader"));
             transientState.messagePart = MESSAGE_DATA;
-        } else if (Chars.equalsNc("schema", contentDisposition)) {
+        } else if (Chars.equalsIgnoreCaseNc("schema", contentDisposition)) {
             transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
             transientState.messagePart = MESSAGE_SCHEMA;
         } else {

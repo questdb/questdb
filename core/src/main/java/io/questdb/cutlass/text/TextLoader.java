@@ -84,6 +84,7 @@ public class TextLoader implements Closeable, Mutable {
     private boolean skipLinesWithExtraValues = true;
     private int state;
     private CharSequence tableName;
+    private boolean walTable;
     private TimestampAdapter timestampAdapter;
     private CharSequence timestampColumn;
     private int timestampIndex = NO_INDEX;
@@ -173,6 +174,7 @@ public class TextLoader implements Closeable, Mutable {
 
     public void configureDestination(
             CharSequence tableName,
+            boolean walTable,
             boolean overwrite,
             int atomicity,
             int partitionBy,
@@ -180,6 +182,7 @@ public class TextLoader implements Closeable, Mutable {
             CharSequence timestampFormat
     ) {
         this.tableName = tableName;
+        this.walTable = walTable;
         this.overwrite = overwrite;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
@@ -683,7 +686,7 @@ public class TextLoader implements Closeable, Mutable {
 
         @Override
         public boolean isWalEnabled() {
-            return cairoConfiguration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
+            return walTable && PartitionBy.isPartitioned(partitionBy) && !Chars.isBlank(timestampColumn);
         }
 
         TableStructureAdapter of(ObjList<CharSequence> columnNames, ObjList<TypeAdapter> columnTypes) throws TextException {

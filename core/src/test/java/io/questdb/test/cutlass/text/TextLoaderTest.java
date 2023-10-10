@@ -564,6 +564,230 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateWalTable() throws Exception {
+        // when there is enough information provided,
+        // more specifically:
+        // 1. designated timestamp column
+        // 2. partition method
+        assertNoLeak(textLoader -> {
+            final String csv = "hostname,region,datacenter,rack,os,arch,team,service,service_version,service_environment,usage_user,usage_system,usage_idle,usage_nice,usage_iowait,usage_irq,usage_softirq,usage_steal,usage_guest,usage_guest_nice,timestamp\n" +
+                    "host_0,eu-central-1,eu-central-1a,6,Ubuntu15.10,x86,SF,19,1,test,58,2,24,61,22,63,6,44,80,38,2016-01-01T00:00:00.000000Z\n" +
+                    "host_1,us-west-1,us-west-1a,41,Ubuntu15.10,x64,NYC,9,1,staging,84,11,53,87,29,20,54,77,53,74,2016-01-01T00:00:00.000000Z\n" +
+                    "host_2,sa-east-1,sa-east-1a,89,Ubuntu16.04LTS,x86,LON,13,0,staging,29,48,5,63,17,52,60,49,93,1,2016-01-01T00:00:00.000000Z\n" +
+                    "host_3,us-west-2,us-west-2b,12,Ubuntu15.10,x64,CHI,18,1,production,8,21,89,78,30,81,33,24,24,82,2016-01-01T00:00:00.000000Z\n" +
+                    "host_4,sa-east-1,sa-east-1c,74,Ubuntu16.10,x86,SF,7,0,staging,2,26,64,6,38,20,71,19,40,54,2016-01-01T00:00:00.000000Z\n" +
+                    "host_5,us-west-1,us-west-1b,18,Ubuntu16.10,x64,CHI,14,0,staging,76,40,63,7,81,20,29,55,20,15,2016-01-01T00:00:00.000000Z\n" +
+                    "host_6,ap-southeast-1,ap-southeast-1b,49,Ubuntu16.10,x86,CHI,7,0,staging,44,70,20,67,65,11,7,92,0,31,2016-01-01T00:00:00.000000Z\n" +
+                    "host_7,eu-west-1,eu-west-1c,44,Ubuntu16.10,x64,LON,7,1,test,92,35,99,9,31,1,2,24,96,69,2016-01-01T00:00:00.000000Z\n" +
+                    "host_8,eu-west-1,eu-west-1a,17,Ubuntu16.04LTS,x64,LON,2,0,test,21,77,90,83,41,84,26,60,43,36,2016-01-01T00:00:00.000000Z\n" +
+                    "host_9,ap-southeast-2,ap-southeast-2a,0,Ubuntu16.04LTS,x86,CHI,18,0,production,90,0,81,28,25,44,8,89,11,76,2016-01-01T00:00:00.000000Z\n" +
+                    "host_10,sa-east-1,sa-east-1a,95,Ubuntu16.10,x64,LON,8,0,staging,76,85,24,0,44,88,90,40,72,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_11,us-west-2,us-west-2b,66,Ubuntu15.10,x64,NYC,6,1,production,80,11,50,72,52,18,68,88,54,50,2016-01-01T00:00:00.000000Z\n" +
+                    "host_12,eu-central-1,eu-central-1a,79,Ubuntu16.10,x86,CHI,6,1,production,64,81,55,54,89,81,69,33,53,25,2016-01-01T00:00:00.000000Z\n" +
+                    "host_13,eu-west-1,eu-west-1a,79,Ubuntu16.10,x64,CHI,19,1,staging,48,0,64,91,13,88,79,41,48,4,2016-01-01T00:00:00.000000Z\n" +
+                    "host_14,us-west-1,us-west-1b,8,Ubuntu15.10,x64,LON,3,0,production,81,47,98,33,59,71,81,5,97,47,2016-01-01T00:00:00.000000Z\n" +
+                    "host_15,ap-southeast-2,ap-southeast-2a,67,Ubuntu16.10,x86,LON,11,1,production,9,5,99,97,25,32,35,38,53,16,2016-01-01T00:00:00.000000Z\n" +
+                    "host_16,ap-southeast-2,ap-southeast-2a,51,Ubuntu16.10,x64,NYC,6,1,staging,70,66,56,90,86,23,42,94,37,2,2016-01-01T00:00:00.000000Z\n" +
+                    "host_17,ap-southeast-1,ap-southeast-1b,79,Ubuntu16.10,x86,NYC,6,0,production,87,24,70,46,85,76,96,95,57,2,2016-01-01T00:00:00.000000Z\n" +
+                    "host_18,ap-southeast-1,ap-southeast-1b,0,Ubuntu15.10,x86,LON,19,1,test,61,51,58,27,59,54,16,44,14,99,2016-01-01T00:00:00.000000Z\n" +
+                    "host_19,ap-northeast-1,ap-northeast-1a,70,Ubuntu16.04LTS,x64,CHI,19,0,staging,55,61,53,44,49,49,20,28,65,64,2016-01-01T00:00:00.000000Z\n" +
+                    "host_20,ap-southeast-1,ap-southeast-1b,47,Ubuntu16.04LTS,x86,CHI,18,1,test,1,26,82,31,71,78,10,24,21,56,2016-01-01T00:00:00.000000Z\n" +
+                    "host_21,ap-northeast-1,ap-northeast-1c,10,Ubuntu16.04LTS,x86,CHI,14,0,staging,53,50,95,43,24,49,87,9,50,98,2016-01-01T00:00:00.000000Z\n" +
+                    "host_22,eu-central-1,eu-central-1b,86,Ubuntu16.04LTS,x86,LON,10,1,production,4,46,15,50,3,61,27,87,54,1,2016-01-01T00:00:00.000000Z\n" +
+                    "host_23,ap-southeast-1,ap-southeast-1b,31,Ubuntu16.10,x86,LON,1,0,production,91,44,15,87,39,59,41,87,88,57,2016-01-01T00:00:00.000000Z\n" +
+                    "host_24,sa-east-1,sa-east-1a,29,Ubuntu16.10,x86,LON,9,1,staging,28,88,90,6,5,83,8,93,94,44,2016-01-01T00:00:00.000000Z\n" +
+                    "host_25,us-west-1,us-west-1a,79,Ubuntu16.04LTS,x86,SF,16,0,staging,15,64,13,38,80,64,18,62,26,35,2016-01-01T00:00:00.000000Z\n" +
+                    "host_26,sa-east-1,sa-east-1c,8,Ubuntu15.10,x64,CHI,3,1,test,96,80,60,57,46,39,92,8,45,22,2016-01-01T00:00:00.000000Z\n" +
+                    "host_27,us-west-1,us-west-1b,38,Ubuntu16.10,x86,SF,4,1,production,5,89,70,15,19,18,15,74,84,72,2016-01-01T00:00:00.000000Z\n" +
+                    "host_28,us-west-1,us-west-1a,90,Ubuntu15.10,x64,CHI,10,1,test,5,16,56,55,5,86,61,6,94,16,2016-01-01T00:00:00.000000Z\n" +
+                    "host_29,sa-east-1,sa-east-1a,6,Ubuntu16.10,x86,NYC,14,0,test,8,88,67,81,38,11,13,68,49,86,2016-01-01T00:00:00.000000Z\n" +
+                    "host_30,ap-northeast-1,ap-northeast-1c,49,Ubuntu16.10,x86,SF,2,0,test,78,9,64,27,16,22,91,1,97,11,2016-01-01T00:00:00.000000Z\n" +
+                    "host_31,us-east-1,us-east-1a,69,Ubuntu16.04LTS,x64,NYC,13,1,production,61,28,45,46,87,41,22,77,15,56,2016-01-01T00:00:00.000000Z\n" +
+                    "host_32,us-west-2,us-west-2c,50,Ubuntu15.10,x64,CHI,11,0,staging,79,67,56,45,13,33,4,42,89,9,2016-01-01T00:00:00.000000Z\n" +
+                    "host_33,ap-southeast-1,ap-southeast-1b,88,Ubuntu15.10,x86,SF,14,0,staging,90,42,88,81,33,62,96,9,35,85,2016-01-01T00:00:00.000000Z\n" +
+                    "host_34,ap-southeast-1,ap-southeast-1b,94,Ubuntu15.10,x64,LON,13,1,production,30,62,66,64,13,82,71,94,28,28,2016-01-01T00:00:00.000000Z\n" +
+                    "host_35,eu-west-1,eu-west-1c,5,Ubuntu16.04LTS,x64,CHI,18,0,test,64,89,36,5,29,78,47,77,32,60,2016-01-01T00:00:00.000000Z\n" +
+                    "host_36,eu-central-1,eu-central-1a,18,Ubuntu16.10,x64,NYC,14,1,staging,20,20,35,38,34,70,73,45,0,84,2016-01-01T00:00:00.000000Z\n" +
+                    "host_37,ap-northeast-1,ap-northeast-1c,53,Ubuntu15.10,x86,LON,13,0,test,54,66,5,40,92,47,21,12,60,77,2016-01-01T00:00:00.000000Z\n" +
+                    "host_38,ap-southeast-2,ap-southeast-2a,87,Ubuntu16.10,x64,NYC,18,1,production,38,35,25,80,72,81,7,29,20,41,2016-01-01T00:00:00.000000Z\n" +
+                    "host_39,eu-west-1,eu-west-1c,56,Ubuntu15.10,x86,SF,5,1,production,77,40,2,12,11,48,41,12,33,8,2016-01-01T00:00:00.000000Z\n" +
+                    "host_40,eu-west-1,eu-west-1a,4,Ubuntu15.10,x64,LON,15,1,production,41,74,76,33,0,31,65,40,17,81,2016-01-01T00:00:00.000000Z\n" +
+                    "host_41,eu-central-1,eu-central-1a,19,Ubuntu15.10,x64,NYC,4,1,staging,9,14,94,42,24,16,39,17,66,81,2016-01-01T00:00:00.000000Z\n" +
+                    "host_42,eu-central-1,eu-central-1b,57,Ubuntu15.10,x86,LON,3,0,test,70,67,99,91,72,36,59,78,80,76,2016-01-01T00:00:00.000000Z\n" +
+                    "host_43,us-west-2,us-west-2c,85,Ubuntu15.10,x64,NYC,5,1,staging,30,19,33,65,89,25,45,62,39,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_44,ap-northeast-1,ap-northeast-1c,15,Ubuntu15.10,x86,NYC,19,1,production,86,67,75,79,96,49,76,31,35,64,2016-01-01T00:00:00.000000Z\n" +
+                    "host_45,us-west-2,us-west-2b,74,Ubuntu15.10,x64,SF,12,1,production,35,4,33,64,86,8,29,10,33,37,2016-01-01T00:00:00.000000Z\n" +
+                    "host_46,sa-east-1,sa-east-1c,37,Ubuntu15.10,x86,SF,3,1,test,44,74,82,19,23,68,22,77,15,11,2016-01-01T00:00:00.000000Z\n" +
+                    "host_47,us-west-1,us-west-1b,54,Ubuntu16.04LTS,x86,SF,11,1,production,53,43,61,66,47,57,25,43,58,17,2016-01-01T00:00:00.000000Z\n" +
+                    "host_48,sa-east-1,sa-east-1a,90,Ubuntu15.10,x64,SF,1,0,staging,6,7,66,45,3,40,46,68,65,25,2016-01-01T00:00:00.000000Z\n" +
+                    "host_49,us-west-2,us-west-2b,75,Ubuntu16.04LTS,x86,SF,12,0,test,44,52,69,43,82,20,50,22,92,79,2016-01-01T00:00:00.000000Z\n" +
+                    "host_50,sa-east-1,sa-east-1b,66,Ubuntu16.10,x64,NYC,17,1,test,17,16,54,72,33,88,38,34,20,71,2016-01-01T00:00:00.000000Z\n" +
+                    "host_51,us-east-1,us-east-1c,98,Ubuntu15.10,x86,SF,11,0,staging,97,40,69,43,4,18,46,20,30,79,2016-01-01T00:00:00.000000Z\n" +
+                    "host_52,us-west-2,us-west-2c,92,Ubuntu16.10,x86,CHI,10,0,production,6,30,35,25,10,83,95,60,92,41,2016-01-01T00:00:00.000000Z\n" +
+                    "host_53,sa-east-1,sa-east-1a,61,Ubuntu16.04LTS,x86,CHI,16,1,staging,12,61,4,9,73,29,69,27,39,53,2016-01-01T00:00:00.000000Z\n" +
+                    "host_54,ap-southeast-2,ap-southeast-2b,79,Ubuntu16.10,x64,SF,19,1,staging,61,0,45,35,2,67,60,95,76,41,2016-01-01T00:00:00.000000Z\n" +
+                    "host_55,us-west-1,us-west-1a,31,Ubuntu15.10,x86,CHI,3,1,staging,29,1,33,76,74,52,61,98,72,8,2016-01-01T00:00:00.000000Z\n" +
+                    "host_56,ap-southeast-1,ap-southeast-1a,48,Ubuntu16.04LTS,x64,NYC,17,0,staging,89,60,20,67,39,83,58,64,11,34,2016-01-01T00:00:00.000000Z\n" +
+                    "host_57,eu-central-1,eu-central-1a,59,Ubuntu16.10,x86,SF,14,0,production,1,98,44,77,5,68,9,56,54,54,2016-01-01T00:00:00.000000Z\n" +
+                    "host_58,ap-northeast-1,ap-northeast-1a,57,Ubuntu16.04LTS,x86,CHI,12,0,production,60,48,93,98,41,39,26,32,89,16,2016-01-01T00:00:00.000000Z\n" +
+                    "host_59,us-east-1,us-east-1c,21,Ubuntu16.10,x86,CHI,11,1,production,58,20,91,34,75,42,23,20,77,64,2016-01-01T00:00:00.000000Z\n" +
+                    "host_60,us-west-2,us-west-2b,71,Ubuntu15.10,x64,SF,1,0,production,36,75,57,10,41,5,92,39,91,82,2016-01-01T00:00:00.000000Z\n" +
+                    "host_61,us-east-1,us-east-1b,98,Ubuntu16.04LTS,x64,NYC,13,1,staging,29,38,25,24,6,22,39,2,30,53,2016-01-01T00:00:00.000000Z\n" +
+                    "host_62,ap-southeast-2,ap-southeast-2a,36,Ubuntu15.10,x64,NYC,15,0,production,87,11,41,78,1,62,53,4,18,15,2016-01-01T00:00:00.000000Z\n" +
+                    "host_63,eu-west-1,eu-west-1a,28,Ubuntu16.10,x64,LON,12,1,staging,21,76,65,52,35,40,15,60,9,7,2016-01-01T00:00:00.000000Z\n" +
+                    "host_64,us-west-1,us-west-1a,59,Ubuntu16.10,x86,CHI,15,0,test,88,99,46,96,20,0,68,6,26,32,2016-01-01T00:00:00.000000Z\n" +
+                    "host_65,eu-central-1,eu-central-1a,43,Ubuntu16.10,x86,NYC,11,0,test,2,63,78,48,55,48,67,33,25,69,2016-01-01T00:00:00.000000Z\n" +
+                    "host_66,eu-west-1,eu-west-1a,57,Ubuntu15.10,x86,CHI,10,1,test,67,89,22,35,82,10,54,34,58,98,2016-01-01T00:00:00.000000Z\n" +
+                    "host_67,eu-central-1,eu-central-1b,96,Ubuntu16.10,x86,NYC,18,0,test,71,2,9,97,63,13,43,45,21,41,2016-01-01T00:00:00.000000Z\n" +
+                    "host_68,eu-central-1,eu-central-1a,68,Ubuntu16.04LTS,x64,SF,12,1,test,25,6,50,82,78,41,15,62,85,77,2016-01-01T00:00:00.000000Z\n" +
+                    "host_69,us-west-1,us-west-1a,11,Ubuntu16.10,x64,LON,7,0,test,1,68,39,82,47,56,56,89,78,51,2016-01-01T00:00:00.000000Z\n" +
+                    "host_70,ap-northeast-1,ap-northeast-1c,5,Ubuntu16.04LTS,x86,LON,3,0,production,66,23,12,0,37,38,44,9,1,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_71,eu-west-1,eu-west-1a,72,Ubuntu15.10,x64,SF,6,0,test,16,55,72,1,70,22,25,35,7,57,2016-01-01T00:00:00.000000Z\n" +
+                    "host_72,us-west-1,us-west-1a,60,Ubuntu15.10,x64,NYC,15,0,test,84,15,88,57,0,4,69,78,29,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_73,us-west-1,us-west-1b,64,Ubuntu15.10,x86,CHI,0,0,staging,97,36,90,38,89,32,73,24,1,7,2016-01-01T00:00:00.000000Z\n" +
+                    "host_74,sa-east-1,sa-east-1a,95,Ubuntu16.10,x86,NYC,5,0,staging,17,29,49,90,18,83,48,17,51,22,2016-01-01T00:00:00.000000Z\n" +
+                    "host_75,eu-central-1,eu-central-1a,11,Ubuntu15.10,x64,LON,17,1,test,56,16,54,74,93,10,42,68,1,59,2016-01-01T00:00:00.000000Z\n" +
+                    "host_76,eu-west-1,eu-west-1c,89,Ubuntu15.10,x86,SF,4,0,production,36,22,14,69,48,65,86,22,76,83,2016-01-01T00:00:00.000000Z\n" +
+                    "host_77,ap-southeast-2,ap-southeast-2b,19,Ubuntu16.04LTS,x64,NYC,8,1,staging,85,21,83,48,61,16,35,55,13,70,2016-01-01T00:00:00.000000Z\n" +
+                    "host_78,ap-southeast-2,ap-southeast-2a,1,Ubuntu15.10,x64,NYC,19,0,production,70,82,1,68,35,2,63,3,11,54,2016-01-01T00:00:00.000000Z\n" +
+                    "host_79,ap-northeast-1,ap-northeast-1c,76,Ubuntu16.04LTS,x86,SF,16,1,test,76,64,43,84,50,53,48,60,81,23,2016-01-01T00:00:00.000000Z\n" +
+                    "host_80,ap-southeast-1,ap-southeast-1a,86,Ubuntu16.10,x86,NYC,2,0,production,76,89,25,15,18,60,74,32,14,21,2016-01-01T00:00:00.000000Z\n" +
+                    "host_81,ap-northeast-1,ap-northeast-1c,29,Ubuntu15.10,x86,CHI,19,1,staging,18,88,61,80,86,31,2,63,82,73,2016-01-01T00:00:00.000000Z\n" +
+                    "host_82,ap-southeast-1,ap-southeast-1a,89,Ubuntu16.10,x86,SF,14,0,production,3,50,12,52,14,36,60,46,77,91,2016-01-01T00:00:00.000000Z\n" +
+                    "host_83,ap-northeast-1,ap-northeast-1c,68,Ubuntu16.04LTS,x64,LON,10,0,test,94,53,33,35,57,37,90,32,47,2,2016-01-01T00:00:00.000000Z\n" +
+                    "host_84,eu-west-1,eu-west-1c,35,Ubuntu16.10,x86,NYC,4,0,test,29,0,78,14,65,34,91,58,64,39,2016-01-01T00:00:00.000000Z\n" +
+                    "host_85,us-west-2,us-west-2b,37,Ubuntu15.10,x64,CHI,18,0,test,10,23,60,9,6,91,19,56,9,76,2016-01-01T00:00:00.000000Z\n" +
+                    "host_86,eu-west-1,eu-west-1b,66,Ubuntu15.10,x86,LON,4,1,production,55,49,23,97,60,49,90,60,56,63,2016-01-01T00:00:00.000000Z\n" +
+                    "host_87,eu-central-1,eu-central-1b,21,Ubuntu16.10,x86,CHI,1,1,production,26,7,45,79,79,98,13,69,45,58,2016-01-01T00:00:00.000000Z\n" +
+                    "host_88,us-west-1,us-west-1b,34,Ubuntu15.10,x86,NYC,11,0,test,72,58,49,73,21,77,6,29,64,9,2016-01-01T00:00:00.000000Z\n" +
+                    "host_89,eu-central-1,eu-central-1b,23,Ubuntu16.10,x64,LON,19,1,staging,89,41,14,37,0,41,29,11,70,70,2016-01-01T00:00:00.000000Z\n" +
+                    "host_90,ap-southeast-1,ap-southeast-1b,93,Ubuntu16.04LTS,x64,CHI,0,0,test,58,68,53,73,39,65,73,26,39,77,2016-01-01T00:00:00.000000Z\n" +
+                    "host_91,us-west-1,us-west-1b,68,Ubuntu16.04LTS,x86,LON,12,1,staging,33,21,52,50,84,16,92,63,85,37,2016-01-01T00:00:00.000000Z\n" +
+                    "host_92,sa-east-1,sa-east-1b,62,Ubuntu15.10,x64,CHI,15,0,staging,34,73,76,6,56,26,64,61,64,87,2016-01-01T00:00:00.000000Z\n" +
+                    "host_93,us-east-1,us-east-1c,84,Ubuntu16.10,x86,LON,2,0,production,9,37,16,27,62,42,37,6,18,64,2016-01-01T00:00:00.000000Z\n" +
+                    "host_94,sa-east-1,sa-east-1b,42,Ubuntu15.10,x64,LON,14,1,test,6,22,74,7,3,31,54,95,4,69,2016-01-01T00:00:00.000000Z\n" +
+                    "host_95,eu-west-1,eu-west-1c,8,Ubuntu15.10,x64,LON,2,0,staging,18,39,51,89,57,28,36,28,95,9,2016-01-01T00:00:00.000000Z\n" +
+                    "host_96,us-west-2,us-west-2a,97,Ubuntu16.04LTS,x86,SF,3,0,production,55,90,24,30,39,67,63,29,82,45,2016-01-01T00:00:00.000000Z\n" +
+                    "host_97,eu-west-1,eu-west-1c,55,Ubuntu15.10,x86,CHI,16,1,test,80,91,26,33,77,61,69,19,23,58,2016-01-01T00:00:00.000000Z\n" +
+                    "host_98,us-east-1,us-east-1c,2,Ubuntu16.10,x86,LON,6,1,staging,70,37,46,60,1,49,95,88,99,53,2016-01-01T00:00:00.000000Z\n" +
+                    "host_99,us-east-1,us-east-1a,31,Ubuntu16.10,x86,SF,19,1,staging,7,58,75,50,42,88,59,32,64,33,2016-01-01T00:00:00.000000Z\n";
+
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            textLoader.configureDestination("test", true, false, 0, PartitionBy.DAY, "timestamp", null);
+            textLoader.configureColumnDelimiter((byte) ',');
+            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+            drainWalQueue();
+            assertTable("hostname\tregion\tdatacenter\track\tos\tarch\tteam\tservice\tservice_version\tservice_environment\tusage_user\tusage_system\tusage_idle\tusage_nice\tusage_iowait\tusage_irq\tusage_softirq\tusage_steal\tusage_guest\tusage_guest_nice\ttimestamp\n" +
+                    "host_0\teu-central-1\teu-central-1a\t6\tUbuntu15.10\tx86\tSF\t19\t1\ttest\t58\t2\t24\t61\t22\t63\t6\t44\t80\t38\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_1\tus-west-1\tus-west-1a\t41\tUbuntu15.10\tx64\tNYC\t9\t1\tstaging\t84\t11\t53\t87\t29\t20\t54\t77\t53\t74\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_2\tsa-east-1\tsa-east-1a\t89\tUbuntu16.04LTS\tx86\tLON\t13\t0\tstaging\t29\t48\t5\t63\t17\t52\t60\t49\t93\t1\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_3\tus-west-2\tus-west-2b\t12\tUbuntu15.10\tx64\tCHI\t18\t1\tproduction\t8\t21\t89\t78\t30\t81\t33\t24\t24\t82\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_4\tsa-east-1\tsa-east-1c\t74\tUbuntu16.10\tx86\tSF\t7\t0\tstaging\t2\t26\t64\t6\t38\t20\t71\t19\t40\t54\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_5\tus-west-1\tus-west-1b\t18\tUbuntu16.10\tx64\tCHI\t14\t0\tstaging\t76\t40\t63\t7\t81\t20\t29\t55\t20\t15\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_6\tap-southeast-1\tap-southeast-1b\t49\tUbuntu16.10\tx86\tCHI\t7\t0\tstaging\t44\t70\t20\t67\t65\t11\t7\t92\t0\t31\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_7\teu-west-1\teu-west-1c\t44\tUbuntu16.10\tx64\tLON\t7\t1\ttest\t92\t35\t99\t9\t31\t1\t2\t24\t96\t69\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_8\teu-west-1\teu-west-1a\t17\tUbuntu16.04LTS\tx64\tLON\t2\t0\ttest\t21\t77\t90\t83\t41\t84\t26\t60\t43\t36\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_9\tap-southeast-2\tap-southeast-2a\t0\tUbuntu16.04LTS\tx86\tCHI\t18\t0\tproduction\t90\t0\t81\t28\t25\t44\t8\t89\t11\t76\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_10\tsa-east-1\tsa-east-1a\t95\tUbuntu16.10\tx64\tLON\t8\t0\tstaging\t76\t85\t24\t0\t44\t88\t90\t40\t72\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_11\tus-west-2\tus-west-2b\t66\tUbuntu15.10\tx64\tNYC\t6\t1\tproduction\t80\t11\t50\t72\t52\t18\t68\t88\t54\t50\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_12\teu-central-1\teu-central-1a\t79\tUbuntu16.10\tx86\tCHI\t6\t1\tproduction\t64\t81\t55\t54\t89\t81\t69\t33\t53\t25\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_13\teu-west-1\teu-west-1a\t79\tUbuntu16.10\tx64\tCHI\t19\t1\tstaging\t48\t0\t64\t91\t13\t88\t79\t41\t48\t4\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_14\tus-west-1\tus-west-1b\t8\tUbuntu15.10\tx64\tLON\t3\t0\tproduction\t81\t47\t98\t33\t59\t71\t81\t5\t97\t47\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_15\tap-southeast-2\tap-southeast-2a\t67\tUbuntu16.10\tx86\tLON\t11\t1\tproduction\t9\t5\t99\t97\t25\t32\t35\t38\t53\t16\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_16\tap-southeast-2\tap-southeast-2a\t51\tUbuntu16.10\tx64\tNYC\t6\t1\tstaging\t70\t66\t56\t90\t86\t23\t42\t94\t37\t2\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_17\tap-southeast-1\tap-southeast-1b\t79\tUbuntu16.10\tx86\tNYC\t6\t0\tproduction\t87\t24\t70\t46\t85\t76\t96\t95\t57\t2\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_18\tap-southeast-1\tap-southeast-1b\t0\tUbuntu15.10\tx86\tLON\t19\t1\ttest\t61\t51\t58\t27\t59\t54\t16\t44\t14\t99\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_19\tap-northeast-1\tap-northeast-1a\t70\tUbuntu16.04LTS\tx64\tCHI\t19\t0\tstaging\t55\t61\t53\t44\t49\t49\t20\t28\t65\t64\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_20\tap-southeast-1\tap-southeast-1b\t47\tUbuntu16.04LTS\tx86\tCHI\t18\t1\ttest\t1\t26\t82\t31\t71\t78\t10\t24\t21\t56\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_21\tap-northeast-1\tap-northeast-1c\t10\tUbuntu16.04LTS\tx86\tCHI\t14\t0\tstaging\t53\t50\t95\t43\t24\t49\t87\t9\t50\t98\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_22\teu-central-1\teu-central-1b\t86\tUbuntu16.04LTS\tx86\tLON\t10\t1\tproduction\t4\t46\t15\t50\t3\t61\t27\t87\t54\t1\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_23\tap-southeast-1\tap-southeast-1b\t31\tUbuntu16.10\tx86\tLON\t1\t0\tproduction\t91\t44\t15\t87\t39\t59\t41\t87\t88\t57\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_24\tsa-east-1\tsa-east-1a\t29\tUbuntu16.10\tx86\tLON\t9\t1\tstaging\t28\t88\t90\t6\t5\t83\t8\t93\t94\t44\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_25\tus-west-1\tus-west-1a\t79\tUbuntu16.04LTS\tx86\tSF\t16\t0\tstaging\t15\t64\t13\t38\t80\t64\t18\t62\t26\t35\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_26\tsa-east-1\tsa-east-1c\t8\tUbuntu15.10\tx64\tCHI\t3\t1\ttest\t96\t80\t60\t57\t46\t39\t92\t8\t45\t22\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_27\tus-west-1\tus-west-1b\t38\tUbuntu16.10\tx86\tSF\t4\t1\tproduction\t5\t89\t70\t15\t19\t18\t15\t74\t84\t72\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_28\tus-west-1\tus-west-1a\t90\tUbuntu15.10\tx64\tCHI\t10\t1\ttest\t5\t16\t56\t55\t5\t86\t61\t6\t94\t16\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_29\tsa-east-1\tsa-east-1a\t6\tUbuntu16.10\tx86\tNYC\t14\t0\ttest\t8\t88\t67\t81\t38\t11\t13\t68\t49\t86\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_30\tap-northeast-1\tap-northeast-1c\t49\tUbuntu16.10\tx86\tSF\t2\t0\ttest\t78\t9\t64\t27\t16\t22\t91\t1\t97\t11\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_31\tus-east-1\tus-east-1a\t69\tUbuntu16.04LTS\tx64\tNYC\t13\t1\tproduction\t61\t28\t45\t46\t87\t41\t22\t77\t15\t56\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_32\tus-west-2\tus-west-2c\t50\tUbuntu15.10\tx64\tCHI\t11\t0\tstaging\t79\t67\t56\t45\t13\t33\t4\t42\t89\t9\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_33\tap-southeast-1\tap-southeast-1b\t88\tUbuntu15.10\tx86\tSF\t14\t0\tstaging\t90\t42\t88\t81\t33\t62\t96\t9\t35\t85\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_34\tap-southeast-1\tap-southeast-1b\t94\tUbuntu15.10\tx64\tLON\t13\t1\tproduction\t30\t62\t66\t64\t13\t82\t71\t94\t28\t28\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_35\teu-west-1\teu-west-1c\t5\tUbuntu16.04LTS\tx64\tCHI\t18\t0\ttest\t64\t89\t36\t5\t29\t78\t47\t77\t32\t60\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_36\teu-central-1\teu-central-1a\t18\tUbuntu16.10\tx64\tNYC\t14\t1\tstaging\t20\t20\t35\t38\t34\t70\t73\t45\t0\t84\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_37\tap-northeast-1\tap-northeast-1c\t53\tUbuntu15.10\tx86\tLON\t13\t0\ttest\t54\t66\t5\t40\t92\t47\t21\t12\t60\t77\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_38\tap-southeast-2\tap-southeast-2a\t87\tUbuntu16.10\tx64\tNYC\t18\t1\tproduction\t38\t35\t25\t80\t72\t81\t7\t29\t20\t41\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_39\teu-west-1\teu-west-1c\t56\tUbuntu15.10\tx86\tSF\t5\t1\tproduction\t77\t40\t2\t12\t11\t48\t41\t12\t33\t8\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_40\teu-west-1\teu-west-1a\t4\tUbuntu15.10\tx64\tLON\t15\t1\tproduction\t41\t74\t76\t33\t0\t31\t65\t40\t17\t81\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_41\teu-central-1\teu-central-1a\t19\tUbuntu15.10\tx64\tNYC\t4\t1\tstaging\t9\t14\t94\t42\t24\t16\t39\t17\t66\t81\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_42\teu-central-1\teu-central-1b\t57\tUbuntu15.10\tx86\tLON\t3\t0\ttest\t70\t67\t99\t91\t72\t36\t59\t78\t80\t76\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_43\tus-west-2\tus-west-2c\t85\tUbuntu15.10\tx64\tNYC\t5\t1\tstaging\t30\t19\t33\t65\t89\t25\t45\t62\t39\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_44\tap-northeast-1\tap-northeast-1c\t15\tUbuntu15.10\tx86\tNYC\t19\t1\tproduction\t86\t67\t75\t79\t96\t49\t76\t31\t35\t64\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_45\tus-west-2\tus-west-2b\t74\tUbuntu15.10\tx64\tSF\t12\t1\tproduction\t35\t4\t33\t64\t86\t8\t29\t10\t33\t37\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_46\tsa-east-1\tsa-east-1c\t37\tUbuntu15.10\tx86\tSF\t3\t1\ttest\t44\t74\t82\t19\t23\t68\t22\t77\t15\t11\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_47\tus-west-1\tus-west-1b\t54\tUbuntu16.04LTS\tx86\tSF\t11\t1\tproduction\t53\t43\t61\t66\t47\t57\t25\t43\t58\t17\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_48\tsa-east-1\tsa-east-1a\t90\tUbuntu15.10\tx64\tSF\t1\t0\tstaging\t6\t7\t66\t45\t3\t40\t46\t68\t65\t25\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_49\tus-west-2\tus-west-2b\t75\tUbuntu16.04LTS\tx86\tSF\t12\t0\ttest\t44\t52\t69\t43\t82\t20\t50\t22\t92\t79\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_50\tsa-east-1\tsa-east-1b\t66\tUbuntu16.10\tx64\tNYC\t17\t1\ttest\t17\t16\t54\t72\t33\t88\t38\t34\t20\t71\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_51\tus-east-1\tus-east-1c\t98\tUbuntu15.10\tx86\tSF\t11\t0\tstaging\t97\t40\t69\t43\t4\t18\t46\t20\t30\t79\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_52\tus-west-2\tus-west-2c\t92\tUbuntu16.10\tx86\tCHI\t10\t0\tproduction\t6\t30\t35\t25\t10\t83\t95\t60\t92\t41\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_53\tsa-east-1\tsa-east-1a\t61\tUbuntu16.04LTS\tx86\tCHI\t16\t1\tstaging\t12\t61\t4\t9\t73\t29\t69\t27\t39\t53\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_54\tap-southeast-2\tap-southeast-2b\t79\tUbuntu16.10\tx64\tSF\t19\t1\tstaging\t61\t0\t45\t35\t2\t67\t60\t95\t76\t41\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_55\tus-west-1\tus-west-1a\t31\tUbuntu15.10\tx86\tCHI\t3\t1\tstaging\t29\t1\t33\t76\t74\t52\t61\t98\t72\t8\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_56\tap-southeast-1\tap-southeast-1a\t48\tUbuntu16.04LTS\tx64\tNYC\t17\t0\tstaging\t89\t60\t20\t67\t39\t83\t58\t64\t11\t34\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_57\teu-central-1\teu-central-1a\t59\tUbuntu16.10\tx86\tSF\t14\t0\tproduction\t1\t98\t44\t77\t5\t68\t9\t56\t54\t54\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_58\tap-northeast-1\tap-northeast-1a\t57\tUbuntu16.04LTS\tx86\tCHI\t12\t0\tproduction\t60\t48\t93\t98\t41\t39\t26\t32\t89\t16\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_59\tus-east-1\tus-east-1c\t21\tUbuntu16.10\tx86\tCHI\t11\t1\tproduction\t58\t20\t91\t34\t75\t42\t23\t20\t77\t64\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_60\tus-west-2\tus-west-2b\t71\tUbuntu15.10\tx64\tSF\t1\t0\tproduction\t36\t75\t57\t10\t41\t5\t92\t39\t91\t82\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_61\tus-east-1\tus-east-1b\t98\tUbuntu16.04LTS\tx64\tNYC\t13\t1\tstaging\t29\t38\t25\t24\t6\t22\t39\t2\t30\t53\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_62\tap-southeast-2\tap-southeast-2a\t36\tUbuntu15.10\tx64\tNYC\t15\t0\tproduction\t87\t11\t41\t78\t1\t62\t53\t4\t18\t15\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_63\teu-west-1\teu-west-1a\t28\tUbuntu16.10\tx64\tLON\t12\t1\tstaging\t21\t76\t65\t52\t35\t40\t15\t60\t9\t7\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_64\tus-west-1\tus-west-1a\t59\tUbuntu16.10\tx86\tCHI\t15\t0\ttest\t88\t99\t46\t96\t20\t0\t68\t6\t26\t32\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_65\teu-central-1\teu-central-1a\t43\tUbuntu16.10\tx86\tNYC\t11\t0\ttest\t2\t63\t78\t48\t55\t48\t67\t33\t25\t69\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_66\teu-west-1\teu-west-1a\t57\tUbuntu15.10\tx86\tCHI\t10\t1\ttest\t67\t89\t22\t35\t82\t10\t54\t34\t58\t98\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_67\teu-central-1\teu-central-1b\t96\tUbuntu16.10\tx86\tNYC\t18\t0\ttest\t71\t2\t9\t97\t63\t13\t43\t45\t21\t41\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_68\teu-central-1\teu-central-1a\t68\tUbuntu16.04LTS\tx64\tSF\t12\t1\ttest\t25\t6\t50\t82\t78\t41\t15\t62\t85\t77\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_69\tus-west-1\tus-west-1a\t11\tUbuntu16.10\tx64\tLON\t7\t0\ttest\t1\t68\t39\t82\t47\t56\t56\t89\t78\t51\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_70\tap-northeast-1\tap-northeast-1c\t5\tUbuntu16.04LTS\tx86\tLON\t3\t0\tproduction\t66\t23\t12\t0\t37\t38\t44\t9\t1\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_71\teu-west-1\teu-west-1a\t72\tUbuntu15.10\tx64\tSF\t6\t0\ttest\t16\t55\t72\t1\t70\t22\t25\t35\t7\t57\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_72\tus-west-1\tus-west-1a\t60\tUbuntu15.10\tx64\tNYC\t15\t0\ttest\t84\t15\t88\t57\t0\t4\t69\t78\t29\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_73\tus-west-1\tus-west-1b\t64\tUbuntu15.10\tx86\tCHI\t0\t0\tstaging\t97\t36\t90\t38\t89\t32\t73\t24\t1\t7\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_74\tsa-east-1\tsa-east-1a\t95\tUbuntu16.10\tx86\tNYC\t5\t0\tstaging\t17\t29\t49\t90\t18\t83\t48\t17\t51\t22\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_75\teu-central-1\teu-central-1a\t11\tUbuntu15.10\tx64\tLON\t17\t1\ttest\t56\t16\t54\t74\t93\t10\t42\t68\t1\t59\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_76\teu-west-1\teu-west-1c\t89\tUbuntu15.10\tx86\tSF\t4\t0\tproduction\t36\t22\t14\t69\t48\t65\t86\t22\t76\t83\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_77\tap-southeast-2\tap-southeast-2b\t19\tUbuntu16.04LTS\tx64\tNYC\t8\t1\tstaging\t85\t21\t83\t48\t61\t16\t35\t55\t13\t70\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_78\tap-southeast-2\tap-southeast-2a\t1\tUbuntu15.10\tx64\tNYC\t19\t0\tproduction\t70\t82\t1\t68\t35\t2\t63\t3\t11\t54\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_79\tap-northeast-1\tap-northeast-1c\t76\tUbuntu16.04LTS\tx86\tSF\t16\t1\ttest\t76\t64\t43\t84\t50\t53\t48\t60\t81\t23\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_80\tap-southeast-1\tap-southeast-1a\t86\tUbuntu16.10\tx86\tNYC\t2\t0\tproduction\t76\t89\t25\t15\t18\t60\t74\t32\t14\t21\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_81\tap-northeast-1\tap-northeast-1c\t29\tUbuntu15.10\tx86\tCHI\t19\t1\tstaging\t18\t88\t61\t80\t86\t31\t2\t63\t82\t73\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_82\tap-southeast-1\tap-southeast-1a\t89\tUbuntu16.10\tx86\tSF\t14\t0\tproduction\t3\t50\t12\t52\t14\t36\t60\t46\t77\t91\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_83\tap-northeast-1\tap-northeast-1c\t68\tUbuntu16.04LTS\tx64\tLON\t10\t0\ttest\t94\t53\t33\t35\t57\t37\t90\t32\t47\t2\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_84\teu-west-1\teu-west-1c\t35\tUbuntu16.10\tx86\tNYC\t4\t0\ttest\t29\t0\t78\t14\t65\t34\t91\t58\t64\t39\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_85\tus-west-2\tus-west-2b\t37\tUbuntu15.10\tx64\tCHI\t18\t0\ttest\t10\t23\t60\t9\t6\t91\t19\t56\t9\t76\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_86\teu-west-1\teu-west-1b\t66\tUbuntu15.10\tx86\tLON\t4\t1\tproduction\t55\t49\t23\t97\t60\t49\t90\t60\t56\t63\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_87\teu-central-1\teu-central-1b\t21\tUbuntu16.10\tx86\tCHI\t1\t1\tproduction\t26\t7\t45\t79\t79\t98\t13\t69\t45\t58\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_88\tus-west-1\tus-west-1b\t34\tUbuntu15.10\tx86\tNYC\t11\t0\ttest\t72\t58\t49\t73\t21\t77\t6\t29\t64\t9\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_89\teu-central-1\teu-central-1b\t23\tUbuntu16.10\tx64\tLON\t19\t1\tstaging\t89\t41\t14\t37\t0\t41\t29\t11\t70\t70\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_90\tap-southeast-1\tap-southeast-1b\t93\tUbuntu16.04LTS\tx64\tCHI\t0\t0\ttest\t58\t68\t53\t73\t39\t65\t73\t26\t39\t77\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_91\tus-west-1\tus-west-1b\t68\tUbuntu16.04LTS\tx86\tLON\t12\t1\tstaging\t33\t21\t52\t50\t84\t16\t92\t63\t85\t37\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_92\tsa-east-1\tsa-east-1b\t62\tUbuntu15.10\tx64\tCHI\t15\t0\tstaging\t34\t73\t76\t6\t56\t26\t64\t61\t64\t87\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_93\tus-east-1\tus-east-1c\t84\tUbuntu16.10\tx86\tLON\t2\t0\tproduction\t9\t37\t16\t27\t62\t42\t37\t6\t18\t64\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_94\tsa-east-1\tsa-east-1b\t42\tUbuntu15.10\tx64\tLON\t14\t1\ttest\t6\t22\t74\t7\t3\t31\t54\t95\t4\t69\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_95\teu-west-1\teu-west-1c\t8\tUbuntu15.10\tx64\tLON\t2\t0\tstaging\t18\t39\t51\t89\t57\t28\t36\t28\t95\t9\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_96\tus-west-2\tus-west-2a\t97\tUbuntu16.04LTS\tx86\tSF\t3\t0\tproduction\t55\t90\t24\t30\t39\t67\t63\t29\t82\t45\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_97\teu-west-1\teu-west-1c\t55\tUbuntu15.10\tx86\tCHI\t16\t1\ttest\t80\t91\t26\t33\t77\t61\t69\t19\t23\t58\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_98\tus-east-1\tus-east-1c\t2\tUbuntu16.10\tx86\tLON\t6\t1\tstaging\t70\t37\t46\t60\t1\t49\t95\t88\t99\t53\t2016-01-01T00:00:00.000000Z\n" +
+                    "host_99\tus-east-1\tus-east-1a\t31\tUbuntu16.10\tx86\tSF\t19\t1\tstaging\t7\t58\t75\t50\t42\t88\t59\t32\t64\t33\t2016-01-01T00:00:00.000000Z\n");
+
+            assertSql(
+                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                            "1\ttest\ttimestamp\tDAY\t1000\t300000000\ttrue\ttest~1\tfalse\n",
+                    "tables"
+            );
+        });
+    }
+
+    @Test
     public void testCsvWithByteOrderMark() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "type\tvalue\tactive\tdesc\tgrp\n" +
@@ -3249,7 +3473,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, atomicity, PartitionBy.NONE, null, null);
+        textLoader.configureDestination("test", false, overwrite, atomicity, PartitionBy.NONE, null, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3257,13 +3481,13 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, atomicity, partitionBy, "ts", null);
+        textLoader.configureDestination("test", false, overwrite, atomicity, partitionBy, "ts", null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
     private void configureLoaderDefaults2(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
+        textLoader.configureDestination("test", false,false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
