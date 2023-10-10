@@ -302,9 +302,4 @@ public class ReadOnlySecurityContext implements SecurityContext {
     public CharSequence getPrincipal() {
         return Constants.USER_NAME;
     }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
-    }
 }

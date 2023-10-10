@@ -154,6 +154,4 @@ public interface SecurityContext {
     default CharSequence getSessionPrincipal() {
         return getPrincipal();
     }
-
-    boolean isEnabled();
 }
