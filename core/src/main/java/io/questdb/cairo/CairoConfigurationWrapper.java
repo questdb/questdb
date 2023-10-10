@@ -229,6 +229,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getDetachedMkDirMode() {
+        return delegate.getDetachedMkDirMode();
+    }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return delegate.getDoubleToStrCastScale();
     }

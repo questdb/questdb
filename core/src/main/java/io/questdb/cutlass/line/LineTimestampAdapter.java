@@ -24,9 +24,10 @@
 
 package io.questdb.cutlass.line;
 
-public class LineProtoException extends RuntimeException {
-    public static final LineProtoException INSTANCE = new LineProtoException();
+import io.questdb.std.NumericException;
 
-    private LineProtoException() {
-    }
+public interface LineTimestampAdapter {
+    long getMicros(CharSequence value) throws NumericException;
+
+    long getMicros(long timestamp);
 }

@@ -22,24 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.test.cutlass.line;
 
-import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.cutlass.line.LineNanoTimestampAdapter;
+import io.questdb.std.NumericException;
+import org.junit.Assert;
+import org.junit.Test;
 
-import java.util.Map;
+public class LineNanoTimestampAdapterTest {
 
-public interface BootstrapConfiguration {
-
-    String getBanner();
-
-    Map<String, String> getEnv();
-
-    FilesFacade getFilesFacade();
-
-    MicrosecondClock getMicrosecondClock();
-
-    ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception;
-
-    boolean useSite();
+    @Test
+    public void testRounding() throws NumericException {
+        Assert.assertEquals(56799L, LineNanoTimestampAdapter.INSTANCE.getMicros("56799000"));
+    }
 }

@@ -751,6 +751,27 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateTableNameCaseInsensitive() throws Exception {
+
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            update("update UP set x = null where ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\n" +
+                    "1970-01-01T00:00:02.000000Z\tNaN\n" +
+                    "1970-01-01T00:00:03.000000Z\tNaN\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
+        });
+    }
+
+    @Test
     public void testUpdateColumnsTypeMismatch() throws Exception {
         //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
         Assume.assumeFalse(walEnabled);

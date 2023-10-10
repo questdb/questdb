@@ -143,6 +143,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    int getDetachedMkDirMode();
+
     int getDoubleToStrCastScale();
 
     EpollFacade getEpollFacade();

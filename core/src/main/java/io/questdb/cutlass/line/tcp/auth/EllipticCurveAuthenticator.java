@@ -87,7 +87,10 @@ public class EllipticCurveAuthenticator implements Authenticator {
         switch (authState) {
             case WAITING_FOR_KEY_ID:
                 readKeyId();
-                break;
+                if (authState != AuthState.SENDING_CHALLENGE) {
+                    // fall-through if we are sending challenge
+                    break;
+                }
             case SENDING_CHALLENGE:
                 sendChallenge();
                 break;

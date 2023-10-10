@@ -528,8 +528,9 @@ public final class TableUtils {
                 } else {
                     // new
                     if (slaveIndex < slaveColumnCount) {
-                        // free
+                        // column deleted at slaveIndex
                         Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
+                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
                     }
                     Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, -masterIndex - 1);
                 }
@@ -1163,32 +1164,6 @@ public final class TableUtils {
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
-    public static void populateRowIDHashMap(
-            SqlExecutionCircuitBreaker circuitBreaker,
-            RecordCursor cursor,
-            Map keyMap,
-            RecordSink recordSink,
-            LongChain rowIDChain
-    ) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            MapKey key = keyMap.withKey();
-            key.put(record, recordSink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                final long offset = rowIDChain.put(record.getRowId(), -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
-            } else {
-                value.putLong(1, rowIDChain.put(record.getRowId(), value.getLong(1)));
-                value.addLong(2, 1);
-            }
-        }
-    }
-
     public static void populateRecordHashMap(
             SqlExecutionCircuitBreaker circuitBreaker,
             RecordCursor cursor,
@@ -1210,6 +1185,32 @@ public final class TableUtils {
                 value.putLong(2, 1);
             } else {
                 value.putLong(1, chain.put(record, value.getLong(1)));
+                value.addLong(2, 1);
+            }
+        }
+    }
+
+    public static void populateRowIDHashMap(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            RecordCursor cursor,
+            Map keyMap,
+            RecordSink recordSink,
+            LongChain rowIDChain
+    ) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+
+            MapKey key = keyMap.withKey();
+            key.put(record, recordSink);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                final long offset = rowIDChain.put(record.getRowId(), -1);
+                value.putLong(0, offset);
+                value.putLong(1, offset);
+                value.putLong(2, 1);
+            } else {
+                value.putLong(1, rowIDChain.put(record.getRowId(), value.getLong(1)));
                 value.addLong(2, 1);
             }
         }

@@ -24,15 +24,15 @@
 
 package io.questdb.test.cutlass.line;
 
-import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
+import io.questdb.cutlass.line.LineMicroTimestampAdapter;
 import io.questdb.std.NumericException;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LineProtoMinuteTimestampAdapterTest {
+public class LineMicroTimestampAdapterTest {
 
     @Test
     public void testRounding() throws NumericException {
-        Assert.assertEquals(340740000000L, LineProtoMinuteTimestampAdapter.INSTANCE.getMicros("5679"));
+        Assert.assertEquals(5679L, LineMicroTimestampAdapter.INSTANCE.getMicros("5679"));
     }
 }

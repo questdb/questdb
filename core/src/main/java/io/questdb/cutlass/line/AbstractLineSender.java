@@ -33,6 +33,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.security.*;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable, Sender {
@@ -71,12 +72,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public void $() {
-        atNow();
-    }
-
-    @Override
-    public final void at(long timestamp) {
-        put(' ').put(timestamp);
         atNow();
     }
 
@@ -298,12 +293,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value) {
-        writeFieldName(name).put(value).put('t');
-        return this;
-    }
-
     private static int findEOL(long ptr, int len) {
         for (int i = 0; i < len; i++) {
             byte b = Unsafe.getUnsafe().getByte(ptr + i);
@@ -369,19 +358,19 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
     }
 
-    private CharSink writeFieldName(CharSequence name) {
-        validateNotClosed();
-        validateColumnName(name);
-        if (hasTable) {
-            if (!hasColumns) {
-                put(' ');
-                hasColumns = true;
-            } else {
-                put(',');
-            }
-            return encodeUtf8(name).put('=');
+    protected static long unitToNanos(ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return 1;
+            case MICROS:
+                return 1_000;
+            case MILLIS:
+                return 1_000_000;
+            case SECONDS:
+                return 1_000_000_000;
+            default:
+                return unit.getDuration().toNanos();
         }
-        throw new LineSenderException("table expected");
     }
 
     protected void send00() {
@@ -436,5 +425,20 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         if (closed) {
             throw new LineSenderException("sender already closed");
         }
+    }
+
+    protected CharSink writeFieldName(CharSequence name) {
+        validateNotClosed();
+        validateColumnName(name);
+        if (hasTable) {
+            if (!hasColumns) {
+                put(' ');
+                hasColumns = true;
+            } else {
+                put(',');
+            }
+            return encodeUtf8(name).put('=');
+        }
+        throw new LineSenderException("table expected");
     }
 }
