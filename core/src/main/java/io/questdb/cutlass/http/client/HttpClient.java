@@ -389,7 +389,7 @@ public abstract class HttpClient implements QuietCloseable {
                 if (fd < 0) {
                     throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
                 }
-                long addrInfo = nf.getAddrInfo(host, port);
+                nf.configureKeepAlive(fd);long addrInfo = nf.getAddrInfo(host, port);
                 if (addrInfo == -1) {
                     disconnect();
                     throw new HttpClientException("could not resolve host ").put("[host=").put(host).put("]");
