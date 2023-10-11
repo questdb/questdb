@@ -80,6 +80,7 @@ public class MetricsIODispatcherTest {
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
                 .withScrapable(metrics)
+                .withTcpSndBufSize(1024)
                 .run(engine -> {
                     try (HttpClient client = HttpClientFactory.newInstance();
                          HttpClient.ResponseHeaders response = client.newRequest().GET().url("/metrics").send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())) {

@@ -55,12 +55,18 @@ public class HttpServerConfigurationBuilder {
     private int sendBufferSize = 1024 * 1024;
     private boolean serverKeepAlive = true;
     private Boolean staticContentAuthRequired;
+    private int tcpSndBufSize;
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
+            }
+
+            @Override
+            public int getSndBufSize() {
+                return tcpSndBufSize == 0 ? super.getSndBufSize() : tcpSndBufSize;
             }
         };
 
@@ -323,6 +329,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withStaticContentAuthRequired(boolean staticContentAuthRequired) {
         this.staticContentAuthRequired = staticContentAuthRequired;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withTcpSndBufSize(int tcpSndBufSize) {
+        this.tcpSndBufSize = tcpSndBufSize;
         return this;
     }
 }
