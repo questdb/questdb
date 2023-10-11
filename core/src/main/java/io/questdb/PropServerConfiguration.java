@@ -462,6 +462,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
+    private final MicrosecondClock microsecondClock;
 
     public PropServerConfiguration(
             String root,
@@ -477,6 +478,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 log,
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
+                MicrosecondClockImpl.INSTANCE,
                 (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE
         );
     }
@@ -488,11 +490,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation,
             FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.filesFacade = filesFacade;
         this.fpf = fpf;
+        this.microsecondClock = microsecondClock;
         this.validator = newValidator();
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
@@ -1735,6 +1739,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 return value.incrementAndGet();
             }
         };
+
+        @Override
+        public @NotNull MicrosecondClock getMicrosecondClock() {
+            return microsecondClock;
+        }
 
         @Override
         public boolean attachPartitionCopy() {

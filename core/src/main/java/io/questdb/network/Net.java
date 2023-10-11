@@ -287,12 +287,10 @@ public final class Net {
     }
 
     public static int socketTcp(boolean blocking) {
-        int fd = Files.bumpFileCount(socketTcp0(blocking));
-        configureKeepAlive(fd);
-        return fd;
+        return Files.bumpFileCount(socketTcp0(blocking));
     }
 
-    private static void configureKeepAlive(int fd) {
+    public static void configureKeepAlive(int fd) {
         if (TCP_KEEPALIVE_SECONDS < 0 || fd < 0) {
             return;
         }

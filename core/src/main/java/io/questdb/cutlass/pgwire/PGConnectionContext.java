@@ -1814,10 +1814,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw BadProtocolException.INSTANCE;
         }
 
-        if (!sqlExecutionContext.getSecurityContext().isEnabled()) {
-            throw CairoException.entityIsDisabled(sqlExecutionContext.getSecurityContext().getPrincipal());
-        }
-
         // msgLen does not take into account type byte
         if (msgLen > len - 1) {
             // When this happens we need to shift our receive buffer left
