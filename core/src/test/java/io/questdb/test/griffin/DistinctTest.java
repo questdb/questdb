@@ -54,6 +54,48 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDuplicateColumnInWhereClauseSubQuery() throws Exception {
+        assertQuery(
+                "origin\tevent\tcreated\n" +
+                        "-27056\ta\t1970-01-01T00:00:00.000000Z\n" +
+                        "-11455\tc\t1970-01-01T00:00:00.000000Z\n" +
+                        "-21227\tc\t1970-01-01T00:00:00.000000Z\n",
+                "SELECT * FROM x WHERE event IN (SELECT * FROM (SELECT DISTINCT event, event FROM x));",
+                "create table x as (" +
+                        "  select" +
+                        "    rnd_short() origin," +
+                        "    rnd_symbol('a','b','c') event," +
+                        "    timestamp_sequence(0, 0) created" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(created);",
+                "created",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnWithSubQuery() throws Exception {
+        assertQuery(
+                "e1\te2\n" +
+                        "-24814\t-24814\n" +
+                        "13027\t13027\n" +
+                        "22955\t22955\n",
+                "SELECT DISTINCT event e1, event e2 FROM (SELECT origin, (-event) event FROM x);",
+                "create table x as (" +
+                        "  select" +
+                        "    rnd_short() origin," +
+                        "    rnd_short() event," +
+                        "    timestamp_sequence(0, 0) created" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(created);",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testDuplicateColumnWithUnion() throws Exception {
         assertQuery(
                 "e1\te2\n" +
