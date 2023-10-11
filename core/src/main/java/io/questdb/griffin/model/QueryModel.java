@@ -252,11 +252,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);
     }
 
-    public void addFieldForNullAlias(QueryColumn column) {
-        bottomUpColumnNames.add(null);
-        bottomUpColumns.add(column);
-    }
-
     public void addGroupBy(ExpressionNode node) {
         groupBy.add(node);
     }
@@ -613,10 +608,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return columnAliasIndexes.get(alias);
     }
 
-    public LowerCaseCharSequenceIntHashMap getColumnAliasIndexes() {
-        return columnAliasIndexes;
-    }
-
     public LowerCaseCharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
         return columnNameToAliasMap;
     }
@@ -947,10 +938,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isSelectTranslation;
     }
 
-    public boolean isTemporalJoin() {
-        return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
-    }
-
     public boolean isTopDownNameMissing(CharSequence columnName) {
         return topDownNameSet.excludes(columnName);
     }
@@ -1247,7 +1234,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             CharSequence alias = column.getAlias();
             ExpressionNode ast = column.getAst();
             ast.toSink(sink);
-            if (column instanceof AnalyticColumn || name == null) {
+            if (column.isWindowColumn() || name == null) {
 
                 if (alias != null) {
                     aliasToSink(alias, sink);
@@ -1282,6 +1269,96 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             if (ac.getOrderByDirection().getQuick(k) == 1) {
                                 sink.put(" desc");
                             }
+                        }
+                    }
+
+                    if (ac.isNonDefault()) {
+                        switch (ac.getFramingMode()) {
+                            case AnalyticColumn.FRAMING_ROWS:
+                                sink.put(" ROWS");
+                                break;
+                            case AnalyticColumn.FRAMING_RANGE:
+                                sink.put(" RANGE");
+                                break;
+                            case AnalyticColumn.FRAMING_GROUP:
+                                sink.put(" GROUP");
+                                break;
+                            default:
+                                break;
+                        }
+                        sink.put(" BETWEEN ");
+                        if (ac.getRowsLoExpr() != null) {
+                            ac.getRowsLoExpr().toSink(sink);
+                            switch (ac.getRowsLoKind()) {
+                                case AnalyticColumn.PRECEDING:
+                                    sink.put(" PRECEDING");
+                                    break;
+                                case AnalyticColumn.FOLLOWING:
+                                    sink.put(" FOLLOWING");
+                                    break;
+                                default:
+                                    break;
+                            }
+                        } else {
+                            switch (ac.getRowsLoKind()) {
+                                case AnalyticColumn.PRECEDING:
+                                    sink.put("UNBOUNDED PRECEDING");
+                                    break;
+                                case AnalyticColumn.FOLLOWING:
+                                    sink.put("UNBOUNDED FOLLOWING");
+                                    break;
+                                default:
+                                    // CURRENT
+                                    sink.put("CURRENT ROW");
+                                    break;
+                            }
+                        }
+                        sink.put(" AND ");
+
+                        if (ac.getRowsHiExpr() != null) {
+                            ac.getRowsHiExpr().toSink(sink);
+                            switch (ac.getRowsHiKind()) {
+                                case AnalyticColumn.PRECEDING:
+                                    sink.put(" PRECEDING");
+                                    break;
+                                case AnalyticColumn.FOLLOWING:
+                                    sink.put(" FOLLOWING");
+                                    break;
+                                default:
+                                    assert false;
+                                    break;
+                            }
+                        } else {
+                            switch (ac.getRowsHiKind()) {
+                                case AnalyticColumn.PRECEDING:
+                                    sink.put("UNBOUNDED PRECEDING");
+                                    break;
+                                case AnalyticColumn.FOLLOWING:
+                                    sink.put("UNBOUNDED FOLLOWING");
+                                    break;
+                                default:
+                                    // CURRENT
+                                    sink.put("CURRENT ROW");
+                                    break;
+                            }
+                        }
+
+                        switch (ac.getExclusionKind()) {
+                            case AnalyticColumn.EXCLUDE_CURRENT_ROW:
+                                sink.put(" EXCLUDE CURRENT ROW");
+                                break;
+                            case AnalyticColumn.EXCLUDE_GROUP:
+                                sink.put(" EXCLUDE GROUP");
+                                break;
+                            case AnalyticColumn.EXCLUDE_TIES:
+                                sink.put(" EXCLUDE TIES");
+                                break;
+                            case AnalyticColumn.EXCLUDE_NO_OTHERS:
+                                sink.put(" EXCLUDE NO OTHERS");
+                                break;
+                            default:
+                                assert false;
+                                break;
                         }
                     }
                     sink.put(')');

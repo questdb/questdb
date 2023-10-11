@@ -64,6 +64,7 @@ public class SqlOptimiser implements Mutable {
     private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
 
     private static final IntHashSet limitTypes = new IntHashSet();
+    private final static int maxRecursion = 128;
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
@@ -384,7 +385,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    //add table prefix to all column references to make it easier to compare expressions  
+    //add table prefix to all column references to make it easier to compare expressions
     private void addMissingTablePrefixes(ExpressionNode node, QueryModel baseModel) throws SqlException {
         sqlNodeStack.clear();
 
@@ -588,11 +589,11 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    //checks join equality condition and pushes it to optimal join contexts (could be a different join context) 
-    //NOTE on LEFT JOIN : 
-    // - left join condition MUST remain as is otherwise it'll produce wrong results 
+    //checks join equality condition and pushes it to optimal join contexts (could be a different join context)
+    //NOTE on LEFT JOIN :
+    // - left join condition MUST remain as is otherwise it'll produce wrong results
     // - only predicates relating to LEFT table may be pushed down
-    // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)  
+    // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)
     private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
         traverseNamesAndIndices(parent, node);
         int aSize = literalCollectorAIndexes.size();
@@ -602,7 +603,7 @@ public class SqlOptimiser implements Mutable {
         boolean canMovePredicate = joinBarriers.excludes(joinModel.getJoinType());
         int joinIndex = parent.getJoinModels().indexOf(joinModel);
 
-        //switch code below assumes expression are simple column references  
+        //switch code below assumes expression are simple column references
         if (literalCollector.functionCount > 0) {
             node.innerPredicate = innerPredicate;
             if (canMovePredicate) {
@@ -1578,7 +1579,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
-            if (qc instanceof AnalyticColumn) {
+            if (qc.isWindowColumn()) {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 emitLiteralsTopDown(ac.getPartitionBy(), target);
                 emitLiteralsTopDown(ac.getOrderBy(), target);
@@ -1825,6 +1826,20 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private long evalLongConstantOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext, long defaultValue) throws SqlException {
+        if (expr != null) {
+            final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!loFunc.isConstant()) {
+                Misc.free(loFunc);
+                throw SqlException.$(expr.position, "constant expression expected");
+            }
+            final long value = loFunc.getLong(null);
+            Misc.free(loFunc);
+            return value;
+        }
+        return defaultValue;
+    }
+
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -2004,7 +2019,7 @@ public class SqlOptimiser implements Mutable {
         ObjList<QueryColumn> columns = limitModel.getColumns();
 
         for (int i = 0, n = columns.size(); i < n; i++) {
-            if (columns.getQuick(i) instanceof AnalyticColumn) {
+            if (columns.getQuick(i).isWindowColumn()) {
                 return true;
             }
         }
@@ -2951,7 +2966,7 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        // propagate join models columns in separate loop to catch columns added to models prior to the current one 
+        // propagate join models columns in separate loop to catch columns added to models prior to the current one
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             final QueryModel jm = joinModels.getQuick(i);
             propagateTopDownColumns0(jm, false, model, true);
@@ -3969,7 +3984,7 @@ public class SqlOptimiser implements Mutable {
 
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
-            final boolean analytic = qc instanceof AnalyticColumn;
+            final boolean analytic = qc.isWindowColumn();
 
             // fail-fast if this is an arithmetic expression where we expect analytic function
             if (analytic && qc.getAst().type != ExpressionNode.FUNCTION) {
@@ -4135,7 +4150,7 @@ public class SqlOptimiser implements Mutable {
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
-            final boolean analytic = qc instanceof AnalyticColumn;
+            final boolean analytic = qc.isWindowColumn();
 
             if (qc.getAst().type == LITERAL) {
                 if (Chars.endsWith(qc.getAst().token, '*')) {
@@ -4360,7 +4375,7 @@ public class SqlOptimiser implements Mutable {
             // needs col_c to be emitted.
             for (int i = 0, k = columns.size(); i < k; i++) {
                 QueryColumn qc = columns.getQuick(i);
-                final boolean analytic = qc instanceof AnalyticColumn;
+                final boolean analytic = qc.isWindowColumn();
 
                 if (analytic & qc.getAst().type == ExpressionNode.FUNCTION) {
                     // Analytic model can be after either translation model directly
@@ -4717,6 +4732,69 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void validateWindowFunctions(QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel) throws SqlException {
+
+        if (model == null) {
+            return;
+        }
+
+        if (recursionLevel > maxRecursion) {
+            throw SqlException.$(0, "SQL model is too complex to evaluate");
+        }
+
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_ANALYTIC) {
+            final ObjList<QueryColumn> queryColumns = model.getColumns();
+            for (int i = 0, n = queryColumns.size(); i < n; i++) {
+                QueryColumn qc = queryColumns.getQuick(i);
+                if (qc.isWindowColumn()) {
+                    final AnalyticColumn ac = (AnalyticColumn) qc;
+                    ac.setRowsLo(evalLongConstantOrDie(ac.getRowsLoExpr(), sqlExecutionContext, Long.MIN_VALUE));
+                    ac.setRowsHi(evalLongConstantOrDie(ac.getRowsHiExpr(), sqlExecutionContext, Long.MAX_VALUE));
+
+                    long rowsLo;
+                    long rowsHi;
+                    switch (ac.getRowsLoKind()) {
+                        case AnalyticColumn.PRECEDING:
+                            rowsLo = -ac.getRowsLo();
+                            break;
+                        case AnalyticColumn.FOLLOWING:
+                            rowsLo = ac.getRowsLo();
+                            break;
+                        default:
+                            // CURRENT
+                            rowsLo = 0;
+                            break;
+                    }
+
+                    switch (ac.getRowsHiKind()) {
+                        case AnalyticColumn.PRECEDING:
+                            rowsHi = -ac.getRowsHi();
+                            break;
+                        case AnalyticColumn.FOLLOWING:
+                            rowsHi = ac.getRowsHi();
+                            break;
+                        default:
+                            // CURRENT
+                            rowsHi = 0;
+                            break;
+                    }
+
+                    if (rowsLo > rowsHi) {
+                        throw SqlException.$(ac.getRowsLoExpr().position, "start of window must be lower than end of window");
+                    }
+                }
+            }
+            validateWindowFunctions(model.getNestedModel(), sqlExecutionContext, recursionLevel + 1);
+        }
+
+        // join models
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            validateWindowFunctions(model.getJoinModels().getQuick(i), sqlExecutionContext, recursionLevel + 1);
+        }
+
+        validateWindowFunctions(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
+    }
+
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
     }
 
@@ -4746,6 +4824,7 @@ public class SqlOptimiser implements Mutable {
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
         } catch (Throwable e) {
