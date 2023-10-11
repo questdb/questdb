@@ -32,6 +32,7 @@ import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -82,6 +83,8 @@ public class MetricsIODispatcherTest {
                 .run(engine -> {
                     try (HttpClient client = HttpClientFactory.newInstance();
                          HttpClient.ResponseHeaders response = client.newRequest().GET().url("/metrics").send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())) {
+
+                        Os.sleep(1000); // wait before consuming response to increase chances of server filling up its tcp send buffer
 
                         response.await(5_000);
                         TestUtils.assertEquals("200", response.getStatusCode());
