@@ -251,6 +251,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void checkEntityEnabled() {
+    }
+
+    @Override
     public void exitServiceAccount(CharSequence serviceAccountName) {
     }
 
