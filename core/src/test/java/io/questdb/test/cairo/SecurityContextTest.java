@@ -62,6 +62,8 @@ public class SecurityContextTest {
                     case 1:
                         if (name.equals("authorizeCopyCancel")) {
                             method.invoke(sc, sc);
+                        } else if (name.equals("authorizeInterface")) {
+                            method.invoke(sc, 0);
                         } else if (name.equals("authorizeTableBackup")) {
                             method.invoke(sc, new ObjHashSet<CharSequence>());
                         } else if (name.startsWith("authorizeShow")
@@ -102,6 +104,8 @@ public class SecurityContextTest {
                         case 1:
                             if (name.equals("authorizeCopyCancel")) {
                                 method.invoke(sc, sc);
+                            } else if (name.equals("authorizeInterface")) {
+                                method.invoke(sc, 0);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
                             } else if (name.startsWith("authorizeShow")
@@ -152,6 +156,8 @@ public class SecurityContextTest {
                         case 1:
                             if (name.equals("authorizeCopyCancel")) {
                                 method.invoke(sc, sc);
+                            } else if (name.equals("authorizeInterface")) {
+                                method.invoke(sc, 0);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
                             } else if (name.startsWith("authorizeShow")
@@ -163,7 +169,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
                             if (name.startsWith("authorizeShow")
-                                    || name.startsWith("authorizeSelect")) {
+                                    || name.startsWith("authorizeSelect")
+                                    || name.equals("authorizeInterface")) {
                                 continue;
                             }
                             Assert.fail();

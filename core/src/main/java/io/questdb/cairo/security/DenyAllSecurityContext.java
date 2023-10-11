@@ -38,6 +38,11 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
+    public void authorizeInterface(int interfaceId) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
     public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
         throw CairoException.nonCritical().put("permission denied");
     }

@@ -194,6 +194,10 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeInterface(int interfaceId) {
+    }
+
+    @Override
     public void authorizeRemovePassword(CharSequence userOrServiceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }

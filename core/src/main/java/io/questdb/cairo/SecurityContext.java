@@ -95,6 +95,8 @@ public interface SecurityContext {
 
     void authorizeInsert(TableToken tableToken);
 
+    void authorizeInterface(int interfaceId);
+
     void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 
     void authorizeRemoveUser();

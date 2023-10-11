@@ -256,7 +256,12 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 case Authenticator.OK:
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), SecurityContextFactory.ILP);
+                    try {
+                        securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), SecurityContextFactory.ILP);
+                    } catch (CairoException e) {
+                        LOG.error().$('[').$(getFd()).$("] could not create security context [msg=").$(e.getFlyweightMessage()).I$();
+                        return IOContextResult.NEEDS_DISCONNECT;
+                    }
                     recvBufPos = authenticator.getRecvBufPos();
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);

@@ -163,6 +163,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeInterface(int interfaceId) {
+    }
+
+    @Override
     public void authorizeRemovePassword(CharSequence userOrServiceAccountName) {
     }
 
