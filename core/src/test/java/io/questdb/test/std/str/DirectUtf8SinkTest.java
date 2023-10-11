@@ -25,14 +25,36 @@
 package io.questdb.test.std.str;
 
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSink;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
-public class DirectByteCharSinkTest {
+public class DirectUtf8SinkTest {
+
+    @Test
+    public void testAsAsciiCharSequence() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(4)) {
+            final String str = "foobar";
+            sink.putAscii(str);
+            TestUtils.assertEquals(str, sink.asAsciiCharSequence());
+        }
+    }
+
+    @Test
+    public void testPutUtf8Sequence() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(1)) {
+            final String str = "こんにちは世界";
+            final Utf8String utf8Str = new Utf8String(str);
+            sink.put(utf8Str);
+            byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+            TestUtils.assertEquals(expectedBytes, sink);
+        }
+    }
+
     @Test
     public void testResize() {
         final String expected = "a\n" +
@@ -67,9 +89,9 @@ public class DirectByteCharSinkTest {
                 "~\n";
 
         final int initialCapacity = 4;
-        try (DirectByteCharSink sink = new DirectByteCharSink(initialCapacity)) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(initialCapacity)) {
             for (int i = 0; i < 30; i++) {
-                sink.put((byte) ('a' + i)).put((byte) '\n');
+                sink.putAscii((char) ('a' + i)).putAscii('\n');
             }
             TestUtils.assertEquals(expected, sink.toString());
             sink.clear();
@@ -78,10 +100,10 @@ public class DirectByteCharSinkTest {
             }
             TestUtils.assertEquals(expected, sink.toString());
 
-            Assert.assertTrue(sink.length() > 0);
-            Assert.assertTrue(sink.getCapacity() >= sink.length());
+            Assert.assertTrue(sink.size() > 0);
+            Assert.assertTrue(sink.getCapacity() >= sink.size());
             sink.resetCapacity();
-            Assert.assertEquals(0, sink.length());
+            Assert.assertEquals(0, sink.size());
             Assert.assertEquals(initialCapacity, sink.getCapacity());
         }
     }
@@ -89,7 +111,7 @@ public class DirectByteCharSinkTest {
     @Test
     public void testUtf8Encoding() {
         final int initialCapacity = 4;
-        try (DirectByteCharSink sink = new DirectByteCharSink(initialCapacity)) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(initialCapacity)) {
             assertUtf8Encoding(sink, "Hello world");
             assertUtf8Encoding(sink, "Привет мир"); // Russian
             assertUtf8Encoding(sink, "你好世界"); // Chinese
@@ -103,12 +125,22 @@ public class DirectByteCharSinkTest {
         }
     }
 
-    private static void assertUtf8Encoding(DirectByteCharSink sink, String s) {
-        sink.clear();
-        sink.encodeUtf8(s);
+    @Test
+    public void testUtf8Sequence() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(4)) {
+            final String str = "Здравей свят";
+            sink.put(str);
+            byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+            TestUtils.assertEquals(expectedBytes, sink);
+        }
+    }
 
-        long ptr = sink.getPtr();
-        int len = sink.length();
+    private static void assertUtf8Encoding(DirectUtf8Sink sink, String s) {
+        sink.clear();
+        sink.put(s);
+
+        long ptr = sink.ptr();
+        int len = sink.size();
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
             bytes[i] = Unsafe.getUnsafe().getByte(ptr + i);

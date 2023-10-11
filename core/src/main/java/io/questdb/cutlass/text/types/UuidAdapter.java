@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class UuidAdapter extends AbstractTypeAdapter {
     public static final UuidAdapter INSTANCE = new UuidAdapter();
@@ -42,11 +42,12 @@ public final class UuidAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
+        final CharSequence textView = text.asAsciiCharSequence();
         try {
-            Uuid.checkDashesAndLength(text);
-            Uuid.parseHi(text);
-            Uuid.parseLo(text);
+            Uuid.checkDashesAndLength(textView);
+            Uuid.parseHi(textView);
+            Uuid.parseLo(textView);
         } catch (NumericException e) {
             return false;
         }
@@ -54,7 +55,7 @@ public final class UuidAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putUuid(column, value);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+        row.putUuid(column, value.asAsciiCharSequence());
     }
 }

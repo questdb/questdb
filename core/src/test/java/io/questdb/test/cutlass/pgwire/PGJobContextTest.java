@@ -48,6 +48,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
@@ -7185,7 +7186,7 @@ nodejs code:
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "_meta.swp")) {
+                    if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
                     }
@@ -7206,7 +7207,7 @@ nodejs code:
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "_meta.swp")) {
+                    if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
@@ -7226,7 +7227,7 @@ nodejs code:
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "_meta.swp")) {
+                    if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         Os.sleep(50);
                     }
                     return super.openRW(name, opts);
@@ -7255,7 +7256,7 @@ nodejs code:
             ) {
                 workerPool.start(LOG);
 
-                //first connection
+                // first connection
                 try (final PgConnection connection = (PgConnection) getConnection(server.getPort(), false, true)) {
                     executeAndCancelQuery(connection);
 
@@ -7372,7 +7373,6 @@ nodejs code:
     public void testSchemasCall() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-
             sink.clear();
             recvBufferSize = 2048;
             try (

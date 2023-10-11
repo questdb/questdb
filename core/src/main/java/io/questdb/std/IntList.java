@@ -25,6 +25,9 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -236,23 +239,23 @@ public class IntList implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[');
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('[');
         for (int i = 0, k = size(); i < k; i++) {
             if (i > 0) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             sink.put(get(i));
         }
-        sink.put(']');
+        sink.putAscii(']');
     }
 
-    public void toSink(CharSink sink, int exceptValue) {
-        sink.put('[');
+    public void toSink(CharSinkBase<?> sink, int exceptValue) {
+        sink.putAscii('[');
         boolean pastFirst = false;
         for (int i = 0, k = size(); i < k; i++) {
             if (pastFirst) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             int val = get(i);
             if (val == exceptValue) {
@@ -261,7 +264,7 @@ public class IntList implements Mutable, Sinkable {
             sink.put(val);
             pastFirst = true;
         }
-        sink.put(']');
+        sink.putAscii(']');
     }
 
     /**
@@ -269,7 +272,7 @@ public class IntList implements Mutable, Sinkable {
      */
     @Override
     public String toString() {
-        CharSink b = Misc.getThreadLocalBuilder();
+        CharSink b = Misc.getThreadLocalSink();
         toSink(b);
         return b.toString();
     }

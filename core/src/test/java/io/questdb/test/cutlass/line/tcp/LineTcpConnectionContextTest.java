@@ -25,13 +25,13 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -446,7 +446,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "broken.d.1")) {
+                        if (Utf8s.endsWithAscii(name, "broken.d.1")) {
                             return -1;
                         }
                         return super.openRW(name, opts);
@@ -486,7 +486,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
+                        if (Utf8s.endsWithAscii(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
                             return -1;
                         }
                         return super.openRW(name, opts);
@@ -524,7 +524,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "broken.d")) {
+                        if (Utf8s.endsWithAscii(name, "broken.d")) {
                             return -1;
                         }
                         return super.openRW(name, opts);

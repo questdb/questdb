@@ -26,9 +26,9 @@ package io.questdb.cutlass.http;
 
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sink;
 
-public interface HttpChunkedResponseSocket extends CharSink {
+public interface HttpChunkedResponseSocket extends Utf8Sink {
     void bookmark();
 
     void done() throws PeerDisconnectedException, PeerIsSlowToReadException;

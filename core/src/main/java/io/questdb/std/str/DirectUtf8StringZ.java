@@ -24,59 +24,49 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
+/**
+ * An immutable flyweight for a NULL-terminated UTF-8 string stored in native memory.
+ * Useful when integrating with C LPSZ type.
+ */
+public class DirectUtf8StringZ implements LPSZ {
+    private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private long ptr;
+    private int size;
 
-public final class CharSequenceZ extends AbstractCharSequence implements Closeable, LPSZ {
-    private int capacity;
-    private int len;
-    private long ptr = 0;
-
-    public CharSequenceZ(CharSequence str) {
-        int l = str.length();
-        alloc(l);
-        cpyz(str, l);
+    @Override
+    public @NotNull CharSequence asAsciiCharSequence() {
+        return asciiCharSequence.of(this);
     }
 
     @Override
-    public long address() {
+    public byte byteAt(int index) {
+        return Unsafe.getUnsafe().getByte(ptr + index);
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    public DirectUtf8StringZ of(long address) {
+        this.ptr = address;
+        long p = address;
+        while (Unsafe.getUnsafe().getByte(p++) != 0) ;
+        this.size = (int) (p - address - 1);
+        return this;
+    }
+
+    @Override
+    public long ptr() {
         return ptr;
     }
 
     @Override
-    public int capacity() {
-        return capacity;
+    public int size() {
+        return size;
     }
 
     @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(ptr + index);
-    }
-
-    @Override
-    public void close() {
-        if (ptr != 0) {
-            Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_DEFAULT);
-            ptr = 0;
-        }
-    }
-
-    @Override
-    public int length() {
-        return len;
-    }
-
-    private void alloc(int len) {
-        this.capacity = len;
-        this.ptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    private void cpyz(CharSequence str, int len) {
-        Chars.asciiStrCpy(str, len, ptr);
-        Unsafe.getUnsafe().putByte(ptr + len, (byte) 0);
-        this.len = len;
+    public @NotNull String toString() {
+        return Utf8s.stringFromUtf8Bytes(ptr, ptr + size);
     }
 }

@@ -27,11 +27,12 @@ package io.questdb.std.str;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
+public class DirectCharSink extends AbstractCharSink implements MutableCharSink, CharSequence, DirectSequence, Closeable {
     private final long initialCapacity;
     private long capacity;
     private long hi;
@@ -73,15 +74,18 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
+    public long ptr() {
+        return ptr;
+    }
+
+    @Override
+    public CharSink put(@Nullable CharSequence cs) {
         if (cs != null) {
             int l = cs.length();
             int l2 = l * 2;
-
             if (lo + l2 >= hi) {
                 resize(Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
             }
-
             for (int i = 0; i < l; i++) {
                 Unsafe.getUnsafe().putChar(lo + i * 2L, cs.charAt(i));
             }
@@ -101,7 +105,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
+    public CharSink put(char @NotNull [] chars, int start, int len) {
         int l2 = len * 2;
 
         if (lo + l2 >= hi) {
@@ -119,6 +123,11 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     public void resetCapacity() {
         resize(initialCapacity);
         clear();
+    }
+
+    @Override
+    public int size() {
+        return (int) (lo - ptr);
     }
 
     @Override

@@ -29,11 +29,11 @@ import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 
@@ -95,7 +95,7 @@ public class TestHttpClient implements QuietCloseable {
 
             sink.clear();
             while ((chunk = chunkedResponse.recv()) != null) {
-                Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
+                Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
             }
 
             TestUtils.assertEquals(expectedResponse, sink);
@@ -167,7 +167,7 @@ public class TestHttpClient implements QuietCloseable {
         Chunk chunk;
 
         while ((chunk = chunkedResponse.recv()) != null) {
-            Chars.utf8toUtf16(chunk.lo(), chunk.hi(), sink);
+            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
         }
     }
 }

@@ -24,10 +24,10 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 /**
- * Read Only gauge used to expose various stats .
+ * Read-only gauge used to expose various stats.
  */
 public class VirtualLongGauge implements LongGauge {
 
@@ -60,7 +60,7 @@ public class VirtualLongGauge implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(CharSinkBase<?> sink) {
         appendType(sink);
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());
@@ -72,15 +72,15 @@ public class VirtualLongGauge implements LongGauge {
         // do nothing as this gauge is RO view of some stat
     }
 
-    private void appendMetricName(CharSink sink) {
-        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+    private void appendMetricName(CharSinkBase<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.put(getName());
     }
 
-    private void appendType(CharSink sink) {
-        sink.put(PrometheusFormatUtils.TYPE_PREFIX);
+    private void appendType(CharSinkBase<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
         sink.put(getName());
-        sink.put(" gauge\n");
+        sink.putAscii(" gauge\n");
     }
 
     private CharSequence getName() {

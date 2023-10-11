@@ -147,7 +147,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
             try {
                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                int snapshotDbLen = path.length();
+                int snapshotDbLen = path.size();
                 // Delete all contents of the snapshot/db dir.
                 if (ff.exists(path.slash$())) {
                     path.trimTo(snapshotDbLen).$();
@@ -197,7 +197,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                 LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
                                 path.trimTo(snapshotDbLen).concat(tableToken);
-                                int rootLen = path.length();
+                                int rootLen = path.size();
                                 if (isWalTable) {
                                     path.concat(WalUtils.SEQ_DIR);
                                 }
@@ -240,7 +240,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                     metadata.clear();
                                     long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                                     path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                    metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
+                                    metadata.switchTo(path, path.size()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
                                     metadata.close(Vm.TRUNCATE_TO_POINTER);
 
                                     mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
@@ -298,9 +298,9 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                 MemoryCMARW memFile = Vm.getCMARWInstance()
         ) {
             srcPath.of(snapshotRoot).concat(configuration.getDbDirectory());
-            final int snapshotRootLen = srcPath.length();
+            final int snapshotRootLen = srcPath.size();
             dstPath.of(root);
-            final int rootLen = dstPath.length();
+            final int rootLen = dstPath.size();
 
             // Check if the snapshot dir exists.
             if (!ff.exists(srcPath.slash$())) {
@@ -331,15 +331,15 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
             // First delete all table name registry files in dst.
             srcPath.trimTo(snapshotRootLen).$();
-            final int snapshotDbLen = srcPath.length();
+            final int snapshotDbLen = srcPath.size();
             for (; ; ) {
                 dstPath.trimTo(rootLen).$();
                 int version = TableNameRegistryStore.findLastTablesFileVersion(ff, dstPath, nameSink);
-                dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(version).$();
-                LOG.info().$("backup removing table name registry file [dst=").utf8(dstPath).I$();
+                dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version).$();
+                LOG.info().$("backup removing table name registry file [dst=").$(dstPath).I$();
                 if (!ff.remove(dstPath)) {
                     LOG.error()
-                            .$("could not remove tables.d file [dst=").utf8(dstPath)
+                            .$("could not remove tables.d file [dst=").$(dstPath)
                             .$(", errno=").$(ff.errno())
                             .I$();
                 }
@@ -348,12 +348,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                 }
             }
             // Now copy the file name registry.
-            srcPath.trimTo(snapshotDbLen).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
-            dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            srcPath.trimTo(snapshotDbLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$();
+            dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0").$();
             if (ff.copy(srcPath, dstPath) < 0) {
                 LOG.error()
-                        .$("could not copy tables.d file [src=").utf8(srcPath)
-                        .$(", dst=").utf8(dstPath)
+                        .$("could not copy tables.d file [src=").$(srcPath)
+                        .$(", dst=").$(dstPath)
                         .$(", errno=").$(ff.errno())
                         .I$();
             }
@@ -366,23 +366,23 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
             ff.iterateDir(srcPath, (pUtf8NameZ, type) -> {
                 if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                     dstPath.trimTo(rootLen).concat(pUtf8NameZ);
-                    int srcPathLen = srcPath.length();
-                    int dstPathLen = dstPath.length();
+                    int srcPathLen = srcPath.size();
+                    int dstPathLen = dstPath.size();
 
                     srcPath.concat(TableUtils.META_FILE_NAME).$();
                     dstPath.concat(TableUtils.META_FILE_NAME).$();
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _meta file [src=").utf8(srcPath)
-                                    .$(", dst=").utf8(dstPath)
+                                    .$("could not copy _meta file [src=").$(srcPath)
+                                    .$(", dst=").$(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .I$();
                         } else {
                             recoveredMetaFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _meta file [src=").utf8(srcPath)
-                                    .$(", dst=").utf8(dstPath)
+                                    .$("recovered _meta file [src=").$(srcPath)
+                                    .$(", dst=").$(dstPath)
                                     .I$();
                         }
                     }
@@ -392,15 +392,15 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _txn file [src=").utf8(srcPath)
-                                    .$(", dst=").utf8(dstPath)
+                                    .$("could not copy _txn file [src=").$(srcPath)
+                                    .$(", dst=").$(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .I$();
                         } else {
                             recoveredTxnFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _txn file [src=").utf8(srcPath)
-                                    .$(", dst=").utf8(dstPath)
+                                    .$("recovered _txn file [src=").$(srcPath)
+                                    .$(", dst=").$(dstPath)
                                     .I$();
                         }
                     }
@@ -410,33 +410,33 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _cv file [src=").utf8(srcPath)
-                                    .$(", dst=").utf8(dstPath)
+                                    .$("could not copy _cv file [src=").$(srcPath)
+                                    .$(", dst=").$(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .I$();
                         } else {
                             recoveredCVFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _cv file [src=").utf8(srcPath)
-                                    .$(", dst=").utf8(dstPath)
+                                    .$("recovered _cv file [src=").$(srcPath)
+                                    .$(", dst=").$(dstPath)
                                     .I$();
                         }
                     }
 
                     // Go inside SEQ_DIR
                     srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
-                    srcPathLen = srcPath.length();
+                    srcPathLen = srcPath.size();
                     srcPath.concat(TableUtils.META_FILE_NAME).$();
 
                     dstPath.trimTo(dstPathLen).concat(WalUtils.SEQ_DIR);
-                    dstPathLen = dstPath.length();
+                    dstPathLen = dstPath.size();
                     dstPath.concat(TableUtils.META_FILE_NAME).$();
 
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.critical()
-                                    .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").utf8(srcPath)
-                                    .utf8(", dst=").utf8(dstPath)
+                                    .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
+                                    .utf8(", dst=").$(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .I$();
                         } else {
@@ -458,7 +458,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                         // update header of dbRoot/tableName/txn_seq/_txnlog with new values
                                         memFile.putLong(MAX_TXN_OFFSET, newMaxTxn);
                                         LOG.info()
-                                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").utf8(dstPath)
+                                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
                                                 .$(", oldMaxTxn=").$(oldMaxTxn)
                                                 .$(", newMaxTxn=").$(newMaxTxn)
                                                 .I$();
@@ -466,7 +466,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                 }
                             } catch (CairoException ex) {
                                 LOG.critical()
-                                        .$("could not update file [src=").utf8(dstPath)
+                                        .$("could not update file [src=").$(dstPath)
                                         .$("`, ex=").$(ex.getFlyweightMessage())
                                         .$(", errno=").$(ff.errno())
                                         .I$();
@@ -474,8 +474,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
                             recoveredWalFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").utf8(srcPath)
-                                    .$(", dst=").utf8(dstPath)
+                                    .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
+                                    .$(", dst=").$(dstPath)
                                     .I$();
                         }
                     }

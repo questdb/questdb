@@ -67,7 +67,7 @@ public class ToPgDateFunctionFactory implements FunctionFactory {
             CharSequence value = arg.getStr(rec);
             try {
                 if (value != null) {
-                    return DateFormatUtils.PG_DATE_FORMAT.parse(value, DateFormatUtils.enLocale);
+                    return DateFormatUtils.PG_DATE_FORMAT.parse(value, DateFormatUtils.EN_LOCALE);
                 }
             } catch (NumericException ignore) {
             }

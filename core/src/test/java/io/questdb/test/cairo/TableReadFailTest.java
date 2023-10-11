@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -50,7 +50,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -65,7 +65,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ path) {
-                if (Chars.endsWith(path, TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(path, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(path);
@@ -191,7 +191,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -205,7 +205,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return !Chars.endsWith(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
+                return !Utf8s.endsWithAscii(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
             }
         };
         assertConstructorFail(ff);

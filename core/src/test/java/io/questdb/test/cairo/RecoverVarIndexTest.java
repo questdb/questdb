@@ -28,11 +28,12 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -294,7 +295,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.contains(name, "str2.i") && count.incrementAndGet() == 14) {
+                    if (Utf8s.containsAscii(name, "str2.i") && count.incrementAndGet() == 14) {
                         return -1;
                     }
                     return super.openRW(name, opts);
@@ -350,7 +351,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             changeTable.run(tablePath);
 
             rebuildVarColumn.clear();
-            rebuildVarColumn.of(tablePath);
+            rebuildVarColumn.of(new Utf8String(tablePath));
             rebuildIndexAction.run(rebuildVarColumn);
 
             assertSqlCursors("copytbl", "xxx");
@@ -375,7 +376,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             path.put(Files.SEPARATOR);
             TableUtils.setPathForPartition(path, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
-            LOG.info().$("removing ").utf8(path).$();
+            LOG.info().$("removing ").$(path).$();
             Assert.assertTrue(Files.remove(path.$()));
         }
     }

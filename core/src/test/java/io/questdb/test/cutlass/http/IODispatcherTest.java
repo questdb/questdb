@@ -53,10 +53,7 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.ByteSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -383,7 +380,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
                 };
@@ -3451,7 +3448,7 @@ public class IODispatcherTest extends AbstractTest {
                             try {
                                 int sent = 0;
                                 int reqLen = request.length();
-                                Chars.asciiStrCpy(request, reqLen, ptr);
+                                Utf8s.strCpyAscii(request, reqLen, ptr);
                                 while (sent < reqLen) {
                                     int n = NetworkFacadeImpl.INSTANCE.sendRaw(fd, ptr + sent, reqLen - sent);
                                     Assert.assertTrue(n > -1);
@@ -5419,7 +5416,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
                 };
@@ -5586,7 +5583,7 @@ public class IODispatcherTest extends AbstractTest {
                     try {
                         int sent = 0;
                         int reqLen = request.length();
-                        Chars.asciiStrCpy(request, reqLen, ptr);
+                        Utf8s.strCpyAscii(request, reqLen, ptr);
                         boolean disconnected = false;
                         while (sent < reqLen) {
                             int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
@@ -6345,14 +6342,14 @@ public class IODispatcherTest extends AbstractTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "host:localhost:9000\r\n" +
-                "connection:keep-alive\r\n" +
-                "cache-control:max-age=0\r\n" +
-                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "accept-encoding:gzip,deflate,sdch\r\n" +
-                "accept-language:en-US,en;q=0.8\r\n" +
-                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "Host:localhost:9000\r\n" +
+                "Connection:keep-alive\r\n" +
+                "Cache-Control:max-age=0\r\n" +
+                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding:gzip,deflate,sdch\r\n" +
+                "Accept-Language:en-US,en;q=0.8\r\n" +
+                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         assertMemoryLeak(() -> {
@@ -6397,14 +6394,14 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
                                 HttpRequestHeader headers = context.getRequestHeader();
                                 sink.put(headers.getMethodLine());
                                 sink.put("\r\n");
-                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                ObjList<? extends Utf8Sequence> headerNames = headers.getHeaderNames();
                                 for (int i = 0, n = headerNames.size(); i < n; i++) {
                                     sink.put(headerNames.getQuick(i)).put(':');
                                     sink.put(headers.getHeader(headerNames.getQuick(i)));
@@ -6494,14 +6491,14 @@ public class IODispatcherTest extends AbstractTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "host:localhost:9000\r\n" +
-                "connection:keep-alive\r\n" +
-                "cache-control:max-age=0\r\n" +
-                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "accept-encoding:gzip,deflate,sdch\r\n" +
-                "accept-language:en-US,en;q=0.8\r\n" +
-                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "Host:localhost:9000\r\n" +
+                "Connection:keep-alive\r\n" +
+                "Cache-Control:max-age=0\r\n" +
+                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding:gzip,deflate,sdch\r\n" +
+                "Accept-Language:en-US,en;q=0.8\r\n" +
+                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
@@ -6566,7 +6563,7 @@ public class IODispatcherTest extends AbstractTest {
                                 HttpRequestHeader headers = context.getRequestHeader();
                                 sink.put(headers.getMethodLine());
                                 sink.put("\r\n");
-                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                ObjList<? extends Utf8Sequence> headerNames = headers.getHeaderNames();
                                 for (int i = 0, n = headerNames.size(); i < n; i++) {
                                     sink.put(headerNames.getQuick(i)).put(':');
                                     sink.put(headers.getHeader(headerNames.getQuick(i)));
@@ -6583,7 +6580,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
                 };
@@ -6726,7 +6723,7 @@ public class IODispatcherTest extends AbstractTest {
                                 HttpRequestHeader headers = connectionContext.getRequestHeader();
                                 sink.put(headers.getMethodLine());
                                 sink.put("\r\n");
-                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                ObjList<? extends Utf8Sequence> headerNames = headers.getHeaderNames();
                                 for (int i = 0, n = headerNames.size(); i < n; i++) {
                                     sink.put(headerNames.getQuick(i)).put(':');
                                     sink.put(headers.getHeader(headerNames.getQuick(i)));
@@ -6738,7 +6735,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
+                    public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
                 };
@@ -7600,8 +7597,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTwoThreadsSendTwoThreadsRead() throws Exception {
-
-        LOG.info().$("started testSendHttpGet").$();
+        LOG.info().$("started testTwoThreadsSendTwoThreadsRead").$();
 
         final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
                 "Host: localhost:9000\r\n" +
@@ -7616,14 +7612,14 @@ public class IODispatcherTest extends AbstractTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "host:localhost:9000\r\n" +
-                "connection:keep-alive\r\n" +
-                "cache-control:max-age=0\r\n" +
-                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "accept-encoding:gzip,deflate,sdch\r\n" +
-                "accept-language:en-US,en;q=0.8\r\n" +
-                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "Host:localhost:9000\r\n" +
+                "Connection:keep-alive\r\n" +
+                "Cache-Control:max-age=0\r\n" +
+                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding:gzip,deflate,sdch\r\n" +
+                "Accept-Language:en-US,en;q=0.8\r\n" +
+                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         final int N = 100;
@@ -7646,7 +7642,6 @@ public class IODispatcherTest extends AbstractTest {
                     },
                     (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
             )) {
-
                 // server will publish status of each request to this queue
                 final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024);
                 final MPSequence pubSeq = new MPSequence(queue.getCycle());
@@ -7670,7 +7665,7 @@ public class IODispatcherTest extends AbstractTest {
                                     sink.clear();
                                     sink.put(headers.getMethodLine());
                                     sink.put("\r\n");
-                                    ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                    ObjList<? extends Utf8Sequence> headerNames = headers.getHeaderNames();
                                     for (int i = 0, n = headerNames.size(); i < n; i++) {
                                         sink.put(headerNames.getQuick(i)).put(':');
                                         sink.put(headers.getHeader(headerNames.getQuick(i)));
@@ -7713,7 +7708,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor select(CharSequence url) {
+                                public HttpRequestProcessor select(Utf8Sequence url) {
                                     return null;
                                 }
                             };
@@ -7780,9 +7775,6 @@ public class IODispatcherTest extends AbstractTest {
                         Assert.assertTrue(valid);
                         receiveCount++;
                     }
-                } catch (Throwable e) {
-                    e.printStackTrace();
-                    throw e;
                 } finally {
                     serverRunning.set(false);
                     serverHaltLatch.await();
@@ -7937,7 +7929,7 @@ public class IODispatcherTest extends AbstractTest {
 
     private static void sendRequest(String request, int fd, long buffer) {
         final int requestLen = request.length();
-        Chars.asciiStrCpy(request, requestLen, buffer);
+        Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
@@ -8786,7 +8778,7 @@ public class IODispatcherTest extends AbstractTest {
         Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }
 
-    private static class ByteArrayResponse extends AbstractCharSequence implements ByteSequence {
+    private static class ByteArrayResponse extends AbstractCharSequence {
         private final byte[] bytes;
         private final int len;
 
@@ -8796,7 +8788,6 @@ public class IODispatcherTest extends AbstractTest {
             this.len = len;
         }
 
-        @Override
         public byte byteAt(int index) {
             if (index >= len) {
                 throw new IndexOutOfBoundsException();

@@ -24,9 +24,8 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 public interface Scrapable {
-
-    void scrapeIntoPrometheus(CharSink sink);
+    void scrapeIntoPrometheus(CharSinkBase<?> sink);
 }

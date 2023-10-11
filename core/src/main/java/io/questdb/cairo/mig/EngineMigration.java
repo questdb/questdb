@@ -162,13 +162,13 @@ public class EngineMigration {
         try (Path path = new Path(); Path copyPath = new Path()) {
             path.of(root);
             copyPath.of(root);
-            final int rootLen = path.length();
+            final int rootLen = path.size();
 
             ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                 if (ff.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type)) {
                     copyPath.trimTo(rootLen);
                     copyPath.concat(pUtf8NameZ);
-                    final int tablePlen = path.length();
+                    final int tablePlen = path.size();
 
                     if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                         final int fdMeta = openFileRWOrFail(ff, path, context.getConfiguration().getWriterFileOpenOpts());
@@ -176,7 +176,7 @@ public class EngineMigration {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
                             if (currentTableVersion < latestMigrationVersion) {
                                 LOG.info()
-                                        .$("upgrading [path=").utf8(copyPath.$())
+                                        .$("upgrading [path=").$(copyPath.$())
                                         .$(", fromVersion=").$(currentTableVersion)
                                         .$(", toVersion=").$(latestMigrationVersion)
                                         .I$();
@@ -185,7 +185,7 @@ public class EngineMigration {
 
                                 if (currentTableVersion < latestTableVersion) {
                                     // backup meta file
-                                    LOG.info().$("backing up meta file [path=").utf8(path)
+                                    LOG.info().$("backing up meta file [path=").$(path)
                                             .$(", toPath=").$(copyPath)
                                             .I$();
                                     backupFile(ff, path, copyPath, TableUtils.META_FILE_NAME, currentTableVersion);
@@ -198,14 +198,14 @@ public class EngineMigration {
                                     final MigrationAction migration = getMigrationToVersion(ver);
                                     if (migration != null) {
                                         try {
-                                            LOG.info().$("upgrading table [path=").utf8(path)
+                                            LOG.info().$("upgrading table [path=").$(path)
                                                     .$(", toVersion=").$(ver)
                                                     .I$();
                                             migration.migrate(context);
                                             path.trimTo(tablePlen);
                                             copyPath.trimTo(tablePlen);
                                         } catch (Throwable e) {
-                                            LOG.error().$("failed to upgrade table [path=").utf8(path.trimTo(tablePlen))
+                                            LOG.error().$("failed to upgrade table [path=").$(path.trimTo(tablePlen))
                                                     .$(", e=").$(e)
                                                     .I$();
                                             throw e;
@@ -214,7 +214,7 @@ public class EngineMigration {
 
                                     if (ver <= latestTableVersion) {
                                         path.trimTo(tablePlen).concat(TableUtils.META_FILE_NAME).$();
-                                        LOG.info().$("upgrading table _meta [path=").utf8(path).$(", toVersion=").$(ver).I$();
+                                        LOG.info().$("upgrading table _meta [path=").$(path).$(", toVersion=").$(ver).I$();
                                         // Upgrades between (latestTableVersion, latestMigrationVersion]
                                         // are backwards compatible and are not set in table _meta
                                         TableUtils.writeIntOrFail(ff, fdMeta, META_OFFSET_VERSION, ver, mem, path);
@@ -236,10 +236,10 @@ public class EngineMigration {
 
     static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
         // make a copy
-        int copyPathLen = toTemp.length();
+        int copyPathLen = toTemp.size();
         try {
             toTemp.concat(backupName).put(".v").put(version);
-            int versionLen = toTemp.length();
+            int versionLen = toTemp.size();
             for (int i = 1; ff.exists(toTemp.$()); i++) {
                 // if backup file already exists
                 // add .<num> at the end until file name is unique
@@ -247,7 +247,7 @@ public class EngineMigration {
                 toTemp.trimTo(versionLen).put('.').put(i);
             }
 
-            LOG.info().$("backing up [file=").utf8(src).$(", to=").utf8(toTemp).I$();
+            LOG.info().$("backing up [file=").$(src).$(", to=").$(toTemp).I$();
             if (ff.copy(src.$(), toTemp) < 0) {
                 throw CairoException.critical(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
             }

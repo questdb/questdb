@@ -269,7 +269,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
     public final void of(Path path, CharSequence name, long columnNameTxn, int indexBlockCapacity) {
         close();
-        final int plen = path.length();
+        final int plen = path.size();
         try {
             boolean init = indexBlockCapacity > 0;
             BitmapIndexUtils.keyFileName(path, name, columnNameTxn);

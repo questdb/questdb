@@ -25,11 +25,12 @@
 package io.questdb.std.datetime;
 
 import io.questdb.std.NumericException;
+import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractDateFormat implements DateFormat {
 
     @Override
-    public long parse(CharSequence in, DateLocale locale) throws NumericException {
+    public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
         return parse(in, 0, in.length(), locale);
     }
 }

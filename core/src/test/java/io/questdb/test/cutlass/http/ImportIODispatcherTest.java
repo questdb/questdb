@@ -38,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -795,7 +796,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 engine,
                                 sqlExecutionContext,
                                 "select count() from trips",
-                                Misc.getThreadLocalBuilder(),
+                                Misc.getThreadLocalSink(),
                                 "count\n24\n"
                         );
 
@@ -810,7 +811,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 engine,
                                 sqlExecutionContext,
                                 "select count() from trips",
-                                Misc.getThreadLocalBuilder(),
+                                Misc.getThreadLocalSink(),
                                 "count\n24\n"
                         );
                     }
@@ -929,7 +930,7 @@ public class ImportIODispatcherTest extends AbstractTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, "x.d") && count.incrementAndGet() == 4) {
+                if (Utf8s.endsWithAscii(path, "x.d") && count.incrementAndGet() == 4) {
                     return false;
                 }
                 return Files.exists(path);

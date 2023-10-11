@@ -28,7 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 import java.io.Closeable;
 
@@ -62,7 +62,7 @@ public interface MemoryR extends Closeable {
 
     long getLong(long offset);
 
-    void getLong256(long offset, CharSink sink);
+    void getLong256(long offset, CharSinkBase<?> sink);
 
     default void getLong256(long offset, Long256Acceptor sink) {
         long addr = addressOf(offset + Long.BYTES * 4);

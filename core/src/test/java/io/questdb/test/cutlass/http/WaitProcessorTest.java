@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.cutlass.http.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -133,7 +134,6 @@ public class WaitProcessorTest {
 
             @Override
             public void close() {
-
             }
 
             @Override
@@ -142,7 +142,7 @@ public class WaitProcessorTest {
             }
 
             @Override
-            public HttpRequestProcessor select(CharSequence url) {
+            public HttpRequestProcessor select(Utf8Sequence url) {
                 return null;
             }
         };

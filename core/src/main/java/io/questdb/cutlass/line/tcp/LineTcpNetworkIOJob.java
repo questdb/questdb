@@ -29,12 +29,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.ByteCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_RETRY_FAILED;
@@ -46,7 +46,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     private final long maintenanceInterval;
     private final MillisecondClock millisecondClock;
     private final LineTcpMeasurementScheduler scheduler;
-    private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
+    private final Utf8StringObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new Utf8StringObjHashMap<>();
     private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
     private final int workerId;
     // Context blocked on LineTcpMeasurementScheduler queue
@@ -69,7 +69,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+    public void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
         tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
         tableUpdateDetails.addReference(workerId);
     }
@@ -84,7 +84,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableNameUtf8) {
+    public TableUpdateDetails getLocalTableDetails(DirectUtf8Sequence tableNameUtf8) {
         return tableUpdateDetailsUtf8.get(tableNameUtf8);
     }
 
@@ -104,7 +104,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+    public TableUpdateDetails removeTableUpdateDetails(DirectUtf8Sequence tableNameUtf8) {
         final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
         if (keyIndex < 0) {
             TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);

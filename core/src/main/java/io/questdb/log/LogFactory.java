@@ -29,8 +29,10 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -848,12 +850,17 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $(CharSequence sequence) {
+        public LogRecord $(@Nullable CharSequence sequence) {
             return this;
         }
 
         @Override
-        public LogRecord $(CharSequence sequence, int lo, int hi) {
+        public LogRecord $(@Nullable Utf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
             return this;
         }
 
@@ -883,22 +890,22 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $(Throwable e) {
+        public LogRecord $(@Nullable Throwable e) {
             return this;
         }
 
         @Override
-        public LogRecord $(File x) {
+        public LogRecord $(@Nullable File x) {
             return this;
         }
 
         @Override
-        public LogRecord $(Object x) {
+        public LogRecord $(@Nullable Object x) {
             return this;
         }
 
         @Override
-        public LogRecord $(Sinkable x) {
+        public LogRecord $(@Nullable Sinkable x) {
             return this;
         }
 
@@ -943,7 +950,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public CharSinkBase put(char c) {
+        public LogRecord put(char c) {
             return this;
         }
 
@@ -953,7 +960,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord utf8(CharSequence sequence) {
+        public LogRecord utf8(@Nullable CharSequence sequence) {
             return this;
         }
     }

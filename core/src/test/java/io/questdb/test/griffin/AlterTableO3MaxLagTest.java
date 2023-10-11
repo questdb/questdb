@@ -26,10 +26,10 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -117,7 +117,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
                 @Override
                 public int openRO(LPSZ path) {
-                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
+                    if (Utf8s.endsWithAscii(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
                         return -1;
                     }
                     return super.openRO(path);
@@ -163,7 +163,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
-                        if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && attempt++ == 0) {
+                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && attempt++ == 0) {
                             return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
@@ -202,7 +202,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
-                        if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
+                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
                             return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
@@ -244,7 +244,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
-                        if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
+                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
                             return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
@@ -271,7 +271,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public int openRO(LPSZ from) {
-                        if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {
+                        if (Utf8s.endsWithAscii(from, TableUtils.META_FILE_NAME)) {
                             return -1;
                         }
                         return super.openRO(from);

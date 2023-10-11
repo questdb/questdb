@@ -24,8 +24,8 @@
 
 package io.questdb.std.str;
 
-public interface LPSZ extends CharSequence {
-    long address();
-
-    int capacity();
+/**
+ * NULL-terminated UTF-8 sequence.
+ */
+public interface LPSZ extends DirectUtf8Sequence {
 }

@@ -27,9 +27,10 @@ package io.questdb.std.str;
 import io.questdb.std.Unsafe;
 
 /**
- * Read-only interface for a UTF-8 string with native ptr access.
+ * A sequence of UTF-8 bytes stored in native memory.
  */
-public interface DirectUtf8Sequence extends Utf8Sequence {
+public interface DirectUtf8Sequence extends Utf8Sequence, DirectSequence {
+
     /**
      * Returns byte at index.
      * Note: Unchecked bounds.
@@ -40,23 +41,4 @@ public interface DirectUtf8Sequence extends Utf8Sequence {
     default byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(ptr() + index);
     }
-
-    /**
-     * Address one past the last character.
-     */
-    default long hi() {
-        return ptr() + size();
-    }
-
-    /**
-     * Address of the first character (alias of `.ptr()`).
-     */
-    default long lo() {
-        return ptr();
-    }
-
-    /**
-     * Address of the first character.
-     */
-    long ptr();
 }

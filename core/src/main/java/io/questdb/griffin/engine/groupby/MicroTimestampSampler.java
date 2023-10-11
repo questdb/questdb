@@ -24,7 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
 
 public class MicroTimestampSampler implements TimestampSampler {
     private final long bucket;
@@ -60,7 +61,7 @@ public class MicroTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MicroTsSampler");
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("MicroTsSampler");
     }
 }

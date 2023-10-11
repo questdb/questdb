@@ -35,6 +35,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -110,7 +111,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int copyRecursive(Path src, Path dst, int dirMode) {
-                    if (Chars.contains(src, attachableDirSuffix)) {
+                    if (Utf8s.containsAscii(src, attachableDirSuffix)) {
                         return 1000;
                     }
                     return 0;
@@ -149,7 +150,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             @Override
             public int copy(LPSZ src, LPSZ dest) {
-                if (Chars.contains(dest, META_FILE_NAME)) {
+                if (Utf8s.containsAscii(dest, META_FILE_NAME)) {
                     i++;
                     if (i == 3) {
                         return -1;
@@ -201,7 +202,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             @Override
             public int rename(LPSZ src, LPSZ dst) {
-                if (Chars.contains(src, DETACHED_DIR_MARKER) && i++ < 2) {
+                if (Utf8s.containsAscii(src, DETACHED_DIR_MARKER) && i++ < 2) {
                     return -1;
                 }
                 super.rename(src, dst);
@@ -569,7 +570,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         ff = new TestFilesFacadeImpl() {
             @Override
             public boolean rmdir(Path path) {
-                if (Chars.contains(path, "2022-06-03")) {
+                if (Utf8s.containsAscii(path, "2022-06-03")) {
                     if (counter.getAndIncrement() == 0) {
                         return false;
                     }
@@ -2084,7 +2085,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 new TestFilesFacadeImpl() {
                     @Override
                     public boolean exists(LPSZ path) {
-                        if (Chars.endsWith(path, "2022-06-03")) {
+                        if (Utf8s.endsWithAscii(path, "2022-06-03")) {
                             return false;
                         }
                         return super.exists(path);

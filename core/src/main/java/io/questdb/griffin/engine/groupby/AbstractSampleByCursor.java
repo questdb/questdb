@@ -87,8 +87,8 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
                 if (opt == Long.MIN_VALUE) {
                     // this is timezone name
                     // fixed rules means the timezone does not have historical or daylight time changes
-                    rules = TimestampFormatUtils.enLocale.getZoneRules(
-                            Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                    rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                             RESOLUTION_MICROS
                     );
                 } else {

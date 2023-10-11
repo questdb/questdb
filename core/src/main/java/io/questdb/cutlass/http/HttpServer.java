@@ -33,14 +33,14 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -71,10 +71,6 @@ public class HttpServer implements Closeable {
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
 
-            final SCSequence queryCacheEventSubSeq = new SCSequence();
-            final FanOut queryCacheEventFanOut = messageBus.getQueryCacheEventFanOut();
-            queryCacheEventFanOut.and(queryCacheEventSubSeq);
-
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
@@ -82,17 +78,8 @@ public class HttpServer implements Closeable {
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    long seq = queryCacheEventSubSeq.next();
-                    if (seq > -1) {
-                        // Queue is not empty, so flush query cache.
-                        LOG.info().$("flushing HTTP server query cache [worker=").$(workerId).$(']').$();
-                        // TODO
-                        queryCacheEventSubSeq.done(seq);
-                    }
-
                     boolean useful = dispatcher.processIOQueue(processor);
                     useful |= rescheduleContext.runReruns(selector);
-
                     return useful;
                 }
             });
@@ -100,11 +87,6 @@ public class HttpServer implements Closeable {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
             pool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
-
-            pool.freeOnExit(() -> {
-                messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
-                queryCacheEventSubSeq.clear();
-            });
         }
     }
 
@@ -195,7 +177,7 @@ public class HttpServer implements Closeable {
                 selector.defaultRequestProcessor = factory.newInstance();
             } else {
                 final HttpRequestProcessor processor = factory.newInstance();
-                selector.processorMap.put(url, processor);
+                selector.processorMap.put(new Utf8String(url), processor);
                 if (useAsDefault) {
                     selector.defaultRequestProcessor = processor;
                 }
@@ -218,19 +200,22 @@ public class HttpServer implements Closeable {
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
         public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
-            super(() -> new HttpConnectionContext(configuration, metrics, socketFactory), configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+            super(
+                    () -> new HttpConnectionContext(configuration, metrics, socketFactory),
+                    configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
+            );
         }
     }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
-        private final CharSequenceObjHashMap<HttpRequestProcessor> processorMap = new CharSequenceObjHashMap<>();
+        private final Utf8SequenceObjHashMap<HttpRequestProcessor> processorMap = new Utf8SequenceObjHashMap<>();
         private HttpRequestProcessor defaultRequestProcessor = null;
 
         @Override
         public void close() {
             Misc.freeIfCloseable(defaultRequestProcessor);
-            ObjList<CharSequence> processorKeys = processorMap.keys();
+            ObjList<Utf8String> processorKeys = processorMap.keys();
             for (int i = 0, n = processorKeys.size(); i < n; i++) {
                 Misc.freeIfCloseable(processorMap.get(processorKeys.getQuick(i)));
             }
@@ -242,7 +227,7 @@ public class HttpServer implements Closeable {
         }
 
         @Override
-        public HttpRequestProcessor select(CharSequence url) {
+        public HttpRequestProcessor select(Utf8Sequence url) {
             return processorMap.get(url);
         }
     }

@@ -24,28 +24,36 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable {
+/**
+ * UTF-8 sink backed by native memory.
+ */
+public class DirectUtf8Sink implements MutableUtf8Sink, DirectUtf8Sequence, Closeable {
+    private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final long initialCapacity;
     private long capacity;
     private long hi;
     private long lo;
     private long ptr;
 
-    public DirectByteCharSink(long capacity) {
-        ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
-        this.capacity = capacity;
-        this.initialCapacity = capacity;
+    public DirectUtf8Sink(long initialCapacity) {
+        ptr = Unsafe.malloc(initialCapacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+        this.capacity = initialCapacity;
+        this.initialCapacity = initialCapacity;
         this.lo = ptr;
-        this.hi = ptr + capacity;
+        this.hi = ptr + initialCapacity;
+    }
+
+    @Override
+    public @NotNull CharSequence asAsciiCharSequence() {
+        return asciiCharSequence.of(this);
     }
 
     @Override
@@ -68,32 +76,28 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         return capacity;
     }
 
-    public long getPtr() {
+    @Override
+    public long ptr() {
         return ptr;
     }
 
     @Override
-    public int length() {
-        return (int) (lo - ptr);
-    }
-
-    public DirectByteCharSink put(ByteSequence cs) {
-        if (cs != null) {
-            int l = cs.length();
-
-            if (lo + l >= hi) {
-                resize(Math.max(capacity * 2L, (lo - ptr + l) * 2L));
+    public DirectUtf8Sink put(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            int s = us.size();
+            if (lo + s >= hi) {
+                resize(Math.max(capacity * 2L, (lo - ptr + s) * 2L));
             }
-
-            for (int i = 0; i < l; i++) {
-                Unsafe.getUnsafe().putByte(lo + i, cs.byteAt(i));
+            for (int i = 0; i < s; i++) {
+                Unsafe.getUnsafe().putByte(lo + i, us.byteAt(i));
             }
-            this.lo += l;
+            this.lo += s;
         }
         return this;
     }
 
-    public DirectByteCharSink put(byte b) {
+    @Override
+    public DirectUtf8Sink put(byte b) {
         if (lo == hi) {
             resize(this.capacity * 2);
         }
@@ -102,8 +106,14 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     }
 
     @Override
-    public CharSink put(char c) {
-        this.put((byte) c);
+    public DirectUtf8Sink putAscii(char c) {
+        MutableUtf8Sink.super.putAscii(c);
+        return this;
+    }
+
+    @Override
+    public DirectUtf8Sink putAscii(@Nullable CharSequence cs) {
+        MutableUtf8Sink.super.putAscii(cs);
         return this;
     }
 
@@ -112,10 +122,14 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         clear();
     }
 
-    @NotNull
     @Override
-    public String toString() {
-        return Chars.stringFromUtf8Bytes(this);
+    public int size() {
+        return (int) (lo - ptr);
+    }
+
+    @Override
+    public @NotNull String toString() {
+        return Utf8s.stringFromUtf8Bytes(ptr, lo);
     }
 
     private void resize(long cap) {

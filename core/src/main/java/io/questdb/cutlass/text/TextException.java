@@ -25,10 +25,12 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public class TextException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<TextException> tlException = new ThreadLocal<>(TextException::new);
@@ -57,6 +59,11 @@ public class TextException extends RuntimeException implements Sinkable, Flyweig
         return this;
     }
 
+    public TextException put(Utf8Sequence us) {
+        message.put(us);
+        return this;
+    }
+
     public TextException put(char c) {
         message.put(c);
         return this;
@@ -73,7 +80,7 @@ public class TextException extends RuntimeException implements Sinkable, Flyweig
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         sink.put(message);
     }
 }

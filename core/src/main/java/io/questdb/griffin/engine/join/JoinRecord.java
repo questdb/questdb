@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 public class JoinRecord implements Record {
@@ -175,7 +176,7 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSinkBase<?> sink) {
         if (col < split) {
             master.getLong256(col, sink);
         } else {

@@ -55,7 +55,7 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
             if (value == 0) {
                 return new StrConstant(null);
             }
-            final StringSink sink = Misc.getThreadLocalBuilder();
+            final StringSink sink = Misc.getThreadLocalSink();
             sink.put(value);
             return new StrConstant(Chars.toString(sink));
         }

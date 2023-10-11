@@ -544,7 +544,7 @@ public final class Dates {
     }
 
     public static String toString(long millis) {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         DateFormatUtils.appendDateTime(sink, millis);
         return sink.toString();
     }

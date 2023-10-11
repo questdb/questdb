@@ -52,7 +52,7 @@ public class HealthCheckProcessor implements HttpRequestProcessor {
             if (unhandledErrors > 0) {
                 r.status(500, "text/plain");
                 r.sendHeader();
-                r.put("Status: Unhealthy\nUnhandled errors: ");
+                r.putAscii("Status: Unhealthy\nUnhandled errors: ");
                 r.put(unhandledErrors);
                 r.sendChunk(true);
                 return;
@@ -61,7 +61,7 @@ public class HealthCheckProcessor implements HttpRequestProcessor {
 
         r.status(200, "text/plain");
         r.sendHeader();
-        r.put("Status: Healthy");
+        r.putAscii("Status: Healthy");
         r.sendChunk(true);
     }
 

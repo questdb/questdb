@@ -164,6 +164,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxUncommittedRows;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
+    private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
@@ -183,7 +184,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
-    private final int queryCacheEventQueueCapacity;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
@@ -460,7 +460,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
-    private final MicrosecondClock microsecondClock;
 
     public PropServerConfiguration(
             String root,
@@ -1133,8 +1132,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 32));
             this.writerAsyncCommandQueueSlotSize = Numbers.ceilPow2(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE, 2048));
 
-            this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
-
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
@@ -1155,7 +1152,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     break;
                 }
             }
-            StringSink sink = Misc.getThreadLocalBuilder();
+            StringSink sink = Misc.getThreadLocalSink();
             sink.put(dbRoot, 0, end);
             if (needsSlash) {
                 sink.put(Files.SEPARATOR);
@@ -1592,6 +1589,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
             registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
             registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
+            registerDeprecated(PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -1720,11 +1718,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 return value.incrementAndGet();
             }
         };
-
-        @Override
-        public @NotNull MicrosecondClock getMicrosecondClock() {
-            return microsecondClock;
-        }
 
         @Override
         public boolean attachPartitionCopy() {
@@ -2026,6 +2019,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull MicrosecondClock getMicrosecondClock() {
+            return microsecondClock;
+        }
+
+        @Override
         public long getMiscAppendPageSize() {
             return writerMiscAppendPageSize;
         }
@@ -2123,11 +2121,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionPurgeListCapacity() {
             return o3PartitionPurgeListCapacity;
-        }
-
-        @Override
-        public int getQueryCacheEventQueueCapacity() {
-            return queryCacheEventQueueCapacity;
         }
 
         @Override

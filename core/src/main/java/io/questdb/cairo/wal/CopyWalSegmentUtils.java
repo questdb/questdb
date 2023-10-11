@@ -57,7 +57,7 @@ public class CopyWalSegmentUtils {
             int commitMode
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
-        int setPathRoot = newSegPath.length();
+        int setPathRoot = newSegPath.size();
         dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);
         int primaryFd = openRW(ff, newSegPath, LOG, options);
         newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);

@@ -30,10 +30,12 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -204,7 +206,7 @@ public class LogAlertSocketTest {
 
                 // send and fail after a re-connect delay
                 AtomicInteger reconnectCounter = new AtomicInteger();
-                Assert.assertFalse(alertSkt.send(builder.length(), reconnectCounter::incrementAndGet));
+                Assert.assertFalse(alertSkt.send(builder.size(), reconnectCounter::incrementAndGet));
                 Assert.assertEquals(2, reconnectCounter.get());
             }
         });
@@ -451,7 +453,7 @@ public class LogAlertSocketTest {
             try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "", log)) {
                 LogRecordSink logRecord = new LogRecordSink(alertSkt.getInBufferPtr(), alertSkt.getInBufferSize());
                 logRecord.put(httpMessage);
-                alertSkt.logResponse(logRecord.length());
+                alertSkt.logResponse(logRecord.size());
                 TestUtils.assertEquals(expected, log.logRecord.sink);
             }
         });
@@ -550,13 +552,18 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $(CharSequence sequence) {
+        public LogRecord $(@Nullable CharSequence sequence) {
             sink.put(sequence);
             return this;
         }
 
         @Override
-        public LogRecord $(CharSequence sequence, int lo, int hi) {
+        public LogRecord $(@Nullable Utf8Sequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
             sink.put(sequence, lo, hi);
             return this;
         }
@@ -589,22 +596,22 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $(Throwable e) {
+        public LogRecord $(@Nullable Throwable e) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public LogRecord $(File x) {
+        public LogRecord $(@Nullable File x) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public LogRecord $(Object x) {
+        public LogRecord $(@Nullable Object x) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public LogRecord $(Sinkable x) {
+        public LogRecord $(@Nullable Sinkable x) {
             throw new UnsupportedOperationException();
         }
 
@@ -651,7 +658,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public CharSinkBase put(char c) {
+        public LogRecord put(char c) {
             sink.put(c);
             return this;
         }
@@ -662,7 +669,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord utf8(CharSequence sequence) {
+        public LogRecord utf8(@Nullable CharSequence sequence) {
             throw new UnsupportedOperationException();
         }
     }

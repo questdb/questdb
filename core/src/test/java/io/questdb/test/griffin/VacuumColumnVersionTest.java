@@ -29,12 +29,12 @@ import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -71,7 +71,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (purgeJobInstance.get() != null && (Chars.endsWith(name, "/1970-01-05/sym1.d.2") || Chars.endsWith(name, "\\1970-01-05\\sym1.d.2"))) {
+                if (purgeJobInstance.get() != null && (Utf8s.endsWithAscii(name, "/1970-01-05/sym1.d.2") || Utf8s.endsWithAscii(name, "\\1970-01-05\\sym1.d.2"))) {
                     try {
                         runTableVacuum("testPurge");
                         runPurgeJob(purgeJobInstance.get());
@@ -436,7 +436,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         for (int i = files.length - 1; i > -1; i--) {
             String file = files[i];
             path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(file).put(colSuffix).$();
-            Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 

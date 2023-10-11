@@ -38,6 +38,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -62,7 +63,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.openRW(name, opts);
@@ -91,7 +92,7 @@ public class O3FailureTest extends AbstractO3Test {
         @Override
         public int openRW(LPSZ name, long opts) {
             int fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
+            if (Utf8s.endsWithAscii(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
                 this.fd = fd;
             }
             return fd;
@@ -100,7 +101,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffMkDirFailure = new TestFilesFacadeImpl() {
         @Override
         public int mkdirs(Path path, int mode) {
-            if (!fixFailure.get() || (Chars.contains(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Utf8s.containsAscii(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -110,7 +111,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenRW = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -163,7 +164,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                if (this.fd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
+                if (this.fd >= 0 && fd > 0 && Utf8s.endsWithAscii(name, fileName)) {
                     this.fd = fd;
                     return fd;
                 }
@@ -215,7 +216,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                if (fd > 0 && Chars.endsWith(name, fileName)) {
+                if (fd > 0 && Utf8s.endsWithAscii(name, fileName)) {
                     this.fd = fd;
                     return fd;
                 }
@@ -261,7 +262,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -287,7 +288,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -323,7 +324,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -356,7 +357,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -406,7 +407,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -433,7 +434,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -459,7 +460,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -474,7 +475,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -489,7 +490,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(4, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -504,7 +505,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -711,7 +712,7 @@ public class O3FailureTest extends AbstractO3Test {
                     @Override
                     public int openRW(LPSZ name, long opts) {
                         int fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
+                        if (Utf8s.endsWithAscii(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
                             if (counter.decrementAndGet() == 0) {
                                 theFd = fd;
                             }
@@ -798,7 +799,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -834,7 +835,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -848,7 +849,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -862,7 +863,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -888,7 +889,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -902,7 +903,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -1030,7 +1031,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-01.4" + Files.SEPARATOR + "g.d")) {
+                if (Utf8s.containsAscii(name, "1970-01-01.4" + Files.SEPARATOR + "g.d")) {
                     tooManyFiles = true;
                     return -1;
                 }
@@ -1090,7 +1091,7 @@ public class O3FailureTest extends AbstractO3Test {
         return new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, fileName) && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -3589,7 +3590,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 final int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, fileName) && counter.decrementAndGet() == 0) {
                     targetFd.set(fd);
                 }
                 return fd;
@@ -3613,7 +3614,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, fileName)) {
+                if (Utf8s.endsWithAscii(name, fileName)) {
                     targetFd.set(fd);
                 }
                 return fd;

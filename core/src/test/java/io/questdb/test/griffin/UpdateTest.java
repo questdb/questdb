@@ -30,12 +30,12 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -281,7 +281,7 @@ public class UpdateTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean remove(LPSZ name) {
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return false;
                     }
                     return super.remove(name);
@@ -399,7 +399,7 @@ public class UpdateTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "s1.d.1") && Chars.contains(name, "1970-01-03")) {
+                    if (Utf8s.endsWithAscii(name, "s1.d.1") && Utf8s.containsAscii(name, "1970-01-03")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
@@ -740,27 +740,6 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             update("UPDATE up SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
-
-            assertSql("ts\tx\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\n" +
-                    "1970-01-01T00:00:02.000000Z\tNaN\n" +
-                    "1970-01-01T00:00:03.000000Z\tNaN\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
-        });
-    }
-
-    @Test
-    public void testUpdateTableNameCaseInsensitive() throws Exception {
-
-        assertMemoryLeak(() -> {
-            ddl("create table up as" +
-                    " (select timestamp_sequence(0, 1000000) ts," +
-                    " cast(x as int) x" +
-                    " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
-
-            update("update UP set x = null where ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql("ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
@@ -1766,6 +1745,27 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateTableNameCaseInsensitive() throws Exception {
+
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            update("update UP set x = null where ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\n" +
+                    "1970-01-01T00:00:02.000000Z\tNaN\n" +
+                    "1970-01-01T00:00:03.000000Z\tNaN\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n", "up");
+        });
+    }
+
+    @Test
     public void testUpdateTableNameContainsSpace() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table \"віт ер\" as" +
@@ -2367,7 +2367,7 @@ public class UpdateTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "x.d.1") && Chars.contains(name, "1970-01-03")) {
+                    if (Utf8s.endsWithAscii(name, "x.d.1") && Utf8s.containsAscii(name, "1970-01-03")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);

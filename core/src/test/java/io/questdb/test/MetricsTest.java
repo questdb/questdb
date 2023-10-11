@@ -27,7 +27,7 @@ package io.questdb.test;
 import io.questdb.Metrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -184,7 +184,7 @@ public class MetricsTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(CharSink sink) {
+        public void scrapeIntoPrometheus(CharSinkBase<?> sink) {
             delegate.scrapeIntoPrometheus(sink);
         }
 

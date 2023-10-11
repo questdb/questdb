@@ -25,10 +25,11 @@
 package io.questdb.cutlass.json;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class JsonException extends Exception implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<JsonException> tlException = new ThreadLocal<>(JsonException::new);
@@ -71,7 +72,7 @@ public class JsonException extends Exception implements Sinkable, FlyweightMessa
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[').put(position).put("]: ").put(message);
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('[').put(position).putAscii("]: ").put(message);
     }
 }

@@ -75,7 +75,7 @@ public class TableSequencerImpl implements TableSequencer {
             path = new Path();
             path.of(configuration.getRoot());
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
-            rootLen = path.length();
+            rootLen = path.size();
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();
 
@@ -378,6 +378,19 @@ public class TableSequencerImpl implements TableSequencer {
         }
     }
 
+    void create(int tableId, TableStructure tableStruct) {
+        schemaLock.writeLock().lock();
+        try {
+            createSequencerDir(ff, mkDirMode);
+            final long timestamp = microClock.getTicks();
+            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
+            tableTransactionLog.create(path, timestamp);
+            engine.getWalListener().tableCreated(tableToken, timestamp);
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
+    }
+
     void open(TableToken tableToken) {
         try {
             walIdGenerator.open(path);
@@ -407,19 +420,6 @@ public class TableSequencerImpl implements TableSequencer {
                     .I$();
             closeLocked();
             throw th;
-        }
-    }
-
-    void create(int tableId, TableStructure tableStruct) {
-        schemaLock.writeLock().lock();
-        try {
-            createSequencerDir(ff, mkDirMode);
-            final long timestamp = microClock.getTicks();
-            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
-            tableTransactionLog.create(path, timestamp);
-            engine.getWalListener().tableCreated(tableToken, timestamp);
-        } finally {
-            schemaLock.writeLock().unlock();
         }
     }
 

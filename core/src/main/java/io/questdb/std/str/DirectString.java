@@ -24,87 +24,77 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.NotNull;
 
 /**
- * UTF8-encoded off-heap char sequence.
+ * An immutable flyweight for a UTF-16 string stored in native memory.
  */
-public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence {
-    public static final Factory FACTORY = new Factory();
+public class DirectString extends AbstractCharSequence implements DirectSequence, Mutable {
     private long hi;
+    private int len;
     private long lo;
 
     @Override
-    public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(lo + index);
-    }
-
-    @Override
     public char charAt(int index) {
-        return (char) byteAt(index);
+        return Unsafe.getUnsafe().getChar(lo + ((long) index * 2L));
     }
 
     @Override
     public void clear() {
-        this.lo = this.hi = 0;
+        hi = lo = 0;
     }
 
-    public DirectByteCharSequence decHi() {
-        this.hi--;
-        return this;
+    @Override
+    public int hashCode() {
+        if (lo == hi) {
+            return 0;
+        }
+
+        int h = 0;
+        for (long p = lo; p < hi; p += 2) {
+            h = 31 * h + Unsafe.getUnsafe().getChar(p);
+        }
+        return h;
     }
 
-    public long getHi() {
+    @Override
+    public long hi() {
         return hi;
-    }
-
-    public long getLo() {
-        return lo;
     }
 
     @Override
     public int length() {
-        return (int) (hi - lo);
+        return len;
     }
 
-    public DirectByteCharSequence of(long lo, long hi) {
+    @Override
+    public long lo() {
+        return lo;
+    }
+
+    public DirectString of(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
+        this.len = (int) ((hi - lo) / 2);
         return this;
     }
 
-    public void shl(long delta) {
-        this.lo -= delta;
-        this.hi -= delta;
-    }
-
-    public void squeeze() {
-        this.lo++;
-        this.hi--;
-    }
-
-    @NotNull
     @Override
-    public String toString() {
-        return Chars.stringFromUtf8Bytes(lo, hi);
+    public long ptr() {
+        return lo;
+    }
+
+    @Override
+    public int size() {
+        return (int) (hi - lo);
     }
 
     @Override
     protected CharSequence _subSequence(int start, int end) {
-        DirectByteCharSequence seq = new DirectByteCharSequence();
+        DirectString seq = new DirectString();
         seq.lo = this.lo + start;
         seq.hi = this.lo + end;
         return seq;
-    }
-
-    public static final class Factory implements ObjectFactory<DirectByteCharSequence> {
-        @Override
-        public DirectByteCharSequence newInstance() {
-            return new DirectByteCharSequence();
-        }
     }
 }

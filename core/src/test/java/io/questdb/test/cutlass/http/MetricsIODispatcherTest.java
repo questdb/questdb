@@ -31,10 +31,10 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.Os;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -96,7 +96,7 @@ public class MetricsIODispatcherTest {
 
                         Chunk chunk;
                         while ((chunk = chunkedResponse.recv(5_000)) != null) {
-                            Chars.utf8toUtf16(chunk.lo(), chunk.hi(), responseSink);
+                            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), responseSink);
                         }
                         TestUtils.assertEquals(expectedResponse, responseSink);
                     }
@@ -186,7 +186,7 @@ public class MetricsIODispatcherTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(CharSink sink) {
+        public void scrapeIntoPrometheus(CharSinkBase<?> sink) {
             metricsRegistry.scrapeIntoPrometheus(sink);
         }
 

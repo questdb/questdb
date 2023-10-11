@@ -30,11 +30,11 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.mp.Job;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -130,7 +130,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     @Override
                     public int openRW(LPSZ name, long opts) {
                         int fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
+                        if (Utf8s.endsWithAscii(name, TableUtils.TAB_INDEX_FILE_NAME)) {
                             this.fd = fd;
                         }
                         return fd;
