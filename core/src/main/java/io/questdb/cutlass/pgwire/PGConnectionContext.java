@@ -1814,9 +1814,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw BadProtocolException.INSTANCE;
         }
 
-        if (!sqlExecutionContext.getSecurityContext().isEnabled()) {
-            throw CairoException.entityIsDisabled(sqlExecutionContext.getSecurityContext().getPrincipal());
-        }
+        // this check is exactly the same as the one run inside security context on every permission checks.
+        // however, this will run even if the command to be executed does not require permission checks.
+        // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
+        sqlExecutionContext.getSecurityContext().checkEntityEnabled();
 
         // msgLen does not take into account type byte
         if (msgLen > len - 1) {

@@ -251,16 +251,15 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void checkEntityEnabled() {
+    }
+
+    @Override
     public void exitServiceAccount(CharSequence serviceAccountName) {
     }
 
     @Override
     public String getPrincipal() {
         return Constants.USER_NAME;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
     }
 }
