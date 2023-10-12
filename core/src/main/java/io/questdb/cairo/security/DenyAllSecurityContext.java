@@ -38,7 +38,17 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
-    public void authorizeInterface(int interfaceId) {
+    public void authorizeHTTP() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeILP() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizePGWIRE() {
         throw CairoException.nonCritical().put("permission denied");
     }
 

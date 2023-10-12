@@ -159,11 +159,19 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeHTTP() {
+    }
+
+    @Override
+    public void authorizeILP() {
+    }
+
+    @Override
     public void authorizeInsert(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeInterface(int interfaceId) {
+    public void authorizePGWIRE() {
     }
 
     @Override

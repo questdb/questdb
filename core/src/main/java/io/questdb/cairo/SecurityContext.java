@@ -93,9 +93,13 @@ public interface SecurityContext {
 
     void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
+    void authorizeHTTP();
+
+    void authorizeILP();
+
     void authorizeInsert(TableToken tableToken);
 
-    void authorizeInterface(int interfaceId);
+    void authorizePGWIRE();
 
     void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 
