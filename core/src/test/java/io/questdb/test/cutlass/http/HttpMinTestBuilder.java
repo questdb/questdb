@@ -47,6 +47,7 @@ public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
     private Scrapable scrapable;
+    private int sendBufferSize;
     private int tcpSndBufSize;
     private TemporaryFolder temp;
 
@@ -56,6 +57,7 @@ public class HttpMinTestBuilder {
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .withTcpSndBufSize(tcpSndBufSize)
+                    .withSendBufferSize(sendBufferSize)
                     .build();
 
             final WorkerPool workerPool = new TestWorkerPool(1);
@@ -91,6 +93,11 @@ public class HttpMinTestBuilder {
 
     public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
         this.scrapable = scrapable;
+        return this;
+    }
+
+    public HttpMinTestBuilder withSendBufferSize(int sendBufferSize) {
+        this.sendBufferSize = sendBufferSize;
         return this;
     }
 

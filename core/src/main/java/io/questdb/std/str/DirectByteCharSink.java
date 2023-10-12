@@ -126,4 +126,26 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         this.lo = ptr + len;
         this.hi = ptr + cap;
     }
+
+    private void ensureAtLeast(long required) {
+        final long avail = hi - lo;
+        if (required > avail) {
+            final long used = lo - ptr;
+            long newCapacity = capacity;
+            do {
+                newCapacity *= 2;
+            } while (newCapacity - used < required);
+            resize(newCapacity);
+        }
+    }
+
+    @Override
+    public DirectByteCharSink put(CharSequence cs) {
+        // This is not UTF-8 safe. It assumes `cs` is ASCII without checks.
+        final int charCount = cs.length();
+        ensureAtLeast(charCount);
+        Chars.asciiStrCpy(cs, charCount, lo);
+        lo += charCount;
+        return this;
+    }
 }

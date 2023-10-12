@@ -32,8 +32,10 @@ import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectByteCharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -100,6 +102,54 @@ public class MetricsIODispatcherTest {
                         }
                         TestUtils.assertEquals(expectedResponse, responseSink);
                     }
+                });
+    }
+
+    @Test
+    public void testMultiChunkResponse() throws Exception {
+        // Size of each HTTP chunk response in bytes.
+        final int chunkSize = 256;
+
+        // Number of metrics registered.
+        final int counterCount = 30;
+
+        final MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
+        final DirectByteCharSink expectedMetricsBuffer = new DirectByteCharSink(4096);
+        for (int i = 0; i < counterCount; i++) {
+            final String name = String.format("c%04d", i);
+            final Counter counter = metricsRegistry.newCounter(name);
+            counter.inc();
+            Assert.assertEquals(1, counter.getValue());
+            expectedMetricsBuffer.put("# TYPE questdb_").put(name).put("_total counter\n");
+            expectedMetricsBuffer.put("questdb_").put(name).put("_total 1\n\n");
+        }
+        final int byteCount = expectedMetricsBuffer.length();
+
+        // Number of expected HTTP chunks.
+        final int chunkCount = byteCount / chunkSize + 1;
+
+        final DirectByteCharSink expectedResponseBuilder = new DirectByteCharSink(4096);
+        expectedResponseBuilder.put("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n" +
+                        "\r\n");
+        Numbers.appendHex(expectedResponseBuilder, byteCount);
+        expectedResponseBuilder.put("\r\n");
+        expectedResponseBuilder.put(expectedMetricsBuffer);
+        final String expectedResponse = expectedResponseBuilder.toString();
+
+        new HttpMinTestBuilder()
+                .withTempFolder(temp)
+                .withSendBufferSize(chunkSize)
+                .withScrapable(metricsRegistry)
+                .run(engine -> {
+                    // Replace with `io.questdb.test.cutlass.http.TestHttpClient`.
+
+                    new SendAndReceiveRequestBuilder()
+                            .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
+                            .execute(prometheusRequest, expectedResponse);
                 });
     }
 

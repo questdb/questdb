@@ -195,7 +195,7 @@ public class HttpServerConfigurationBuilder {
 
                     @Override
                     public int getSendBufferSize() {
-                        return sendBufferSize;
+                        return sendBufferSize == 0 ? super.getSendBufferSize() : sendBufferSize;
                     }
 
                     @Override

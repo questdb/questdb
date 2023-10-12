@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -470,6 +471,23 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (deflateBeforeSend) {
                 headerImpl.put("Content-Encoding: gzip").put(Misc.EOL);
             }
+        }
+
+        @Override
+        public int availForWrite() {
+            return (int) buffer.getWriteNAvailable();
+        }
+
+        @Override
+        public void writeBytes(long srcAddr, int len) {
+            assert len >= 0;
+            if (len > availForWrite()) {
+                // We raise this exception instead of NoSpaceLeftInResponseBufferException because
+                // this API usage would be invalid, and we don't want to trigger another chunked response.
+                throw BufferOverflowException.INSTANCE;
+            }
+            Vect.memcpy(buffer.getWriteAddress(len), srcAddr, len);
+            buffer.onWrite(len);
         }
     }
 

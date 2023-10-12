@@ -44,4 +44,8 @@ public interface HttpChunkedResponseSocket extends CharSink {
     void shutdownWrite();
 
     void status(int status, CharSequence contentType);
+
+    int availForWrite();
+
+    void writeBytes(long srcAddr, int len);
 }
