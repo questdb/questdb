@@ -32,10 +32,8 @@ import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -66,9 +64,16 @@ public class MetricsIODispatcherTest {
             .build();
 
     @Test
-    public void testPrometheusLongOutput() throws Exception {
-        int metricCount = 10_000;
+    public void testMultiChunkResponse() throws Exception {
+        testPrometheusScenario(30, 0, 256);
+    }
 
+    @Test
+    public void testPrometheusLongOutput() throws Exception {
+        testPrometheusScenario(10_000, 1024, 0);
+    }
+
+    public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize) throws Exception {
         MetricsRegistry metrics = new MetricsRegistryImpl();
         for (int i = 0; i < metricCount; i++) {
             metrics.newCounter("testMetrics" + i).add(i);
@@ -82,10 +87,14 @@ public class MetricsIODispatcherTest {
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
                 .withScrapable(metrics)
-                .withTcpSndBufSize(1024)
+                .withTcpSndBufSize(tcpSndBufSize)
+                .withSendBufferSize(sendBufferSize)
                 .run(engine -> {
                     try (HttpClient client = HttpClientFactory.newInstance();
-                         HttpClient.ResponseHeaders response = client.newRequest().GET().url("/metrics").send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())) {
+                         HttpClient.ResponseHeaders response = client.newRequest()
+                                 .GET()
+                                 .url("/metrics")
+                                 .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())) {
 
                         Os.sleep(1000); // wait before consuming response to increase chances of server filling up its tcp send buffer
 
@@ -102,54 +111,6 @@ public class MetricsIODispatcherTest {
                         }
                         TestUtils.assertEquals(expectedResponse, responseSink);
                     }
-                });
-    }
-
-    @Test
-    public void testMultiChunkResponse() throws Exception {
-        // Size of each HTTP chunk response in bytes.
-        final int chunkSize = 256;
-
-        // Number of metrics registered.
-        final int counterCount = 30;
-
-        final MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
-        final DirectByteCharSink expectedMetricsBuffer = new DirectByteCharSink(4096);
-        for (int i = 0; i < counterCount; i++) {
-            final String name = String.format("c%04d", i);
-            final Counter counter = metricsRegistry.newCounter(name);
-            counter.inc();
-            Assert.assertEquals(1, counter.getValue());
-            expectedMetricsBuffer.put("# TYPE questdb_").put(name).put("_total counter\n");
-            expectedMetricsBuffer.put("questdb_").put(name).put("_total 1\n\n");
-        }
-        final int byteCount = expectedMetricsBuffer.length();
-
-        // Number of expected HTTP chunks.
-        final int chunkCount = byteCount / chunkSize + 1;
-
-        final DirectByteCharSink expectedResponseBuilder = new DirectByteCharSink(4096);
-        expectedResponseBuilder.put("HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n" +
-                        "\r\n");
-        Numbers.appendHex(expectedResponseBuilder, byteCount);
-        expectedResponseBuilder.put("\r\n");
-        expectedResponseBuilder.put(expectedMetricsBuffer);
-        final String expectedResponse = expectedResponseBuilder.toString();
-
-        new HttpMinTestBuilder()
-                .withTempFolder(temp)
-                .withSendBufferSize(chunkSize)
-                .withScrapable(metricsRegistry)
-                .run(engine -> {
-                    // Replace with `io.questdb.test.cutlass.http.TestHttpClient`.
-
-                    new SendAndReceiveRequestBuilder()
-                            .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
-                            .execute(prometheusRequest, expectedResponse);
                 });
     }
 

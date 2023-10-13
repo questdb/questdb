@@ -32,52 +32,18 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectByteCharSink;
 
 public class PrometheusMetricsProcessor implements HttpRequestProcessor {
-    private static class State implements QuietCloseable {
-        public final DirectByteCharSink sink = new DirectByteCharSink(4096);  // 1 page on most systems
-        public int lastChunkLen = 0;
-        public int sent = 0;
-
-        @Override
-        public void close() {
-            sink.close();
-        }
-    }
-
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
     private static final LocalValue<State> LV = new LocalValue<>();
     private final Scrapable metrics;
     private final boolean requiresAuthentication;
-
     public PrometheusMetricsProcessor(Scrapable metrics, HttpMinServerConfiguration configuration) {
         this.metrics = metrics;
         this.requiresAuthentication = configuration.isHealthCheckAuthenticationRequired();
     }
 
-    private static State setupState(HttpConnectionContext context) {
-        State state = LV.get(context);
-        if (state != null) {
-            state.sink.clear();
-            state.sent = 0;
-        } else {
-            LV.set(context, state = new State());
-        }
-        return state;
-    }
-
-    private boolean writeNextChunk(HttpChunkedResponseSocket r, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        final int remain = state.sink.length() - state.sent;
-        final int avail = r.availForWrite();
-        System.err.println("writeNextChunk :: (A) remain: " + remain + ", avail: " + avail);
-        final int chunkLen = Math.min(avail, remain);
-        r.writeBytes(state.sink.getPtr() + state.sent, chunkLen);
-        final boolean done = chunkLen == remain;
-        state.lastChunkLen = chunkLen;
-        System.err.println("writeNextChunk :: (B) done: " + done);
-        return done;
-    }
-
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        System.err.println("onRequestComplete :: (A)");
         final State state = setupState(context);
 
         // We double-buffer the metrics response.
@@ -87,35 +53,102 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
         r.status(200, CONTENT_TYPE_TEXT);
         r.sendHeader();
-        sendResponse(r, state);
-    }
-
-    private void sendResponse(HttpChunkedResponseSocket r, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        boolean done = false;
-        while (!done) {
-            System.err.println("onRequestComplete :: (A)");
-            done = writeNextChunk(r, state);
-            r.sendChunk(done);
-
-            // `writeNextChunk` and `sendChunk` may raise `PeerIsSlowToReadException`.
-            // As such we track the number of sent bytes only after a successful call.
-            // If `PeerIsSlowToReadException` is raised, the rest will be sent later via `resumeSend`.
-            state.sent += state.lastChunkLen;
-        }
-    }
-
-    @Override
-    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // Continues after `PeerIsSlowToReadException` is thrown.
-        final State state = LV.get(context);
-        assert state != null;
-
-        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        sendResponse(r, state);
+        sendResponse("onRequestComplete", r, state);
     }
 
     @Override
     public boolean requiresAuthentication() {
         return requiresAuthentication;
+    }
+
+    @Override
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        System.err.println("resumeSend :: (A)");
+        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        System.err.println("resumeSend :: (B) r.availForWrite(): " + r.availForWrite());
+        try {
+            context.resumeResponseSend();
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException ex) {
+            System.err.println("resumeSend :: (C) ex: " + ex);
+            throw ex;
+        }
+
+        System.err.println("resumeSend :: (C)");
+
+        // Continues after `PeerIsSlowToReadException` is thrown.
+        final State state = LV.get(context);
+        assert state != null;
+
+        System.err.println("resumeSend :: (D)");
+
+        System.err.println("resumeSend :: (E)");
+        sendResponse("resumeSend", r, state);
+
+        System.err.println("resumeSend :: (F)");
+    }
+
+    private static State setupState(HttpConnectionContext context) {
+        State state = LV.get(context);
+        if (state != null) {
+            state.reset();
+        } else {
+            LV.set(context, state = new State());
+        }
+        return state;
+    }
+
+    private void sendResponse(String caller, HttpChunkedResponseSocket r, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        System.err.println("sendResponse :: (A)");
+
+        try {
+            while (!sendNextChunk(caller, r, state)) {
+                System.err.println("sendResponse :: (B)");
+            }
+        } catch (PeerIsSlowToReadException | PeerDisconnectedException ex) {
+            System.err.println("sendResponse :: (C) ex: " + ex);
+            throw ex;
+        }
+
+        System.err.println("sendResponse :: (D)");
+    }
+
+    private boolean sendNextChunk(String caller, HttpChunkedResponseSocket r, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        final int remain = state.sink.length() - state.written;
+        final int avail = r.availForWrite();
+        System.err.println(caller + " -> sendNextChunk :: (A) remain: " + remain + ", avail: " + avail);
+        if (avail == 0) {
+            System.err.println(caller + " -> sendNextChunk :: (B) avail == 0, throwing PeerIsSlowToReadException");
+            throw PeerIsSlowToReadException.INSTANCE;
+        }
+        final int chunkLen = Math.min(avail, remain);
+        r.writeBytes(state.sink.getPtr() + state.written, chunkLen);
+        state.written += chunkLen;
+        final boolean done = chunkLen == remain;
+        System.err.println(caller + " -> sendNextChunk :: (C) done: " + done);
+        r.sendChunk(done);
+        System.err.println(caller + " -> sendNextChunk :: (D) (sent!) done: " + done);
+        return done;
+    }
+
+    private static class State implements QuietCloseable {
+        /**
+         * Metrics serialization destination, sent into one or more chunks later.
+         */
+        public final DirectByteCharSink sink = new DirectByteCharSink(4096);  // 1 page on most systems
+
+        /**
+         * Total number of bytes written to one or more chunks (`HttpChunkedResponseSocket` objects).
+         */
+        public int written = 0;
+
+        @Override
+        public void close() {
+            sink.close();
+        }
+
+        public void reset() {
+            sink.clear();
+            written = 0;
+        }
     }
 }
