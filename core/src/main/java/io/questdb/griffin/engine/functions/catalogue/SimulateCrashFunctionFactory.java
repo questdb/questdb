@@ -29,8 +29,10 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
@@ -51,11 +53,12 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) {
 
         if (configuration.getSimulateCrashEnabled()) {
@@ -82,6 +85,12 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            executionContext.getSecurityContext().authorizeAdminAction();
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return true;
         }
@@ -97,6 +106,12 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             throw CairoException.critical(1).put("simulated cairo exception");
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override
@@ -117,6 +132,12 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            executionContext.getSecurityContext().authorizeAdminAction();
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return true;
         }
@@ -134,6 +155,12 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            executionContext.getSecurityContext().authorizeAdminAction();
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("simulate_crash(oom)");
         }
@@ -144,6 +171,12 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             Unsafe.getUnsafe().getLong(0L);
             return true;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override
