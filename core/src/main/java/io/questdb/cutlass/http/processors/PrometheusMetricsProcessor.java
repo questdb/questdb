@@ -69,16 +69,19 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCl
         return requiresAuthentication;
     }
 
+    /**
+     * Continues after `PeerIsSlowToReadException` was thrown
+     * by `onRequestComplete` or earlier call to `resumeSend`.
+     */
     @Override
     public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // Continues after `PeerIsSlowToReadException` is thrown.
 
-        // Send the remainder of the current chunk.
+        // Send the remainder of the current, partially sent, chunk.
         context.resumeResponseSend();
+
+        // Send any remaining chunks, if any.
         final RequestState state = LV.get(context);
         assert state != null;
-
-        // Send any remaining chunks.
         final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
         sendResponse(r, state);
     }
