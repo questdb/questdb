@@ -89,9 +89,6 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCl
     private boolean sendNextChunk(HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
         final int remain = state.sink.length() - state.written;
         final int avail = r.availForWrite();
-        if (avail == 0) {
-            throw PeerIsSlowToReadException.INSTANCE;
-        }
         final int chunkLen = Math.min(avail, remain);
         r.writeBytes(state.sink.getPtr() + state.written, chunkLen);
         state.written += chunkLen;
