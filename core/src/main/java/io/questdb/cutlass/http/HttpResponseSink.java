@@ -474,20 +474,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public int availForWrite() {
-            return (int) buffer.getWriteNAvailable();
-        }
-
-        @Override
-        public void writeBytes(long srcAddr, int len) {
+        public int writeBytes(long srcAddr, int len) {
             assert len >= 0;
-            if (len > availForWrite()) {
-                // We raise this exception instead of NoSpaceLeftInResponseBufferException because
-                // this API usage would be invalid, and we don't want to trigger another chunked response.
-                throw BufferOverflowException.INSTANCE;
-            }
+            len = Math.min(len, (int) buffer.getWriteNAvailable());
             Vect.memcpy(buffer.getWriteAddress(len), srcAddr, len);
             buffer.onWrite(len);
+            return len;
         }
     }
 
