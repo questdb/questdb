@@ -60,16 +60,20 @@ public class InputFormatConfiguration {
     private final DateLocale dateLocale;
     private final DateLocaleFactory dateLocaleFactory;
     private final ObjList<DateLocale> dateLocales = new ObjList<>();
+    private final ObjList<String> datePatterns = new ObjList<>();
     private final IntList dateUtf8Flags = new IntList();
     private final TimestampFormatFactory timestampFormatFactory;
     private final ObjList<DateFormat> timestampFormats = new ObjList<>();
     private final ObjList<DateLocale> timestampLocales = new ObjList<>();
+    private final ObjList<String> timestampPatterns = new ObjList<>();
     private final IntList timestampUtf8Flags = new IntList();
     private DateFormat jsonDateFormat;
+    private String jsonDateFormatPattern;
     private DateLocale jsonDateLocale;
     private boolean jsonDateUtf8;
     private int jsonState = STATE_EXPECT_TOP; // expect start of object
     private DateFormat jsonTimestampFormat;
+    private String jsonTimestampFormatPattern;
     private DateLocale jsonTimestampLocale;
     private boolean jsonTimestampUtf8;
 
@@ -89,16 +93,20 @@ public class InputFormatConfiguration {
         dateFormats.clear();
         dateLocales.clear();
         dateUtf8Flags.clear();
+        datePatterns.clear();
         timestampFormats.clear();
         timestampLocales.clear();
+        timestampPatterns.clear();
         timestampUtf8Flags.clear();
         jsonState = STATE_EXPECT_TOP;
         jsonDateFormat = null;
         jsonDateLocale = null;
         jsonDateUtf8 = false;
+        jsonDateFormatPattern = null;
         jsonTimestampFormat = null;
         jsonTimestampLocale = null;
         jsonTimestampUtf8 = false;
+        jsonTimestampFormatPattern = null;
     }
 
     public DateFormatFactory getDateFormatFactory() {
@@ -117,6 +125,10 @@ public class InputFormatConfiguration {
         return dateLocales;
     }
 
+    public ObjList<String> getDatePatterns() {
+        return datePatterns;
+    }
+
     public IntList getDateUtf8Flags() {
         return dateUtf8Flags;
     }
@@ -131,6 +143,10 @@ public class InputFormatConfiguration {
 
     public ObjList<DateLocale> getTimestampLocales() {
         return timestampLocales;
+    }
+
+    public ObjList<String> getTimestampPatterns() {
+        return timestampPatterns;
     }
 
     public IntList getTimestampUtf8Flags() {
@@ -205,6 +221,7 @@ public class InputFormatConfiguration {
                         dateFormats.add(jsonDateFormat);
                         dateLocales.add(jsonDateLocale == null ? dateLocale : jsonDateLocale);
                         dateUtf8Flags.add(jsonDateUtf8 ? 1 : 0);
+                        datePatterns.add(jsonDateFormatPattern);
                         break;
                     case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
                         if (jsonTimestampFormat == null) {
@@ -214,6 +231,7 @@ public class InputFormatConfiguration {
                         timestampFormats.add(jsonTimestampFormat);
                         timestampLocales.add(jsonTimestampLocale == null ? dateLocale : jsonTimestampLocale);
                         timestampUtf8Flags.add(jsonTimestampUtf8 ? 1 : 0);
+                        timestampPatterns.add(jsonTimestampFormatPattern);
                         break;
                     default:
                         // the only time we get here would be when
@@ -251,10 +269,11 @@ public class InputFormatConfiguration {
                     case STATE_EXPECT_DATE_FORMAT_VALUE:
                         // date format
                         assert jsonDateFormat == null;
-                        if (Chars.equals("null", tag)) {
+                        if (tag == null) {
                             throw JsonException.$(position, "null format");
                         }
                         jsonDateFormat = dateFormatFactory.get(tag);
+                        jsonDateFormatPattern = Chars.toString(tag);
                         jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;
                         break;
                     case STATE_EXPECT_DATE_LOCALE_VALUE: // date locale
@@ -267,10 +286,11 @@ public class InputFormatConfiguration {
                         break;
                     case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE: // timestamp format
                         assert jsonTimestampFormat == null;
-                        if (Chars.equals("null", tag)) {
+                        if (tag == null) {
                             throw JsonException.$(position, "null format");
                         }
                         jsonTimestampFormat = timestampFormatFactory.get(tag);
+                        jsonTimestampFormatPattern = Chars.toString(tag);
                         jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;
                         break;
                     case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:

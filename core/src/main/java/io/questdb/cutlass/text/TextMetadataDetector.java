@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.text.schema2.SchemaV2;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
@@ -42,7 +43,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final IntList _histogram = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
-    private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
+    private final SchemaV2 schema;
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
     private final LowerCaseCharSequenceHashSet uniqueColumnNames = new LowerCaseCharSequenceHashSet();
@@ -54,10 +55,12 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
 
     public TextMetadataDetector(
             TypeManager typeManager,
-            TextConfiguration textConfiguration
+            TextConfiguration textConfiguration,
+            SchemaV2 schema
     ) {
         this.typeManager = typeManager;
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        this.schema = schema;
     }
 
     @Override
@@ -70,7 +73,6 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         fieldCount = 0;
         header = false;
         columnTypes.clear();
-        schemaColumns.clear();
         forceHeader = false;
     }
 
@@ -122,10 +124,12 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             }
         }
 
+
+        int schemaColumnCount = schema.getColumnCount();
         // override calculated types with user-supplied information
-        if (schemaColumns.size() > 0) {
+        if (schemaColumnCount > 0) {
             for (int i = 0, k = columnNames.size(); i < k; i++) {
-                TypeAdapter type = schemaColumns.get(columnNames.getQuick(i));
+                TypeAdapter type = schema.findFirstFormat(columnNames.getQuick(i));
                 if (type != null) {
                     columnTypes.setQuick(i, type);
                 }
@@ -137,15 +141,8 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         return header;
     }
 
-    public void of(CharSequence tableName, ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
+    public void of(CharSequence tableName, boolean forceHeader) {
         clear();
-        if (names != null && types != null) {
-            final int n = names.size();
-            assert n == types.size();
-            for (int i = 0; i < n; i++) {
-                schemaColumns.put(names.getQuick(i), types.getQuick(i));
-            }
-        }
         this.forceHeader = forceHeader;
         this.tableName = tableName;
     }

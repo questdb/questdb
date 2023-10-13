@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.json;
 
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
@@ -314,7 +315,7 @@ public class JsonLexer implements Mutable, Closeable {
         } else {
             utf8DecodeCacheAndBuffer(lo, hi - 1, position);
         }
-        return sink;
+        return SqlKeywords.isNullKeyword(sink) ? null : sink;
     }
 
     private void utf8DecodeCacheAndBuffer(long lo, long hi, int position) throws JsonException {

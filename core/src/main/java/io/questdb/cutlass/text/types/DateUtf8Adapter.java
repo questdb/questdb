@@ -31,6 +31,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 
@@ -38,6 +39,7 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     private final DirectCharSink utf8Sink;
     private DateFormat format;
     private DateLocale locale;
+    private String pattern;
 
     public DateUtf8Adapter(DirectCharSink utf8Sink) {
         this.utf8Sink = utf8Sink;
@@ -54,7 +56,8 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
         return ColumnType.DATE;
     }
 
-    public DateUtf8Adapter of(DateFormat format, DateLocale locale) {
+    public DateUtf8Adapter of(String pattern, DateFormat format, DateLocale locale) {
+        this.pattern = pattern;
         this.format = format;
         this.locale = locale;
         return this;
@@ -70,15 +73,23 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
         }
     }
 
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8ToUtf16EscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
-        row.putDate(column, format.parse(utf8Sink, locale));
+    public void toSink(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("pattern").put(':').putQuoted(pattern).put(',');
+        sink.putQuoted("locale").put(':').putQuoted(locale.getLocaleName()).put(',');
+        sink.putQuoted("utf8").put(':').put("true");
+        sink.put('}');
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         write(row, column, value, utf8Sink);
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
+        utf8Sink.clear();
+        TextUtil.utf8ToUtf16EscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
+        row.putDate(column, format.parse(utf8Sink, locale));
     }
 }

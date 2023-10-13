@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.text.schema2.SchemaV2;
 import io.questdb.cutlass.text.types.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -90,6 +91,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final ObjList<PartitionInfo> partitions;
     private final Sequence pubSeq;
     private final RingQueue<CopyTask> queue;
+    private final SchemaV2 schema = new SchemaV2();
     private final IntList symbolCapacities;
     private final TableStructureAdapter targetTableStructure;
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
@@ -173,7 +175,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
-        this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+        this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration, schema);
 
         this.targetTableStructure = new TableStructureAdapter(configuration);
         this.targetTableStatus = -1;
@@ -318,6 +320,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         atomicity = Atomicity.SKIP_COL;
         taskCount = -1;
         createdWorkDir = false;
+        schema.clear();
     }
 
     @Override
@@ -358,6 +361,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (timestampFormat != null) {
             DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
             this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(
+                    Chars.toString(timestampFormat),
                     false,
                     dateFormat,
                     configuration.getTextConfiguration().getDefaultDateLocale()
@@ -443,14 +447,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 AbstractTextLexer lexer = tlw.getLexer(columnDelimiter);
                 lexer.setSkipLinesWithExtraValues(false);
 
-                final ObjList<CharSequence> names = new ObjList<>();
-                final ObjList<TypeAdapter> types = new ObjList<>();
                 if (timestampColumn != null && timestampAdapter != null) {
-                    names.add(timestampColumn);
-                    types.add(timestampAdapter);
+                    schema.addColumn(timestampColumn, ColumnType.TIMESTAMP, timestampAdapter);
                 }
 
-                textMetadataDetector.of(tableName, names, types, forceHeader);
+                textMetadataDetector.of(tableName, forceHeader);
                 lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
                 textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
                 forceHeader = textMetadataDetector.isHeader();

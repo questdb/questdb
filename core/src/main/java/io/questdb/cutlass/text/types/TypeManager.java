@@ -61,23 +61,45 @@ public class TypeManager implements Mutable {
 
         final ObjList<DateFormat> dateFormats = inputFormatConfiguration.getDateFormats();
         final ObjList<DateLocale> dateLocales = inputFormatConfiguration.getDateLocales();
+        final ObjList<String> datePatterns = inputFormatConfiguration.getDatePatterns();
         final IntList dateUtf8Flags = inputFormatConfiguration.getDateUtf8Flags();
         for (int i = 0, n = dateFormats.size(); i < n; i++) {
             if (dateUtf8Flags.getQuick(i) == 1) {
-                probes.add(new DateUtf8Adapter(utf8Sink).of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
+                probes.add(
+                        new DateUtf8Adapter(utf8Sink).of(
+                                datePatterns.getQuick(i),
+                                dateFormats.getQuick(i),
+                                dateLocales.getQuick(i)
+                        )
+                );
             } else {
-                probes.add(new DateAdapter().of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
+                probes.add(
+                        new DateAdapter().of(
+                                datePatterns.getQuick(i),
+                                dateFormats.getQuick(i),
+                                dateLocales.getQuick(i)
+                        )
+                );
             }
         }
 
         final ObjList<DateFormat> timestampFormats = inputFormatConfiguration.getTimestampFormats();
         final ObjList<DateLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
+        final ObjList<String> timestampPatterns = inputFormatConfiguration.getTimestampPatterns();
         final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
             if (timestampUtf8Flags.getQuick(i) == 1) {
-                probes.add(new TimestampUtf8Adapter(utf8Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+                probes.add(new TimestampUtf8Adapter(utf8Sink).of(
+                        timestampPatterns.getQuick(i),
+                        timestampFormats.getQuick(i),
+                        timestampLocales.getQuick(i))
+                );
             } else {
-                probes.add(new TimestampAdapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+                probes.add(new TimestampAdapter().of(
+                        timestampPatterns.getQuick(i),
+                        timestampFormats.getQuick(i),
+                        timestampLocales.getQuick(i))
+                );
             }
         }
         this.probeCount = probes.size();
@@ -155,15 +177,15 @@ public class TypeManager implements Mutable {
         return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;
     }
 
-    public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, DateFormat format, DateLocale locale) {
+    public TypeAdapter nextTimestampAdapter(String pattern, boolean decodeUtf8, DateFormat format, DateLocale locale) {
         if (decodeUtf8) {
             TimestampUtf8Adapter adapter = timestampUtf8AdapterPool.next();
-            adapter.of(format, locale);
+            adapter.of(pattern, format, locale);
             return adapter;
         }
 
         TimestampAdapter adapter = timestampAdapterPool.next();
-        adapter.of(format, locale);
+        adapter.of(pattern, format, locale);
         return adapter;
     }
 

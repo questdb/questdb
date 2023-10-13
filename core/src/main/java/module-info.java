@@ -110,6 +110,7 @@ open module io.questdb {
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
     exports io.questdb.client;
+    exports io.questdb.cutlass.text.schema2;
 
     provides FunctionFactory with
             // test functions

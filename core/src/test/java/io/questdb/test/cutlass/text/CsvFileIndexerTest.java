@@ -195,7 +195,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
             try (CsvFileIndexer indexer = new CsvFileIndexer(conf);
                  DirectCharSink sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize())) {
 
-                long length = ff.length(Path.getThreadLocal(inputRoot).concat(fileName).$());
+                @SuppressWarnings("resource") long length = ff.length(Path.getThreadLocal(inputRoot).concat(fileName).$());
 
                 indexer.of(
                         fileName,
@@ -232,7 +232,10 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
         TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         TypeManager typeManager = new TypeManager(textConfiguration, sink);
         DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get("yyyy-MM-ddTHH:mm:ss.SSSZ");
-        return (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
+        return (TimestampAdapter) typeManager.nextTimestampAdapter(
+                "yyyy-MM-ddTHH:mm:ss.SSSZ",
+                false,
+                dateFormat,
                 configuration.getTextConfiguration().getDefaultDateLocale()
         );
     }

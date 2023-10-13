@@ -27,7 +27,7 @@ package io.questdb.test.cutlass.text;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
-import io.questdb.cutlass.text.TextMetadataParser;
+import io.questdb.cutlass.text.SchemaV1Parser;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -35,9 +35,9 @@ import io.questdb.std.str.DirectCharSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-public class TextMetadataParserTest {
+public class SchemaV1ParserTest {
     private static final JsonLexer LEXER = new JsonLexer(1024, 4096);
-    private static TextMetadataParser textMetadataParser;
+    private static SchemaV1Parser schemaV1Parser;
     private static TypeManager typeManager;
     private static DirectCharSink utf8Sink;
 
@@ -48,7 +48,7 @@ public class TextMetadataParserTest {
                 new DefaultTextConfiguration(),
                 utf8Sink
         );
-        textMetadataParser = new TextMetadataParser(
+        schemaV1Parser = new SchemaV1Parser(
                 new DefaultTextConfiguration(),
                 typeManager
         );
@@ -58,13 +58,13 @@ public class TextMetadataParserTest {
     public static void tearDown() {
         LEXER.close();
         utf8Sink.close();
-        textMetadataParser.close();
+        schemaV1Parser.close();
     }
 
     @Before
     public void setUp() {
         LEXER.clear();
-        textMetadataParser.clear();
+        schemaV1Parser.clear();
         typeManager.clear();
     }
 
@@ -88,11 +88,11 @@ public class TextMetadataParserTest {
 
         long buf = TestUtils.toMemory(in);
         try {
-            LEXER.parse(buf, buf + in.length(), textMetadataParser);
-            Assert.assertEquals(2, textMetadataParser.getColumnTypes().size());
-            Assert.assertEquals(2, textMetadataParser.getColumnNames().size());
-            Assert.assertEquals("[INT,DATE]", textMetadataParser.getColumnTypes().toString());
-            Assert.assertEquals("[x,y]", textMetadataParser.getColumnNames().toString());
+            LEXER.parse(buf, buf + in.length(), schemaV1Parser);
+            Assert.assertEquals(2, schemaV1Parser.getColumnTypes().size());
+            Assert.assertEquals(2, schemaV1Parser.getColumnNames().size());
+            Assert.assertEquals("[INT,DATE]", schemaV1Parser.getColumnTypes().toString());
+            Assert.assertEquals("[x,y]", schemaV1Parser.getColumnNames().toString());
         } finally {
             Unsafe.free(buf, in.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -104,9 +104,9 @@ public class TextMetadataParserTest {
 
         long buf = TestUtils.toMemory(in);
         try {
-            LEXER.parse(buf, buf + in.length(), textMetadataParser);
-            Assert.assertEquals(0, textMetadataParser.getColumnTypes().size());
-            Assert.assertEquals(0, textMetadataParser.getColumnNames().size());
+            LEXER.parse(buf, buf + in.length(), schemaV1Parser);
+            Assert.assertEquals(0, schemaV1Parser.getColumnTypes().size());
+            Assert.assertEquals(0, schemaV1Parser.getColumnNames().size());
         } finally {
             Unsafe.free(buf, in.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -188,7 +188,7 @@ public class TextMetadataParserTest {
     private void assertFailure(CharSequence schema, int position, CharSequence message) {
         long buf = TestUtils.toMemory(schema);
         try {
-            LEXER.parse(buf, buf + schema.length(), textMetadataParser);
+            LEXER.parse(buf, buf + schema.length(), schemaV1Parser);
             Assert.fail();
         } catch (JsonException e) {
             Assert.assertEquals(position, e.getPosition());

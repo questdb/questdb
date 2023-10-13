@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.text.schema2.SchemaV2;
 import io.questdb.cutlass.text.types.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -59,12 +60,13 @@ public class TextLoader implements Closeable, Mutable {
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
     private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final IntList remapIndex = new IntList();
+    private final SchemaV2 schema = new SchemaV2();
+    private final SchemaV1Parser schemaV1Parser;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration;
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
-    private final TextMetadataParser textMetadataParser;
     private final TextLexerWrapper tlw;
     private final TypeManager typeManager;
     private final DirectCharSink utf8Sink;
@@ -84,16 +86,15 @@ public class TextLoader implements Closeable, Mutable {
     private boolean skipLinesWithExtraValues = true;
     private int state;
     private CharSequence tableName;
-    private boolean walTable;
     private TimestampAdapter timestampAdapter;
-    private CharSequence timestampColumn;
+    private CharSequence timestampColumnName;
     private int timestampIndex = NO_INDEX;
+    private boolean walTable;
     private int warnings;
     private TableWriterAPI writer;
     private int writtenLineCount;
     private final CsvTextLexer.Listener partitionedListener = this::onFieldsPartitioned;
     private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
-
 
     public TextLoader(CairoEngine engine) {
         this.engine = engine;
@@ -103,8 +104,8 @@ public class TextLoader implements Closeable, Mutable {
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
-        textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
-        textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
+        textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration, schema);
+        schemaV1Parser = new SchemaV1Parser(textConfiguration, typeManager);
         textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
         textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
         parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
@@ -133,7 +134,7 @@ public class TextLoader implements Closeable, Mutable {
             lexer.clear();
             lexer = null;
         }
-        textMetadataParser.clear();
+        schemaV1Parser.clear();
         textMetadataDetector.clear();
         jsonLexer.clear();
         forceHeaders = false;
@@ -149,7 +150,7 @@ public class TextLoader implements Closeable, Mutable {
         Misc.free(ddlMem);
         Misc.free(tlw);
         Misc.free(textMetadataDetector);
-        Misc.free(textMetadataParser);
+        Misc.free(schemaV1Parser);
         Misc.free(jsonLexer);
         Misc.free(path);
         Misc.free(textDelimiterScanner);
@@ -188,12 +189,17 @@ public class TextLoader implements Closeable, Mutable {
         this.partitionBy = partitionBy;
         this.importedTimestampColumnName = timestampColumn;
         this.textDelimiterScanner.setTableName(tableName);
-        this.textMetadataParser.setTableName(tableName);
-        this.timestampColumn = timestampColumn;
+        this.schemaV1Parser.setTableName(tableName);
+        this.timestampColumnName = timestampColumn;
+        this.schema.clear();
         if (timestampFormat != null) {
             DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
-            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
-                    textConfiguration.getDefaultDateLocale());
+            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(
+                    Chars.toString(timestampFormat),
+                    false,
+                    dateFormat,
+                    textConfiguration.getDefaultDateLocale()
+            );
         }
 
         LOG.info()
@@ -500,7 +506,7 @@ public class TextLoader implements Closeable, Mutable {
 
     private void parseJsonMetadata(long lo, long hi, SecurityContext securityContext) throws TextException {
         try {
-            jsonLexer.parse(lo, hi, textMetadataParser);
+            jsonLexer.parse(lo, hi, schemaV1Parser);
         } catch (JsonException e) {
             throw TextException.$(e.getFlyweightMessage());
         }
@@ -513,20 +519,27 @@ public class TextLoader implements Closeable, Mutable {
             setDelimiter(textDelimiterScanner.scan(lo, hi));
         }
 
-        if (timestampColumn != null && timestampAdapter != null) {
-            textMetadataParser.getColumnNames().add(timestampColumn);
-            textMetadataParser.getColumnTypes().add(timestampAdapter);
+        if (timestampColumnName != null && timestampAdapter != null) {
+            schema.addColumn(timestampColumnName, ColumnType.TIMESTAMP, timestampAdapter);
         }
 
-        textMetadataDetector.of(
-                getTableName(),
-                textMetadataParser.getColumnNames(),
-                textMetadataParser.getColumnTypes(),
-                forceHeaders
-        );
+        final ObjList<CharSequence> columnNames = schemaV1Parser.getColumnNames();
+        final ObjList<TypeAdapter> columnTypes = schemaV1Parser.getColumnTypes();
+
+        final int n = columnNames.size();
+        assert n == columnTypes.size();
+        for (int i = 0; i < n; i++) {
+            TypeAdapter columnType = columnTypes.getQuick(i);
+            schema.addColumn(columnNames.getQuick(i), columnType.getType(), columnType);
+        }
+
+        textMetadataDetector.of(getTableName(), forceHeaders);
+
         parse(lo, hi, textAnalysisMaxLines, textMetadataDetector);
         textMetadataDetector.evaluateResults(getParsedLineCount(), getErrorLineCount());
         restart(textMetadataDetector.isHeader());
+
+        // todo: use schema
         ObjList<CharSequence> names = textMetadataDetector.getColumnNames();
         ObjList<TypeAdapter> types = textMetadataDetector.getColumnTypes();
 
@@ -686,7 +699,7 @@ public class TextLoader implements Closeable, Mutable {
 
         @Override
         public boolean isWalEnabled() {
-            return walTable && PartitionBy.isPartitioned(partitionBy) && !Chars.isBlank(timestampColumn);
+            return walTable && PartitionBy.isPartitioned(partitionBy) && !Chars.isBlank(timestampColumnName);
         }
 
         TableStructureAdapter of(ObjList<CharSequence> columnNames, ObjList<TypeAdapter> columnTypes) throws TextException {

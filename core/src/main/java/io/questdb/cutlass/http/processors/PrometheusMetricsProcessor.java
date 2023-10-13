@@ -47,9 +47,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
         r.status(200, CONTENT_TYPE_TEXT);
         r.sendHeader();
-
         metrics.scrapeIntoPrometheus(r);
-
         r.done();
     }
 

@@ -34,6 +34,7 @@ public class DateLocale {
     private final String[] eraArray;
     private final IntObjHashMap<ObjList<CharSequence>> eras = new IntObjHashMap<>();
     private final TimeZoneRuleFactory factory;
+    private final String localeName;
     private final String[] monthArray;
     private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
     private final String[] shortMonthArray;
@@ -42,7 +43,8 @@ public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> weekdays = new IntObjHashMap<>();
     private final IntObjHashMap<ObjList<CharSequence>> zones = new IntObjHashMap<>();
 
-    public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
+    public DateLocale(String localeName, DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
+        this.localeName = localeName;
         this.factory = timeZoneRuleFactory;
         index(monthArray = symbols.getMonths(), months);
         index(shortMonthArray = symbols.getShortMonths(), months);
@@ -72,6 +74,10 @@ public class DateLocale {
 
     public String getEra(int index) {
         return eraArray[index];
+    }
+
+    public String getLocaleName() {
+        return localeName;
     }
 
     public String getMonth(int index) {
@@ -119,7 +125,7 @@ public class DateLocale {
     }
 
     private static void defineToken(String token, int pos, IntObjHashMap<ObjList<CharSequence>> map) {
-        if (token == null || token.length() == 0) {
+        if (token == null || token.isEmpty()) {
             return;
         }
 

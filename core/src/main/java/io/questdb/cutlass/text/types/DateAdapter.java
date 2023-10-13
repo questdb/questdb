@@ -30,16 +30,19 @@ import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class DateAdapter extends AbstractTypeAdapter implements Mutable, TimestampCompatibleAdapter {
     private DateFormat format;
     private DateLocale locale;
+    private String pattern;
 
     @Override
     public void clear() {
         this.format = null;
         this.locale = null;
+        this.pattern = null;
     }
 
     @Override
@@ -52,7 +55,8 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
         return ColumnType.DATE;
     }
 
-    public DateAdapter of(DateFormat format, DateLocale locale) {
+    public DateAdapter of(String pattern, DateFormat format, DateLocale locale) {
+        this.pattern = pattern;
         this.format = format;
         this.locale = locale;
         return this;
@@ -66,6 +70,14 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
         } catch (NumericException e) {
             return false;
         }
+    }
+
+    public void toSink(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("pattern").put(':').putQuoted(pattern).put(',');
+        sink.putQuoted("locale").put(':').putQuoted(locale.getLocaleName()).put(',');
+        sink.putQuoted("utf8").put(':').put("false");
+        sink.put('}');
     }
 
     @Override

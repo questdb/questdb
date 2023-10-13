@@ -26,8 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.TextUtil;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 
@@ -39,10 +38,18 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
         this.utf8Sink = utf8Sink;
     }
 
-    public TimestampUtf8Adapter of(DateFormat format, DateLocale locale) {
-        this.format = format;
-        this.locale = locale;
-        return this;
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("pattern").put(':').putQuoted(pattern).put(',');
+        sink.putQuoted("locale").put(':').putQuoted(locale.getLocaleName()).put(',');
+        sink.putQuoted("utf8").put(':').put("true");
+        sink.put('}');
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        write(row, column, value, utf8Sink);
     }
 
     @Override
@@ -50,10 +57,5 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
         utf8Sink.clear();
         TextUtil.utf8ToUtf16EscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
         row.putDate(column, format.parse(utf8Sink, locale));
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        write(row, column, value, utf8Sink);
     }
 }

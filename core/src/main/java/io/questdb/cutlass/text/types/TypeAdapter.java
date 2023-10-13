@@ -25,10 +25,12 @@
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 
-public interface TypeAdapter {
+public interface TypeAdapter extends Sinkable {
 
     int getType();
 
@@ -42,5 +44,10 @@ public interface TypeAdapter {
 
     default void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
         write(row, column, value);
+    }
+
+    @Override
+    default void toSink(CharSink sink) {
+        sink.put("{}");
     }
 }
