@@ -28,23 +28,32 @@ import io.questdb.cutlass.http.*;
 import io.questdb.metrics.Scrapable;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectByteCharSink;
 
-public class PrometheusMetricsProcessor implements HttpRequestProcessor {
+public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCloseable {
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
-    private static final LocalValue<State> LV = new LocalValue<>();
+    private static final LocalValue<RequestState> LV = new LocalValue<>();
     private final Scrapable metrics;
+    private final RequestStatePool pool;
     private final boolean requiresAuthentication;
+
     public PrometheusMetricsProcessor(Scrapable metrics, HttpMinServerConfiguration configuration) {
         this.metrics = metrics;
         this.requiresAuthentication = configuration.isHealthCheckAuthenticationRequired();
+        this.pool = new RequestStatePool(configuration.getWorkerCount());
+    }
+
+    @Override
+    public void close() {
+        pool.close();
     }
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         System.err.println("onRequestComplete :: (A)");
-        final State state = setupState(context);
+        final RequestState state = setupState(context);
 
         // We double-buffer the metrics response.
         // This is because we send back chunked responses and each chunk may not be large enough.
@@ -76,7 +85,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         System.err.println("resumeSend :: (C)");
 
         // Continues after `PeerIsSlowToReadException` is thrown.
-        final State state = LV.get(context);
+        final RequestState state = LV.get(context);
         assert state != null;
 
         System.err.println("resumeSend :: (D)");
@@ -87,32 +96,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         System.err.println("resumeSend :: (F)");
     }
 
-    private static State setupState(HttpConnectionContext context) {
-        State state = LV.get(context);
-        if (state != null) {
-            state.reset();
-        } else {
-            LV.set(context, state = new State());
-        }
-        return state;
-    }
-
-    private void sendResponse(String caller, HttpChunkedResponseSocket r, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        System.err.println("sendResponse :: (A)");
-
-        try {
-            while (!sendNextChunk(caller, r, state)) {
-                System.err.println("sendResponse :: (B)");
-            }
-        } catch (PeerIsSlowToReadException | PeerDisconnectedException ex) {
-            System.err.println("sendResponse :: (C) ex: " + ex);
-            throw ex;
-        }
-
-        System.err.println("sendResponse :: (D)");
-    }
-
-    private boolean sendNextChunk(String caller, HttpChunkedResponseSocket r, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    private boolean sendNextChunk(String caller, HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
         final int remain = state.sink.length() - state.written;
         final int avail = r.availForWrite();
         System.err.println(caller + " -> sendNextChunk :: (A) remain: " + remain + ", avail: " + avail);
@@ -130,25 +114,91 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         return done;
     }
 
-    private static class State implements QuietCloseable {
+    private void sendResponse(String caller, HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        System.err.println("sendResponse :: (A)");
+
+        try {
+            while (!sendNextChunk(caller, r, state)) {
+                System.err.println("sendResponse :: (B)");
+            }
+        } catch (PeerIsSlowToReadException | PeerDisconnectedException ex) {
+            System.err.println("sendResponse :: (C) ex: " + ex);
+            throw ex;
+        }
+
+        System.err.println("sendResponse :: (D)");
+    }
+
+    private RequestState setupState(HttpConnectionContext context) {
+        RequestState state = pool.take();
+        LV.set(context, state);
+        return state;
+    }
+
+    /**
+     * State for processing a single request across multiple response chunks.
+     * Each object is used for the lifetime of one request, then returned the pool.
+     */
+    private static class RequestState implements QuietCloseable {
         /**
          * Metrics serialization destination, sent into one or more chunks later.
          */
-        public final DirectByteCharSink sink = new DirectByteCharSink(4096);  // 1 page on most systems
-
+        public final DirectByteCharSink sink = new DirectByteCharSink(4096);  // One page on most systems.
+        private final RequestStatePool pool;
         /**
          * Total number of bytes written to one or more chunks (`HttpChunkedResponseSocket` objects).
          */
         public int written = 0;
 
-        @Override
-        public void close() {
-            sink.close();
+        private RequestState(RequestStatePool pool) {
+            this.pool = pool;
         }
 
-        public void reset() {
+        /**
+         * Return to pool at the end of a request.
+         */
+        @Override
+        public void close() {
             sink.clear();
             written = 0;
+            pool.give(this);
+        }
+
+        /**
+         * Release off-heap buffer.
+         */
+        public void free() {
+            sink.close();
+        }
+    }
+
+    private static class RequestStatePool implements QuietCloseable {
+        private final ObjList<RequestState> objects;
+
+        public RequestStatePool(int initialCapacity) {
+            this.objects = new ObjList<>(initialCapacity);
+        }
+
+        @Override
+        public void close() {
+            for (int i = 0, n = objects.size(); i < n; i++) {
+                objects.getQuick(i).free();
+            }
+        }
+
+        public synchronized void give(RequestState requestState) {
+            objects.add(requestState);
+        }
+
+        public synchronized RequestState take() {
+            final RequestState state;
+            if (objects.size() > 0) {
+                final int index = objects.size() - 1;
+                state = objects.getQuick(index);
+            } else {
+                state = new RequestState(this);
+            }
+            return state;
         }
     }
 }

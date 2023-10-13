@@ -64,20 +64,18 @@ public class MetricsIODispatcherTest {
             .build();
 
     @Test
+    public void testFewMetricsBigBuffers() throws Exception {
+        // In this scenario there are few metrics and the send and tcp send buffers are large.
+        // This will cover the code that handles sending a single chunk from `onRequestComplete`.
+        testPrometheusScenario(100, 1024 * 1024, 1024 * 1024);
+    }
+
+    @Test
     public void testMultiChunkResponse() throws Exception {
         // In this scenario, the metrics response is larger than the chunk size (256 bytes),
         // but fits comfortably in the tcp send buffer (1MiB).
         // This will stress the code that handles sending multiple chunks from `onRequestComplete`.
-        testPrometheusScenario(30, 1024 * 1024, 256);
-    }
-
-    @Test
-    public void testPeerIsSlowToRead() throws Exception {
-        // In this scenario, the metrics response is smaller than the chunk size (1MiB),
-        // but larger than the tcp send buffer (1KiB).
-        // This will cause `onRequestComplete` to raise `PeerIsSlowToReadException` and
-        // will stress the code that handles resending the same chunk multiple times from `resumeSend`.
-        testPrometheusScenario(10_000, 1024, 1024 * 1024);
+        testPrometheusScenario(100, 1024 * 1024, 256);
     }
 
     @Test
@@ -87,6 +85,15 @@ public class MetricsIODispatcherTest {
         // This will stress the code that handles sending multiple chunks from both `onRequestComplete` and
         // `resumeSend`.
         testPrometheusScenario(10_000, 1024, 256);
+    }
+
+    @Test
+    public void testPeerIsSlowToRead() throws Exception {
+        // In this scenario, the metrics response is smaller than the chunk size (1MiB),
+        // but larger than the tcp send buffer (1KiB).
+        // This will cause `onRequestComplete` to raise `PeerIsSlowToReadException` and
+        // will stress the code that handles resending the same chunk multiple times from `resumeSend`.
+        testPrometheusScenario(10_000, 1024, 1024 * 1024);
     }
 
     public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize) throws Exception {

@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -79,6 +80,21 @@ public class HttpMinTestBuilder {
                         return new PrometheusMetricsProcessor(scrapable, httpConfiguration);
                     }
                 });
+
+                // This `bind` for the default handler is only here to allow checking what the server behaviour is with
+                // an external web browser that would issue additional requests to `/favicon.ico`.
+                // It mirrors the setup of the min http server.
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/status";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new HealthCheckProcessor(httpConfiguration);
+                    }
+                }, true);
 
                 workerPool.start(LOG);
 
