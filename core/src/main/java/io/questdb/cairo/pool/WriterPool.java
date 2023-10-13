@@ -40,6 +40,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.Iterator;
 import java.util.Map;
 
@@ -70,6 +72,18 @@ public class WriterPool extends AbstractPool {
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
+    private final static VarHandle ENTRY_OWNER_HANDLER;
+
+    static {
+        try {
+            ENTRY_OWNER_HANDLER = MethodHandles.lookup().findVarHandle(Entry.class, "owner", long.class);
+        } catch (NoSuchFieldException e) {
+            throw new RuntimeException(e);
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;
@@ -437,9 +451,11 @@ public class WriterPool extends AbstractPool {
                 }
             }
 
-            long owner = e.owner;
             // try to change owner
-            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+            long owner = (long) ENTRY_OWNER_HANDLER.compareAndExchange(e, UNALLOCATED, thread);
+            if (owner == UNALLOCATED) {
+                // we managed to grab the writer
+
                 // in an extreme race condition it is possible that e.writer will be null
                 // in this case behaviour should be identical to entry missing entirely
                 if (e.writer == null) {
@@ -448,6 +464,9 @@ public class WriterPool extends AbstractPool {
                 return checkClosedAndGetWriter(tableToken, e, lockReason);
             } else {
                 if (owner < 0) {
+                    // todo: shouldn't the condition be `if (owner < -2)` ?
+                    // as now we will be looping even when the writer is used to process commands
+
                     // writer is about to be released from the pool by release method.
                     // try again, it should become available soon.
                     Os.pause();
