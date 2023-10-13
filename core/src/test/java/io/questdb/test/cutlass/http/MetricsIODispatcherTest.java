@@ -32,6 +32,7 @@ import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -42,10 +43,11 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public class MetricsIODispatcherTest {
 
+    private static final int PARALLEL_REQUESTS = 50;
     private static final String prometheusRequest = "GET /metrics HTTP/1.1\r\n" +
             "Host: localhost:9003\r\n" +
             "User-Agent: Prometheus/2.22.0\r\n" +
@@ -67,7 +69,12 @@ public class MetricsIODispatcherTest {
     public void testFewMetricsBigBuffers() throws Exception {
         // In this scenario there are few metrics and the send and tcp send buffers are large.
         // This will cover the code that handles sending a single chunk from `onRequestComplete`.
-        testPrometheusScenario(100, 1024 * 1024, 1024 * 1024);
+        testPrometheusScenario(100, 1024 * 1024, 1024 * 1024, 1);
+    }
+
+    @Test
+    public void testFewMetricsBigBuffersPar() throws Exception {
+        testPrometheusScenario(100, 1024 * 1024, 1024 * 1024, PARALLEL_REQUESTS);
     }
 
     @Test
@@ -75,7 +82,12 @@ public class MetricsIODispatcherTest {
         // In this scenario, the metrics response is larger than the chunk size (256 bytes),
         // but fits comfortably in the tcp send buffer (1MiB).
         // This will stress the code that handles sending multiple chunks from `onRequestComplete`.
-        testPrometheusScenario(100, 1024 * 1024, 256);
+        testPrometheusScenario(100, 1024 * 1024, 256, 1);
+    }
+
+    @Test
+    public void testMultiChunkResponsePar() throws Exception {
+        testPrometheusScenario(100, 1024 * 1024, 256, PARALLEL_REQUESTS);
     }
 
     @Test
@@ -84,7 +96,12 @@ public class MetricsIODispatcherTest {
         // and is also larger than the tcp send buffer (1KiB).
         // This will stress the code that handles sending multiple chunks from both `onRequestComplete` and
         // `resumeSend`.
-        testPrometheusScenario(10_000, 1024, 256);
+        testPrometheusScenario(10_000, 1024, 256, 1);
+    }
+
+    @Test
+    public void testMultipleChunksPeerIsSlowToReadPar() throws Exception {
+        testPrometheusScenario(10_000, 1024, 256, PARALLEL_REQUESTS);
     }
 
     @Test
@@ -93,10 +110,15 @@ public class MetricsIODispatcherTest {
         // but larger than the tcp send buffer (1KiB).
         // This will cause `onRequestComplete` to raise `PeerIsSlowToReadException` and
         // will stress the code that handles resending the same chunk multiple times from `resumeSend`.
-        testPrometheusScenario(10_000, 1024, 1024 * 1024);
+        testPrometheusScenario(10_000, 1024, 1024 * 1024, 1);
     }
 
-    public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize) throws Exception {
+    @Test
+    public void testPeerIsSlowToReadPar() throws Exception {
+        testPrometheusScenario(10_000, 1024, 1024 * 1024, PARALLEL_REQUESTS);
+    }
+
+    public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequests) throws Exception {
         MetricsRegistry metrics = new MetricsRegistryImpl();
         for (int i = 0; i < metricCount; i++) {
             metrics.newCounter("testMetrics" + i).add(i);
@@ -107,34 +129,38 @@ public class MetricsIODispatcherTest {
             expectedResponse.append("questdb_testMetrics").append(i).append("_total ").append(i).append("\n").append("\n");
         }
 
+        final HttpQueryTestBuilder.HttpClientCode makeRequest = engine -> {
+            try (HttpClient client = HttpClientFactory.newInstance();
+                 HttpClient.ResponseHeaders response = client.newRequest()
+                         .GET()
+                         .url("/metrics")
+                         .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())) {
+
+                Os.sleep(1000); // wait before consuming response to increase chances of server filling up its tcp send buffer
+
+                response.await(5_000);
+                TestUtils.assertEquals("200", response.getStatusCode());
+
+                Assert.assertTrue(response.isChunked());
+                ChunkedResponse chunkedResponse = response.getChunkedResponse();
+                StringSink responseSink = new StringSink();
+
+                Chunk chunk;
+                while ((chunk = chunkedResponse.recv(5_000)) != null) {
+                    Chars.utf8toUtf16(chunk.lo(), chunk.hi(), responseSink);
+                }
+                TestUtils.assertEquals(expectedResponse, responseSink);
+            }
+        };
+
+        final HttpQueryTestBuilder.HttpClientCode clientCode = parallelizeRequests(parallelRequests, makeRequest);
+
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
                 .withScrapable(metrics)
                 .withTcpSndBufSize(tcpSndBufSize)
                 .withSendBufferSize(sendBufferSize)
-                .run(engine -> {
-                    try (HttpClient client = HttpClientFactory.newInstance();
-                         HttpClient.ResponseHeaders response = client.newRequest()
-                                 .GET()
-                                 .url("/metrics")
-                                 .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())) {
-
-                        Os.sleep(1000); // wait before consuming response to increase chances of server filling up its tcp send buffer
-
-                        response.await(5_000);
-                        TestUtils.assertEquals("200", response.getStatusCode());
-
-                        Assert.assertTrue(response.isChunked());
-                        ChunkedResponse chunkedResponse = response.getChunkedResponse();
-                        StringSink responseSink = new StringSink();
-
-                        Chunk chunk;
-                        while ((chunk = chunkedResponse.recv(5_000)) != null) {
-                            Chars.utf8toUtf16(chunk.lo(), chunk.hi(), responseSink);
-                        }
-                        TestUtils.assertEquals(expectedResponse, responseSink);
-                    }
-                });
+                .run(clientCode);
     }
 
     @Test
@@ -180,6 +206,31 @@ public class MetricsIODispatcherTest {
                             .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
                             .execute(prometheusRequest, expectedResponse);
                 });
+    }
+
+    private static HttpQueryTestBuilder.HttpClientCode parallelizeRequests(int parallelRequests, HttpQueryTestBuilder.HttpClientCode makeRequest) {
+        assert parallelRequests > 0;
+        if (parallelRequests == 1) {
+            return makeRequest;
+        }
+        return engine -> {
+            final ExecutorService execSvc = Executors.newCachedThreadPool();
+            final ObjList<Future<Void>> futures = new ObjList<>(parallelRequests);
+            for (int index = 0; index < parallelRequests; index++) {
+                futures.add(execSvc.submit(() -> {
+                    makeRequest.run(engine);
+                    return null;
+                }));
+            }
+
+            for (int index = 0; index < parallelRequests; index++) {
+                try {
+                    futures.getQuick(index).get();
+                } catch (ExecutionException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        };
     }
 
     private static class TestMetrics implements Scrapable {
