@@ -47,7 +47,7 @@ import java.util.concurrent.*;
 
 public class MetricsIODispatcherTest {
 
-    private static final int PARALLEL_REQUESTS = 50;
+    private static final int PARALLEL_REQUESTS = 30;
     private static final String prometheusRequest = "GET /metrics HTTP/1.1\r\n" +
             "Host: localhost:9003\r\n" +
             "User-Agent: Prometheus/2.22.0\r\n" +

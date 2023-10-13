@@ -52,7 +52,6 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCl
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        System.err.println("onRequestComplete :: (A)");
         final RequestState state = setupState(context);
 
         // We double-buffer the metrics response.
@@ -62,7 +61,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCl
         final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
         r.status(200, CONTENT_TYPE_TEXT);
         r.sendHeader();
-        sendResponse("onRequestComplete", r, state);
+        sendResponse(r, state);
     }
 
     @Override
@@ -72,61 +71,37 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCl
 
     @Override
     public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        System.err.println("resumeSend :: (A)");
-        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        System.err.println("resumeSend :: (B) r.availForWrite(): " + r.availForWrite());
-        try {
-            context.resumeResponseSend();
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException ex) {
-            System.err.println("resumeSend :: (C) ex: " + ex);
-            throw ex;
-        }
-
-        System.err.println("resumeSend :: (C)");
-
         // Continues after `PeerIsSlowToReadException` is thrown.
+
+        // Send the remainder of the current chunk.
+        context.resumeResponseSend();
         final RequestState state = LV.get(context);
         assert state != null;
 
-        System.err.println("resumeSend :: (D)");
-
-        System.err.println("resumeSend :: (E)");
-        sendResponse("resumeSend", r, state);
-
-        System.err.println("resumeSend :: (F)");
+        // Send any remaining chunks.
+        final HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        sendResponse(r, state);
     }
 
-    private boolean sendNextChunk(String caller, HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    private boolean sendNextChunk(HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
         final int remain = state.sink.length() - state.written;
         final int avail = r.availForWrite();
-        System.err.println(caller + " -> sendNextChunk :: (A) remain: " + remain + ", avail: " + avail);
         if (avail == 0) {
-            System.err.println(caller + " -> sendNextChunk :: (B) avail == 0, throwing PeerIsSlowToReadException");
             throw PeerIsSlowToReadException.INSTANCE;
         }
         final int chunkLen = Math.min(avail, remain);
         r.writeBytes(state.sink.getPtr() + state.written, chunkLen);
         state.written += chunkLen;
         final boolean done = chunkLen == remain;
-        System.err.println(caller + " -> sendNextChunk :: (C) done: " + done);
         r.sendChunk(done);
-        System.err.println(caller + " -> sendNextChunk :: (D) (sent!) done: " + done);
         return done;
     }
 
-    private void sendResponse(String caller, HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        System.err.println("sendResponse :: (A)");
-
-        try {
-            while (!sendNextChunk(caller, r, state)) {
-                System.err.println("sendResponse :: (B)");
-            }
-        } catch (PeerIsSlowToReadException | PeerDisconnectedException ex) {
-            System.err.println("sendResponse :: (C) ex: " + ex);
-            throw ex;
-        }
-
-        System.err.println("sendResponse :: (D)");
+    private void sendResponse(HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        boolean done;
+        do {
+            done = sendNextChunk(r, state);
+        } while (!done);
     }
 
     private RequestState setupState(HttpConnectionContext context) {
