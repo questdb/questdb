@@ -65,12 +65,28 @@ public class MetricsIODispatcherTest {
 
     @Test
     public void testMultiChunkResponse() throws Exception {
-        testPrometheusScenario(30, 0, 256);
+        // In this scenario, the metrics response is larger than the chunk size (256 bytes),
+        // but fits comfortably in the tcp send buffer (1MiB).
+        // This will stress the code that handles sending multiple chunks from `onRequestComplete`.
+        testPrometheusScenario(30, 1024 * 1024, 256);
     }
 
     @Test
-    public void testPrometheusLongOutput() throws Exception {
-        testPrometheusScenario(10_000, 1024, 0);
+    public void testPeerIsSlowToRead() throws Exception {
+        // In this scenario, the metrics response is smaller than the chunk size (1MiB),
+        // but larger than the tcp send buffer (1KiB).
+        // This will cause `onRequestComplete` to raise `PeerIsSlowToReadException` and
+        // will stress the code that handles resending the same chunk multiple times from `resumeSend`.
+        testPrometheusScenario(10_000, 1024, 1024 * 1024);
+    }
+
+    @Test
+    public void testMultipleChunksPeerIsSlowToRead() throws Exception {
+        // In this scenario, the metrics response is larger than the chunk size (256 bytes),
+        // and is also larger than the tcp send buffer (1KiB).
+        // This will stress the code that handles sending multiple chunks from both `onRequestComplete` and
+        // `resumeSend`.
+        testPrometheusScenario(10_000, 1024, 256);
     }
 
     public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize) throws Exception {
