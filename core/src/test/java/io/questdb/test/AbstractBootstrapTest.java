@@ -112,6 +112,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
             writer.println(METRICS_ENABLED + "=false");
             writer.println(TELEMETRY_ENABLED + "=false");
+            writer.println(TELEMETRY_DISABLE_COMPLETELY + "=true");
 
             // configure endpoints
             writer.println(HTTP_BIND_TO + "=0.0.0.0:" + httpPort);

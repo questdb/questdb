@@ -605,7 +605,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
             }
         } catch (CairoException e) {
-            LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();
+            if (e.isAuthorizationError()) {
+                LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$(e.getFlyweightMessage()).$();
+            } else {
+                LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();
+            }
             e.position(lexer.lastTokenPosition());
             throw e;
         }
@@ -1698,7 +1702,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     circuitBreaker
             );
         } catch (CairoException e) {
-            LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+            if (e.isAuthorizationError()) {
+                // No point printing stack trace for authorization errors
+                LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
+            } else {
+                LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+            }
             // Close writer, the table will be removed
             writerAPI = Misc.free(writerAPI);
             writer = null;
@@ -1818,7 +1827,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 } catch (EntryUnavailableException e) {
                     throw SqlException.$(name.position, "table already exists");
                 } catch (CairoException e) {
-                    LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+                    if (e.isAuthorizationError()) {
+                        // No point printing stack trace for authorization errors
+                        LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
+                    } else {
+                        LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+                    }
                     if (e.isInterruption()) {
                         throw e;
                     }
