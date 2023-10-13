@@ -168,8 +168,9 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCl
         public synchronized RequestState take() {
             final RequestState state;
             if (objects.size() > 0) {
-                final int index = objects.size() - 1;
-                state = objects.getQuick(index);
+                final int last = objects.size() - 1;
+                state = objects.getQuick(last);
+                objects.remove(last);
             } else {
                 state = new RequestState(this);
             }
