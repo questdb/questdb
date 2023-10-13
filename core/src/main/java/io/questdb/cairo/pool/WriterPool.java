@@ -40,8 +40,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.Iterator;
 import java.util.Map;
 
@@ -72,7 +70,6 @@ public class WriterPool extends AbstractPool {
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
-    private final static VarHandle ENTRY_OWNER_VARHANDLE;
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;
@@ -216,14 +213,16 @@ public class WriterPool extends AbstractPool {
             }
 
             // try to change owner
-            long owner = (long) ENTRY_OWNER_VARHANDLE.compareAndExchange(e, UNALLOCATED, thread);
-            if (owner == UNALLOCATED) {
+            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
                 closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                 if (lockAndNotify(thread, e, tableToken, lockReason)) {
                     return OWNERSHIP_REASON_NONE;
                 }
                 return reinterpretOwnershipReason(e.ownershipReason);
-            } else if (owner < QUEUE_PROCESSING_OWNER) {
+            }
+
+            long owner = e.owner;
+            if (owner < 0) {
                 // writer is about to be released from the pool by release method.
                 // try again, it should become available soon.
                 Os.pause();
@@ -231,7 +230,7 @@ public class WriterPool extends AbstractPool {
             }
 
             LOG.error().$("could not lock, busy [table=`").utf8(tableToken.getDirName())
-                    .$("`, owner=").$(e.owner)
+                    .$("`, owner=").$(owner)
                     .$(", thread=").$(thread).I$();
             notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY);
             return reinterpretOwnershipReason(e.ownershipReason);
@@ -449,8 +448,7 @@ public class WriterPool extends AbstractPool {
             }
 
             // try to change owner
-            long owner = (long) ENTRY_OWNER_VARHANDLE.compareAndExchange(e, UNALLOCATED, thread);
-            if (owner == UNALLOCATED) {
+            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
                 // we managed to grab the writer
 
                 // in an extreme race condition it is possible that e.writer will be null
@@ -460,10 +458,8 @@ public class WriterPool extends AbstractPool {
                 }
                 return checkClosedAndGetWriter(tableToken, e, lockReason);
             } else {
+                long owner = e.owner;
                 if (owner < 0) {
-                    // todo: shouldn't the condition be `if (owner < -2)` ?
-                    // as now we will be looping even when the writer is used to process commands
-
                     // writer is about to be released from the pool by release method.
                     // try again, it should become available soon.
                     Os.pause();
@@ -682,14 +678,6 @@ public class WriterPool extends AbstractPool {
                 writer = null;
             }
             return w;
-        }
-    }
-
-    static {
-        try {
-            ENTRY_OWNER_VARHANDLE = MethodHandles.lookup().findVarHandle(Entry.class, "owner", long.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new AssertionError("please report this failure as a bug", e);
         }
     }
 }
