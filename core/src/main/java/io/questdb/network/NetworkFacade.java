@@ -122,6 +122,8 @@ public interface NetworkFacade {
 
     int socketTcp(boolean blocking);
 
+    void configureKeepAlive(int fd);
+
     int socketUdp();
 
     /**

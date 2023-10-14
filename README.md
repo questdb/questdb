@@ -20,16 +20,18 @@ English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.
 # QuestDB
 
 QuestDB is an open-source [time-series database](https://questdb.io/glossary/time-series-database/) for high throughput
-ingestion and fast SQL queries with operational simplicity. It supports schema-agnostic ingestion using the InfluxDB
-line protocol, PostgreSQL wire protocol, and a REST API for bulk imports and exports.
+ingestion and fast SQL queries with operational simplicity.
 
-QuestDB is well suited for financial market data, application metrics, sensor data, real-time analytics, dashboards, and
-infrastructure monitoring.
+QuestDB is well-suited for financial market data, IoT sensor data, application metrics, real-time dashboards, and fast analytics.
 
-QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to correlate
-data from multiple sources using relational and time-series joins. We achieve high performance by adopting a
+QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to filter and downsample data, 
+or correlate data from multiple sources using relational and time-series joins. We achieve high performance by adopting a
 column-oriented storage model, parallelized vector execution, SIMD instructions, and low-latency techniques. The entire
 codebase is built from the ground up in Java and C++, with no dependencies and zero garbage collection.
+
+QuestDB supports schema-agnostic streaming ingestion using the InfluxDB line protocol and a REST API for bulk imports and exports. 
+The QuestDB SQL Web Console is an interactive SQL editor facilitating CSV import. Finally, QuestDB also includes the Postgres Wire Protocol
+for programmatic queries and interoperability with various tools such as Grafana.
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -78,18 +80,24 @@ questdb stop  // To stop questdb
 The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct downloads for binaries and has details for
 other installation and deployment methods.
 
+### QuestDB Cloud
+
+QuestDB Cloud is the fully managed version of QuestDB, with additional features such as Role-based access control,
+Cloud-native Replication, Compression, monitoring and cloud-native snapshots.
+Get started with $200 credits [here](https://cloud.questdb.com)
+
 ### Connect to QuestDB
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) for an interactive SQL editor on port `9000`
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for high-throughput ingestion on port `9009`
-- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on port `8812`
+- [Web Console](https://questdb.io/docs/develop/web-console/) for an interactive SQL editor and CSV import on port `9000`
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for streaming ingestion on port `9009`
+- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) for programmatic queries and transactional inserts on port `8812`
+- [REST API](https://questdb.io/docs/reference/api/rest/) for CSV import and cURL on port `9000`
 
 ### Insert data
 
-Below are our official questdb clients for popular programming languages:
+Below are the official QuestDB clients for ingesting data via the InfluxDB Line Protocol:
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -142,11 +150,12 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 
 ## Contribute
 
-We are always happy to have contributions to the project whether it is source code, documentation, bug reports, feature
+We welcome contributions to the project, whether source code, documentation, bug reports, feature
 requests or feedback. To get started with contributing:
 
-- Have a look through GitHub issues labeled
+- Have a look through GitHub issues labelled
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+- For Hacktoberfest, see the relevant [labelled issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
 - Read the
   [contribution guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
 - For details on building QuestDB, see the
