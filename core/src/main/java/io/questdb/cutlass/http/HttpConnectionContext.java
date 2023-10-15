@@ -222,6 +222,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         boolean keepGoing;
         switch (operation) {
             case IOOperation.READ:
+                System.out.println("READING!!!");
                 keepGoing = handleClientRecv(selector, rescheduleContext);
                 break;
             case IOOperation.WRITE:

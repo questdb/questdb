@@ -244,6 +244,10 @@ public class TextLoader implements Closeable, Mutable {
         return partitionBy;
     }
 
+    public int getState() {
+        return state;
+    }
+
     public CharSequence getTableName() {
         return tableName;
     }
@@ -505,6 +509,7 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     private void parseJsonMetadata(long lo, long hi, SecurityContext securityContext) throws TextException {
+        System.out.println("PARSING META");
         try {
             jsonLexer.parse(lo, hi, schemaV1Parser);
         } catch (JsonException e) {
@@ -535,7 +540,11 @@ public class TextLoader implements Closeable, Mutable {
 
         textMetadataDetector.of(getTableName(), forceHeaders);
 
+        System.out.println("STRUCTURE ???" + Thread.currentThread().getName());
+        new Exception().printStackTrace();
+
         parse(lo, hi, textAnalysisMaxLines, textMetadataDetector);
+        System.out.println("STRUCTURE DONE");
         textMetadataDetector.evaluateResults(getParsedLineCount(), getErrorLineCount());
         restart(textMetadataDetector.isHeader());
 

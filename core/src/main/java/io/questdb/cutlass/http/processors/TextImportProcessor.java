@@ -94,8 +94,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             try {
                 transientState.lo = lo;
                 transientState.hi = hi;
+                System.out.println("STATE: "+ transientState.textLoader.getState());
                 transientState.textLoader.parse(lo, hi, transientContext.getSecurityContext());
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
+                    System.out.println("ANALYZED");
                     transientState.analysed = true;
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);
                 }
