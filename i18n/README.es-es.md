@@ -76,6 +76,12 @@ questdb stop  // To stop questdb
 La [página de descargas de QuestDB](https://questdb.io/get-questdb/) proporciona acceso a los binarios y ofrece métodos
 de instalacion en una variedad de plataformas.
 
+### QuestDB Cloud
+
+QuestDB Cloud es la versión gestionada de QuestDB, con funcionalidades añadidas como control de acceso basado en roles (RBAC), 
+replicación nativa en nube, compresión, monitorización, o snapshots en nube. La [prueba gratuita](https://cloud.questdb.com)
+incluye un crédito de $200.
+
 ### Conéctate con QuestDB
 
 Puedes conectarte con QuestDB utilizando las siguientes interfaces:
