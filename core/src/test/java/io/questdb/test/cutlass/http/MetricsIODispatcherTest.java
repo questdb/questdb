@@ -24,9 +24,19 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cutlass.http.client.Chunk;
+import io.questdb.cutlass.http.client.ChunkedResponse;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.metrics.*;
+import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -52,6 +62,46 @@ public class MetricsIODispatcherTest {
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+
+    @Test
+    public void testPrometheusLongOutput() throws Exception {
+        int metricCount = 10_000;
+
+        MetricsRegistry metrics = new MetricsRegistryImpl();
+        for (int i = 0; i < metricCount; i++) {
+            metrics.newCounter("testMetrics" + i).add(i);
+        }
+        StringBuilder expectedResponse = new StringBuilder();
+        for (int i = 0; i < metricCount; i++) {
+            expectedResponse.append("# TYPE questdb_testMetrics").append(i).append("_total counter").append("\n");
+            expectedResponse.append("questdb_testMetrics").append(i).append("_total ").append(i).append("\n").append("\n");
+        }
+
+        new HttpMinTestBuilder()
+                .withTempFolder(temp)
+                .withScrapable(metrics)
+                .withTcpSndBufSize(1024)
+                .run(engine -> {
+                    try (HttpClient client = HttpClientFactory.newInstance();
+                         HttpClient.ResponseHeaders response = client.newRequest().GET().url("/metrics").send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())) {
+
+                        Os.sleep(1000); // wait before consuming response to increase chances of server filling up its tcp send buffer
+
+                        response.await(5_000);
+                        TestUtils.assertEquals("200", response.getStatusCode());
+
+                        Assert.assertTrue(response.isChunked());
+                        ChunkedResponse chunkedResponse = response.getChunkedResponse();
+                        StringSink responseSink = new StringSink();
+
+                        Chunk chunk;
+                        while ((chunk = chunkedResponse.recv(5_000)) != null) {
+                            Chars.utf8toUtf16(chunk.lo(), chunk.hi(), responseSink);
+                        }
+                        TestUtils.assertEquals(expectedResponse, responseSink);
+                    }
+                });
+    }
 
     @Test
     public void testPrometheusTextFormat() throws Exception {

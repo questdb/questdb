@@ -189,8 +189,20 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeHTTP() {
+    }
+
+    @Override
+    public void authorizeILP() {
+    }
+
+    @Override
     public void authorizeInsert(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizePGWIRE() {
     }
 
     @Override
@@ -294,6 +306,10 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void checkEntityEnabled() {
+    }
+
+    @Override
     public void exitServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -301,10 +317,5 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public CharSequence getPrincipal() {
         return Constants.USER_NAME;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
     }
 }
