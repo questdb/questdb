@@ -2346,7 +2346,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.getUnionModel() != null) {
             return generateSetFactory(model, factory, executionContext);
         }
-
         return factory;
     }
 
@@ -2986,7 +2985,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
         final RecordCursorFactory factory;
         try {
-            //if model uses explicit timestamp (e.g. select * from X timestamp(ts)) then we shouldn't expect the inner models to produce one
+            // if model uses explicit timestamp (e.g. select * from X timestamp(ts))
+            // then we shouldn't expect the inner models to produce one
             if (overrideTimestampRequired) {
                 executionContext.pushTimestampRequiredFlag(false);
             }
@@ -3032,7 +3032,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean entity;
         // the model is considered entity when it doesn't add any value to its nested model
-        //
         if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
             entity = true;
             for (int i = 0; i < selectColumnCount; i++) {
@@ -3131,7 +3130,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-
         QueryModel nested;
         QueryModel twoDeepNested;
         ExpressionNode tableNameEn;
@@ -3145,7 +3143,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && (tableNameEn = twoDeepNested.getTableNameExpr()) != null
                         && tableNameEn.type == ExpressionNode.LITERAL
                         && twoDeepNested.getWhereClause() == null
-                        && twoDeepNested.getJoinModels().size() == 1//no joins
+                        && twoDeepNested.getJoinModels().size() == 1 // no joins
         ) {
             CharSequence tableName = tableNameEn.token;
             TableToken tableToken = executionContext.getTableToken(tableName);
@@ -3159,7 +3157,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();
                 distinctColumnMetadata.add(readerMetadata.getColumnMetadata(columnIndex));
                 if (ColumnType.isSymbol(columnType) || columnType == ColumnType.INT) {
-
                     final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
 
                     if (factory.supportPageFrameCursor()) {
