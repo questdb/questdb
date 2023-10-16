@@ -108,8 +108,7 @@ public class ServerMain implements Closeable {
     }
 
     public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
-        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance()
-                || configuration.isReadOnlyReplica();
+        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
         if (readOnlyInstance) {
             return ReadOnlySecurityContextFactory.INSTANCE;
         } else {
@@ -316,7 +315,7 @@ public class ServerMain implements Closeable {
                 metrics
         ));
 
-        if (!isReadOnly && !config.isReadOnlyReplica()) {
+        if (!isReadOnly && config.isILPEnabled()) {
             // ilp/tcp
             freeOnExit.register(Services.createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
