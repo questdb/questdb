@@ -437,7 +437,9 @@ public class FastMapTest extends AbstractCairoTest {
                             Numbers.SIZE_1MB,
                             new SingleColumnType(ColumnType.STRING),
                             new SingleColumnType(ColumnType.LONG),
-                            N / 2, 0.5f, 1
+                            N / 2,
+                            0.5f,
+                            1
                     )
             ) {
                 ObjList<String> keys = new ObjList<>();
@@ -457,6 +459,7 @@ public class FastMapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     CharSequence s = keys.getQuick(i);
                     key.putStr(s);
+
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
                     Assert.assertEquals(i + 1, value.getLong(0));
@@ -847,7 +850,9 @@ public class FastMapTest extends AbstractCairoTest {
                                         .add(ColumnType.TIMESTAMP)
                                         .add(ColumnType.BOOLEAN)
                                         .add(ColumnType.UUID),
-                                N, 0.9f, 1
+                                N,
+                                0.9f,
+                                1
                         )
                 ) {
 
@@ -879,7 +884,6 @@ public class FastMapTest extends AbstractCairoTest {
             final int N = 10000;
             final Rnd rnd = new Rnd();
             try (FastMap map = new FastMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)) {
-
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putInt(rnd.nextInt());
@@ -892,22 +896,22 @@ public class FastMapTest extends AbstractCairoTest {
                 rnd.reset();
                 LongList list = new LongList();
                 try (RecordCursor cursor = map.getCursor()) {
-                    final MapRecord record = (MapRecord) cursor.getRecord();
+                    final MapRecord recordA = (MapRecord) cursor.getRecord();
                     while (cursor.hasNext()) {
-                        list.add(record.getRowId());
-                        Assert.assertEquals(rnd.nextInt(), record.getInt(1));
-                        MapValue value = record.getValue();
+                        list.add(recordA.getRowId());
+                        Assert.assertEquals(rnd.nextInt(), recordA.getInt(1));
+                        MapValue value = recordA.getValue();
                         value.putInt(0, value.getInt(0) * 2);
                     }
 
-                    MapRecord rec = (MapRecord) cursor.getRecordB();
-                    Assert.assertNotSame(rec, record);
+                    final MapRecord recordB = (MapRecord) cursor.getRecordB();
+                    Assert.assertNotSame(recordB, recordA);
 
                     rnd.reset();
                     for (int i = 0, n = list.size(); i < n; i++) {
-                        cursor.recordAt(rec, list.getQuick(i));
-                        Assert.assertEquals((i + 1) * 2, rec.getInt(0));
-                        Assert.assertEquals(rnd.nextInt(), rec.getInt(1));
+                        cursor.recordAt(recordB, list.getQuick(i));
+                        Assert.assertEquals((i + 1) * 2, recordB.getInt(0));
+                        Assert.assertEquals(rnd.nextInt(), recordB.getInt(1));
                     }
                 }
             }
@@ -955,7 +959,6 @@ public class FastMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
                     // this random will be populating values
@@ -995,7 +998,6 @@ public class FastMapTest extends AbstractCairoTest {
     @Test
     public void testValueRandomWrite() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             final int N = 10000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
@@ -1027,7 +1029,6 @@ public class FastMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, false);
 
                     // this random will be populating values
