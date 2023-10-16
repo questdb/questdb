@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.Reopenable;
-import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
