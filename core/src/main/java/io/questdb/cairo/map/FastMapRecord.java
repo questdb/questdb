@@ -324,7 +324,7 @@ final class FastMapRecord implements MapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(valueAddress, limit, false);
+        return value.of(startAddress, valueAddress, limit, false);
     }
 
     @Override

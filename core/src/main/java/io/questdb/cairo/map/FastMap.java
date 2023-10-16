@@ -291,8 +291,12 @@ public class FastMap implements Map, Reopenable {
     }
 
     @Override
-    public MapValue valueAt(long address) {
-        return valueOf(address, false, value);
+    public MapValue valueAt(long startAddress) {
+        int keySize = this.keySize;
+        if (keySize == -1) {
+            keySize = Unsafe.getUnsafe().getInt(startAddress);
+        }
+        return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
     }
 
     @Override
@@ -332,7 +336,7 @@ public class FastMap implements Map, Reopenable {
             rehash();
         }
         size++;
-        return valueOf(keyWriter.appendAddress, true, value);
+        return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
     }
 
     private FastMapValue probe0(BaseKey keyWriter, int index, int hashCode, int keySize, FastMapValue value) {
@@ -340,7 +344,8 @@ public class FastMap implements Map, Reopenable {
         long offset;
         while ((offset = unpackOffset(packedOffset = getPackedOffset(offsets, index = (++index & mask)))) > -1) {
             if (hashCode == unpackHashCode(packedOffset) && keyWriter.eq(offset)) {
-                return valueOf(heapStart + offset + keyOffset + keySize, false, value);
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
             }
         }
         return asNew(keyWriter, index, hashCode, value);
@@ -351,7 +356,8 @@ public class FastMap implements Map, Reopenable {
         long offset;
         while ((offset = unpackOffset(packedOffset = getPackedOffset(offsets, index = (++index & mask)))) > -1) {
             if (hashCode == unpackHashCode(packedOffset) && keyWriter.eq(offset)) {
-                return valueOf(heapStart + offset + keyOffset + keySize, false, value);
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
             }
         }
         return null;
@@ -413,8 +419,8 @@ public class FastMap implements Map, Reopenable {
         }
     }
 
-    private FastMapValue valueOf(long address, boolean newValue, FastMapValue value) {
-        return value.of(address, heapLimit, newValue);
+    private FastMapValue valueOf(long startAddress, long valueAddress, boolean newValue, FastMapValue value) {
+        return value.of(startAddress, valueAddress, heapLimit, newValue);
     }
 
     int keySize() {
@@ -487,7 +493,8 @@ public class FastMap implements Map, Reopenable {
             if (offset < 0) {
                 return asNew(this, index, hashCode, value);
             } else if (hashCode == unpackHashCode(packedOffset) && eq(offset)) {
-                return valueOf(heapStart + offset + keyOffset + keySize, false, value);
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
             } else {
                 return probe0(this, index, hashCode, keySize, value);
             }
@@ -503,7 +510,8 @@ public class FastMap implements Map, Reopenable {
             if (offset < 0) {
                 return null;
             } else if (hashCode == unpackHashCode(packedOffset) && eq(offset)) {
-                return valueOf(heapStart + offset + keyOffset + keySize, false, value);
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
             } else {
                 return probeReadOnly(this, index, hashCode, keySize, value);
             }

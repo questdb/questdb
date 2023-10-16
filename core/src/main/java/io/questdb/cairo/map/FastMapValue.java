@@ -32,10 +32,11 @@ import io.questdb.std.Unsafe;
 final class FastMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
     private final int[] valueOffsets;
-    private long address;
     private long limit;
     private boolean newValue;
     private FastMapRecord record; // double-linked
+    private long startAddress; // key-value pair start address
+    private long valueAddress;
 
     public FastMapValue(int[] valueOffsets) {
         this.valueOffsets = valueOffsets;
@@ -86,11 +87,6 @@ final class FastMapValue implements MapValue {
     public void addShort(int index, short value) {
         final long p = address0(index);
         Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
-    }
-
-    @Override
-    public long getAddress() {
-        return address;
     }
 
     @Override
@@ -186,6 +182,11 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public long getStartAddress() {
+        return startAddress;
+    }
+
+    @Override
     public long getTimestamp(int index) {
         return getLong(index);
     }
@@ -276,19 +277,20 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void setMapRecordHere() {
-        record.of(address, limit);
+        record.of(startAddress, limit);
     }
 
     private long address0(int index) {
-        return address + valueOffsets[index];
+        return valueAddress + valueOffsets[index];
     }
 
     void linkRecord(FastMapRecord record) {
         this.record = record;
     }
 
-    FastMapValue of(long address, long limit, boolean newValue) {
-        this.address = address;
+    FastMapValue of(long startAddress, long valueAddress, long limit, boolean newValue) {
+        this.startAddress = startAddress;
+        this.valueAddress = valueAddress;
         this.limit = limit;
         this.newValue = newValue;
         return this;
