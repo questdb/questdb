@@ -120,7 +120,7 @@ public class MetricsIODispatcherTest {
         testPrometheusScenario(10_000, 1024, 1024 * 1024, PARALLEL_REQUESTS);
     }
 
-    public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequests) throws Exception {
+    public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches) throws Exception {
         MetricsRegistry metrics = new MetricsRegistryImpl();
         for (int i = 0; i < metricCount; i++) {
             metrics.newCounter("testMetrics" + i).add(i);
@@ -155,13 +155,23 @@ public class MetricsIODispatcherTest {
             }
         };
 
-        final HttpQueryTestBuilder.HttpClientCode clientCode = parallelizeRequests(parallelRequests, makeRequest);
+        // Repeat each request 5 times, for each parallel request batch.
+        // This is to stress out the RequestState pooling logic.
+        final HttpQueryTestBuilder.HttpClientCode repeatedRequest = engine -> {
+            for (int i = 0; i < 5; i++) {
+                makeRequest.run(engine);
+            }
+        };
 
+        // Parallel request batches.
+        final HttpQueryTestBuilder.HttpClientCode clientCode = parallelizeRequests(parallelRequestBatches, repeatedRequest);
+        final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
                 .withScrapable(metrics)
                 .withTcpSndBufSize(tcpSndBufSize)
                 .withSendBufferSize(sendBufferSize)
+                .withWorkerCount(workerCount)
                 .run(clientCode);
     }
 

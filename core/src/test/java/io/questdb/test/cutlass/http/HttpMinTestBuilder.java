@@ -51,6 +51,7 @@ public class HttpMinTestBuilder {
     private int sendBufferSize;
     private int tcpSndBufSize;
     private TemporaryFolder temp;
+    private int workerCount;
 
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
@@ -59,9 +60,10 @@ public class HttpMinTestBuilder {
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .withTcpSndBufSize(tcpSndBufSize)
                     .withSendBufferSize(sendBufferSize)
+                    .withWorkerCount(workerCount)
                     .build();
 
-            final WorkerPool workerPool = new TestWorkerPool(1);
+            final WorkerPool workerPool = new TestWorkerPool(httpConfiguration.getWorkerCount());
 
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
 
@@ -69,6 +71,8 @@ public class HttpMinTestBuilder {
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE)
             ) {
+                final PrometheusMetricsProcessor.RequestStatePool requestStatePool = new PrometheusMetricsProcessor.RequestStatePool();
+                httpServer.registerClosable(requestStatePool);
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
@@ -77,7 +81,7 @@ public class HttpMinTestBuilder {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(scrapable, httpConfiguration);
+                        return new PrometheusMetricsProcessor(scrapable, httpConfiguration, requestStatePool);
                     }
                 });
 
@@ -124,6 +128,11 @@ public class HttpMinTestBuilder {
 
     public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
         this.temp = temp;
+        return this;
+    }
+
+    public HttpMinTestBuilder withWorkerCount(int workerCount) {
+        this.workerCount = workerCount;
         return this;
     }
 }

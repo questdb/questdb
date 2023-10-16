@@ -27,10 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
-import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
-import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.TextQueryProcessor;
+import io.questdb.cutlass.http.processors.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -52,6 +49,7 @@ public class HttpServer implements Closeable {
     private final HttpContextFactory httpContextFactory;
     private final WaitProcessor rescheduleContext;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
+    private final ObjList<Closeable> closeables = new ObjList<>();
     private final int workerCount;
 
     public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool, SocketFactory socketFactory) {
@@ -208,7 +206,12 @@ public class HttpServer implements Closeable {
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
         Misc.freeObjListAndClear(selectors);
+        Misc.freeObjListAndClear(closeables);
         Misc.free(httpContextFactory);
+    }
+
+    public void registerClosable(Closeable closeable) {
+        closeables.add(closeable);
     }
 
     @FunctionalInterface

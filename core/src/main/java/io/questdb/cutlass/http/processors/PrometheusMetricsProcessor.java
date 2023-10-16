@@ -32,22 +32,17 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectByteCharSink;
 
-public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCloseable {
+public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
     private static final LocalValue<RequestState> LV = new LocalValue<>();
     private final Scrapable metrics;
     private final RequestStatePool pool;
     private final boolean requiresAuthentication;
 
-    public PrometheusMetricsProcessor(Scrapable metrics, HttpMinServerConfiguration configuration) {
+    public PrometheusMetricsProcessor(Scrapable metrics, HttpMinServerConfiguration configuration, RequestStatePool pool) {
         this.metrics = metrics;
         this.requiresAuthentication = configuration.isHealthCheckAuthenticationRequired();
-        this.pool = new RequestStatePool(configuration.getWorkerCount());
-    }
-
-    @Override
-    public void close() {
-        pool.close();
+        this.pool = pool;
     }
 
     @Override
@@ -75,7 +70,6 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCl
      */
     @Override
     public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-
         // Send the remainder of the current, partially sent, chunk.
         context.resumeResponseSend();
 
@@ -146,11 +140,11 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, QuietCl
         }
     }
 
-    private static class RequestStatePool implements QuietCloseable {
+    public static class RequestStatePool implements QuietCloseable {
         private final ObjList<RequestState> objects;
 
-        public RequestStatePool(int initialCapacity) {
-            this.objects = new ObjList<>(initialCapacity);
+        public RequestStatePool() {
+            this.objects = new ObjList<>();
         }
 
         @Override
