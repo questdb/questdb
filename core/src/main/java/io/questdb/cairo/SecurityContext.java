@@ -93,7 +93,13 @@ public interface SecurityContext {
 
     void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
+    void authorizeHTTP();
+
+    void authorizeILP();
+
     void authorizeInsert(TableToken tableToken);
+
+    void authorizePGWIRE();
 
     void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 
@@ -139,6 +145,15 @@ public interface SecurityContext {
     void authorizeTableVacuum(TableToken tableToken);
 
     void authorizeUnassignServiceAccount(CharSequence serviceAccountName);
+
+    /**
+     * Should throw an exception if:
+     * - logged in as a user and the user has been disabled,
+     * - logged in as a service account and the service account has been disabled,
+     * - logged in as a user, then assumed a service account and either the user or the service account has been disabled,
+     *      or access to the service account has been revoked from the user
+     */
+    void checkEntityEnabled();
 
     void exitServiceAccount(CharSequence serviceAccountName);
 

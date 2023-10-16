@@ -1717,6 +1717,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         CharSequence principal = authenticator.getPrincipal();
         SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
+        securityContext.authorizePGWIRE();
         sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
         sendRNQ = true;
 
@@ -1813,6 +1814,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     .I$();
             throw BadProtocolException.INSTANCE;
         }
+
+        // this check is exactly the same as the one run inside security context on every permission checks.
+        // however, this will run even if the command to be executed does not require permission checks.
+        // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
+        sqlExecutionContext.getSecurityContext().checkEntityEnabled();
 
         // msgLen does not take into account type byte
         if (msgLen > len - 1) {

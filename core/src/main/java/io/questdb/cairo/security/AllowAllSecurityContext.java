@@ -159,7 +159,19 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeHTTP() {
+    }
+
+    @Override
+    public void authorizeILP() {
+    }
+
+    @Override
     public void authorizeInsert(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizePGWIRE() {
     }
 
     @Override
@@ -248,6 +260,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeUnassignServiceAccount(CharSequence serviceAccountName) {
+    }
+
+    @Override
+    public void checkEntityEnabled() {
     }
 
     @Override

@@ -144,7 +144,9 @@ public class SecurityContextTest {
                     switch (parameters.length) {
                         case 0:
                             method.invoke(sc, NO_PARAM_ARGS);
-                            if (name.startsWith("authorizeShow") || name.startsWith("authorizeAdminAction")) {
+                            if (name.startsWith("authorizeShow")
+                                    || name.startsWith("authorizeAdminAction")
+                                    || name.equals("authorizeHTTP") || name.equals("authorizePGWIRE") || name.equals("authorizeILP")) {
                                 continue;
                             }
                             Assert.fail();

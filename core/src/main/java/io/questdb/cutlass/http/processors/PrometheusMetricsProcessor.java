@@ -54,6 +54,11 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        context.resumeResponseSend();
+    }
+
+    @Override
     public boolean requiresAuthentication() {
         return requiresAuthentication;
     }
