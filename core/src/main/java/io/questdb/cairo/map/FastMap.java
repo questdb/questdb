@@ -95,7 +95,7 @@ public class FastMap implements Map, Reopenable {
     private int free;
     private long heapLimit; // Heap memory limit pointer.
     private long heapStart; // Heap memory start pointer.
-    private long kPos;      // Current key memory pointer.
+    private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
     private int keyCapacity;
     private int mask;
     private int nResizes;

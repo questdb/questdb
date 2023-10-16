@@ -31,7 +31,6 @@ import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -44,19 +43,18 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class FastMapReadSequentialKeyBenchmark {
+public class FastMapReadLongBenchmark {
 
-    private static final int N = 300_000;
+    private static final int N = 5_000_000;
     private static final double loadFactor = 0.7;
-    private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
-    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
-    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
+    private static final HashMap<Long, Long> hmap = new HashMap<>(N, (float) loadFactor);
+    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final CompactMap cmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
     private static final Rnd rnd = new Rnd();
-    private static final StringSink sink = new StringSink();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(FastMapReadSequentialKeyBenchmark.class.getSimpleName())
+                .include(FastMapReadLongBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -66,55 +64,51 @@ public class FastMapReadSequentialKeyBenchmark {
     }
 
     @Benchmark
-    public int baseline() {
-        return rnd.nextInt(N);
+    public long baseline() {
+        return rnd.nextLong(N);
     }
 
     @Setup(Level.Iteration)
     public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + fmap.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
+        System.out.print(" [q=" + cmap.size() + ", l=" + fmap.size() + ", cap=" + cmap.getKeyCapacity() + "] ");
     }
 
     @Benchmark
     public MapValue testCompactMap() {
-        MapKey key = qmap.withKey();
-        sink.clear();
-        sink.put(rnd.nextInt(N));
-        key.putStr(sink);
+        MapKey key = cmap.withKey();
+        key.putLong(rnd.nextLong(N));
         return key.findValue();
     }
 
     @Benchmark
     public MapValue testFastMap() {
         MapKey key = fmap.withKey();
-        sink.clear();
-        sink.put(rnd.nextInt(N));
-        key.putStr(sink);
+        key.putLong(rnd.nextLong(N));
         return key.findValue();
     }
 
     @Benchmark
     public Long testHashMap() {
-        return hmap.get(String.valueOf(rnd.nextInt(N)));
+        return hmap.get(rnd.nextLong(N));
     }
 
     static {
         for (int i = 0; i < N; i++) {
-            MapKey key = qmap.withKey();
-            key.putStr(String.valueOf(i));
+            MapKey key = cmap.withKey();
+            key.putLong(i);
             MapValue value = key.createValue();
             value.putLong(0, i);
         }
 
         for (int i = 0; i < N; i++) {
             MapKey key = fmap.withKey();
-            key.putStr(String.valueOf(i));
+            key.putLong(i);
             MapValue values = key.createValue();
             values.putLong(0, i);
         }
 
-        for (int i = 0; i < N; i++) {
-            hmap.put(String.valueOf(i), (long) i);
+        for (long i = 0; i < N; i++) {
+            hmap.put(i, i);
         }
     }
 }
