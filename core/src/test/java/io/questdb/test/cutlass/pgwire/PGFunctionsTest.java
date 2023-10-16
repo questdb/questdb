@@ -51,10 +51,10 @@ public class PGFunctionsTest extends BasePGTest {
                     }
                     sink.clear();
                     long openFilesBefore = TestFilesFacadeImpl.INSTANCE.getOpenFileCount();
-                    try (PreparedStatement ps = connection.prepareStatement("select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")) {
+                    try (PreparedStatement ps = connection.prepareStatement("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")) {
                         try (ResultSet rs = ps.executeQuery()) {
                             assertResultSet(
-                                    "id[INTEGER],name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT]\n" +
+                                    "id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT]\n" +
                                             "1,sys.text_import_log,ts,DAY,1000,300000000\n" +
                                             "2,a,null,NONE,1000,300000000\n",
                                     sink,

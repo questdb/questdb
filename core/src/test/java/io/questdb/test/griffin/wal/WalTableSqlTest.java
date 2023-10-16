@@ -809,9 +809,9 @@ public class WalTableSqlTest extends AbstractCairoTest {
             assertSql("table_name\n" +
                     tableName + "\n" +
                     tableNameNonWal + "\n", "all_tables() order by table_name");
-            assertSql("name\n" +
+            assertSql("table_name\n" +
                     tableName + "\n" +
-                    tableNameNonWal + "\n", "select name from tables() order by name");
+                    tableNameNonWal + "\n", "select table_name from tables() order by table_name");
             assertSql("relname\npg_class\n" +
                     tableName + "\n" +
                     tableNameNonWal + "\n", "select relname from pg_class() order by relname");
@@ -821,8 +821,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             assertSql("table_name\n" +
                     tableNameNonWal + "\n", "all_tables() order by table_name");
-            assertSql("name\n" +
-                    tableNameNonWal + "\n", "select name from tables() order by name");
+            assertSql("table_name\n" +
+                    tableNameNonWal + "\n", "select table_name from tables() order by table_name");
             assertSql("relname\npg_class\n" +
                     tableNameNonWal + "\n", "select relname from pg_class() order by relname");
 
@@ -830,8 +830,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             assertSql("table_name\n" +
                     tableNameNonWal + "\n", "all_tables() order by table_name");
-            assertSql("name\n" +
-                    tableNameNonWal + "\n", "select name from tables() order by name");
+            assertSql("table_name\n" +
+                    tableNameNonWal + "\n", "select table_name from tables() order by table_name");
             assertSql("relname\npg_class\n" +
                     tableNameNonWal + "\n", "select relname from pg_class() order by relname");
 
@@ -840,15 +840,15 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             assertSql("table_name\n" +
                     tableNameNonWal + "\n", "all_tables() order by table_name");
-            assertSql("name\n" +
-                    tableNameNonWal + "\n", "select name from tables() order by name");
+            assertSql("table_name\n" +
+                    tableNameNonWal + "\n", "select table_name from tables() order by table_name");
             assertSql("relname\npg_class\n" +
                     tableNameNonWal + "\n", "select relname from pg_class() order by relname");
 
             drop("drop table " + tableNameNonWal);
 
             assertSql("table_name\n", "all_tables() order by table_name");
-            assertSql("name\n", "select name from tables() order by name");
+            assertSql("table_name\n", "select table_name from tables() order by table_name");
             assertSql("relname\npg_class\n", "select relname from pg_class() order by relname");
         });
     }
@@ -1402,8 +1402,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                     "100\t\t2022-02-25T00:00:00.000000Z\n", newTableName);
 
-            assertSql("name\n" +
-                    newTableName + "\n", "select name from tables() order by name");
+            assertSql("table_name\n" +
+                    newTableName + "\n", "select table_name from tables() order by table_name");
 
             for (int i = 0; i < 2; i++) {
                 engine.releaseInactive();
@@ -1416,8 +1416,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         "100\t\t2022-02-25T00:00:00.000000Z\n", newTableName);
             }
 
-            assertSql("name\tdirectoryName\n" +
-                    newTableName + "\t" + newTabledirectoryName.getDirName() + "\n", "select name, directoryName from tables() order by name");
+            assertSql("table_name\tdirectoryName\n" +
+                    newTableName + "\t" + newTabledirectoryName.getDirName() + "\n", "select table_name, directoryName from tables() order by table_name");
             assertSql("table_name\n" +
                     newTableName + "\n", "select table_name from all_tables()");
             assertSql("relname\npg_class\n" +
@@ -1457,8 +1457,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                     "100\t\t2022-02-25T00:00:00.000000Z\n", newTableName);
 
-            assertSql("name\n" +
-                    newTableName + "\n", "select name from tables() order by name");
+            assertSql("table_name\n" +
+                    newTableName + "\n", "select table_name from tables() order by table_name");
 
             for (int i = 0; i < 2; i++) {
                 engine.releaseInactive();
@@ -1471,8 +1471,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         "100\t\t2022-02-25T00:00:00.000000Z\n", newTableName);
             }
 
-            assertSql("name\tdirectoryName\n" +
-                    newTableName + "\t" + newTableDirectoryName.getDirName() + "\n", "select name, directoryName from tables() order by name");
+            assertSql("table_name\tdirectoryName\n" +
+                    newTableName + "\t" + newTableDirectoryName.getDirName() + "\n", "select table_name, directoryName from tables() order by table_name");
             assertSql("table_name\n" +
                     newTableName + "\n", "select table_name from all_tables()");
             assertSql("relname\npg_class\n" +
