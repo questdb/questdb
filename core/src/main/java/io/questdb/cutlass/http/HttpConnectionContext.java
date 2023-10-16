@@ -395,6 +395,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     authenticator.getPrincipal(),
                     SecurityContextFactory.HTTP
             );
+            securityContext.authorizeHTTP();
         }
         return true;
     }
