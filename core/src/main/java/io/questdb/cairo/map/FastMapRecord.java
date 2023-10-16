@@ -276,6 +276,8 @@ final class FastMapRecord implements MapRecord {
 
     @Override
     public long getRowId() {
+        // Important invariant: we assume that the FastMap doesn't grow after the first getRowId() call.
+        // Otherwise, row ids returned by this method may no longer point at a valid memory address.
         return startAddress;
     }
 
