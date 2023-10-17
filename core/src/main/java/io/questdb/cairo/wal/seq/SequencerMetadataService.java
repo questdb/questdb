@@ -60,7 +60,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
 
     @Override
     public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
-        metadata.enableDeduplicationWithUpsertKeys(columnsIndexes);
+        metadata.enableDeduplicationWithUpsertKeys();
     }
 
     public TableRecordMetadata getMetadata() {

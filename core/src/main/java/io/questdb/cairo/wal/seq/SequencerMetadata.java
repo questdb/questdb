@@ -102,7 +102,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile();
     }
 
-    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public void enableDeduplicationWithUpsertKeys() {
         structureVersion.incrementAndGet();
     }
 

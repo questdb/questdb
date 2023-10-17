@@ -40,7 +40,7 @@ public class RenameTableTest extends AbstractCairoTest {
                         " cast(x as int) i, " +
                         " timestamp_sequence(1,1) timestamp " +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp);"
+                        ") timestamp (timestamp) partition by DAY WAL;"
         );
         TableToken from = engine.verifyTableName("x");
         TableToken to = from.renamed("y");

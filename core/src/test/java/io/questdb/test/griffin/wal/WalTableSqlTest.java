@@ -779,6 +779,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             assertSql("x\tsym2\tts\n" +
                     "2\tEF\t2022-02-25T00:00:00.000000Z\n", newTableName);
+            Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(newTableDirectoryName).getWriterTxn());
+            Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(newTableDirectoryName).getSeqTxn());
         });
     }
 
