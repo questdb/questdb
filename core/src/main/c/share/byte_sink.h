@@ -51,9 +51,9 @@ PACK(struct questdb_byte_sink_t {
 
 typedef struct questdb_byte_sink_t questdb_byte_sink_t;
 
-// Function return NULL on malloc/realloc error. See errno.
-questdb_byte_sink_t* questdb_byte_sink_create(uint64_t capacity);
-uint64_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t len);
-void questdb_byte_sink_destroy(questdb_byte_sink_t* sink);
+// Ensure the sink has at least len bytes available.
+// Returns a pointer to the start of the available bytes.
+// or NULL if a memory allocation failed.
+uint8_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t min_len);
 
-##endif // QUESTDB_BYTE_SINK_H
+#endif // QUESTDB_BYTE_SINK_H
