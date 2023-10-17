@@ -84,6 +84,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static io.questdb.test.tools.TestUtils.drainWalQueue;
 
 public class IODispatcherTest extends AbstractTest {
     public static final String JSON_DDL_RESPONSE = "0c\r\n" +
@@ -1060,6 +1061,20 @@ public class IODispatcherTest extends AbstractTest {
                             "select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)"
                     );
                 });
+    }
+
+    @Test
+    public void testBadImplicitStrToLongCast() throws Exception {
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day wal;");
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "insert into tab values(1, now(), now());"); // it should not be DDL:OK. change me when https://github.com/questdb/questdb/issues/3858 is fixed
+            drainWalQueue(engine);
+
+            testHttpClient.assertGet(
+                    "{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":31}",
+                    "select * from tab where when = '2023-10-17';"
+            );
+        });
     }
 
     @Test

@@ -796,6 +796,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.LONG && arg.isConstant()) {
+                CharSequence str = arg.getStr(null);
+                try {
+                    args.setQuick(k, LongConstant.newInstance(SqlUtil.implicitCastStrAsLong(str)));
+                } catch (ImplicitCastException e) {
+                    throw e.setPosition(argPositions.getQuick(k));
+                }
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);

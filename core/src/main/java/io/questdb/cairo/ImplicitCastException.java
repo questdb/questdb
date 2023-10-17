@@ -33,6 +33,17 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<ImplicitCastException> tlException = new ThreadLocal<>(ImplicitCastException::new);
     protected final StringSink message = new StringSink();
+    private int position;
+
+    @Override
+    public int getPosition() {
+        return position;
+    }
+
+    public ImplicitCastException setPosition(int position) {
+        this.position = position;
+        return this;
+    }
 
     public static ImplicitCastException inconvertibleValue(double value, int fromType, int toType) {
         return instance().put("inconvertible value: ")
@@ -107,6 +118,7 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new ImplicitCastException()) != null;
         ex.message.clear();
+        ex.position = 0;
         return ex;
     }
 
