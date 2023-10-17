@@ -35,7 +35,8 @@
 #define PACK( __Declaration__ ) __pragma( pack(push, 1) ) __Declaration__ __pragma( pack(pop))
 #endif
 
-// N.B.: Pack here guarantees predictable layout of the struct. We use this from Java Unsafe to access the fields.
+// N.B.: PACK here guarantees a predictable layout of the struct.
+// We use this from Java Unsafe to access the fields.
 PACK(struct questdb_byte_sink_t {
     // Start of the buffer.
     uint8_t *buf;
@@ -45,8 +46,6 @@ PACK(struct questdb_byte_sink_t {
 
     // Capacity of the buffer.
     uint64_t capacity;
-
-    // Tracking the number of times we've called malloc or realloc.
 });
 
 typedef struct questdb_byte_sink_t questdb_byte_sink_t;

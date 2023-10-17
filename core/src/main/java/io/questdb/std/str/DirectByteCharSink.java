@@ -57,24 +57,24 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         if (impl == 0) {
             throw new OutOfMemoryError("Cannot allocate " + capacity + " bytes");
         }
-        Unsafe.recordMemAlloc(this.capacity(), MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+        Unsafe.recordMemAlloc(this.getCapacity(), MemoryTag.NATIVE_DIRECT_CHAR_SINK);
         Unsafe.incrMallocCount();
     }
 
     @Override
     public DirectByteSink borrowDirectByteSink() {
-        lastCapacity = capacity();
+        lastCapacity = getCapacity();
         return byteSink;
     }
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(getImplPtr() + index);
+        return Unsafe.getUnsafe().getByte(getPtr() + index);
     }
 
     @Override
     public void clear() {
-        setImplPos(0);
+        setPos(0);
     }
 
     @Override
@@ -82,7 +82,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         if (impl == 0) {
             return;
         }
-        final long capAdjustment = -1 * capacity();
+        final long capAdjustment = -1 * getCapacity();
         DirectByteSink.destroy(impl);
         Unsafe.incrFreeCount();
         Unsafe.recordMemAlloc(capAdjustment, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
@@ -90,16 +90,12 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
 
     @TestOnly
     public long getCapacity() {
-        return capacity();
-    }
-
-    public long getPtr() {
-        return getImplPtr();
+        return Unsafe.getUnsafe().getLong(impl + 16);
     }
 
     @Override
     public int length() {
-        return (int) getImplPos();
+        return (int) getPos();
     }
 
     public DirectByteCharSink put(ByteSequence bs) {
@@ -109,7 +105,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
             for (int i = 0; i < bsLen; i++) {
                 Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
             }
-            setImplPos(getImplPos() + bsLen);
+            setPos(getPos() + bsLen);
         }
         return this;
     }
@@ -117,7 +113,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     public DirectByteCharSink put(byte b) {
         final long dest = book(1);
         Unsafe.getUnsafe().putByte(dest, b);
-        setImplPos(getImplPos() + 1);
+        setPos(getPos() + 1);
         return this;
     }
 
@@ -134,16 +130,16 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     }
 
     private long book(long required) {
-        final long initCapacity = capacity();
-        final long available = initCapacity - getImplPos();
+        final long initCapacity = getCapacity();
+        final long available = initCapacity - getPos();
         if (available >= required) {
-            return getImplPtr() + getImplPos();
+            return getPtr() + getPos();
         }
         final long writePtr = DirectByteSink.book(impl, required);
         if (writePtr == 0) {
             throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
         }
-        final long newCapacity = capacity();
+        final long newCapacity = getCapacity();
         if (newCapacity > initCapacity) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(newCapacity - initCapacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
@@ -151,27 +147,23 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         return writePtr;
     }
 
-    private long capacity() {
-        return Unsafe.getUnsafe().getLong(impl + 16);
-    }
-
     private void closeByteSink() {
-        final long capacityChange = capacity() - lastCapacity;
+        final long capacityChange = getCapacity() - lastCapacity;
         if (capacityChange != 0) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(capacityChange, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
         }
     }
 
-    private long getImplPos() {
+    private long getPos() {
         return Unsafe.getUnsafe().getLong(impl + 8);
     }
 
-    private long getImplPtr() {
+    private long getPtr() {
         return Unsafe.getUnsafe().getLong(impl);
     }
 
-    private void setImplPos(long pos) {
+    private void setPos(long pos) {
         Unsafe.getUnsafe().putLong(impl + 8, pos);
     }
 }
