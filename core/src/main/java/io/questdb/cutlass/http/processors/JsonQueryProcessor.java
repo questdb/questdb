@@ -378,6 +378,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
+    private static void sendInsertConfirmation(
+            JsonQueryProcessorState state,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        header(socket, keepAliveHeader, 200);
+        socket.put('{')
+                .put('}');
+        socket.sendChunk(true);
+        readyForNextRequest(context);
+    }
+
     private static void sendUpdateConfirmation(
             JsonQueryProcessorState state,
             CharSequence keepAliveHeader,
@@ -509,7 +522,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         cq.getInsertOperation().execute(sqlExecutionContext).await();
         metrics.jsonQuery().markComplete();
-        sendConfirmation(state, keepAliveHeader);
+        sendInsertConfirmation(state, keepAliveHeader);
     }
 
     private void executeNewSelect(
