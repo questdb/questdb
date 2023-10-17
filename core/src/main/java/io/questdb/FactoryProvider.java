@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
@@ -60,4 +61,7 @@ public interface FactoryProvider extends QuietCloseable {
 
     @NotNull
     SecurityContextFactory getSecurityContextFactory();
+
+    @NotNull
+    WalJobFactory getWalJobFactory();
 }

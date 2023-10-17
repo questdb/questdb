@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
@@ -94,5 +95,10 @@ public class FactoryProviderImpl implements FactoryProvider {
     @Override
     public @NotNull SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
+    }
+
+    @Override
+    public @NotNull WalJobFactory getWalJobFactory() {
+        return null;
     }
 }
