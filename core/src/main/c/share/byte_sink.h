@@ -1,0 +1,59 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2023 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+#ifndef QUESTDB_BYTE_SINK_H
+#define QUESTDB_BYTE_SINK_H
+
+#include <stdint.h>
+
+#ifdef __GNUC__
+#define PACK( __Declaration__ ) __Declaration__ __attribute__((__packed__))
+#endif
+
+#ifdef _MSC_VER
+#define PACK( __Declaration__ ) __pragma( pack(push, 1) ) __Declaration__ __pragma( pack(pop))
+#endif
+
+// N.B.: Pack here guarantees predictable layout of the struct. We use this from Java Unsafe to access the fields.
+PACK(struct questdb_byte_sink_t {
+    // Start of the buffer.
+    uint8_t *buf;
+
+    // Current position in the buffer.
+    uint64_t pos;
+
+    // Capacity of the buffer.
+    uint64_t capacity;
+
+    // Tracking the number of times we've called malloc or realloc.
+});
+
+typedef struct questdb_byte_sink_t questdb_byte_sink_t;
+
+// Function return NULL on malloc/realloc error. See errno.
+questdb_byte_sink_t* questdb_byte_sink_create(uint64_t capacity);
+uint64_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t len);
+void questdb_byte_sink_destroy(questdb_byte_sink_t* sink);
+
+##endif // QUESTDB_BYTE_SINK_H

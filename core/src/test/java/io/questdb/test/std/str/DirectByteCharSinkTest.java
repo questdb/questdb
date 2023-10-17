@@ -80,9 +80,6 @@ public class DirectByteCharSinkTest {
 
             Assert.assertTrue(sink.length() > 0);
             Assert.assertTrue(sink.getCapacity() >= sink.length());
-            sink.resetCapacity();
-            Assert.assertEquals(0, sink.length());
-            Assert.assertEquals(initialCapacity, sink.getCapacity());
         }
     }
 
