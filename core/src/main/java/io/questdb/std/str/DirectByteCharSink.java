@@ -93,6 +93,10 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         return Unsafe.getUnsafe().getLong(impl + 16);
     }
 
+    public long getPtr() {
+        return Unsafe.getUnsafe().getLong(impl);
+    }
+
     @Override
     public int length() {
         return (int) getPos();
@@ -157,10 +161,6 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
 
     private long getPos() {
         return Unsafe.getUnsafe().getLong(impl + 8);
-    }
-
-    private long getPtr() {
-        return Unsafe.getUnsafe().getLong(impl);
     }
 
     private void setPos(long pos) {
