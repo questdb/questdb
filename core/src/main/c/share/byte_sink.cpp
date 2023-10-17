@@ -31,6 +31,12 @@ static questdb_byte_sink_t* create(uint64_t capacity) {
     if (sink == NULL) {
         return NULL;
     }
+
+    // Ensure allocation.
+    // The smallest allocation we can practically make on 64-bits
+    // with malloc is 32 bytes. We use this as a minimum.
+    capacity = capacity < 32 ? 32 : capacity;
+
     sink->buf = (uint8_t*) malloc(capacity);
     if (sink->buf == NULL) {
         free(sink);
@@ -46,22 +52,53 @@ static void destroy(questdb_byte_sink_t* sink) {
     free(sink);
 }
 
-static uint64_t remaining(uint64_t capacity, uint64_t pos) {
-    return capacity - pos;
+/**
+ * Calculate the next power of two.
+ *
+ * Here are some example inputs / outputs to understand behaviour:
+ *     next_pow2(2): 2
+ *     next_pow2(3): 4
+ *     next_pow2(4): 4
+ *     next_pow2(5): 8
+ *     next_pow2(6): 8
+ *     next_pow2(7): 8
+ *     next_pow2(8): 8
+ *     next_pow2(9): 16
+ *
+ * Note that values of 0 and 1 yield inconsistent results between compilers and
+ * platforms, but this doesn't affect usage as we never input such values.
+ */
+static int64_t next_pow2(int64_t n)
+{
+    // See: https://jameshfisher.com/2018/03/30/round-up-power-2/
+    // In this portable code we use two different slightly different intrinsics
+    // for MSVC and others.
+    //  * __builtin_clz(l): counts the number of leading zeros.
+    //  * _BitScanReverse(64): counts the 0-based index of the highest bit.
+    // As such they need to be handled slightly differently.
+    const int64_t prev = n - 1;
+
+#if defined(__GNUC__) || defined(__clang__)
+    const int n_leading_zeros = (size_t)__builtin_clzll(prev);
+    const int64_t width = 64;
+    return ((size_t)1) << (width - n_leading_zeros);
+#else
+    unsigned long bit_index = 0;
+    _BitScanReverse64(&bit_index, prev);
+    return ((size_t)1) << (bit_index + 1);
+#endif
 }
 
 uint8_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t min_len) {
     const uint64_t pos = sink->pos;
     int64_t capacity = sink->capacity;
 
-    if (remaining(capacity, pos) >= min_len) {
+    const int64_t remaining = capacity - pos;
+    if (remaining >= min_len) {
         return sink->buf + pos;
     }
 
-    do {
-        capacity *= 2;
-    } while (remaining(capacity, pos) < min_len);
-
+    capacity = next_pow2(capacity + min_len - remaining);
     sink->buf = (uint8_t*) realloc(sink->buf, capacity);
     if (sink->buf == NULL) {
         return NULL;
@@ -70,24 +107,42 @@ uint8_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t min_len) {
     return sink->buf + pos;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_str_DirectByteCharSink_create(
+extern "C" {
+    JNIEXPORT jlong JNICALL Java_io_questdb_std_str_DirectByteSink_create(
+            JNIEnv *env,
+            jclass cl,
+            jlong capacity);
+
+    JNIEXPORT void JNICALL Java_io_questdb_std_str_DirectByteSink_destroy(
+            JNIEnv *env,
+            jclass cl,
+            jlong impl);
+
+    JNIEXPORT jlong JNICALL Java_io_questdb_std_str_DirectByteSink_book(
+            JNIEnv *env,
+            jclass cl,
+            jlong impl,
+            jlong min_len);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_str_DirectByteSink_create(
         JNIEnv *env,
         jclass cl,
         jlong capacity) {
     return (jlong) create(capacity);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_std_str_DirectByteCharSink_destroy(
+JNIEXPORT void JNICALL Java_io_questdb_std_str_DirectByteSink_destroy(
         JNIEnv *env,
         jclass cl,
         jlong impl) {
     destroy((questdb_byte_sink_t*)impl);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_str_DirectByteCharSink_book(
+JNIEXPORT jlong JNICALL Java_io_questdb_std_str_DirectByteSink_book(
         JNIEnv *env,
         jclass cl,
         jlong impl,
-        jlong len) {
-    return (jlong) questdb_byte_sink_book((questdb_byte_sink_t*)impl, (uint64_t)len);
+        jlong min_len) {
+    return (jlong) questdb_byte_sink_book((questdb_byte_sink_t*) impl, (uint64_t) min_len);
 }

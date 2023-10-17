@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
-public interface AsDirectByteSink {
-    DirectByteSink asDirectByteSink();
+/** Implement to temporarily expose a {@link DirectByteSink} to the caller. */
+public interface BorrowableDirectByteSink {
+    DirectByteSink borrowDirectByteSink();
 }

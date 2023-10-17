@@ -24,15 +24,126 @@
 
 package io.questdb.test.std.str;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.DirectByteCharSink;
+import io.questdb.std.str.DirectByteSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.function.Supplier;
 
 public class DirectByteCharSinkTest {
+    @Test
+    public void testBorrowDirectByteSink() throws Exception {
+        try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+            final long ptr = sink.getPtr();
+            Assert.assertNotEquals(0, ptr);
+            Assert.assertEquals(32, sink.getCapacity());
+            sink.put((byte) 'a');
+            sink.put((byte) 'b');
+            sink.put((byte) 'c');
+            Assert.assertEquals(3, sink.length());
+            Assert.assertEquals((byte) 'a', sink.byteAt(0));
+            Assert.assertEquals((byte) 'b', sink.byteAt(1));
+            Assert.assertEquals((byte) 'c', sink.byteAt(2));
+
+            try (DirectByteSink directSink = sink.borrowDirectByteSink()) {
+                final long sinkPtr = directSink.getPtr();
+                Assert.assertNotEquals(ptr, sinkPtr);
+                final long ptr2 = Unsafe.getUnsafe().getLong(sinkPtr);
+                final long pos = Unsafe.getUnsafe().getLong(sinkPtr + 8);
+                Unsafe.getUnsafe().putByte(ptr2 + pos, (byte) 'd');
+                Unsafe.getUnsafe().putLong(sinkPtr + 8, pos + 1);
+                Assert.assertEquals(ptr, ptr2);
+                Assert.assertEquals(4, sink.length());
+                Assert.assertEquals(32, sink.getCapacity());
+                Assert.assertEquals(32, Unsafe.getUnsafe().getLong(sinkPtr + 16));
+                final long writePtr = DirectByteSink.book(sinkPtr, 400);
+                Assert.assertNotEquals(ptr, writePtr);
+                Assert.assertEquals(512, sink.getCapacity());
+                Assert.assertEquals(512, Unsafe.getUnsafe().getLong(sinkPtr + 16));
+            }
+
+            Assert.assertEquals(4, sink.length());
+            Assert.assertEquals((byte) 'a', sink.byteAt(0));
+            Assert.assertEquals((byte) 'b', sink.byteAt(1));
+            Assert.assertEquals((byte) 'c', sink.byteAt(2));
+            Assert.assertEquals((byte) 'd', sink.byteAt(3));
+        }
+
+    }
+
+    @Test
+    public void testCreateEmpty() throws Exception {
+        final long mallocCount0 = Unsafe.getMallocCount();
+        final long reallocCount0 = Unsafe.getReallocCount();
+        final long freeCount0 = Unsafe.getFreeCount();
+        final long memUsed0 = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+        final Supplier<Long> getMallocCount = () -> Unsafe.getMallocCount() - mallocCount0;
+        final Supplier<Long> getReallocCount = () -> Unsafe.getReallocCount() - reallocCount0;
+        final Supplier<Long> getFreeCount = () -> Unsafe.getFreeCount() - freeCount0;
+        final Supplier<Long> getMemUsed = () -> Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_CHAR_SINK) - memUsed0;
+
+        try (DirectByteCharSink sink = new DirectByteCharSink(0)) {
+            Assert.assertEquals(0, sink.length());
+            Assert.assertEquals(32, sink.getCapacity());
+            final long ptr = sink.getPtr();
+            Assert.assertNotEquals(0, ptr);
+            Assert.assertEquals(getMallocCount.get().longValue(), 1);
+            Assert.assertEquals(getReallocCount.get().longValue(), 0);
+            Assert.assertEquals(getFreeCount.get().longValue(), 0);
+            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+
+            sink.put((byte) 'a');
+            Assert.assertEquals(1, sink.length());
+            Assert.assertEquals(32, sink.getCapacity());
+            Assert.assertEquals(ptr, sink.getPtr());
+            Assert.assertEquals(getMallocCount.get().longValue(), 1);
+            Assert.assertEquals(getReallocCount.get().longValue(), 0);
+            Assert.assertEquals(getFreeCount.get().longValue(), 0);
+            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+
+            sink.clear();
+            Assert.assertEquals(0, sink.length());
+            Assert.assertEquals(32, sink.getCapacity());
+            Assert.assertEquals(ptr, sink.getPtr());
+            Assert.assertEquals(getMallocCount.get().longValue(), 1);
+            Assert.assertEquals(getReallocCount.get().longValue(), 0);
+            Assert.assertEquals(getFreeCount.get().longValue(), 0);
+            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+
+            final ByteSequence bs = new ByteSequence() {
+                @Override
+                public byte byteAt(int index) {
+                    return (byte) 'a';
+                }
+
+                @Override
+                public int length() {
+                    return 40;
+                }
+            };
+
+            sink.put(bs);
+            Assert.assertEquals(40, sink.length());
+            Assert.assertEquals(64, sink.getCapacity());
+            Assert.assertNotEquals(ptr, sink.getPtr());
+            Assert.assertEquals(getMallocCount.get().longValue(), 1);
+            Assert.assertEquals(getReallocCount.get().longValue(), 1);
+            Assert.assertEquals(getFreeCount.get().longValue(), 0);
+            Assert.assertEquals(getMemUsed.get().longValue(), 64);
+        }
+
+        Assert.assertEquals(getMallocCount.get().longValue(), 1);
+        Assert.assertEquals(getReallocCount.get().longValue(), 1);
+        Assert.assertEquals(getFreeCount.get().longValue(), 1);
+        Assert.assertEquals(getMemUsed.get().longValue(), 0);
+    }
+
     @Test
     public void testResize() {
         final String expected = "a\n" +

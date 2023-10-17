@@ -24,9 +24,28 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 
-public interface DirectByteSink extends QuietCloseable {
-    /** Get the raw pointer to the `byte_sink_t` structure. */
-    long ptr();
+/**
+ * A try-with-resource accessor to the `questdb_byte_sink_t` structure.
+ * <p>
+ * Note that the close method is simply meant to allow the owner object to
+ * update its memory bookkeeping. The underlying memory is not released.
+ */
+public abstract class DirectByteSink implements QuietCloseable {
+    public static native long book(long impl, long len);
+
+    public static native long create(long capacity);
+
+    public static native void destroy(long impl);
+
+    /**
+     * Get the raw pointer to the `byte_sink_t` structure.
+     */
+    public abstract long getPtr();
+
+    static {
+        Os.init();
+    }
 }
