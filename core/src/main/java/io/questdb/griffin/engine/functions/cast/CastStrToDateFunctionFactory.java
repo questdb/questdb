@@ -46,16 +46,10 @@ public class CastStrToDateFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToDateFunction {
-        private final Function arg;
+    public static class Func extends AbstractCastToDateFunction {
 
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.functions.AbstractUnaryDateFunction;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -676,6 +677,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
+                        // Implicit cast from STRING to DATE
+                        overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
+                                sigArgTypeTag == ColumnType.DATE && !factory.isGroupBy();
+
                         // Implicit cast from STRING to GEOHASH
                         overloadPossible |= argTypeTag == ColumnType.STRING &&
                                 sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
@@ -791,6 +796,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         castFn = new CastStrToTimestampFunctionFactory.Func(arg);
                     } else {
                         castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
+                    }
+                    args.setQuick(k, castFn);
+                }
+            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.DATE) {
+                // convert arguments if necessary
+                int position = argPositions.getQuick(k);
+                if (arg.isConstant()) {
+                    long timestamp = convertToTimestamp(arg.getStr(null), position) / 1000;
+                    args.set(k, DateConstant.newInstance(timestamp));
+                } else {
+                    AbstractUnaryDateFunction castFn;
+                    if (argTypeTag == ColumnType.STRING) {
+                        castFn = new CastStrToDateFunctionFactory.Func(arg);
+                    } else {
+                        castFn = new CastSymbolToDateFunctionFactory.Func(arg);
                     }
                     args.setQuick(k, castFn);
                 }
@@ -952,7 +972,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof DateConstant) {
                     return function;
                 } else {
-                    return DateConstant.getInstance(function.getDate(null));
+                    return DateConstant.newInstance(function.getDate(null));
                 }
             case ColumnType.STRING:
                 if (function instanceof StrConstant) {
