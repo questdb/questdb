@@ -98,6 +98,13 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     @Override
+    public int denyAccess() throws AuthenticatorException {
+        prepareWrongUsernamePasswordResponse("Access denied");
+        state = State.WRITE_AND_AUTH_FAILURE;
+        return handleIO();
+    }
+
+    @Override
     public void clear() {
         circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
@@ -296,13 +303,13 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         sink.put('N');
     }
 
-    private void prepareWrongUsernamePasswordResponse() {
+    private void prepareWrongUsernamePasswordResponse(String errorMessage) {
         sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = sink.skip();
         sink.put('C');
         sink.encodeUtf8Z("00000");
         sink.put('M');
-        sink.encodeUtf8Z("invalid username/password");
+        sink.encodeUtf8Z(errorMessage);
         sink.put('S');
         sink.encodeUtf8Z("ERROR");
         sink.put((char) 0);
@@ -389,7 +396,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             state = State.WRITE_AND_AUTH_SUCCESS;
         } else {
             LOG.info().$("bad password for user [user=").$(username).$(']').$();
-            prepareWrongUsernamePasswordResponse();
+            prepareWrongUsernamePasswordResponse("invalid username/password");
             state = State.WRITE_AND_AUTH_FAILURE;
         }
         return Authenticator.OK;

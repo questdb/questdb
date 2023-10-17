@@ -1699,6 +1699,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int r;
         try {
             r = authenticator.handleIO();
+            if (r == Authenticator.OK) {
+                CharSequence principal = authenticator.getPrincipal();
+                SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
+                try {
+                    securityContext.authorizePGWIRE();
+                } catch (CairoException e) {
+                    r = authenticator.denyAccess();
+                }
+                sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+            }
         } catch (AuthenticatorException e) {
             throw PeerDisconnectedException.INSTANCE;
         }
@@ -1715,10 +1725,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             default:
                 throw BadProtocolException.INSTANCE;
         }
-        CharSequence principal = authenticator.getPrincipal();
-        SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
-        securityContext.authorizePGWIRE();
-        sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+
         sendRNQ = true;
 
         // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it

@@ -36,6 +36,8 @@ public interface Authenticator extends QuietCloseable {
     int OK = -1;
     int QUEUE_FULL = 2;
 
+    int denyAccess() throws AuthenticatorException;
+
     default void clear() {
     }
 
