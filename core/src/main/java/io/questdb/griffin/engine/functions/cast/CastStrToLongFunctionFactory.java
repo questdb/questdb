@@ -50,7 +50,7 @@ public class CastStrToLongFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    public static class Func extends AbstractCastToLongFunction {
+    private static class Func extends AbstractCastToLongFunction {
         public Func(Function arg) {
             super(arg);
         }
