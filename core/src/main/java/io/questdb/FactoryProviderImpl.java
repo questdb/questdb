@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DefaultWalJobFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -37,6 +38,7 @@ import io.questdb.std.str.DirectByteCharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderImpl implements FactoryProvider {
+    private final DefaultWalJobFactory defaultWalJobFactory = new DefaultWalJobFactory();
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
     private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
     private final SecurityContextFactory securityContextFactory;
@@ -99,6 +101,6 @@ public class FactoryProviderImpl implements FactoryProvider {
 
     @Override
     public @NotNull WalJobFactory getWalJobFactory() {
-        return null;
+        return defaultWalJobFactory;
     }
 }
