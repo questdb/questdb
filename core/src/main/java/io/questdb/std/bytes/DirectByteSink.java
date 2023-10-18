@@ -29,8 +29,17 @@ import org.jetbrains.annotations.TestOnly;
 
 public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByteSink, QuietCloseable, Mutable {
     /**
-     * Pointer to the C `questdb_byte_sink_t` structure.
-     * See `byte_sink.h`.
+     * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
+     * <p>
+     * Fields accessible from `impl` via `GetLong`/`PutLong`:
+     * * `ptr` - pointer to the first writable byte, offset: 0
+     * * `lo` - pointer to the first byte in the buffer, offset: 8
+     * * `hi` - pointer to the last byte in the buffer, offset: 16
+     * <p>
+     * These indirect fields are get/set by {@link #getImplPtr()},
+     * {@link #setImplPtr(long)}, {@link #getImplLo()}, {@link #getImplHi()}.
+     * <p>
+     * The {@link #book(long)} method updates `impl`'s `lo` and `hi` fields.
      */
     private long impl;
 
