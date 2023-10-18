@@ -69,12 +69,12 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(getPtr() + index);
+        return Unsafe.getUnsafe().getByte(getImplLo() + index);
     }
 
     @Override
     public void clear() {
-        setPos(0);
+        setImplPtr(getImplLo());
     }
 
     @Override
@@ -90,16 +90,40 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
 
     @TestOnly
     public long getCapacity() {
+        return getImplHi() - getImplLo();
+    }
+
+    private long getImplLo() {
+        return Unsafe.getUnsafe().getLong(impl + 8);
+    }
+
+    private long getImplHi() {
         return Unsafe.getUnsafe().getLong(impl + 16);
     }
 
-    public long getPtr() {
+    private long getImplPtr() {
         return Unsafe.getUnsafe().getLong(impl);
+    }
+
+    private void setImplPtr(long ptr) {
+        Unsafe.getUnsafe().putLong(impl, ptr);
+    }
+
+    private void advance(long size) {
+        setImplPtr(getImplPtr() + size);
+    }
+
+    public long getPtr() {
+        return getImplLo();
+    }
+
+    public long size() {
+        return getImplPtr() - getImplLo();
     }
 
     @Override
     public int length() {
-        return (int) getPos();
+        return (int) size();
     }
 
     public DirectByteCharSink put(ByteSequence bs) {
@@ -109,7 +133,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
             for (int i = 0; i < bsLen; i++) {
                 Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
             }
-            setPos(getPos() + bsLen);
+            advance(bsLen);
         }
         return this;
     }
@@ -117,7 +141,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     public DirectByteCharSink put(byte b) {
         final long dest = book(1);
         Unsafe.getUnsafe().putByte(dest, b);
-        setPos(getPos() + 1);
+        advance(1);
         return this;
     }
 
@@ -134,13 +158,15 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     }
 
     private long book(long required) {
-        final long initCapacity = getCapacity();
-        final long available = initCapacity - getPos();
+        assert required >= 0;
+        long p = getImplPtr();
+        final long available = getImplHi() - p;
         if (available >= required) {
-            return getPtr() + getPos();
+            return p;
         }
-        final long writePtr = DirectByteSink.book(impl, required);
-        if (writePtr == 0) {
+        final long initCapacity = getCapacity();
+        p = DirectByteSink.book(impl, required);
+        if (p == 0) {
             throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
         }
         final long newCapacity = getCapacity();
@@ -148,7 +174,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(newCapacity - initCapacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
         }
-        return writePtr;
+        return p;
     }
 
     private void closeByteSink() {
@@ -157,13 +183,5 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(capacityChange, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
         }
-    }
-
-    private long getPos() {
-        return Unsafe.getUnsafe().getLong(impl + 8);
-    }
-
-    private void setPos(long pos) {
-        Unsafe.getUnsafe().putLong(impl + 8, pos);
     }
 }

@@ -37,18 +37,17 @@ static questdb_byte_sink_t* create(uint64_t capacity) {
     // with malloc is 32 bytes. We use this as a minimum.
     capacity = capacity < 32 ? 32 : capacity;
 
-    sink->buf = (uint8_t*) malloc(capacity);
-    if (sink->buf == NULL) {
+    sink->ptr = sink->lo = (uint8_t*) malloc(capacity);
+    if (sink->lo == NULL) {
         free(sink);
         return NULL;
     }
-    sink->capacity = capacity;
-    sink->pos = 0;
+    sink->hi = sink->lo + capacity;
     return sink;
 }
 
 static void destroy(questdb_byte_sink_t* sink) {
-    free(sink->buf);
+    free(sink->lo);
     free(sink);
 }
 
@@ -90,21 +89,23 @@ static int64_t next_pow2(int64_t n)
 }
 
 uint8_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t min_len) {
-    const uint64_t pos = sink->pos;
-    int64_t capacity = sink->capacity;
-
-    const int64_t remaining = capacity - pos;
-    if (remaining >= min_len) {
-        return sink->buf + pos;
+    const uint64_t curr_avail = sink->hi - sink->ptr;
+    if (curr_avail >= min_len) {
+        return sink->ptr;
     }
-
-    capacity = next_pow2(capacity + min_len - remaining);
-    sink->buf = (uint8_t*) realloc(sink->buf, capacity);
-    if (sink->buf == NULL) {
+    const uint64_t curr_pos = sink->ptr - sink->lo;
+    const uint64_t curr_capacity = sink->hi - sink->lo;
+    const uint64_t add_req_capacity = min_len - curr_avail;
+    const uint64_t new_capacity = next_pow2(curr_capacity + add_req_capacity);
+    uint8_t* new_lo = (uint8_t*) realloc(sink->lo, new_capacity);
+    if (new_lo == NULL) {
+        // NB: sink->lo is still valid here and will need to be freed later.
         return NULL;
     }
-    sink->capacity = capacity;
-    return sink->buf + pos;
+    sink->lo = new_lo;
+    sink->hi = new_lo + new_capacity;
+    sink->ptr = new_lo + curr_pos;
+    return sink->ptr;
 }
 
 extern "C" {

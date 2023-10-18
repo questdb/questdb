@@ -35,17 +35,24 @@
 #define PACK( __Declaration__ ) __pragma( pack(push, 1) ) __Declaration__ __pragma( pack(pop))
 #endif
 
+/**
+ * A growable byte buffer.
+ *
+ * To get current capacity `hi - lo`
+ * To get the current used size `ptr - lo`
+ * To get the current available size `hi - ptr`
+ */
 // N.B.: PACK here guarantees a predictable layout of the struct.
 // We use this from Java Unsafe to access the fields.
 PACK(struct questdb_byte_sink_t {
-    // Start of the buffer.
-    uint8_t *buf;
+    // Pointer to the first writable byte.
+    uint8_t* ptr;
 
-    // Current position in the buffer.
-    uint64_t pos;
+    // Start of the allocated buffer.
+    uint8_t* lo;
 
-    // Capacity of the buffer.
-    uint64_t capacity;
+    // End of the allocated buffer.
+    uint8_t* hi;
 });
 
 typedef struct questdb_byte_sink_t questdb_byte_sink_t;

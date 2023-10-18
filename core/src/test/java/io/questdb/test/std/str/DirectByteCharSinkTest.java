@@ -52,20 +52,19 @@ public class DirectByteCharSinkTest {
             Assert.assertEquals((byte) 'c', sink.byteAt(2));
 
             try (DirectByteSink directSink = sink.borrowDirectByteSink()) {
-                final long sinkPtr = directSink.getPtr();
-                Assert.assertNotEquals(ptr, sinkPtr);
-                final long ptr2 = Unsafe.getUnsafe().getLong(sinkPtr);
-                final long pos = Unsafe.getUnsafe().getLong(sinkPtr + 8);
-                Unsafe.getUnsafe().putByte(ptr2 + pos, (byte) 'd');
-                Unsafe.getUnsafe().putLong(sinkPtr + 8, pos + 1);
-                Assert.assertEquals(ptr, ptr2);
+                final long impl = directSink.getPtr();
+                Assert.assertNotEquals(ptr, impl);
+                final long implPtr = Unsafe.getUnsafe().getLong(impl);
+                Unsafe.getUnsafe().putByte(implPtr, (byte) 'd');
+                Unsafe.getUnsafe().putLong(impl, implPtr + 1);
                 Assert.assertEquals(4, sink.length());
                 Assert.assertEquals(32, sink.getCapacity());
-                Assert.assertEquals(32, Unsafe.getUnsafe().getLong(sinkPtr + 16));
-                final long writePtr = DirectByteSink.book(sinkPtr, 400);
-                Assert.assertNotEquals(ptr, writePtr);
+                final long newImplPtr = DirectByteSink.book(impl, 400);
+                Assert.assertEquals(newImplPtr, Unsafe.getUnsafe().getLong(impl));
                 Assert.assertEquals(512, sink.getCapacity());
-                Assert.assertEquals(512, Unsafe.getUnsafe().getLong(sinkPtr + 16));
+                final long implLo = Unsafe.getUnsafe().getLong(impl + 8);
+                final long implHi = Unsafe.getUnsafe().getLong(impl + 16);
+                Assert.assertEquals(512, implHi - implLo);
             }
 
             Assert.assertEquals(4, sink.length());
@@ -73,6 +72,7 @@ public class DirectByteCharSinkTest {
             Assert.assertEquals((byte) 'b', sink.byteAt(1));
             Assert.assertEquals((byte) 'c', sink.byteAt(2));
             Assert.assertEquals((byte) 'd', sink.byteAt(3));
+            Assert.assertEquals(512, sink.getCapacity());
         }
 
     }
