@@ -9,7 +9,8 @@ public class DefaultHttpCookieHandler implements HttpCookieHandler {
     }
 
     @Override
-    public void processCookies(CharSequence cookies, SecurityContext securityContext) {
+    public boolean processCookies(HttpConnectionContext contexts, SecurityContext securityContext) {
+        return true;
     }
 
     @Override

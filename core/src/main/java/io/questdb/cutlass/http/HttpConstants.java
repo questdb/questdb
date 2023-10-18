@@ -13,6 +13,7 @@ public class HttpConstants {
     public static final String DDL_OK = "0c\r\n{\"ddl\":\"OK\"}";
     public static final String EOL_EOL = "\r\n\r\n";
     public static final String HTTP_BAD_RESPONSE_STATUS = "HTTP/1.1 400 Bad request\r\n";
+    public static final String HTTP_FORBIDDEN_RESPONSE_STATUS = "HTTP/1.1 403 Forbidden\r\n";
     public static final String HTTP_OK_RESPONSE_STATUS = "HTTP/1.1 200 OK\r\n";
     public static final String HTTP_RESPONSE_HEADERS_NO_COOKIE = "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +

@@ -190,11 +190,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (DataUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
-        } catch (CairoError | CairoException e) {
-            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(), e, state, context.getMetrics());
+        } catch (CairoError e) {
+            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
+                    400, e, state, context.getMetrics());
             readyForNextRequest(context);
-            if (e instanceof CairoException
-                    && ((CairoException) e).isEntityDisabled()) {
+        } catch (CairoException e) {
+            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
+                    e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics());
+            readyForNextRequest(context);
+            if (e.isEntityDisabled()) {
                 throw ServerDisconnectException.INSTANCE;
             }
         } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
@@ -211,7 +215,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final JsonQueryProcessorState state = LV.get(context);
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         logInternalError(e, state, metrics);
-        sendException(socket, context, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader());
+        sendException(socket, context, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader(), 400);
         socket.shutdownWrite();
     }
 
@@ -406,7 +410,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 container.getPosition(),
                 container.getFlyweightMessage(),
                 state.getQuery(),
-                keepAliveHeader
+                keepAliveHeader,
+                400
         );
     }
 
@@ -603,6 +608,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpChunkedResponseSocket socket,
             long bytesSent,
             CharSequence message,
+            int code,
             Throwable e,
             JsonQueryProcessorState state,
             Metrics metrics
@@ -618,7 +624,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             position = ((CairoException) e).getPosition();
         }
 
-        sendException(socket, state.getHttpConnectionContext(), position, message, state.getQuery(), configuration.getKeepAliveHeader());
+        sendException(socket, state.getHttpConnectionContext(), position, message, state.getQuery(), configuration.getKeepAliveHeader(), code);
     }
 
     private boolean parseUrl(
@@ -631,7 +637,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final DirectByteCharSequence query = header.getUrlParam("query");
         if (query == null || query.length() == 0) {
             state.info().$("Empty query header received. Sending empty reply.").$();
-            sendException(context.getChunkedResponseSocket(), context, 0, "No query text", query, keepAliveHeader);
+            sendException(context.getChunkedResponseSocket(), context, 0, "No query text", query, keepAliveHeader, 400);
             return false;
         }
 
@@ -671,7 +677,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             state.configure(header, query, skip, stop);
         } catch (Utf8Exception e) {
             state.info().$("Bad UTF8 encoding").$();
-            sendException(context.getChunkedResponseSocket(), context, 0, "Bad UTF8 encoding in query text", query, keepAliveHeader);
+            sendException(context.getChunkedResponseSocket(), context, 0, "Bad UTF8 encoding in query text", query, keepAliveHeader, 400);
             return false;
         }
         return true;
@@ -739,9 +745,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             int position,
             CharSequence message,
             CharSequence query,
-            CharSequence keepAliveHeader
+            CharSequence keepAliveHeader,
+            int code
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, context, keepAliveHeader, 400);
+        header(socket, context, keepAliveHeader, code);
         JsonQueryProcessorState.prepareExceptionJson(socket, position, message, query);
     }
 

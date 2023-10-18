@@ -658,7 +658,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 if (configuration.areCookiesEnabled()) {
-                    cookieHandler.processCookies(headerParser.getHeader("Cookie"), securityContext);
+                    if (!cookieHandler.processCookies(this, securityContext)) {
+                        return false;
+                    }
                 }
 
                 if (multipartRequest && !multipartProcessor) {
@@ -780,9 +782,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        return rejectRequest(404, userMessage, null, null);
+    }
+
+    public boolean rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
         reset();
-        LOG.error().$(userMessage).$();
-        simpleResponse().sendStatus(404, userMessage);
+        LOG.error().$(userMessage).$(" [code=").$(code).I$();
+        simpleResponse().sendStatusWithCookie(code, userMessage, cookieName, cookieValue);
         dispatcher.registerChannel(this, IOOperation.READ);
         return false;
     }
