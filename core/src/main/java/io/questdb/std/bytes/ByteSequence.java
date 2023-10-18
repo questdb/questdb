@@ -24,6 +24,9 @@
 
 package io.questdb.std.bytes;
 
+/**
+ * Read-only interface for a sequence of bytes.
+ */
 public interface ByteSequence {
     /**
      * Returns byte at index.
@@ -36,6 +39,7 @@ public interface ByteSequence {
 
     /**
      * Number of bytes in the sequence.
+     * Note that this is not called `length()` to avoid collision with `CharSequence` (and other) interfaces.
      */
-    long byteSize();
+    long size();
 }

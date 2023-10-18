@@ -40,7 +40,7 @@ public class DirectByteCharSinkTest {
     @Test
     public void testBorrowDirectByteSink() throws Exception {
         try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
-            final long ptr = sink.getPtr();
+            final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
             Assert.assertEquals(32, sink.getCapacity());
             sink.put((byte) 'a');
@@ -91,7 +91,7 @@ public class DirectByteCharSinkTest {
         try (DirectByteCharSink sink = new DirectByteCharSink(0)) {
             Assert.assertEquals(0, sink.length());
             Assert.assertEquals(32, sink.getCapacity());
-            final long ptr = sink.getPtr();
+            final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
             Assert.assertEquals(getMallocCount.get().longValue(), 1);
             Assert.assertEquals(getReallocCount.get().longValue(), 0);
@@ -101,7 +101,7 @@ public class DirectByteCharSinkTest {
             sink.put((byte) 'a');
             Assert.assertEquals(1, sink.length());
             Assert.assertEquals(32, sink.getCapacity());
-            Assert.assertEquals(ptr, sink.getPtr());
+            Assert.assertEquals(ptr, sink.ptr());
             Assert.assertEquals(getMallocCount.get().longValue(), 1);
             Assert.assertEquals(getReallocCount.get().longValue(), 0);
             Assert.assertEquals(getFreeCount.get().longValue(), 0);
@@ -110,7 +110,7 @@ public class DirectByteCharSinkTest {
             sink.clear();
             Assert.assertEquals(0, sink.length());
             Assert.assertEquals(32, sink.getCapacity());
-            Assert.assertEquals(ptr, sink.getPtr());
+            Assert.assertEquals(ptr, sink.ptr());
             Assert.assertEquals(getMallocCount.get().longValue(), 1);
             Assert.assertEquals(getReallocCount.get().longValue(), 0);
             Assert.assertEquals(getFreeCount.get().longValue(), 0);
@@ -131,7 +131,7 @@ public class DirectByteCharSinkTest {
             sink.put(bs);
             Assert.assertEquals(40, sink.length());
             Assert.assertEquals(64, sink.getCapacity());
-            Assert.assertNotEquals(ptr, sink.getPtr());
+            Assert.assertNotEquals(ptr, sink.ptr());
             Assert.assertEquals(getMallocCount.get().longValue(), 1);
             Assert.assertEquals(getReallocCount.get().longValue(), 1);
             Assert.assertEquals(getFreeCount.get().longValue(), 0);
@@ -215,7 +215,7 @@ public class DirectByteCharSinkTest {
         sink.clear();
         sink.encodeUtf8(s);
 
-        long ptr = sink.getPtr();
+        long ptr = sink.ptr();
         int len = sink.length();
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {

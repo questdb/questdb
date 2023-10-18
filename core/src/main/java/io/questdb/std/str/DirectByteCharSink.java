@@ -73,13 +73,19 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         return sink.capacity();
     }
 
-    public long getPtr() {
+    public long ptr() {
         return sink.ptr();
+    }
+
+    public long size() {
+        return sink.size();
     }
 
     @Override
     public int length() {
-        return (int) sink.byteSize();
+        // TODO: This is incorrect as it returns the number of bytes, not UTF-16 code units.
+        // As such it breaks the contract of CharSequence.
+        return (int) sink.size();
     }
 
     public DirectByteCharSink put(ByteSequence bs) {

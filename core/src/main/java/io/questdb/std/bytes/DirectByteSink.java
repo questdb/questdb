@@ -69,7 +69,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     public DirectByteSink append(ByteSequence bs) {
         if (bs != null) {
-            final long bsSize = bs.byteSize();
+            final long bsSize = bs.size();
             final long dest = book(bsSize);
             for (long i = 0; i < bsSize; i++) {
                 Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
@@ -83,7 +83,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (dbs == null) {
             return this;
         }
-        return append(dbs.ptr(), dbs.byteSize());
+        return append(dbs.ptr(), dbs.size());
     }
 
     public DirectByteSink append(long src, long len) {
@@ -103,7 +103,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * Number of readable bytes in the sequence.
      */
     @Override
-    public long byteSize() {
+    public long size() {
         return getImplPtr() - getImplLo();
     }
 

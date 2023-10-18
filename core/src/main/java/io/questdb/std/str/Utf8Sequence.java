@@ -24,10 +24,12 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.bytes.ByteSequence;
+
 /**
  * A sequence of UTF-8 bytes.
  */
-public interface Utf8Sequence {
+public interface Utf8Sequence extends ByteSequence {
     /**
      * Returns byte at index.
      * Note: Unchecked bounds.
@@ -35,7 +37,7 @@ public interface Utf8Sequence {
      * @param index byte index
      * @return byte at index
      */
-    byte byteAt(int index);
+    byte byteAt(long index);
 
     /**
      * Number of bytes in the string.
@@ -43,5 +45,5 @@ public interface Utf8Sequence {
      * This is NOT the number of 16-bit chars or code points in the string.
      * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
      */
-    int size();
+    long size();
 }

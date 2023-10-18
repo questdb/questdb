@@ -26,12 +26,15 @@ package io.questdb.std.bytes;
 
 import io.questdb.std.Unsafe;
 
+/**
+ * Read-only interface for a sequence of bytes with native ptr access.
+ */
 public interface DirectByteSequence extends ByteSequence {
     /**
      * Address one past the last byte.
      */
     default long hi() {
-        return ptr() + byteSize();
+        return ptr() + size();
     }
 
     /**
