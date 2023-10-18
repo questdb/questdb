@@ -56,7 +56,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public DirectByteSink(long capacity) {
-        impl = NativeByteSink.create(capacity);
+        impl = implCreate(capacity);
         if (impl == 0) {
             throw new OutOfMemoryError("Cannot allocate " + capacity + " bytes");
         }
@@ -118,7 +118,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             return p;
         }
         final long initCapacity = capacity();
-        p = NativeByteSink.book(impl, required);
+        p = implBook(impl, required);
         if (p == 0) {
             throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
         }
@@ -152,7 +152,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             return;
         }
         final long capAdjustment = -1 * capacity();
-        NativeByteSink.destroy(impl);
+        implDestroy(impl);
         Unsafe.incrFreeCount();
         Unsafe.recordMemAlloc(capAdjustment, memoryTag());
         impl = 0;
@@ -208,5 +208,18 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     protected int memoryTag() {
         return MemoryTag.NATIVE_DIRECT_BYTE_SINK;
+    }
+
+    @TestOnly
+    public static native long implBook(long impl, long len);
+
+    @TestOnly
+    public static native long implCreate(long capacity);
+
+    @TestOnly
+    public static native void implDestroy(long impl);
+
+    static {
+        Os.init();
     }
 }

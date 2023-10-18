@@ -26,7 +26,9 @@
 #include <stdlib.h>
 #include <jni.h>
 
-static questdb_byte_sink_t* create(uint64_t capacity) {
+static_assert(sizeof(size_t) == 8, "size_t must be 64-bits");
+
+static questdb_byte_sink_t* create(size_t capacity) {
     questdb_byte_sink_t* sink = (questdb_byte_sink_t*) malloc(sizeof(questdb_byte_sink_t));
     if (sink == NULL) {
         return NULL;
@@ -37,7 +39,7 @@ static questdb_byte_sink_t* create(uint64_t capacity) {
     // with malloc is 32 bytes. We use this as a minimum.
     capacity = capacity < 32 ? 32 : capacity;
 
-    sink->ptr = sink->lo = (uint8_t*) malloc(capacity);
+    sink->ptr = sink->lo = (std::byte*) malloc(capacity);
     if (sink->lo == NULL) {
         free(sink);
         return NULL;
@@ -88,16 +90,16 @@ static int64_t next_pow2(int64_t n)
 #endif
 }
 
-uint8_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t min_len) {
-    const uint64_t curr_avail = sink->hi - sink->ptr;
+std::byte* questdb_byte_sink_book(questdb_byte_sink_t* sink, size_t min_len) {
+    const size_t curr_avail = sink->hi - sink->ptr;
     if (curr_avail >= min_len) {
         return sink->ptr;
     }
-    const uint64_t curr_pos = sink->ptr - sink->lo;
-    const uint64_t curr_capacity = sink->hi - sink->lo;
-    const uint64_t add_req_capacity = min_len - curr_avail;
-    const uint64_t new_capacity = next_pow2(curr_capacity + add_req_capacity);
-    uint8_t* new_lo = (uint8_t*) realloc(sink->lo, new_capacity);
+    const size_t curr_pos = sink->ptr - sink->lo;
+    const size_t curr_capacity = sink->hi - sink->lo;
+    const size_t add_req_capacity = min_len - curr_avail;
+    const size_t new_capacity = next_pow2(curr_capacity + add_req_capacity);
+    std::byte* new_lo = (std::byte*) realloc(sink->lo, new_capacity);
     if (new_lo == NULL) {
         // NB: sink->lo is still valid here and will need to be freed later.
         return NULL;
@@ -109,41 +111,73 @@ uint8_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t min_len) {
 }
 
 extern "C" {
-    JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_NativeByteSink_create(
+    // Create
+    JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implCreate(
             JNIEnv *env,
             jclass cl,
             jlong capacity);
 
-    JNIEXPORT void JNICALL Java_io_questdb_std_bytes_NativeByteSink_destroy(
+    JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implCreate(
+            jlong capacity);
+
+    // Destroy
+    JNIEXPORT void JNICALL Java_io_questdb_std_bytes_DirectByteSink_implDestroy(
             JNIEnv *env,
             jclass cl,
             jlong impl);
 
-    JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_NativeByteSink_book(
+    JNIEXPORT void JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implDestroy(
+            jlong impl);
+
+    // Book
+    JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implBook(
             JNIEnv *env,
             jclass cl,
             jlong impl,
             jlong min_len);
+
+    JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implBook(
+            jlong impl,
+            jlong min_len);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_NativeByteSink_create(
+// Create
+JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implCreate(
         JNIEnv *env,
         jclass cl,
         jlong capacity) {
     return (jlong) create(capacity);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_std_bytes_NativeByteSink_destroy(
+JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implCreate(
+        jlong capacity) {
+    return (jlong) create(capacity);
+}
+
+// Destroy
+JNIEXPORT void JNICALL Java_io_questdb_std_bytes_DirectByteSink_implDestroy(
         JNIEnv *env,
         jclass cl,
         jlong impl) {
-    destroy((questdb_byte_sink_t*)impl);
+    destroy((questdb_byte_sink_t*) impl);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_NativeByteSink_book(
+JNIEXPORT void JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implDestroy(
+        jlong impl) {
+    destroy((questdb_byte_sink_t*) impl);
+}
+
+// Book
+JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implBook(
         JNIEnv *env,
         jclass cl,
         jlong impl,
         jlong min_len) {
-    return (jlong) questdb_byte_sink_book((questdb_byte_sink_t*) impl, (uint64_t) min_len);
+    return (jlong) questdb_byte_sink_book((questdb_byte_sink_t*) impl, (size_t) min_len);
+}
+
+JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implBook(
+        jlong impl,
+        jlong min_len) {
+    return (jlong) questdb_byte_sink_book((questdb_byte_sink_t*) impl, (size_t) min_len);
 }

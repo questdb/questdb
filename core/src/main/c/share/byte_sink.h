@@ -25,7 +25,7 @@
 #ifndef QUESTDB_BYTE_SINK_H
 #define QUESTDB_BYTE_SINK_H
 
-#include <stdint.h>
+#include <cstddef>
 
 #ifdef __GNUC__
 #define PACK( __Declaration__ ) __Declaration__ __attribute__((__packed__))
@@ -46,13 +46,13 @@
 // We use this from Java Unsafe to access the fields.
 PACK(struct questdb_byte_sink_t {
     // Pointer to the first writable byte.
-    uint8_t* ptr;
+    std::byte* ptr;
 
     // Start of the allocated buffer.
-    uint8_t* lo;
+    std::byte* lo;
 
     // End of the allocated buffer.
-    uint8_t* hi;
+    std::byte* hi;
 });
 
 typedef struct questdb_byte_sink_t questdb_byte_sink_t;
@@ -60,6 +60,6 @@ typedef struct questdb_byte_sink_t questdb_byte_sink_t;
 // Ensure the sink has at least len bytes available.
 // Returns a pointer to the start of the available bytes.
 // or NULL if a memory allocation failed.
-uint8_t* questdb_byte_sink_book(questdb_byte_sink_t* sink, uint64_t min_len);
+std::byte* questdb_byte_sink_book(questdb_byte_sink_t* sink, size_t min_len);
 
 #endif // QUESTDB_BYTE_SINK_H

@@ -34,18 +34,8 @@ import io.questdb.std.QuietCloseable;
  * update its memory bookkeeping. The underlying memory is not released.
  */
 public abstract class NativeByteSink implements QuietCloseable {
-    public static native long book(long impl, long len);
-
-    public static native long create(long capacity);
-
-    public static native void destroy(long impl);
-
     /**
      * Get the raw pointer to the `questdb_byte_sink_t` C structure.
      */
     public abstract long ptr();
-
-    static {
-        Os.init();
-    }
 }

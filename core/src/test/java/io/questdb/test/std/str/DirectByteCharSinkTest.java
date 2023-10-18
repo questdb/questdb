@@ -26,6 +26,7 @@ package io.questdb.test.std.str;
 
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.DirectByteCharSink;
@@ -59,7 +60,7 @@ public class DirectByteCharSinkTest {
                 Unsafe.getUnsafe().putLong(impl, implPtr + 1);
                 Assert.assertEquals(4, sink.length());
                 Assert.assertEquals(32, sink.capacity());
-                final long newImplPtr = NativeByteSink.book(impl, 400);
+                final long newImplPtr = DirectByteSink.implBook(impl, 400);
                 Assert.assertEquals(newImplPtr, Unsafe.getUnsafe().getLong(impl));
                 Assert.assertEquals(512, sink.capacity());
                 final long implLo = Unsafe.getUnsafe().getLong(impl + 8);

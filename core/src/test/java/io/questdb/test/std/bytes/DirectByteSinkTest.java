@@ -57,7 +57,9 @@ public class DirectByteSinkTest {
                 Unsafe.getUnsafe().putLong(impl, implPtr + 1);
                 Assert.assertEquals(4, sink.size());
                 Assert.assertEquals(32, sink.capacity());
-                final long newImplPtr = NativeByteSink.book(impl, 400);
+                final long newImplPtr = DirectByteSink.implBook(impl, 400);
+                final long newImplPtr2 = DirectByteSink.implBook(impl, 400);  // idempotent
+                Assert.assertEquals(newImplPtr, newImplPtr2);
                 Assert.assertEquals(newImplPtr, Unsafe.getUnsafe().getLong(impl));
                 Assert.assertEquals(512, sink.capacity());
                 final long implLo = Unsafe.getUnsafe().getLong(impl + 8);
