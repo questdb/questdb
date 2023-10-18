@@ -384,8 +384,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        final long rowCount = state.getOperationFuture().getAffectedRowsCount();
         header(socket, keepAliveHeader, 200);
         socket.put('{')
+                .putQuoted("inserted").put(':').put(rowCount)
                 .put('}');
         socket.sendChunk(true);
         readyForNextRequest(context);
