@@ -24,7 +24,9 @@
 
 package io.questdb.std.bytes;
 
-/** Implement to temporarily expose a {@link NativeByteSink} to the caller. */
+/**
+ * Implement to temporarily expose a {@link NativeByteSink} to the caller.
+ */
 public interface BorrowableAsNativeByteSink {
     NativeByteSink borrowDirectByteSink();
 }

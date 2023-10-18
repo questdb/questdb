@@ -48,6 +48,7 @@ public final class MemoryTag {
     public static final int NATIVE_CB5 = 32;
     public static final int NATIVE_COMPACT_MAP = 8;
     public static final int NATIVE_DEFAULT = 1;
+    public static final int NATIVE_DIRECT_BYTE_SINK = 54;
     public static final int NATIVE_DIRECT_CHAR_SINK = 51;
     public static final int NATIVE_FAST_MAP = 9;
     public static final int NATIVE_FAST_MAP_LONG_LIST = 10;
@@ -80,7 +81,6 @@ public final class MemoryTag {
     public static final int NATIVE_TLS_RSS = 47;
     public static final int NATIVE_TREE_CHAIN = 6;
     public static final int SIZE = MMAP_TX_LOG + 1;
-    public static final int NATIVE_DIRECT_BYTE_SINK = 54;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {

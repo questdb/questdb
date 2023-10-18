@@ -30,6 +30,11 @@ import io.questdb.std.Unsafe;
  * Read-only interface for a sequence of bytes with native ptr access.
  */
 public interface DirectByteSequence extends ByteSequence {
+    @Override
+    default byte byteAt(long index) {
+        return Unsafe.getUnsafe().getByte(ptr() + index);
+    }
+
     /**
      * Address one past the last byte.
      */
@@ -42,11 +47,6 @@ public interface DirectByteSequence extends ByteSequence {
      */
     default long lo() {
         return ptr();
-    }
-
-    @Override
-    default byte byteAt(long index) {
-        return Unsafe.getUnsafe().getByte(ptr() + index);
     }
 
     /**

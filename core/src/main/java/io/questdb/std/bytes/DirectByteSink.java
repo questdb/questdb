@@ -60,6 +60,14 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         Unsafe.incrMallocCount();
     }
 
+    /**
+     * Low-level access to advance the internal write cursor by `written` bytes.
+     * Use in conjunction with {@link #book(long)}.
+     */
+    public void advance(long written) {
+        setImplPtr(getImplPtr() + written);
+    }
+
     public DirectByteSink append(byte b) {
         final long dest = book(1);
         Unsafe.getUnsafe().putByte(dest, b);
@@ -93,66 +101,6 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return this;
     }
 
-    @Override
-    public NativeByteSink borrowDirectByteSink() {
-        lastCapacity = capacity();
-        return byteSink;
-    }
-
-    /**
-     * Number of readable bytes in the sequence.
-     */
-    @Override
-    public long size() {
-        return getImplPtr() - getImplLo();
-    }
-
-    @Override
-    public void clear() {
-        setImplPtr(getImplLo());
-    }
-
-    @Override
-    public void close() {
-        if (impl == 0) {
-            return;
-        }
-        final long capAdjustment = -1 * capacity();
-        NativeByteSink.destroy(impl);
-        Unsafe.incrFreeCount();
-        Unsafe.recordMemAlloc(capAdjustment, memoryTag());
-        impl = 0;
-    }
-
-    @TestOnly
-    public long capacity() {
-        return getImplHi() - getImplLo();
-    }
-
-    /**
-     * One past the last readable byte.
-     */
-    @Override
-    public long hi() {
-        return getImplPtr();
-    }
-
-    /**
-     * First readable byte in the sequence.
-     */
-    @Override
-    public long ptr() {
-        return getImplLo();
-    }
-
-    /**
-     * Low-level access to advance the internal write cursor by `written` bytes.
-     * Use in conjunction with {@link #book(long)}.
-     */
-    public void advance(long written) {
-        setImplPtr(getImplPtr() + written);
-    }
-
     /**
      * Low-level access to ensure that at least `required` bytes are available for writing.
      * Returns the address of the first writable byte.
@@ -176,6 +124,58 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
         }
         return p;
+    }
+
+    @Override
+    public NativeByteSink borrowDirectByteSink() {
+        lastCapacity = capacity();
+        return byteSink;
+    }
+
+    @TestOnly
+    public long capacity() {
+        return getImplHi() - getImplLo();
+    }
+
+    @Override
+    public void clear() {
+        setImplPtr(getImplLo());
+    }
+
+    @Override
+    public void close() {
+        if (impl == 0) {
+            return;
+        }
+        final long capAdjustment = -1 * capacity();
+        NativeByteSink.destroy(impl);
+        Unsafe.incrFreeCount();
+        Unsafe.recordMemAlloc(capAdjustment, memoryTag());
+        impl = 0;
+    }
+
+    /**
+     * One past the last readable byte.
+     */
+    @Override
+    public long hi() {
+        return getImplPtr();
+    }
+
+    /**
+     * First readable byte in the sequence.
+     */
+    @Override
+    public long ptr() {
+        return getImplLo();
+    }
+
+    /**
+     * Number of readable bytes in the sequence.
+     */
+    @Override
+    public long size() {
+        return getImplPtr() - getImplLo();
     }
 
     private void closeByteSink() {

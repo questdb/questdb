@@ -26,9 +26,9 @@ package io.questdb.test.std.str;
 
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.DirectByteCharSink;
-import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
