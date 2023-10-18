@@ -45,6 +45,7 @@ public class RenameTableTest extends AbstractCairoTest {
         TableToken from = engine.verifyTableName("x");
         TableToken to = from.renamed("y");
         engine.applyTableRename(from, to);
+        engine.getTableSequencerAPI().reload(to);
 
         Assert.assertEquals(from.getDirName(), engine.verifyTableName("y").getDirName());
         Assert.assertNull(engine.getTableTokenIfExists("x"));
