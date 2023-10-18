@@ -716,6 +716,7 @@ public class SqlUtil {
 
         DATE_FORMATS = new DateFormat[]{
                 pgDateTimeFormat,
+                PG_DATE_FORMAT,
                 PG_DATE_Z_FORMAT,
                 PG_DATE_MILLI_TIME_Z_FORMAT,
                 UTC_FORMAT
