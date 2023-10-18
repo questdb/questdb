@@ -24,15 +24,21 @@
 
 package io.questdb;
 
+import io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory;
 import io.questdb.network.*;
 
 public class DefaultHttpClientConfiguration implements HttpClientConfiguration {
-
     public final static HttpClientConfiguration INSTANCE = new DefaultHttpClientConfiguration();
+    private static final HttpClientCookieHandlerFactory COOKIE_HANDLER_FACTORY = () -> null;
 
     @Override
     public int getBufferSize() {
         return 64 * 1024;
+    }
+
+    @Override
+    public HttpClientCookieHandlerFactory getCookieHandlerFactory() {
+        return COOKIE_HANDLER_FACTORY;
     }
 
     @Override

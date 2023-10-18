@@ -38,13 +38,17 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.network.IODispatcher.*;
+import static io.questdb.std.Chars.contains;
+import static io.questdb.std.Chars.equalsNc;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpAuthenticator authenticator;
     private final HttpContextConfiguration configuration;
+    private final HttpCookieHandler cookieHandler;
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final boolean dumpNetworkTraffic;
     private final HttpHeaderParser headerParser;
@@ -72,7 +76,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
 
+    @TestOnly
     public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
+        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE);
+    }
+
+    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler) {
         super(
                 socketFactory,
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
@@ -81,6 +90,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         );
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.configuration = contextConfiguration;
+        this.cookieHandler = cookieHandler;
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
@@ -169,6 +179,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public HttpChunkedResponseSocket getChunkedResponseSocket() {
         return responseSink.getChunkedSocket();
+    }
+
+    public HttpCookieHandler getCookieHandler() {
+        return cookieHandler;
     }
 
     public long getLastRequestBytesSent() {
@@ -631,16 +645,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
 
-            final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
+            final boolean multipartRequest = equalsNc("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
-            if (configuration.allowDeflateBeforeSend() && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
+            if (configuration.allowDeflateBeforeSend() && contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
                 responseSink.setDeflateBeforeSend(true);
             }
 
             try {
                 if (newRequest && processor.requiresAuthentication() && !configureSecurityContext()) {
                     return rejectUnauthenticatedRequest();
+                }
+
+                if (configuration.areCookiesEnabled()) {
+                    cookieHandler.processCookies(headerParser.getHeader("Cookie"), securityContext);
                 }
 
                 if (multipartRequest && !multipartProcessor) {

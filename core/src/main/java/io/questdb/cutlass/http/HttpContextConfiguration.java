@@ -32,6 +32,8 @@ public interface HttpContextConfiguration {
 
     boolean allowDeflateBeforeSend();
 
+    boolean areCookiesEnabled();
+
     MillisecondClock getClock();
 
     int getConnectionPoolInitialCapacity();
