@@ -39,21 +39,21 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
      * @return byte at index
      */
     default byte byteAt(long index) {
-        return Unsafe.getUnsafe().getByte(ptr() + index);
+        return DirectByteSequence.super.byteAt(index);
     }
 
     /**
      * Address one past the last character.
      */
     default long hi() {
-        return ptr() + size();
+        return DirectByteSequence.super.hi();
     }
 
     /**
      * Address of the first character (alias of `.ptr()`).
      */
     default long lo() {
-        return ptr();
+        return DirectByteSequence.super.lo();
     }
 
     /**

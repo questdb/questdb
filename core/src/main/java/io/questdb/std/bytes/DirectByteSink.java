@@ -51,6 +51,10 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         }
     };
 
+    public DirectByteSink() {
+        this(32);
+    }
+
     public DirectByteSink(long capacity) {
         impl = NativeByteSink.create(capacity);
         if (impl == 0) {
@@ -68,14 +72,14 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         setImplPtr(getImplPtr() + written);
     }
 
-    public DirectByteSink append(byte b) {
+    public DirectByteSink put(byte b) {
         final long dest = book(1);
         Unsafe.getUnsafe().putByte(dest, b);
         advance(1);
         return this;
     }
 
-    public DirectByteSink append(ByteSequence bs) {
+    public DirectByteSink put(ByteSequence bs) {
         if (bs != null) {
             final long bsSize = bs.size();
             final long dest = book(bsSize);
@@ -87,14 +91,14 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return this;
     }
 
-    public DirectByteSink append(DirectByteSequence dbs) {
+    public DirectByteSink put(DirectByteSequence dbs) {
         if (dbs == null) {
             return this;
         }
-        return append(dbs.ptr(), dbs.size());
+        return put(dbs.ptr(), dbs.size());
     }
 
-    public DirectByteSink append(long src, long len) {
+    public DirectByteSink put(long src, long len) {
         final long dest = book(len);
         Vect.memcpy(dest, src, len);
         advance(len);

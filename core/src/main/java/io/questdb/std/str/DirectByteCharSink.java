@@ -69,7 +69,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     }
 
     @TestOnly
-    public long getCapacity() {
+    public long capacity() {
         return sink.capacity();
     }
 
@@ -97,7 +97,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     }
 
     public DirectByteCharSink put(byte b) {
-        sink.append(b);
+        sink.put(b);
         return this;
     }
 
