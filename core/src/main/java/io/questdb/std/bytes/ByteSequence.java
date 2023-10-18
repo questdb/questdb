@@ -22,9 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.std.bytes;
 
-/** Implement to temporarily expose a {@link DirectByteSink} to the caller. */
-public interface BorrowableDirectByteSink {
-    DirectByteSink borrowDirectByteSink();
+public interface ByteSequence {
+    /**
+     * Returns byte at index.
+     * Note: Unchecked bounds.
+     *
+     * @param index byte index
+     * @return byte at index
+     */
+    byte byteAt(long index);
+
+    /**
+     * Number of bytes in the sequence.
+     */
+    long byteSize();
 }

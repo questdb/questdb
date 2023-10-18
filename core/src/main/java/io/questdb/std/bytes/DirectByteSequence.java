@@ -22,30 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.std.bytes;
 
-import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 
-/**
- * A try-with-resource accessor to the `questdb_byte_sink_t` structure.
- * <p>
- * Note that the close method is simply meant to allow the owner object to
- * update its memory bookkeeping. The underlying memory is not released.
- */
-public abstract class DirectByteSink implements QuietCloseable {
-    public static native long book(long impl, long len);
-
-    public static native long create(long capacity);
-
-    public static native void destroy(long impl);
+public interface DirectByteSequence extends ByteSequence {
+    /**
+     * Address one past the last byte.
+     */
+    default long hi() {
+        return ptr() + byteSize();
+    }
 
     /**
-     * Get the raw pointer to the `byte_sink_t` structure.
+     * Address of the first byte (alias of `.ptr()`).
      */
-    public abstract long getPtr();
-
-    static {
-        Os.init();
+    default long lo() {
+        return ptr();
     }
+
+    @Override
+    default byte byteAt(long index) {
+        return Unsafe.getUnsafe().getByte(ptr() + index);
+    }
+
+    /**
+     * Address of the first byte.
+     */
+    long ptr();
 }

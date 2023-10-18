@@ -28,120 +28,74 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.BorrowableAsNativeByteSink;
+import io.questdb.std.bytes.DirectByteSink;
+import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, BorrowableDirectByteSink {
-    /**
-     * Pointer to the C `questdb_byte_sink_t` structure.
-     * See `byte_sink.h`.
-     */
-    private final long impl;
-    private long lastCapacity;
-    private final DirectByteSink byteSink = new DirectByteSink() {
-        @Override
-        public void close() {
-            closeByteSink();
-        }
-
-        @Override
-        public long getPtr() {
-            return impl;
-        }
-    };
+public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, BorrowableAsNativeByteSink {
+    private final DirectByteSink sink;
 
     public DirectByteCharSink(long capacity) {
-        impl = DirectByteSink.create(capacity);
-        if (impl == 0) {
-            throw new OutOfMemoryError("Cannot allocate " + capacity + " bytes");
-        }
-        Unsafe.recordMemAlloc(this.getCapacity(), MemoryTag.NATIVE_DIRECT_CHAR_SINK);
-        Unsafe.incrMallocCount();
+        sink = new DirectByteSink(capacity) {
+            @Override
+            protected int memoryTag() {
+                return MemoryTag.NATIVE_DIRECT_CHAR_SINK;
+            }
+        };
     }
 
     @Override
-    public DirectByteSink borrowDirectByteSink() {
-        lastCapacity = getCapacity();
-        return byteSink;
+    public NativeByteSink borrowDirectByteSink() {
+        return sink.borrowDirectByteSink();
     }
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(getImplLo() + index);
+        return sink.byteAt(index);
     }
 
     @Override
     public void clear() {
-        setImplPtr(getImplLo());
+        sink.clear();
     }
 
     @Override
     public void close() {
-        if (impl == 0) {
-            return;
-        }
-        final long capAdjustment = -1 * getCapacity();
-        DirectByteSink.destroy(impl);
-        Unsafe.incrFreeCount();
-        Unsafe.recordMemAlloc(capAdjustment, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+        sink.close();
     }
 
     @TestOnly
     public long getCapacity() {
-        return getImplHi() - getImplLo();
-    }
-
-    private long getImplLo() {
-        return Unsafe.getUnsafe().getLong(impl + 8);
-    }
-
-    private long getImplHi() {
-        return Unsafe.getUnsafe().getLong(impl + 16);
-    }
-
-    private long getImplPtr() {
-        return Unsafe.getUnsafe().getLong(impl);
-    }
-
-    private void setImplPtr(long ptr) {
-        Unsafe.getUnsafe().putLong(impl, ptr);
-    }
-
-    private void advance(long size) {
-        setImplPtr(getImplPtr() + size);
+        return sink.capacity();
     }
 
     public long getPtr() {
-        return getImplLo();
-    }
-
-    public long size() {
-        return getImplPtr() - getImplLo();
+        return sink.ptr();
     }
 
     @Override
     public int length() {
-        return (int) size();
+        return (int) sink.byteSize();
     }
 
     public DirectByteCharSink put(ByteSequence bs) {
         if (bs != null) {
             final int bsLen = bs.length();
-            final long dest = book(bsLen);
+            final long dest = sink.book(bsLen);
             for (int i = 0; i < bsLen; i++) {
                 Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
             }
-            advance(bsLen);
+            sink.advance(bsLen);
         }
         return this;
     }
 
     public DirectByteCharSink put(byte b) {
-        final long dest = book(1);
-        Unsafe.getUnsafe().putByte(dest, b);
-        advance(1);
+        sink.append(b);
         return this;
     }
 
@@ -155,33 +109,5 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     @Override
     public String toString() {
         return Chars.stringFromUtf8Bytes(this);
-    }
-
-    private long book(long required) {
-        assert required >= 0;
-        long p = getImplPtr();
-        final long available = getImplHi() - p;
-        if (available >= required) {
-            return p;
-        }
-        final long initCapacity = getCapacity();
-        p = DirectByteSink.book(impl, required);
-        if (p == 0) {
-            throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
-        }
-        final long newCapacity = getCapacity();
-        if (newCapacity > initCapacity) {
-            Unsafe.incrReallocCount();
-            Unsafe.recordMemAlloc(newCapacity - initCapacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
-        }
-        return p;
-    }
-
-    private void closeByteSink() {
-        final long capacityChange = getCapacity() - lastCapacity;
-        if (capacityChange != 0) {
-            Unsafe.incrReallocCount();
-            Unsafe.recordMemAlloc(capacityChange, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
-        }
     }
 }

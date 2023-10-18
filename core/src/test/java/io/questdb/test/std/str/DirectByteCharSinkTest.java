@@ -28,7 +28,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.DirectByteCharSink;
-import io.questdb.std.str.DirectByteSink;
+import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -51,15 +51,15 @@ public class DirectByteCharSinkTest {
             Assert.assertEquals((byte) 'b', sink.byteAt(1));
             Assert.assertEquals((byte) 'c', sink.byteAt(2));
 
-            try (DirectByteSink directSink = sink.borrowDirectByteSink()) {
-                final long impl = directSink.getPtr();
+            try (NativeByteSink directSink = sink.borrowDirectByteSink()) {
+                final long impl = directSink.ptr();
                 Assert.assertNotEquals(ptr, impl);
                 final long implPtr = Unsafe.getUnsafe().getLong(impl);
                 Unsafe.getUnsafe().putByte(implPtr, (byte) 'd');
                 Unsafe.getUnsafe().putLong(impl, implPtr + 1);
                 Assert.assertEquals(4, sink.length());
                 Assert.assertEquals(32, sink.getCapacity());
-                final long newImplPtr = DirectByteSink.book(impl, 400);
+                final long newImplPtr = NativeByteSink.book(impl, 400);
                 Assert.assertEquals(newImplPtr, Unsafe.getUnsafe().getLong(impl));
                 Assert.assertEquals(512, sink.getCapacity());
                 final long implLo = Unsafe.getUnsafe().getLong(impl + 8);

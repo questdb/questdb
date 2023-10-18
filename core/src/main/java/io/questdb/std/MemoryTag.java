@@ -80,6 +80,7 @@ public final class MemoryTag {
     public static final int NATIVE_TLS_RSS = 47;
     public static final int NATIVE_TREE_CHAIN = 6;
     public static final int SIZE = MMAP_TX_LOG + 1;
+    public static final int NATIVE_DIRECT_BYTE_SINK = 54;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
