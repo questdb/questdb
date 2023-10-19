@@ -2799,7 +2799,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
                 final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                 chainMetadata.add(i, m);
-                factoryMetadata.add(i, m);
+                if (Chars.equals(qc.getAst().token, qc.getAlias())) {
+                    factoryMetadata.add(i, m);
+                } else {// keep alias
+                    factoryMetadata.add(i, new TableColumnMetadata(
+                                    Chars.toString(qc.getAlias()),
+                                    m.getType(),
+                                    m.isIndexed(),
+                                    m.getIndexValueBlockCapacity(),
+                                    m.isSymbolTableStatic(),
+                                    baseMetadata
+                            )
+                    );
+                }
                 chainTypes.add(i, m.getType());
                 listColumnFilterA.extendAndSet(i, i + 1);
                 listColumnFilterB.extendAndSet(i, columnIndex);

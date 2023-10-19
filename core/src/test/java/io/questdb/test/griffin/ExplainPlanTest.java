@@ -334,27 +334,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "avg(j) over (partition by i order by j, i desc rows unbounded preceding) " +
                             "from tab order by ts desc",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
-                            "      keys: [ts desc]\n" +
-                            "        CachedAnalytic\n" +
-                            "          orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i])]]\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n");
+                            "    CachedAnalytic\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i])]]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n");
 
             assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
                             "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding)," +
                             "        rank() over (partition by j, i) " +
                             "from tab order by ts desc",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
-                            "      keys: [ts desc]\n" +
-                            "        CachedAnalytic\n" +
-                            "          orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j])]]\n" +
-                            "          unorderedFunctions: [rank() over (partition by [j,i])]\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n");
+                            "    CachedAnalytic\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j])]]\n" +
+                            "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n");
         });
     }
 
@@ -1700,7 +1696,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
         );
     }
-    
+
     @Test
     public void testFiltersOnIndexedSymbolColumns() throws SqlException {
         ddl("CREATE TABLE reference_prices (\n" +
@@ -2049,9 +2045,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         if (factory.isWindow()) {
                             sqlExecutionContext.configureAnalyticContext(null, null, null, false, true, AnalyticColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, AnalyticColumn.EXCLUDE_NO_OTHERS, 0);
                         }
+                        Function function = null;
+                        try {
+                            function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
+                            function.toPlan(planSink);
+                        } finally {
+                            sqlExecutionContext.clearAnalyticContext();
+                        }
 
-                        Function function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
-                        function.toPlan(planSink);
                         goodArgsFound = true;
 
                         Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));

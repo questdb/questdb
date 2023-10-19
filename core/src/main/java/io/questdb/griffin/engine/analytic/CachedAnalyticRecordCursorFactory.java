@@ -174,11 +174,15 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("CachedAnalytic");
-        if (orderedFunctions.size() > 0) {
-            sink.attr("orderedFunctions");
-            sink.val("[");
-            sink.useBaseMetadata(true);
-            try {
+
+        boolean oldVal = sink.getUseBaseMetadata();
+        try {
+            if (orderedFunctions.size() > 0) {
+                sink.attr("orderedFunctions");
+                sink.val("[");
+
+                sink.useBaseMetadata(true);
+
                 for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
                     if (i > 0) {
                         sink.val(',');
@@ -198,14 +202,15 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
                     sink.val("]");
                 }
-            } finally {
-                sink.useBaseMetadata(false);
+                sink.val(']');
             }
 
-            sink.val(']');
+            sink.optAttr("unorderedFunctions", unorderedFunctions, true);
+
+        } finally {
+            sink.useBaseMetadata(oldVal);
         }
 
-        sink.optAttr("unorderedFunctions", unorderedFunctions, true);
         sink.child(base);
     }
 

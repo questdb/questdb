@@ -6266,7 +6266,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testNonAnalyticFunctionInAnalyticContext() throws Exception {
         assertException(
-                "select avg(price) over (partition by symbol) from trades",
+                "select max(price) over (partition by symbol) from trades",
                 "create table trades " +
                         "(" +
                         " price double," +

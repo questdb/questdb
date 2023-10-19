@@ -35,22 +35,34 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
             ddl("create table y (a int, b int)");
             insert("insert into y select x/4, x from long_sequence(10)");
             engine.releaseAllWriters();
+
             String query = "select b.a, row_number() OVER (PARTITION BY b.a ORDER BY b.b desc) as b " +
                     " from y b " +
                     "order by b.b";
 
+            assertPlan(query,
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [b1]\n" +
+                            "        CachedAnalytic\n" +
+                            "          orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]\n" +
+                            "            SelectedRecord\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: y\n");
+
             assertQuery(
                     "a\tb\n" +
-                            "2\t1\n" +
-                            "1\t1\n" +
-                            "0\t1\n" +
-                            "2\t2\n" +
-                            "1\t2\n" +
-                            "0\t2\n" +
-                            "2\t3\n" +
-                            "1\t3\n" +
                             "0\t3\n" +
-                            "1\t4\n",
+                            "0\t2\n" +
+                            "0\t1\n" +
+                            "1\t4\n" +
+                            "1\t3\n" +
+                            "1\t2\n" +
+                            "1\t1\n" +
+                            "2\t3\n" +
+                            "2\t2\n" +
+                            "2\t1\n",
                     query,
                     null,
                     true,
