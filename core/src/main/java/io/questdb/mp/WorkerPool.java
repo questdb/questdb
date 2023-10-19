@@ -177,15 +177,7 @@ public class WorkerPool implements Closeable {
                         workerAffinity[i],
                         workerJobs.getQuick(i),
                         halted,
-                        (ex) -> {
-                            Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index));
-                            if (log != null) {
-                                log.info().$("cleaned worker [name=").$(poolName)
-                                        .$(", worker=").$(index)
-                                        .$(", total=").$(workerCount)
-                                        .I$();
-                            }
-                        },
+                        ex -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
                         haltOnError,
                         yieldThreshold,
                         sleepThreshold,

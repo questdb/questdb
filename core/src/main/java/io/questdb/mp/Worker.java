@@ -25,26 +25,30 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.wal.WorkerMetrics;
 import io.questdb.log.Log;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Worker extends Thread {
-    public static final int NO_THREAD_AFFINITY = -1;
-    private final static AtomicInteger COUNTER = new AtomicInteger();
+    public final static int NO_THREAD_AFFINITY = -1;
+    private final static AtomicInteger UNIQUE_ID = new AtomicInteger();
     private final int affinity;
-    private final WorkerCleaner cleaner;
     private final String criticalErrorLine;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
     private final ObjHashSet<? extends Job> jobs;
     private final Log log;
     private final Metrics metrics;
-    private final AtomicInteger running = new AtomicInteger();
-    private final Job.RunStatus runStatus = () -> running.get() == 2;
+    private final OnHaltAction onHaltAction;
+    private final String poolName;
+    private final AtomicReference<Lifecycle> running = new AtomicReference<>(Lifecycle.BORN);
+    private final Job.RunStatus runStatus = () -> running.get() == Lifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
     private final int workerId;
@@ -52,31 +56,32 @@ public class Worker extends Thread {
 
     public Worker(
             String poolName,
-            final int workerId,
-            final int affinity,
-            final ObjHashSet<? extends Job> jobs,
-            final SOCountDownLatch haltLatch,
-            final WorkerCleaner cleaner,
-            final boolean haltOnError,
+            int workerId,
+            int affinity,
+            ObjHashSet<? extends Job> jobs,
+            SOCountDownLatch haltLatch,
+            @Nullable OnHaltAction onHaltAction,
+            boolean haltOnError,
             long yieldThreshold,
             long sleepThreshold,
             long sleepMs,
             Metrics metrics,
-            final Log log
+            @Nullable Log log
     ) {
-        this.log = log;
+        this.setName("questdb-" + poolName + "-" + UNIQUE_ID.incrementAndGet());
+        this.poolName = poolName;
+        this.workerId = workerId;
+        this.affinity = affinity;
         this.jobs = jobs;
         this.haltLatch = haltLatch;
-        this.setName("questdb-" + poolName + "-" + COUNTER.incrementAndGet());
-        this.affinity = affinity;
-        this.cleaner = cleaner;
+        this.onHaltAction = onHaltAction;
         this.haltOnError = haltOnError;
-        this.workerId = workerId;
+        this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
         this.yieldThreshold = yieldThreshold;
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
         this.metrics = metrics;
-        this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
+        this.log = log;
     }
 
     public int getWorkerId() {
@@ -84,62 +89,94 @@ public class Worker extends Thread {
     }
 
     public void halt() {
-        running.set(2);
+        running.set(Lifecycle.HALTED);
     }
 
     @Override
     public void run() {
         Throwable ex = null;
         try {
-            if (running.compareAndSet(0, 1)) {
-                if (affinity > -1) {
-                    if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
+            if (running.compareAndSet(Lifecycle.BORN, Lifecycle.RUNNING)) {
+
+                String workerName = getName();
+
+                // set affinity
+                if (affinity > NO_THREAD_AFFINITY) {
+                    if (Os.setCurrentThreadAffinity(affinity) == 0) {
                         if (log != null) {
-                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).I$();
+                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(workerName).I$();
                         }
                     } else {
                         if (log != null) {
-                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).I$();
+                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(workerName).I$();
                         }
                     }
                 } else {
                     if (log != null) {
-                        log.info().$("os scheduled worker started [name=").$(getName()).I$();
+                        log.info().$("os scheduled worker started [name=").$(workerName).I$();
                     }
                 }
-                setupJobs();
-                int n = jobs.size();
-                long uselessCounter = 0;
-                while (running.get() == 1) {
-                    boolean useful = false;
-                    for (int i = 0; i < n; i++) {
+
+                // setup eager jobs
+                for (int i = 0, n = jobs.size(); i < n; i++) {
+                    Unsafe.getUnsafe().loadFence();
+                    try {
+                        Job job = jobs.get(i);
+                        if (job instanceof EagerThreadSetup) {
+                            ((EagerThreadSetup) job).setup();
+                        }
+                    } finally {
+                        Unsafe.getUnsafe().storeFence();
+                    }
+                }
+
+                // enter main loop
+                WorkerMetrics workerMetrics = metrics.workerMetrics().begin(workerName);
+                long ticker = 0L;
+                while (running.get() == Lifecycle.RUNNING) {
+                    workerMetrics.beginRun(workerName);
+                    boolean runAsap = false;
+                    for (int i = 0, n = jobs.size(); i < n; i++) {
+                        workerMetrics.beginJob(workerName);
                         Unsafe.getUnsafe().loadFence();
                         try {
                             try {
-                                useful |= jobs.get(i).run(workerId, runStatus);
+                                runAsap |= jobs.get(i).run(workerId, runStatus);
                             } catch (Throwable e) {
-                                onError(i, e);
+                                try {
+                                    metrics.health().incrementUnhandledErrors();
+                                } catch (Throwable t) {
+                                    stdErrCritical(t);
+                                }
+
+                                // Log error even then halt if halt error setting is on.
+                                if (log != null) {
+                                    log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
+                                } else {
+                                    stdErrCritical(e);
+                                }
+                                if (haltOnError) {
+                                    throw e;
+                                }
                             }
                         } finally {
                             Unsafe.getUnsafe().storeFence();
                         }
+                        workerMetrics.endJob(workerName);
                     }
+                    workerMetrics.endRun(workerName);
 
-                    if (useful) {
-                        uselessCounter = 0;
+                    if (runAsap) {
+                        ticker = 0L;
                         continue;
                     }
 
-                    uselessCounter++;
-
-                    if (uselessCounter < 0) {
-                        // deal with overflow
-                        uselessCounter = sleepThreshold + 1;
+                    if (++ticker < 0L) {
+                        ticker = sleepThreshold + 1L; // overflow
                     }
-
-                    if (uselessCounter > sleepThreshold) {
+                    if (ticker > sleepThreshold) {
                         Os.sleep(sleepMs);
-                    } else if (uselessCounter > yieldThreshold) {
+                    } else if (ticker > yieldThreshold) {
                         Os.pause();
                     }
                 }
@@ -148,10 +185,15 @@ public class Worker extends Thread {
             ex = e;
             stdErrCritical(e);
         } finally {
-            // cleaner will typically attempt to release
-            // thread-local instances
-            if (cleaner != null) {
-                cleaner.run(ex);
+            if (onHaltAction != null) {
+                try {
+                    onHaltAction.run(ex);
+                    if (log != null) {
+                        log.info().$("cleaned worker [name=").$(poolName).$(", worker=").$(workerId).I$();
+                    }
+                } catch (Throwable t) {
+                    stdErrCritical(t);
+                }
             }
             haltLatch.countDown();
             if (log != null) {
@@ -160,42 +202,17 @@ public class Worker extends Thread {
         }
     }
 
-    private void onError(int i, Throwable e) throws Throwable {
-        try {
-            metrics.health().incrementUnhandledErrors();
-        } catch (Throwable t) {
-            stdErrCritical(e);
-        }
-
-        // Log error even then halt if halt error setting is on.
-        if (log != null) {
-            log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
-        } else {
-            stdErrCritical(e);
-        }
-        if (haltOnError) {
-            throw e;
-        }
-    }
-
-    private void setupJobs() {
-        if (running.get() == 1) {
-            for (int i = 0; i < jobs.size(); i++) {
-                Unsafe.getUnsafe().loadFence();
-                try {
-                    Job job = jobs.get(i);
-                    if (job instanceof EagerThreadSetup) {
-                        ((EagerThreadSetup) job).setup();
-                    }
-                } finally {
-                    Unsafe.getUnsafe().storeFence();
-                }
-            }
-        }
-    }
-
     private void stdErrCritical(Throwable e) {
         System.err.println(criticalErrorLine);
         e.printStackTrace();
+    }
+
+    private enum Lifecycle {
+        BORN, RUNNING, HALTED
+    }
+
+    @FunctionalInterface
+    public interface OnHaltAction {
+        void run(Throwable ex);
     }
 }
