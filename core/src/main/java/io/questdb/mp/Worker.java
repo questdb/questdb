@@ -33,6 +33,7 @@ import io.questdb.std.Unsafe;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Worker extends Thread {
+    public static final int NO_THREAD_AFFINITY = -1;
     private final static AtomicInteger COUNTER = new AtomicInteger();
     private final int affinity;
     private final WorkerCleaner cleaner;

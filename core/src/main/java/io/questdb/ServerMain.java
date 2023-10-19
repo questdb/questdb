@@ -116,8 +116,9 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(walPurgeJob);
                             sharedPool.freeOnExit(walPurgeJob);
 
+                            // wal apply job in the shared pool when there is no dedicated pool
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
-                                setupWalApplyJob(sharedPool, engine, getSharedWorkerCount());
+                                setupWalApplyJob(sharedPool, engine, sharedPool.getWorkerCount());
                             }
                         }
 
