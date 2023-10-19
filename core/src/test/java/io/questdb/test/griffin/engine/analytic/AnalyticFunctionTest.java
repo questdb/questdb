@@ -100,8 +100,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
-            assertSql("", "select ts, i, j, avg(i) over (partition by i order by ts groups unbounded preceding) from tab");
-            assertSql("", "select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and current row) from tab");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups unbounded preceding) from tab", 17, "function not implemented for given window paramters");
         });
     }
 
@@ -131,8 +130,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\n" +
                     "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\n", "select ts, i, j, avg(j) over (partition by i) from tab");
 
-            assertSql("", "select ts, i, j, avg(i) over (partition by i order by ts range unbounded preceding) from tab");
-            assertSql("", "select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and current row) from tab");
+
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range unbounded preceding) from tab", 17, "function not implemented for given window paramters");
         });
     }
 

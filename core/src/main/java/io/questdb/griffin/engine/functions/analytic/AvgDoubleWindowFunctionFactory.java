@@ -41,7 +41,7 @@ import io.questdb.std.*;
 
 import java.util.Arrays;
 
-public class AvgFunctionFactory implements FunctionFactory {
+public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
     private static final ArrayColumnTypes AVG_COLUMN_TYPES;
 

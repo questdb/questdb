@@ -740,7 +740,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         candidateDescriptor = descriptor;
                         candidateSigArgCount = sigArgCount;
                         candidateSigVarArgConst = sigVarArgConst;
-                        break;
+                        if (isAnalyticContext == factory.isWindow()) {
+                            break;
+                        }
                     }
                 }
             }
