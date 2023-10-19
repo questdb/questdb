@@ -75,7 +75,6 @@ public class DirectByteCharSinkTest {
             Assert.assertEquals((byte) 'd', sink.byteAt(3));
             Assert.assertEquals(512, sink.capacity());
         }
-
     }
 
     @Test

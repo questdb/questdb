@@ -24,7 +24,6 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectByteSequence;
 
 /**
@@ -38,7 +37,7 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
      * @param index byte index
      * @return byte at index
      */
-    default byte byteAt(long index) {
+    default byte byteAt(int index) {
         return DirectByteSequence.super.byteAt(index);
     }
 

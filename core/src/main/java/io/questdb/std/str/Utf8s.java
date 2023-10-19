@@ -14,7 +14,7 @@ public interface Utf8s {
             return false;
         }
 
-        for (long index = 0, n = a.size(); index < n; index++) {
+        for (int index = 0, n = a.size(); index < n; index++) {
             if (a.byteAt(index) != b.byteAt(index)) {
                 return false;
             }

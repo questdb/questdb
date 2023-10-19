@@ -31,7 +31,7 @@ import io.questdb.std.Unsafe;
  */
 public interface DirectByteSequence extends ByteSequence {
     @Override
-    default byte byteAt(long index) {
+    default byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(ptr() + index);
     }
 

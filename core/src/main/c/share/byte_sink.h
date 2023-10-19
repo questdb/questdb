@@ -53,6 +53,9 @@ PACK(struct questdb_byte_sink_t {
 
     // End of the allocated buffer.
     std::byte* hi;
+
+    // Set to `true` if a `realloc` fails due to exceeding 2GiB.
+    bool overflow;  // TODO: Remove once artificial limitation is lifted.
 });
 
 typedef struct questdb_byte_sink_t questdb_byte_sink_t;

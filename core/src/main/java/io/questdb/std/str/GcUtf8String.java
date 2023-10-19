@@ -84,7 +84,7 @@ public class GcUtf8String implements DirectUtf8Sequence {
     }
 
     @Override
-    public long size() {
+    public int size() {
         return size;
     }
 

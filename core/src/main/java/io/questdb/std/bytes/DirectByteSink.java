@@ -27,6 +27,8 @@ package io.questdb.std.bytes;
 import io.questdb.std.*;
 import org.jetbrains.annotations.TestOnly;
 
+import java.nio.BufferOverflowException;
+
 public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByteSink, QuietCloseable, Mutable {
     /**
      * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
@@ -35,6 +37,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * * `ptr` - pointer to the first writable byte, offset: 0
      * * `lo` - pointer to the first byte in the buffer, offset: 8
      * * `hi` - pointer to the last byte in the buffer, offset: 16
+     * * `overflow` - bool flag set to true if the buffer was asked to resize beyond 2GiB.
      * <p>
      * These indirect fields are get/set by {@link #getImplPtr()},
      * {@link #setImplPtr(long)}, {@link #getImplLo()}, {@link #getImplHi()}.
@@ -65,6 +68,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public DirectByteSink(long capacity) {
+        assert capacity >= 0;
+        assert capacity <= Integer.MAX_VALUE;
         impl = implCreate(capacity);
         if (impl == 0) {
             throw new OutOfMemoryError("Cannot allocate " + capacity + " bytes");
@@ -90,9 +95,9 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     public DirectByteSink put(ByteSequence bs) {
         if (bs != null) {
-            final long bsSize = bs.size();
+            final int bsSize = bs.size();
             final long dest = book(bsSize);
-            for (long i = 0; i < bsSize; i++) {
+            for (int i = 0; i < bsSize; i++) {
                 Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
             }
             advance(bsSize);
@@ -129,7 +134,12 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         final long initCapacity = capacity();
         p = implBook(impl, required);
         if (p == 0) {
-            throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
+            if (getImplOverflow()) {  // TODO: Remove check once api is `long` (rather than `int`) based for size.
+                throw new BufferOverflowException();  // More than 2GiB requested.
+            }
+            else {
+                throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
+            }
         }
         final long newCapacity = capacity();
         if (newCapacity > initCapacity) {
@@ -187,8 +197,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * Number of readable bytes in the sequence.
      */
     @Override
-    public long size() {
-        return getImplPtr() - getImplLo();
+    public int size() {
+        return (int) (getImplPtr() - getImplLo());
     }
 
     private void closeByteSink() {
@@ -213,6 +223,10 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     private void setImplPtr(long ptr) {
         Unsafe.getUnsafe().putLong(impl, ptr);
+    }
+
+    private boolean getImplOverflow() {
+        return Unsafe.getUnsafe().getByte(impl + 24) != 0;
     }
 
     protected int memoryTag() {

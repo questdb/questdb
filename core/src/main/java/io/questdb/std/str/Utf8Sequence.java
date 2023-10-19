@@ -37,7 +37,7 @@ public interface Utf8Sequence extends ByteSequence {
      * @param index byte index
      * @return byte at index
      */
-    byte byteAt(long index);
+    byte byteAt(int index);
 
     /**
      * Number of bytes in the string.
@@ -45,5 +45,5 @@ public interface Utf8Sequence extends ByteSequence {
      * This is NOT the number of 16-bit chars or code points in the string.
      * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
      */
-    long size();
+    int size();
 }

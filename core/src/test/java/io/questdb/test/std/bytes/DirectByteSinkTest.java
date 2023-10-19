@@ -32,6 +32,7 @@ import io.questdb.std.bytes.NativeByteSink;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.BufferOverflowException;
 import java.util.function.Supplier;
 
 public class DirectByteSinkTest {
@@ -120,12 +121,12 @@ public class DirectByteSinkTest {
 
             final ByteSequence bs = new ByteSequence() {
                 @Override
-                public byte byteAt(long index) {
+                public byte byteAt(int index) {
                     return (byte) 'a';
                 }
 
                 @Override
-                public long size() {
+                public int size() {
                     return 40;
                 }
             };
@@ -167,5 +168,36 @@ public class DirectByteSinkTest {
         Assert.assertEquals(getReallocCount.get().longValue(), 1);
         Assert.assertEquals(getFreeCount.get().longValue(), 2);
         Assert.assertEquals(getMemUsed.get().longValue(), 0);
+    }
+
+    @Test
+    public void testOver2GiB() {
+        try (DirectByteSink oneMegChunk = new DirectByteSink();
+            DirectByteSink dbs = new DirectByteSink()) {
+
+            final int oneMiB = 1024 * 1024;
+            for (int i = 0; i < oneMiB; i++) {
+                oneMegChunk.put((byte) '0');
+            }
+            Assert.assertEquals(oneMiB, oneMegChunk.size());
+
+            dbs.book(Integer.MAX_VALUE);
+
+            final int numChunks = Integer.MAX_VALUE / oneMiB;
+            for (int i = 0; i < numChunks; i++) {
+                dbs.put(oneMegChunk);
+            }
+
+            for (int i = 0; i < (oneMiB - 1); i++) {
+                dbs.put((byte) '0');
+            }
+
+            Assert.assertEquals(Integer.MAX_VALUE, dbs.size());
+            Assert.assertEquals(Integer.MAX_VALUE, dbs.capacity());
+            Assert.assertEquals(Integer.MAX_VALUE, dbs.hi() - dbs.lo());
+
+            // The next byte will overflow.
+            Assert.assertThrows(BufferOverflowException.class, () -> dbs.put((byte) '0'));
+        }
     }
 }

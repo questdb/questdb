@@ -25,8 +25,15 @@
 #include "byte_sink.h"
 #include <stdlib.h>
 #include <jni.h>
+#include <limits>
+#include <algorithm>
 
 static_assert(sizeof(size_t) == 8, "size_t must be 64-bits");
+
+// TODO: Remove this constraint once `ByteSequence`'s `size` returns `long` instead of `int`.
+// Due to restrictions in the signature of `ByteSequence`,
+// we need to restrict allocations to 2GiB.
+static const size_t max_alloc_size = std::numeric_limits<jint>::max();
 
 static questdb_byte_sink_t* create(size_t capacity) {
     questdb_byte_sink_t* sink = (questdb_byte_sink_t*) malloc(sizeof(questdb_byte_sink_t));
@@ -39,12 +46,13 @@ static questdb_byte_sink_t* create(size_t capacity) {
     // with malloc is 32 bytes. We use this as a minimum.
     capacity = capacity < 32 ? 32 : capacity;
 
-    sink->ptr = sink->lo = (std::byte*) malloc(capacity);
+    sink->lo = sink->ptr = (std::byte*) malloc(capacity);
     if (sink->lo == NULL) {
         free(sink);
         return NULL;
     }
     sink->hi = sink->lo + capacity;
+    sink->overflow = false;
     return sink;
 }
 
@@ -69,7 +77,7 @@ static void destroy(questdb_byte_sink_t* sink) {
  * Note that values of 0 and 1 yield inconsistent results between compilers and
  * platforms, but this doesn't affect usage as we never input such values.
  */
-static int64_t next_pow2(int64_t n)
+static size_t next_pow2(size_t n)
 {
     // See: https://jameshfisher.com/2018/03/30/round-up-power-2/
     // In this portable code we use two different slightly different intrinsics
@@ -77,11 +85,11 @@ static int64_t next_pow2(int64_t n)
     //  * __builtin_clz(l): counts the number of leading zeros.
     //  * _BitScanReverse(64): counts the 0-based index of the highest bit.
     // As such they need to be handled slightly differently.
-    const int64_t prev = n - 1;
+    const size_t prev = n - 1;
 
 #if defined(__GNUC__) || defined(__clang__)
     const int n_leading_zeros = (size_t)__builtin_clzll(prev);
-    const int64_t width = 64;
+    const size_t width = 64;
     return ((size_t)1) << (width - n_leading_zeros);
 #else
     unsigned long bit_index = 0;
@@ -98,10 +106,18 @@ std::byte* questdb_byte_sink_book(questdb_byte_sink_t* sink, size_t min_len) {
     const size_t curr_pos = sink->ptr - sink->lo;
     const size_t curr_capacity = sink->hi - sink->lo;
     const size_t add_req_capacity = min_len - curr_avail;
-    const size_t new_capacity = next_pow2(curr_capacity + add_req_capacity);
-    std::byte* new_lo = (std::byte*) realloc(sink->lo, new_capacity);
+    const size_t new_capacity = std::min(next_pow2(curr_capacity + add_req_capacity), max_alloc_size);
+
+    // TODO: Remove this check once `ByteSequence`'s `size` returns `long` instead of `int`.
+    // Cap allocation to 2GiB.
+    if ((new_capacity == max_alloc_size) && (new_capacity < (curr_capacity + add_req_capacity))) {
+        sink->overflow = true;
+        return NULL;
+    }
+
+    std::byte* const new_lo = (std::byte*) realloc(sink->lo, new_capacity);
     if (new_lo == NULL) {
-        // NB: sink->lo is still valid here and will need to be freed later.
+        // NB: sink->lo is still valid here and will be freed later by `destroy`.
         return NULL;
     }
     sink->lo = new_lo;
@@ -111,37 +127,23 @@ std::byte* questdb_byte_sink_book(questdb_byte_sink_t* sink, size_t min_len) {
 }
 
 extern "C" {
-    // Create
     JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implCreate(
             JNIEnv *env,
             jclass cl,
             jlong capacity);
 
-    JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implCreate(
-            jlong capacity);
-
-    // Destroy
     JNIEXPORT void JNICALL Java_io_questdb_std_bytes_DirectByteSink_implDestroy(
             JNIEnv *env,
             jclass cl,
             jlong impl);
 
-    JNIEXPORT void JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implDestroy(
-            jlong impl);
-
-    // Book
     JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implBook(
             JNIEnv *env,
             jclass cl,
             jlong impl,
             jlong min_len);
-
-    JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implBook(
-            jlong impl,
-            jlong min_len);
 }
 
-// Create
 JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implCreate(
         JNIEnv *env,
         jclass cl,
@@ -149,12 +151,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implCreate(
     return (jlong) create(capacity);
 }
 
-JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implCreate(
-        jlong capacity) {
-    return (jlong) create(capacity);
-}
-
-// Destroy
 JNIEXPORT void JNICALL Java_io_questdb_std_bytes_DirectByteSink_implDestroy(
         JNIEnv *env,
         jclass cl,
