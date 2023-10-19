@@ -119,7 +119,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                     orderedTmp = new ObjList<ObjList<AnalyticFunction>>();
                 }
 
-                orderedTmp.set(i, twoPassFunctions);
+                orderedTmp.extendAndSet(i, twoPassFunctions);
             }
         }
 

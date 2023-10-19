@@ -76,10 +76,10 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         if (!analyticContext.isDefaultFrame()) {
             if (rowsLo > 0) {
-                throw SqlException.$(analyticContext.getRowsLoKindPos(), "frame boundaries that use FOLLOWING are not supported");
+                throw SqlException.$(analyticContext.getRowsLoKindPos(), "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
             }
-            if (rowsHi > 0) {
-                throw SqlException.$(analyticContext.getRowsHiKindPos(), "frame boundaries that use FOLLOWING are not supported");
+            if (rowsHi > 0 && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE)) {
+                throw SqlException.$(analyticContext.getRowsHiKindPos(), "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
             }
         }
 
@@ -92,16 +92,20 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         if (exclusionKind == AnalyticColumn.EXCLUDE_CURRENT_ROW) {
             // assumes frame doesn't use 'following'
+            if (rowsHi == Long.MAX_VALUE) {
+                throw SqlException.$(exclusionKindPos, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
+            }
 
             if (rowsHi == 0) {
                 rowsHi = -1;
             }
             if (rowsHi < rowsLo) {
-                throw SqlException.$(exclusionKindPos, "start of window is not lower than end of window due to exclusion mode");
+                throw SqlException.$(exclusionKindPos, "end of window is higher than start of window due to exclusion mode");
             }
         }
 
-        long windowSize = Math.abs(rowsLo != Long.MIN_VALUE ? rowsLo : rowsHi);
+        long windowSize = rowsHi != Long.MAX_VALUE ?
+                Math.abs(rowsLo != Long.MIN_VALUE ? rowsLo : rowsHi) : 0;
 
         if (windowSize > configuration.getSqlAnalyticMaxFrameSize()) {
             throw SqlException.$(position, "window buffer size exceeds configured limit [maxSize=").put(configuration.getSqlAnalyticMaxFrameSize()).put(",actual=").put(windowSize).put(']');
@@ -140,8 +144,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             } else if (framingMode == AnalyticColumn.FRAMING_ROWS) {
 
                 //between unbounded preceding and current row
-                if (rowsLo == Long.MIN_VALUE
-                        && rowsHi == 0) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createMap(
                             configuration,
                             partitionByKeyTypes,
@@ -155,10 +158,24 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0
-                        && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsLo == rowsHi) {
                     return new AvgOverCurrentRowFunction(args.get(0));
-                } //between [unbounded | x] preceding and [x preceding | current row]
+                } // whole partition
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            AVG_COLUMN_TYPES
+                    );
+
+                    return new AvgOverPartitionFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            args.get(0)
+                    );
+                }
+                //between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     final int bufferSize;
                     if (rowsLo > Long.MIN_VALUE) {
@@ -212,9 +229,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new AvgOverUnboundedRowsFrameFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0
-                        && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsLo == rowsHi) {
                     return new AvgOverCurrentRowFunction(args.get(0));
+                } // whole result set
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new AvgOverWholeResultSetFunction(args.get(0));
                 } //between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     return new AvgOverRowsFrameFunction(
@@ -230,39 +249,15 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
-    static class AvgOverCurrentRowFunction extends DoubleFunction implements AnalyticFunction, ScalarFunction {
-
-        private final Function arg;
-
-        private int columnIndex;
+    static class AvgOverCurrentRowFunction extends BaseAvgFunction {
 
         AvgOverCurrentRowFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-
+            super(arg);
         }
 
         @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), arg.getDouble(record));
-        }
-
-        @Override
-        public void reset() {
-
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
         }
     }
 
@@ -553,37 +548,18 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // mavg() over () - empty clause, no partition by no order by, no frame == default frame
-    private static class AvgOverWholeResultSetFunction extends DoubleFunction implements AnalyticFunction {
-
-        private final Function arg;
+    private static class AvgOverWholeResultSetFunction extends BaseAvgFunction {
         private double avg;
-        private int columnIndex;
         private long count;
         private double sum;
 
         public AvgOverWholeResultSetFunction(Function arg) {
-            this.arg = arg;
+            super(arg);
         }
 
         @Override
         public int getAnalyticType() {
             return AnalyticFunction.TWO_PASS;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            throw new UnsupportedOperationException();
-            //never called ! unused, unless we rework analytic functions
-//            if (count > 0) {
-//                return sum / count;
-//            }
-//
-//            return Double.NaN;
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-
         }
 
         @Override
@@ -604,22 +580,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         public void preparePass2() {
             avg = count > 0 ? sum / count : Double.NaN;
         }
-
-        @Override
-        public void reset() {
-
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
-        }
-
     }
 
     private static abstract class BaseAvgFunction extends DoubleFunction implements AnalyticFunction, ScalarFunction, Reopenable {
@@ -638,12 +598,10 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-
         }
 
         @Override
         public void reopen() {
-
         }
 
         @Override

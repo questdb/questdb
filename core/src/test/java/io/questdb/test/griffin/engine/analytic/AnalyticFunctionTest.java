@@ -151,7 +151,76 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000007Z\t1\t2\n",
                     "select ts, i, j from tab");
 
-            //rows
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t2.5\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8333333333333333\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\n",
+                    "select ts, i, j, avg(d) over (order by ts rows unbounded preceding) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.5\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.4\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\n",
+                    "select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
+                    "select ts, i, j, avg(d) over (order by ts rows current row) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.5\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8333333333333333\n",
+                    "select ts, i, j, avg(d) over (order by ts rows between unbounded preceding and 1 preceding) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t3.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.3333333333333335\n",
+                    "select ts, i, j, avg(d) over (order by ts rows between 4 preceding and 2 preceding) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\n",
+                    "select ts, i, j, avg(d) over (order by i rows between unbounded preceding and unbounded following) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.75\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\n",
+                    "select ts, i, j, avg(d) over (partition by i rows between unbounded preceding and unbounded following) from tab");
+
             String rowsResult1 = "ts\ti\tj\tavg\n" +
                     "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                     "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
@@ -285,22 +354,31 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAverageOverRowsRejectsCurrentRowFrameExcludingCurrentRow() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows current row exclude current row) from tab", 82, "end of window is higher than start of window due to exclusion mode");
+        });
+    }
+
+    @Test
     public void testAverageRejectsFramesThatUseFollowing() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 following and 20 following) from tab", 73, "frame boundaries that use FOLLOWING are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and 1 following) from tab", 89, "frame boundaries that use FOLLOWING are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and unbounded following) from tab", 97, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 following and 20 following) from tab", 73, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and 1 following) from tab", 89, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and unbounded following) from tab", 97, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
 
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 following and 20 following) from tab", 75, "frame boundaries that use FOLLOWING are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and 1 following) from tab", 91, "frame boundaries that use FOLLOWING are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and unbounded following) from tab", 99, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 following and 20 following) from tab", 75, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and 1 following) from tab", 91, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and unbounded following) from tab", 99, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
 
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 following and 20 following) from tab", 74, "frame boundaries that use FOLLOWING are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and 1 following) from tab", 90, "frame boundaries that use FOLLOWING are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and unbounded following) from tab", 98, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 following and 20 following) from tab", 74, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and 1 following) from tab", 90, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and unbounded following) from tab", 98, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
         });
     }
 
@@ -327,8 +405,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
-            assertException("select avg(j) over (partition by i rows between 10 following and 20 following) from tab", 51, "frame boundaries that use FOLLOWING are not supported");
-            assertException("select avg(j) over (partition by i rows between current row and 10 following) from tab", 67, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select avg(j) over (partition by i rows between 10 following and 20 following) from tab", 51, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select avg(j) over (partition by i rows between current row and 10 following) from tab", 67, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
         });
     }
 

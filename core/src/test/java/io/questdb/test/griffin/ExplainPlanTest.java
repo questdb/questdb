@@ -103,7 +103,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                    Frame forward scan on: table_2\n"
         ));
     }
-
+    
     @Test
     public void test2686LeftJoinDoesntMoveOtherLeftJoinPredicate() throws Exception {
         test2686Prepare();
@@ -322,6 +322,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testAnalytic3() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertPlan("select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab",
+                    "CachedAnalytic\n" +
+                            "  orderedFunctions: [[i, j] => [avg(j) over ()]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
                     "CachedAnalytic\n" +
