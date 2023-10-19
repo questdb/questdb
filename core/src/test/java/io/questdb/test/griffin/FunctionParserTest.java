@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqDateFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
@@ -1149,7 +1150,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testOverloadBetweenNullAndAnyType() {
         for (short type = ColumnType.BOOLEAN; type < ColumnType.MAX; type++) {
-            if(type == ColumnType.STRING || type == ColumnType.SYMBOL) {
+            if (type == ColumnType.STRING || type == ColumnType.SYMBOL) {
                 String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
                 Assert.assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
                 Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
@@ -1610,6 +1611,32 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Function function = parseFunction("a+b", metadata, functionParser);
         Assert.assertEquals(ColumnType.LONG, function.getType());
         Assert.assertEquals(expected, function.getLong(record));
+    }
+
+    @Test
+    public void testConstStrToDateCast() throws SqlException {
+        functions.add(new EqDateFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.DATE));
+
+        FunctionParser parser = createFunctionParser();
+        Function function = parseFunction("a='2020-01-01'", metadata, parser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.getBool(new Record() {
+            @Override
+            public long getDate(int col) {
+                return 1577836800000L;
+            }
+        }));
+
+        function = parseFunction("'2020-01-01'=a", metadata, parser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.getBool(new Record() {
+            @Override
+            public long getDate(int col) {
+                return 1577836800000L;
+            }
+        }));
     }
 
     private void assertFail(int expectedPos, String expectedMessage, String expression, GenericRecordMetadata metadata) {
