@@ -787,18 +787,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 // convert arguments if necessary
                 assert arg.isConstant(); // casting from String/Symbol to Timestamp is supported for constants only
                 int position = argPositions.getQuick(k);
-                if (arg.isConstant()) {
-                    long timestamp = parseTimestamp(arg.getStr(null), position);
-                    args.set(k, TimestampConstant.newInstance(timestamp));
-                }
+                long timestamp = parseTimestamp(arg.getStr(null), position);
+                args.set(k, TimestampConstant.newInstance(timestamp));
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.DATE) {
                 // convert arguments if necessary
                 assert arg.isConstant(); // casting from String/Symbol to Date is supported for constants only
                 int position = argPositions.getQuick(k);
-                if (arg.isConstant()) {
-                    long millis = parseDate(arg.getStr(null), position);
-                    args.set(k, DateConstant.newInstance(millis));
-                }
+                long millis = parseDate(arg.getStr(null), position);
+                args.set(k, DateConstant.newInstance(millis));
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             }
