@@ -69,7 +69,7 @@ public class RankFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
         if (analyticContext.isEmpty()) {
-            throw SqlException.$(position, "analytic function called in non-analytic context, make sure to add OVER clause");
+            throw SqlException.emptyAnalyticContext(position);
         }
 
         if (analyticContext.getPartitionByRecord() != null) {
@@ -132,14 +132,6 @@ public class RankFunctionFactory implements FunctionFactory {
                 Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndex);
             }
             maxIndex++;
-        }
-
-        @Override
-        public void pass2(Record record) {
-        }
-
-        @Override
-        public void preparePass2(RecordCursor cursor) {
         }
 
         @Override
@@ -238,14 +230,6 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass2(Record record) {
-        }
-
-        @Override
-        public void preparePass2(RecordCursor cursor) {
-        }
-
-        @Override
         public void reopen() {
             map.reopen();
         }
@@ -263,6 +247,10 @@ public class RankFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(')');
         }
     }
 
@@ -290,14 +278,6 @@ public class RankFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), 1);
-        }
-
-        @Override
-        public void pass2(Record record) {
-        }
-
-        @Override
-        public void preparePass2(RecordCursor cursor) {
         }
 
         @Override

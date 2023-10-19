@@ -28,6 +28,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class AnalyticFunctionTest extends AbstractCairoTest {
@@ -62,6 +63,366 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                 Assert.assertEquals(7, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "analytic function called in non-analytic context, make sure to add OVER clause");
             }
+        });
+    }
+
+    @Test
+    public void testAnalyticFunctionDoesntSortIfOrderByCompatibleWithBaseQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
+                    "CachedAnalytic\n" +
+                            "  unorderedFunctions: [avg(1) over (partition by [i])]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc",
+                    "CachedAnalytic\n" +
+                            "  unorderedFunctions: [avg(1) over (partition by [i])]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc",
+                    "CachedAnalytic\n" +
+                            "  unorderedFunctions: [avg(1) over (partition by [i])]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testAverageOverGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
+
+            assertSql("", "select ts, i, j, avg(i) over (partition by i order by ts groups unbounded preceding) from tab");
+            assertSql("", "select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and current row) from tab");
+        });
+    }
+
+    @Test
+    public void testAverageOverRange() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
+
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\n",
+                    "select ts, i, j, avg(j) over () from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\t1.75\n" +
+                    "1970-01-01T00:00:00.000005Z\t1\t0\t1.75\n" +
+                    "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\n" +
+                    "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\n", "select ts, i, j, avg(j) over (partition by i) from tab");
+
+            assertSql("", "select ts, i, j, avg(i) over (partition by i order by ts range unbounded preceding) from tab");
+            assertSql("", "select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and current row) from tab");
+        });
+    }
+
+    @Test
+    public void testAverageOverRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long, d double) timestamp(ts)");
+            insert("insert into tab select x::timestamp, x/4, x%5, x%5 from long_sequence(7)");
+
+            assertSql("ts\ti\tj\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\n",
+                    "select ts, i, j from tab");
+
+            //rows
+            String rowsResult1 = "ts\ti\tj\tavg\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\n" +
+                    "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
+                    "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\n" +
+                    "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\n";
+
+            assertSql(rowsResult1, "select ts, i, j, avg(d) over (partition by i order by ts rows unbounded preceding) from tab");
+            assertSql(rowsResult1, "select ts, i, j, avg(j) over (partition by i order by ts rows unbounded preceding) from tab");
+            assertSql(rowsResult1, "select ts, i, j, avg(j) over (partition by i rows unbounded preceding) from tab");
+            assertSql(rowsResult1, "select ts, i, j, avg(j) over (partition by i rows between unbounded preceding and current row) from tab");
+            assertSql(rowsResult1, "select ts, i, j, avg(j) over (partition by i order by ts rows between 10 preceding and current row) from tab");
+            assertSql(rowsResult1, "select ts, i, j, avg(j) over (partition by i order by ts rows between 3 preceding and current row) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.5\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t0.5\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\n",
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t1.0\n",
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 2 preceding and current row) from tab");
+
+            String result2 = "ts\ti\tj\tavg\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\tNaN\n" +
+                    "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\n" +
+                    "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\n" +
+                    "1970-01-01T00:00:00.000007Z\t1\t2\t0.5\n";
+            assertSql(result2, "select ts, i, j, avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding) from tab");
+            assertSql(result2, "select ts, i, j, avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row) from tab");
+            assertSql(result2, "select ts, i, j, avg(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row) from tab");
+
+            //partitions are smaller than 10 elements so avg is all nulls
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\tNaN\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tNaN\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\tNaN\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n",
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tNaN\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding) from tab");
+
+            // here avg returns j as double because it processes current row only
+            assertSql("ts\ti\tj\tavg\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\n" +
+                    "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\n" +
+                    "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\n" +
+                    "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n", "select ts, i, j, avg(j) over (partition by i order by ts rows current row) from tab");
+
+            // test with dependencies not included on column list + column reorder + sort
+            assertSql("avg\tts\ti\tj\n" +
+                            "1.0\t1970-01-01T00:00:00.000001Z\t0\t1\n" +
+                            "1.5\t1970-01-01T00:00:00.000002Z\t0\t2\n" +
+                            "2.5\t1970-01-01T00:00:00.000003Z\t0\t3\n" +
+                            "4.0\t1970-01-01T00:00:00.000004Z\t1\t4\n" +
+                            "2.0\t1970-01-01T00:00:00.000005Z\t1\t0\n" +
+                            "0.5\t1970-01-01T00:00:00.000006Z\t1\t1\n" +
+                            "1.5\t1970-01-01T00:00:00.000007Z\t1\t2\n",
+                    "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), ts, i, j from tab");
+
+            assertSql("avg\ti\tj\n" +
+                            "1.0\t0\t1\n" +
+                            "1.5\t0\t2\n" +
+                            "2.5\t0\t3\n" +
+                            "4.0\t1\t4\n" +
+                            "2.0\t1\t0\n" +
+                            "0.5\t1\t1\n" +
+                            "1.5\t1\t2\n",
+                    "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), i, j from tab");
+
+            assertSql("avg\n" +
+                            "1.5\n" +
+                            "2.5\n" +
+                            "3.0\n" +
+                            "2.0\n" +
+                            "0.5\n" +
+                            "1.5\n" +
+                            "2.0\n",
+                    "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row) from tab");
+
+            assertSql("avg\n" +
+                            "1.5\n" +
+                            "2.5\n" +
+                            "3.0\n" +
+                            "2.0\n" +
+                            "0.5\n" +
+                            "1.5\n" +
+                            "2.0\n",
+                    "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row) from tab order by ts");
+
+            assertSql("avg\ti\tj\n" +
+                            "1.0\t0\t1\n" +
+                            "1.5\t0\t2\n" +
+                            "2.5\t0\t3\n" +
+                            "0.0\t1\t0\n" +
+                            "0.5\t1\t1\n" +
+                            "1.5\t1\t2\n" +
+                            "3.0\t1\t4\n",
+                    "select avg(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), i, j from tab order by i,j");
+        });
+    }
+
+    @Test
+    public void testAverageRejectsFramesThatUseFollowing() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
+
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 following and 20 following) from tab", 73, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and 1 following) from tab", 89, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and unbounded following) from tab", 97, "frame boundaries that use FOLLOWING are not supported");
+
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 following and 20 following) from tab", 75, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and 1 following) from tab", 91, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and unbounded following) from tab", 99, "frame boundaries that use FOLLOWING are not supported");
+
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 following and 20 following) from tab", 74, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and 1 following) from tab", 90, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and unbounded following) from tab", 98, "frame boundaries that use FOLLOWING are not supported");
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testAvgFailsInNonAnalyticContext() throws Exception {
+        assertException(
+                "select avg(price), * from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                7,
+                "analytic function called in non-analytic context, make sure to add OVER clause"
+        );
+    }
+
+    @Test
+    public void testAvgFunctionDontAcceptFollowingInNonDefaultFrameDefinition() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertException("select avg(j) over (partition by i rows between 10 following and 20 following) from tab", 51, "frame boundaries that use FOLLOWING are not supported");
+            assertException("select avg(j) over (partition by i rows between current row and 10 following) from tab", 67, "frame boundaries that use FOLLOWING are not supported");
+        });
+    }
+
+    @Test
+    public void testPartitionByAndOrderByColumnPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
+
+            //row_number()
+            assertSql("row_number\n" +
+                            "3\n" +
+                            "2\n" +
+                            "1\n" +
+                            "4\n" +
+                            "3\n" +
+                            "2\n" +
+                            "1\n",
+                    "select row_number() over (partition by i order by ts desc) " +
+                            "from tab order by ts asc");
+
+            assertSql("row_number\n" +
+                            "1\n" +
+                            "2\n" +
+                            "3\n" +
+                            "4\n" +
+                            "1\n" +
+                            "2\n" +
+                            "3\n",
+                    "select row_number() over (partition by i order by ts desc)" +
+                            "from tab order by ts desc");
+
+            assertSql("row_number\n" +
+                            "1\n" +
+                            "2\n" +
+                            "3\n" +
+                            "1\n" +
+                            "2\n" +
+                            "3\n" +
+                            "4\n",
+                    "select row_number() over (partition by i order by ts asc) " +
+                            "from tab order by ts asc");
+
+            assertSql("row_number\n" +
+                            "4\n" +
+                            "3\n" +
+                            "2\n" +
+                            "1\n" +
+                            "3\n" +
+                            "2\n" +
+                            "1\n",
+                    "select row_number() over (partition by i order by ts asc) " +
+                            "from tab order by ts desc");
+
+            assertSql("row_number\n" +
+                            "3\n" +
+                            "2\n" +
+                            "1\n" +
+                            "4\n" +
+                            "3\n" +
+                            "2\n" +
+                            "1\n",
+                    "select row_number() over (partition by i order by i, j asc) " +
+                            "from tab order by ts desc");
+
+            //avg(), row_number() and rank()
+            assertSql("row_number\tavg\trank\n" +
+                            "1\t2.0\t1\n" +
+                            "2\t2.5\t2\n" +
+                            "3\t3.0\t3\n" +
+                            "1\t1.75\t4\n" +
+                            "2\t1.0\t1\n" +
+                            "3\t1.5\t2\n" +
+                            "4\t2.0\t3\n",
+                    "select row_number() over (partition by i order by ts asc), " +
+                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   rank() over (partition by i order by j asc) " +
+                            "from tab " +
+                            "order by ts asc");
+
+            assertSql("row_number\tavg\trank\n" +
+                            "4\t2.0\t3\n" +
+                            "3\t1.5\t2\n" +
+                            "2\t1.0\t1\n" +
+                            "1\t1.75\t4\n" +
+                            "3\t3.0\t3\n" +
+                            "2\t2.5\t2\n" +
+                            "1\t2.0\t1\n",
+                    "select row_number() over (partition by i order by ts asc), " +
+                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   rank() over (partition by i order by j asc) " +
+                            "from tab " +
+                            "order by ts desc");
         });
     }
 
@@ -705,5 +1066,15 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testWindowBufferExceedsLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertException("select avg(j) over (partition by i rows between 10001 preceding and current row) from tab",
+                    7, "window buffer size exceeds configured limit [maxSize=10000,actual=10001]");
+        });
     }
 }

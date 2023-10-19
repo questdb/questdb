@@ -883,10 +883,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             assertException(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
                 if (errorPos > -1) {
                     Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
                 }
-                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
             } else {
                 throw e;
             }

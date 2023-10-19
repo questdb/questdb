@@ -51,7 +51,8 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, boolean baseSupportsRandomAccess) {
+    public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, boolean baseSupportsRandomAccess, int framingMode, long rowsLo, int rowsLoExprPos, long rowsHi, int rowsHiExprPos, int exclusionKind, int exclusionKindPos) {
+
     }
 
     @Override

@@ -546,6 +546,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int candidateSigArgCount = 0;
         int candidateSigArgTypeSum = -1;
         int bestMatch = MATCH_NO_MATCH;
+        boolean isAnalyticContext = !sqlExecutionContext.getAnalyticContext().isEmpty();
 
         undefinedVariables.clear();
 
@@ -712,6 +713,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 if (match == MATCH_NO_MATCH) {
                     continue;
+                }
+
+                if (factory.isWindow()) {
+                    // prefer window functions in analytic context, otherwise non-window functions
+                    sigArgTypeSum += isAnalyticContext ? -1 : 1;
                 }
 
                 if (match == MATCH_EXACT_MATCH || match >= bestMatch) {

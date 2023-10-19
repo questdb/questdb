@@ -1220,6 +1220,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    private static void unitToSink(CharSink sink, long timeUnit) {
+        if (timeUnit == AnalyticColumn.TIME_UNIT_MICROSECOND) {
+            sink.put(" microsecond");
+        } else if (timeUnit == AnalyticColumn.TIME_UNIT_MILLISECOND) {
+            sink.put(" millisecond");
+        } else if (timeUnit == AnalyticColumn.TIME_UNIT_SECOND) {
+            sink.put(" second");
+        } else if (timeUnit == AnalyticColumn.TIME_UNIT_MINUTE) {
+            sink.put(" minute");
+        } else if (timeUnit == AnalyticColumn.TIME_UNIT_HOUR) {
+            sink.put(" hour");
+        } else if (timeUnit == AnalyticColumn.TIME_UNIT_DAY) {
+            sink.put(" day");
+        } else {
+            sink.put(" [unknown unit]");
+        }
+    }
+
     private String getSelectModelTypeText() {
         return modelTypeName.get(selectModelType);
     }
@@ -1272,29 +1290,33 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         }
                     }
 
-                    if (ac.isNonDefault()) {
+                    if (ac.isNonDefaultFrame()) {
                         switch (ac.getFramingMode()) {
                             case AnalyticColumn.FRAMING_ROWS:
-                                sink.put(" ROWS");
+                                sink.put(" rows");
                                 break;
                             case AnalyticColumn.FRAMING_RANGE:
-                                sink.put(" RANGE");
+                                sink.put(" range");
                                 break;
-                            case AnalyticColumn.FRAMING_GROUP:
-                                sink.put(" GROUP");
+                            case AnalyticColumn.FRAMING_GROUPS:
+                                sink.put(" groups");
                                 break;
                             default:
                                 break;
                         }
-                        sink.put(" BETWEEN ");
+                        sink.put(" between ");
                         if (ac.getRowsLoExpr() != null) {
                             ac.getRowsLoExpr().toSink(sink);
+                            if (ac.getFramingMode() == AnalyticColumn.FRAMING_RANGE) {
+                                unitToSink(sink, ac.getRowsLoExprTimeUnit());
+                            }
+
                             switch (ac.getRowsLoKind()) {
                                 case AnalyticColumn.PRECEDING:
-                                    sink.put(" PRECEDING");
+                                    sink.put(" preceding");
                                     break;
                                 case AnalyticColumn.FOLLOWING:
-                                    sink.put(" FOLLOWING");
+                                    sink.put(" following");
                                     break;
                                 default:
                                     break;
@@ -1302,27 +1324,31 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         } else {
                             switch (ac.getRowsLoKind()) {
                                 case AnalyticColumn.PRECEDING:
-                                    sink.put("UNBOUNDED PRECEDING");
+                                    sink.put("unbounded preceding");
                                     break;
                                 case AnalyticColumn.FOLLOWING:
-                                    sink.put("UNBOUNDED FOLLOWING");
+                                    sink.put("unbounded following");
                                     break;
                                 default:
                                     // CURRENT
-                                    sink.put("CURRENT ROW");
+                                    sink.put("current row");
                                     break;
                             }
                         }
-                        sink.put(" AND ");
+                        sink.put(" and ");
 
                         if (ac.getRowsHiExpr() != null) {
                             ac.getRowsHiExpr().toSink(sink);
+                            if (ac.getFramingMode() == AnalyticColumn.FRAMING_RANGE) {
+                                unitToSink(sink, ac.getRowsHiExprTimeUnit());
+                            }
+
                             switch (ac.getRowsHiKind()) {
                                 case AnalyticColumn.PRECEDING:
-                                    sink.put(" PRECEDING");
+                                    sink.put(" preceding");
                                     break;
                                 case AnalyticColumn.FOLLOWING:
-                                    sink.put(" FOLLOWING");
+                                    sink.put(" following");
                                     break;
                                 default:
                                     assert false;
@@ -1331,30 +1357,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         } else {
                             switch (ac.getRowsHiKind()) {
                                 case AnalyticColumn.PRECEDING:
-                                    sink.put("UNBOUNDED PRECEDING");
+                                    sink.put("unbounded preceding");
                                     break;
                                 case AnalyticColumn.FOLLOWING:
-                                    sink.put("UNBOUNDED FOLLOWING");
+                                    sink.put("unbounded following");
                                     break;
                                 default:
                                     // CURRENT
-                                    sink.put("CURRENT ROW");
+                                    sink.put("current row");
                                     break;
                             }
                         }
 
                         switch (ac.getExclusionKind()) {
                             case AnalyticColumn.EXCLUDE_CURRENT_ROW:
-                                sink.put(" EXCLUDE CURRENT ROW");
+                                sink.put(" exclude current row");
                                 break;
                             case AnalyticColumn.EXCLUDE_GROUP:
-                                sink.put(" EXCLUDE GROUP");
+                                sink.put(" exclude group");
                                 break;
                             case AnalyticColumn.EXCLUDE_TIES:
-                                sink.put(" EXCLUDE TIES");
+                                sink.put(" exclude ties");
                                 break;
                             case AnalyticColumn.EXCLUDE_NO_OTHERS:
-                                sink.put(" EXCLUDE NO OTHERS");
+                                sink.put(" exclude no others");
                                 break;
                             default:
                                 assert false;

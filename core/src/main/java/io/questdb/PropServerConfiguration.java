@@ -206,6 +206,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String snapshotRoot;
     private final long spinLockTimeout;
     private final int sqlAnalyticColumnPoolCapacity;
+    private final int sqlAnalyticMaxFrameSize;
     private final int sqlAnalyticRowIdMaxPages;
     private final int sqlAnalyticRowIdPageSize;
     private final int sqlAnalyticStoreMaxPages;
@@ -981,6 +982,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAnalyticRowIdMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlAnalyticTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE, 512 * 1024));
             this.sqlAnalyticTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlAnalyticMaxFrameSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_MAX_FRAME_SIZE, 1000);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATESTBY_QUEUE_CAPACITY, 32));
             this.telemetryEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_ENABLED, true);
@@ -2174,6 +2176,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSpinLockTimeout() {
             return spinLockTimeout;
+        }
+
+        @Override
+        public int getSqlAnalyticMaxFrameSize() {
+            return sqlAnalyticMaxFrameSize;
         }
 
         @Override

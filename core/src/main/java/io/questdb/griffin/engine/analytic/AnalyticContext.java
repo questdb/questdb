@@ -31,11 +31,27 @@ import io.questdb.cairo.sql.VirtualRecord;
 public interface AnalyticContext {
     boolean baseSupportsRandomAccess();
 
+    int getExclusionKind();
+
+    int getExclusionKindPos();
+
+    int getFramingMode();
+
     ColumnTypes getPartitionByKeyTypes();
 
     VirtualRecord getPartitionByRecord();
 
     RecordSink getPartitionBySink();
+
+    long getRowsHi();
+
+    int getRowsHiKindPos();
+
+    long getRowsLo();
+
+    int getRowsLoKindPos();
+
+    boolean isDefaultFrame();
 
     boolean isEmpty();
 

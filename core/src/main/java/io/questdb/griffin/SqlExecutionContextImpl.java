@@ -96,9 +96,28 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes partitionByKeyTypes,
             boolean ordered,
-            boolean baseSupportsRandomAccess
+            boolean baseSupportsRandomAccess,
+            int framingMode,
+            long rowsLo,
+            int rowsLoKindPos,
+            long rowsHi,
+            int rowsHiKindPos,
+            int exclusionKind,
+            int exclusionKindPos
     ) {
-        analyticContext.of(partitionByRecord, partitionBySink, partitionByKeyTypes, ordered, baseSupportsRandomAccess);
+        analyticContext.of(
+                partitionByRecord,
+                partitionBySink,
+                partitionByKeyTypes,
+                ordered,
+                baseSupportsRandomAccess,
+                framingMode,
+                rowsLo,
+                rowsLoKindPos,
+                rowsHi,
+                rowsHiKindPos,
+                exclusionKind,
+                exclusionKindPos);
     }
 
     @Override

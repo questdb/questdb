@@ -889,9 +889,28 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 @Nullable RecordSink partitionBySink,
                 @Nullable ColumnTypes keyTypes,
                 boolean isOrdered,
-                boolean baseSupportsRandomAccess
+                boolean baseSupportsRandomAccess,
+                int framingMode,
+                long rowsLo,
+                int rowsLoKindPos,
+                long rowsHi,
+                int rowsHiKindPos,
+                int exclusionKind,
+                int exclusionKindPos
         ) {
-            sqlExecutionContext.configureAnalyticContext(partitionByRecord, partitionBySink, keyTypes, isOrdered, baseSupportsRandomAccess);
+            sqlExecutionContext.configureAnalyticContext(
+                    partitionByRecord,
+                    partitionBySink,
+                    keyTypes,
+                    isOrdered,
+                    baseSupportsRandomAccess,
+                    framingMode,
+                    rowsLo,
+                    rowsLoKindPos,
+                    rowsHi,
+                    rowsHiKindPos,
+                    exclusionKind,
+                    exclusionKindPos);
         }
 
         @Override

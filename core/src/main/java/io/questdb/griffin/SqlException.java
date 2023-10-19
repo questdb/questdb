@@ -68,6 +68,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return exception;
     }
 
+    public static SqlException emptyAnalyticContext(int position) {
+        return SqlException.$(position, "analytic function called in non-analytic context, make sure to add OVER clause");
+    }
+
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
         return $(position, "inconvertible types: ")
                 .put(ColumnType.nameOf(fromType))
@@ -119,7 +123,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", from=").put(ColumnType.nameOf(fromType))
                 .put(", to=").put(ColumnType.nameOf(toType))
                 .put(']');
-
     }
 
     @Override

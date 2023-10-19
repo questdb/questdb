@@ -133,6 +133,11 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
+    public void useBaseMetadata(boolean useBaseMetdata) {
+        this.useBaseMetadata = useBaseMetdata;
+    }
+
     public PlanSink val(ObjList<?> list) {
         return val(list, 0, list.size());
     }
@@ -243,5 +248,4 @@ public abstract class BasePlanSink implements PlanSink {
             }
         }
     }
-
 }

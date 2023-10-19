@@ -80,6 +80,8 @@ public interface PlanSink {
 
     PlanSink type(CharSequence type);
 
+    void useBaseMetadata(boolean b);
+
     PlanSink val(ObjList<?> list);
 
     PlanSink val(ObjList<?> list, int from);

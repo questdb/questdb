@@ -520,6 +520,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAnalyticMaxFrameSize() {
+        return 10000;
+    }
+
+    @Override
     public int getSqlAnalyticRowIdMaxPages() {
         return Integer.MAX_VALUE;
     }

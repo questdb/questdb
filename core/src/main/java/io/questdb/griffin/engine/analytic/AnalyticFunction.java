@@ -28,7 +28,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.std.IntList;
 
@@ -37,15 +36,24 @@ public interface AnalyticFunction extends Function {
     int THREE_PASS = 3;
     int TWO_PASS = 2;
 
+    default int getAnalyticType() {
+        return STREAM;
+    }
+
     void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order);
 
     void pass1(Record record, long recordOffset, AnalyticSPI spi);
 
-    void pass2(Record record);
+    default void pass2(Record record, long recordOffset, AnalyticSPI spi) {
+    }
 
-    void preparePass2(RecordCursor cursor);
+    default void preparePass2() {
+    }
 
     void reset();
 
+    /*
+      Set index of record chain column used to store analytic function result.
+     */
     void setColumnIndex(int columnIndex);
 }

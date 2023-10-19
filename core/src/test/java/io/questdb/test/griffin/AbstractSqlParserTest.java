@@ -54,7 +54,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
                     CreateTableTestUtils.create(tableModels[i]);
                 }
-                assertException(query, position, contains);
+                assertException(query, position, contains, false);
             });
         } finally {
             for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -110,54 +110,6 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
-    protected void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
-        try {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                CreateTableTestUtils.create(tableModels[i]);
-            }
-            runnable.run();
-        } finally {
-            Assert.assertTrue(engine.releaseAllReaders());
-            FilesFacade filesFacade = configuration.getFilesFacade();
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                Assert.assertTrue(filesFacade.rmdir(path));
-                tableModel.close();
-            }
-            engine.reloadTableNames();
-        }
-    }
-
-    private void validateTopDownColumns(QueryModel model) {
-        ObjList<QueryColumn> columns = model.getColumns();
-        final ObjList<LowerCaseCharSequenceHashSet> nameSets = new ObjList<>();
-
-        QueryModel nested = model.getNestedModel();
-        while (nested != null) {
-            nameSets.clear();
-
-            for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
-                LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
-                final QueryModel m = nested.getJoinModels().getQuick(i);
-                final ObjList<QueryColumn> cols = m.getTopDownColumns();
-                for (int j = 0, k = cols.size(); j < k; j++) {
-                    QueryColumn qc = cols.getQuick(j);
-                    Assert.assertTrue(set.add(qc.getName()));
-                }
-                nameSets.add(set);
-            }
-
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getModelAliasIndexes());
-            }
-
-            columns = nested.getTopDownColumns();
-            nested = nested.getNestedModel();
-        }
-    }
-
     protected static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
         refreshTablesInBaseEngine();
         assertSyntaxError0(query, position, contains, tableModels);
@@ -209,5 +161,53 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
     protected void assertUpdate(String expected, String query, TableModel... tableModels) throws SqlException {
         assertModel(expected, query, ExecutionModel.UPDATE, tableModels);
+    }
+
+    protected void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
+        try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CreateTableTestUtils.create(tableModels[i]);
+            }
+            runnable.run();
+        } finally {
+            Assert.assertTrue(engine.releaseAllReaders());
+            FilesFacade filesFacade = configuration.getFilesFacade();
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                Assert.assertTrue(filesFacade.rmdir(path));
+                tableModel.close();
+            }
+            engine.reloadTableNames();
+        }
+    }
+
+    protected void validateTopDownColumns(QueryModel model) {
+        ObjList<QueryColumn> columns = model.getColumns();
+        final ObjList<LowerCaseCharSequenceHashSet> nameSets = new ObjList<>();
+
+        QueryModel nested = model.getNestedModel();
+        while (nested != null) {
+            nameSets.clear();
+
+            for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
+                LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
+                final QueryModel m = nested.getJoinModels().getQuick(i);
+                final ObjList<QueryColumn> cols = m.getTopDownColumns();
+                for (int j = 0, k = cols.size(); j < k; j++) {
+                    QueryColumn qc = cols.getQuick(j);
+                    Assert.assertTrue(set.add(qc.getName()));
+                }
+                nameSets.add(set);
+            }
+
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getModelAliasIndexes());
+            }
+
+            columns = nested.getTopDownColumns();
+            nested = nested.getNestedModel();
+        }
     }
 }

@@ -1826,7 +1826,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private long evalLongConstantOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext, long defaultValue) throws SqlException {
+    private long evalNonNegativeLongConstantOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext, long defaultValue) throws SqlException {
         if (expr != null) {
             final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
             if (!loFunc.isConstant()) {
@@ -1835,6 +1835,9 @@ public class SqlOptimiser implements Mutable {
             }
             final long value = loFunc.getLong(null);
             Misc.free(loFunc);
+            if (value < 0) {
+                throw SqlException.$(expr.position, "non-negative expression expected");
+            }
             return value;
         }
         return defaultValue;
@@ -3630,8 +3633,8 @@ public class SqlOptimiser implements Mutable {
                             tempColumnAlias = null;
 
                             // if necessary, propagate column to limit model that'll receive order by
-                            if (limitModel != baseParent &&
-                                    !hasAnalyticColumn(limitModel)) { // analytic model doesn't support aliases
+                            if (limitModel != baseParent /*&&
+                                    !hasAnalyticColumn(limitModel)*/) { // analytic model doesn't support aliases
                                 CharSequence translatedColumnAlias = getTranslatedColumnAlias(limitModel, baseParent, orderBy.token);
 
                                 if (translatedColumnAlias == null) {
@@ -3692,7 +3695,11 @@ public class SqlOptimiser implements Mutable {
                                         if (qc.getAst().type == ExpressionNode.FUNCTION || qc.getAst().type == ExpressionNode.OPERATION) {
                                             emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel(), false);
                                         } else {
-                                            synthetic.addBottomUpColumn(qc);
+                                            // avoid duplicate column error if column has been pushed by window function already
+                                            if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_ANALYTIC ||
+                                                    !synthetic.getAliasToColumnMap().contains(qc.getName())) {
+                                                synthetic.addBottomUpColumn(qc);
+                                            }
                                         }
                                     }
                                     synthetic.setNestedModel(base);
@@ -4351,6 +4358,7 @@ public class SqlOptimiser implements Mutable {
             throw SqlException.$(0, "Analytic function is not allowed in context of aggregation. Use sub-query.");
         }
 
+        boolean forceTranslatingModel = false;
         if (useAnalyticModel) {
             // We need one more pass for analytic model to emit potentially missing columns.
             // For example, 'SELECT row_number() over (partition by col_c order by col_c), col_a, col_b FROM tab'
@@ -4371,8 +4379,13 @@ public class SqlOptimiser implements Mutable {
                     // either only to translation model or both translation model and the
                     // inner virtual models.
                     final AnalyticColumn ac = (AnalyticColumn) qc;
+                    int innerColumnsPre = innerVirtualModel.getBottomUpColumns().size();
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
+                    int innerColumnsPost = innerVirtualModel.getBottomUpColumns().size();
+                    // analytic model might require columns it doesn't explicitly contain (e.g. used for order by or partition by  in over() clause  )
+                    // skipping translating model will trigger 'invalid column' exceptions
+                    forceTranslatingModel |= innerColumnsPre != innerColumnsPost;
                 }
             }
         }
@@ -4391,7 +4404,7 @@ public class SqlOptimiser implements Mutable {
 
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = useInnerModel || useGroupByModel || useAnalyticModel;
+        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useAnalyticModel) && !forceTranslatingModel;
         if (translationIsRedundant) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
@@ -4730,44 +4743,47 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn qc = queryColumns.getQuick(i);
                 if (qc.isWindowColumn()) {
                     final AnalyticColumn ac = (AnalyticColumn) qc;
-                    ac.setRowsLo(evalLongConstantOrDie(ac.getRowsLoExpr(), sqlExecutionContext, Long.MIN_VALUE));
-                    ac.setRowsHi(evalLongConstantOrDie(ac.getRowsHiExpr(), sqlExecutionContext, Long.MAX_VALUE));
+                    // preceding and following accept non-negative values only
+                    long rowsLo = evalNonNegativeLongConstantOrDie(ac.getRowsLoExpr(), sqlExecutionContext, Long.MAX_VALUE);
+                    long rowsHi = evalNonNegativeLongConstantOrDie(ac.getRowsHiExpr(), sqlExecutionContext, Long.MAX_VALUE);
 
-                    long rowsLo;
-                    long rowsHi;
                     switch (ac.getRowsLoKind()) {
                         case AnalyticColumn.PRECEDING:
-                            rowsLo = -ac.getRowsLo();
+                            rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
                             break;
                         case AnalyticColumn.FOLLOWING:
-                            rowsLo = ac.getRowsLo();
+                            //rowsLo = rowsLo;
                             break;
                         default:
-                            // CURRENT
+                            // CURRENT ROW
                             rowsLo = 0;
                             break;
                     }
 
                     switch (ac.getRowsHiKind()) {
                         case AnalyticColumn.PRECEDING:
-                            rowsHi = -ac.getRowsHi();
+                            rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
                             break;
                         case AnalyticColumn.FOLLOWING:
-                            rowsHi = ac.getRowsHi();
+                            //rowsHi = rowsHi;
                             break;
                         default:
-                            // CURRENT
+                            // CURRENT ROW
                             rowsHi = 0;
                             break;
                     }
+
+                    ac.setRowsLo(rowsLo * ac.getRowsLoExprTimeUnit());
+                    ac.setRowsHi(rowsHi * ac.getRowsHiExprTimeUnit());
 
                     if (rowsLo > rowsHi) {
                         throw SqlException.$(ac.getRowsLoExpr().position, "start of window must be lower than end of window");
                     }
                 }
             }
-            validateWindowFunctions(model.getNestedModel(), sqlExecutionContext, recursionLevel + 1);
         }
+
+        validateWindowFunctions(model.getNestedModel(), sqlExecutionContext, recursionLevel + 1);
 
         // join models
         for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {

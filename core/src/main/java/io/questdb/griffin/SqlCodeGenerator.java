@@ -66,7 +66,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
@@ -2879,18 +2879,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     partitionBySink = null;
                 }
 
-
                 final int osz = ac.getOrderBy().size();
                 executionContext.configureAnalyticContext(
                         partitionByRecord,
                         partitionBySink,
                         keyTypes,
                         osz > 0,
-                        base.recordCursorSupportsRandomAccess()
+                        base.recordCursorSupportsRandomAccess(),
+                        ac.getFramingMode(),
+                        ac.getRowsLo(),
+                        ac.getRowsLoKindPos(),
+                        ac.getRowsHi(),
+                        ac.getRowsHiKindPos(),
+                        ac.getExclusionKind(),
+                        ac.getExclusionKindPos()
                 );
                 final Function f;
                 try {
-                    f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                    //function needs to resolve args against chain metadata
+                    f = functionParser.parseFunction(ast, chainMetadata, executionContext);
                     if (!(f instanceof AnalyticFunction)) {
                         Misc.free(base);
                         throw SqlException.$(ast.position, "non-analytic function called in analytic context");
@@ -2905,6 +2912,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // order by on analytic function if it matches the one on the model
                 final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
                 boolean dismissOrder = false;
+                int timestampIdx = base.getMetadata().getTimestampIndex();
+
                 if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                     dismissOrder = true;
                     for (int j = 0; j < osz; j++) {
@@ -2916,6 +2925,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 }
+                if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
+                    ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
+                    int orderByDirection = ac.getOrderByDirection().getQuick(0);
+
+                    if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
+                            (orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                            (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)) {
+                        dismissOrder = true;
+                    }
+                }
+
 
                 if (osz > 0 && !dismissOrder) {
                     IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
@@ -2959,9 +2979,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final ObjList<RecordComparator> analyticComparators = new ObjList<>(groupedAnalytic.size());
         final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(groupedAnalytic.size());
+        final ObjList<IntList> keys = new ObjList<>();
         for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : groupedAnalytic) {
             analyticComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
             functionGroups.add(e.value);
+            keys.add(e.key);
         }
 
         final RecordSink recordSink = RecordSinkFactory.getInstance(
@@ -2981,7 +3003,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 analyticComparators,
                 functionGroups,
                 naturalOrderFunctions,
-                columnIndexes
+                columnIndexes,
+                keys,
+                chainMetadata
         );
     }
 
@@ -4310,7 +4334,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta,
                     cursorFactory,
                     rowCursorFactory,
-                    false,
+                    orderDescendingByDesignatedTimestampOnly || isOrderByDesignatedTimestampOnly(model),
                     null,
                     framingSupported,
                     columnIndexes,

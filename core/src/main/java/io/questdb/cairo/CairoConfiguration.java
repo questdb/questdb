@@ -321,6 +321,8 @@ public interface CairoConfiguration {
 
     long getSpinLockTimeout();
 
+    int getSqlAnalyticMaxFrameSize();
+
     int getSqlAnalyticRowIdMaxPages();
 
     int getSqlAnalyticRowIdPageSize();

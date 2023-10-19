@@ -35,7 +35,6 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
             ddl("create table y (a int, b int)");
             insert("insert into y select x/4, x from long_sequence(10)");
             engine.releaseAllWriters();
-
             String query = "select b.a, row_number() OVER (PARTITION BY b.a ORDER BY b.b desc) as b " +
                     " from y b " +
                     "order by b.b";
@@ -353,17 +352,17 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPgAttributeFuncWith2Tables() throws Exception {
         assertQuery("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n" +
-                        "2\ta\t1\t701\tfalse\t0\t8\t\tfalse\ttrue\n" +
-                        "2\tb\t2\t1043\tfalse\t0\t-1\t\tfalse\ttrue\n", true, false, false);
+                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n" +
+                "2\ta\t1\t701\tfalse\t0\t8\t\tfalse\ttrue\n" +
+                "2\tb\t2\t1043\tfalse\t0\t-1\t\tfalse\ttrue\n", true, false, false);
     }
 
     @Test
     public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
         assertQuery("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1 limit 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", true, false, false);
+                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1 limit 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", true, false, false);
     }
 
     @Test

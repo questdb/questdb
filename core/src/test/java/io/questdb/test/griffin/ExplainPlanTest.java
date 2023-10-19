@@ -34,8 +34,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.analytic.RankFunctionFactory;
-import io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
@@ -52,6 +50,7 @@ import io.questdb.griffin.engine.functions.eq.*;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.model.AnalyticColumn;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -280,7 +279,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
                 "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t",
                 "CachedAnalytic\n" +
-                        "  functions: [row_number(),row_number()]\n" +
+                        "  orderedFunctions: [[l] => [row_number()]]\n" +
+                        "  unorderedFunctions: [row_number() over (partition by [l])]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: t\n"
@@ -293,7 +293,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
                 "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t",
                 "CachedAnalytic\n" +
-                        "  functions: [row_number()]\n" +
+                        "  orderedFunctions: [[ts] => [row_number() over (partition by [l])]]\n" +
                         "    VirtualRecord\n" +
                         "      functions: [str,ts,l,10]\n" +
                         "        DataFrame\n" +
@@ -308,7 +308,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
                 "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t",
                 "CachedAnalytic\n" +
-                        "  functions: [row_number()]\n" +
+                        "  orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]\n" +
                         "    VirtualRecord\n" +
                         "      functions: [str,ts,l1,ts::long+l1]\n" +
                         "        SelectedRecord\n" +
@@ -317,6 +317,47 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                Frame forward scan on: t\n"
         );
     }
+
+    @Test
+    public void testAnalytic3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertPlan("select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
+                    "CachedAnalytic\n" +
+                            "  unorderedFunctions: [avg(j) over (partition by [i])]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
+                            "avg(j) over (partition by i order by j, i desc rows unbounded preceding) " +
+                            "from tab order by ts desc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [ts desc]\n" +
+                            "        CachedAnalytic\n" +
+                            "          orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i])]]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n");
+
+            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
+                            "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding)," +
+                            "        rank() over (partition by j, i) " +
+                            "from tab order by ts desc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [ts desc]\n" +
+                            "        CachedAnalytic\n" +
+                            "          orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j])]]\n" +
+                            "          unorderedFunctions: [rank() over (partition by [j,i])]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n");
+        });
+    }
+
 
     @Test
     public void testAsOfJoin0() throws Exception {
@@ -544,7 +585,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     sql,
                     "Limit lo: 3\n" +
                             "    CachedAnalytic\n" +
-                            "      functions: [row_number()]\n" +
+                            "      unorderedFunctions: [row_number() over (partition by [sym])]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
@@ -1265,6 +1306,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainPlanNoTrailingQuote() throws Exception {
+        assertQuery("QUERY PLAN\n" +
+                "[\n" +
+                "  {\n" +
+                "    \"Plan\": {\n" +
+                "        \"Node Type\": \"long_sequence\",\n" +
+                "        \"count\":  1\n" +
+                "    }\n" +
+                "  }\n" +
+                "]\n", "explain (format json) select * from long_sequence(1)", null, null, false, true);
+    }
+
+    @Test
     public void testExplainPlanWithEOLs1() throws Exception {
         assertPlan(
                 "create table a (s string)",
@@ -1413,19 +1467,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "    }\n" +
                 "  }\n" +
                 "]\n", "explain (format json) select count (*) from long_sequence(10)", null, null, false, true);
-    }
-
-    @Test
-    public void testExplainPlanNoTrailingQuote() throws Exception {
-        assertQuery("QUERY PLAN\n" +
-                "[\n" +
-                "  {\n" +
-                "    \"Plan\": {\n" +
-                "        \"Node Type\": \"long_sequence\",\n" +
-                "        \"count\":  1\n" +
-                "    }\n" +
-                "  }\n" +
-                "]\n", "explain (format json) select * from long_sequence(1)", null, null, false, true);
     }
 
     @Test
@@ -1953,8 +1994,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         argPositions.setAll(args.size(), 0);
 
-                        if (factory instanceof RowNumberFunctionFactory || factory instanceof RankFunctionFactory) {
-                            sqlExecutionContext.configureAnalyticContext(null, null, null, true, true);
+                        //TODO: test with partition by, order by and various frame modes
+                        if (factory.isWindow()) {
+                            sqlExecutionContext.configureAnalyticContext(null, null, null, false, true, AnalyticColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, AnalyticColumn.EXCLUDE_NO_OTHERS, 0);
                         }
 
                         Function function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);

@@ -1813,13 +1813,25 @@ public class SqlParser {
                         framingMode = AnalyticColumn.FRAMING_ROWS;
                     } else if (isRangeKeyword(tok)) {
                         framingMode = AnalyticColumn.FRAMING_RANGE;
-                    } else if (isGroupKeyword(tok)) {
-                        framingMode = AnalyticColumn.FRAMING_GROUP;
+                    } else if (isGroupsKeyword(tok)) {
+                        framingMode = AnalyticColumn.FRAMING_GROUPS;
+                    } else if (!Chars.equals(tok, ')')) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'rows', 'groups', 'range' or ')' expected");
                     }
+
+                    /* PG documentation:
+                       The default framing option is RANGE UNBOUNDED PRECEDING, which is the same as RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
+                       With ORDER BY, this sets the frame to be all rows from the partition start up through the current row's last ORDER BY peer.
+                       Without ORDER BY, this means all rows of the partition are included in the window frame, since all rows become peers of the current row.
+                     */
 
                     if (framingMode != -1) {
 
                         winCol.setFramingMode(framingMode);
+
+                        if (framingMode == AnalyticColumn.FRAMING_GROUPS && winCol.getOrderBy().size() == 0) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "GROUPS mode requires an ORDER BY clause");
+                        }
 
                         // These keywords define for each row a window (a physical or logical
                         // set of rows) used for calculating the function result. The function is
@@ -1827,7 +1839,7 @@ public class SqlParser {
                         // query result set or partition from top to bottom.
 
                         /*
-                        { ROWS | RANGE }
+                        { ROWS | GROUPS | RANGE }
                         { BETWEEN
                             { UNBOUNDED PRECEDING
                             | CURRENT ROW
@@ -1869,6 +1881,13 @@ public class SqlParser {
                                 int pos = lexer.lastTokenPosition();
                                 lexer.unparseLast();
                                 winCol.setRowsLoExpr(expectExpr(lexer), pos);
+                                if (framingMode == AnalyticColumn.FRAMING_RANGE) {
+                                    long timeUnit = parseTimeUnit(lexer);
+                                    if (timeUnit != -1) {
+                                        winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                    }
+                                }
+
                                 tok = tok(lexer, "'preceding' or 'following'");
                                 if (SqlKeywords.isPrecedingKeyword(tok)) {
                                     winCol.setRowsLoKind(AnalyticColumn.PRECEDING, lexer.lastTokenPosition());
@@ -1877,6 +1896,10 @@ public class SqlParser {
                                 } else {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
                                 }
+                            }
+
+                            if (winCol.getOrderBy().size() != 1 && winCol.requiresOrderBy()) {//groups mode is validated earlier
+                                throw SqlException.$(lexer.lastTokenPosition(), "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
                             }
 
                             tok = tok(lexer, "'and'");
@@ -1900,6 +1923,13 @@ public class SqlParser {
                                     int pos = lexer.lastTokenPosition();
                                     lexer.unparseLast();
                                     winCol.setRowsHiExpr(expectExpr(lexer), pos);
+                                    if (framingMode == AnalyticColumn.FRAMING_RANGE) {
+                                        long timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != -1) {
+                                            winCol.setRowsHiExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                        }
+                                    }
+
                                     tok = tok(lexer, "'preceding'  'following'");
                                     if (SqlKeywords.isPrecedingKeyword(tok)) {
                                         if (winCol.getRowsLoKind() == AnalyticColumn.CURRENT) {
@@ -1928,6 +1958,12 @@ public class SqlParser {
                             } else {
                                 lexer.unparseLast();
                                 winCol.setRowsLoExpr(expectExpr(lexer), pos);
+                                if (framingMode == AnalyticColumn.FRAMING_RANGE) {
+                                    long timeUnit = parseTimeUnit(lexer);
+                                    if (timeUnit != -1) {
+                                        winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                    }
+                                }
                                 tok = tok(lexer, "'preceding'");
                                 if (SqlKeywords.isPrecedingKeyword(tok)) {
                                     winCol.setRowsLoKind(AnalyticColumn.PRECEDING, lexer.lastTokenPosition());
@@ -1938,25 +1974,31 @@ public class SqlParser {
 
                             winCol.setRowsHiKind(AnalyticColumn.CURRENT, pos);
                         }
+
+                        if (winCol.getOrderBy().size() != 1 && winCol.requiresOrderBy()) {//groups mode is validated earlier
+                            throw SqlException.$(lexer.lastTokenPosition(), "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
+                        }
+
                         tok = tok(lexer, "'exclude' or ')' expected");
 
                         if (isExcludeKeyword(tok)) {
                             tok = tok(lexer, "'current', 'group', 'ties' or 'no other' expected");
+                            int excludePos = lexer.lastTokenPosition();
                             if (SqlKeywords.isCurrentKeyword(tok)) {
                                 tok = tok(lexer, "'row' expected");
                                 if (SqlKeywords.isRowKeyword(tok)) {
-                                    winCol.setExclusionKind(AnalyticColumn.EXCLUDE_CURRENT_ROW);
+                                    winCol.setExclusionKind(AnalyticColumn.EXCLUDE_CURRENT_ROW, excludePos);
                                 } else {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'row' expected");
                                 }
                             } else if (SqlKeywords.isGroupKeyword(tok)) {
-                                winCol.setExclusionKind(AnalyticColumn.EXCLUDE_GROUP);
+                                winCol.setExclusionKind(AnalyticColumn.EXCLUDE_GROUP, excludePos);
                             } else if (SqlKeywords.isTiesKeyword(tok)) {
-                                winCol.setExclusionKind(AnalyticColumn.EXCLUDE_TIES);
+                                winCol.setExclusionKind(AnalyticColumn.EXCLUDE_TIES, excludePos);
                             } else if (SqlKeywords.isNoKeyword(tok)) {
                                 tok = tok(lexer, "'others' expected");
                                 if (SqlKeywords.isOthersKeyword(tok)) {
-                                    winCol.setExclusionKind(AnalyticColumn.EXCLUDE_NO_OTHERS);
+                                    winCol.setExclusionKind(AnalyticColumn.EXCLUDE_NO_OTHERS, excludePos);
                                 } else {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'others' expected");
                                 }
@@ -2098,6 +2140,28 @@ public class SqlParser {
         final int symbolCapacity = expectInt(lexer);
         TableUtils.validateSymbolCapacity(errorPosition, symbolCapacity);
         return Numbers.ceilPow2(symbolCapacity);
+    }
+
+    private long parseTimeUnit(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "'preceding' or time unit");
+        long unit = -1;
+        if (SqlKeywords.isMicrosecondKeyword(tok)) {
+            unit = AnalyticColumn.ITME_UNIT_MICROSECOND;
+        } else if (SqlKeywords.isMillisecondKeyword(tok)) {
+            unit = AnalyticColumn.TIME_UNIT_MILLISECOND;
+        } else if (SqlKeywords.isSecondKeyword(tok)) {
+            unit = AnalyticColumn.TIME_UNIT_SECOND;
+        } else if (SqlKeywords.isMinuteKeyword(tok)) {
+            unit = AnalyticColumn.TIME_UNIT_MINUTE;
+        } else if (SqlKeywords.isHourKeyword(tok)) {
+            unit = AnalyticColumn.TIME_UNIT_HOUR;
+        } else if (SqlKeywords.isDayKeyword(tok)) {
+            unit = AnalyticColumn.TIME_UNIT_DAY;
+        }
+        if (unit == -1) {
+            lexer.unparseLast();
+        }
+        return unit;
     }
 
     private ExpressionNode parseTimestamp(GenericLexer lexer, CharSequence tok) throws SqlException {
