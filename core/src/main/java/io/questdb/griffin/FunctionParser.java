@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.AbstractUnaryDateFunction;
-import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
@@ -42,6 +40,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -404,7 +403,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return function;
     }
 
-    private long convertToTimestamp(CharSequence str, int position) throws SqlException {
+    private long parseTimestamp(CharSequence str, int position) throws SqlException {
         try {
             return IntervalUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException e) {
@@ -786,39 +785,33 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.TIMESTAMP) {
                 // convert arguments if necessary
+                assert arg.isConstant(); // casting from String/Symbol to Timestamp is supported for constants only
                 int position = argPositions.getQuick(k);
                 if (arg.isConstant()) {
-                    long timestamp = convertToTimestamp(arg.getStr(null), position);
+                    long timestamp = parseTimestamp(arg.getStr(null), position);
                     args.set(k, TimestampConstant.newInstance(timestamp));
-                } else {
-                    AbstractUnaryTimestampFunction castFn;
-                    if (argTypeTag == ColumnType.STRING) {
-                        castFn = new CastStrToTimestampFunctionFactory.Func(arg);
-                    } else {
-                        castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
-                    }
-                    args.setQuick(k, castFn);
                 }
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.DATE) {
                 // convert arguments if necessary
+                assert arg.isConstant(); // casting from String/Symbol to Date is supported for constants only
                 int position = argPositions.getQuick(k);
                 if (arg.isConstant()) {
-                    long timestamp = convertToTimestamp(arg.getStr(null), position) / 1000;
-                    args.set(k, DateConstant.newInstance(timestamp));
-                } else {
-                    AbstractUnaryDateFunction castFn;
-                    if (argTypeTag == ColumnType.STRING) {
-                        castFn = new CastStrToDateFunctionFactory.Func(arg);
-                    } else {
-                        castFn = new CastSymbolToDateFunctionFactory.Func(arg);
-                    }
-                    args.setQuick(k, castFn);
+                    long millis = parseDate(arg.getStr(null), position);
+                    args.set(k, DateConstant.newInstance(millis));
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
+    }
+
+    private static long parseDate(CharSequence str, int position) throws SqlException {
+        try {
+            return DateFormatUtils.parseDate(str);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
     }
 
     @Nullable

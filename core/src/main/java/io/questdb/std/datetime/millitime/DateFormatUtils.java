@@ -274,6 +274,16 @@ public class DateFormatUtils {
         return UTC_FORMAT.parse(value, 0, value.length(), enLocale);
     }
 
+    /**
+     * Parse date and return number of <b>milliseconds</b> since epoch.
+     * <p>
+     * The method tries to parse date using a number of formats which are supported by QuestDB
+     * when inserting String into DATE column.
+     *
+     * @param value date string
+     * @return number of milliseconds since epoch
+     * @throws NumericException if date cannot be parsed
+     */
     public static long parseDate(CharSequence value) throws NumericException {
         if (value == null) {
             return Numbers.LONG_NaN;
