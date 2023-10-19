@@ -3710,11 +3710,7 @@ public class SqlOptimiser implements Mutable {
                                         if (qc.getAst().type == ExpressionNode.FUNCTION || qc.getAst().type == ExpressionNode.OPERATION) {
                                             emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel(), false);
                                         } else {
-                                            // avoid duplicate column error if column has been pushed by window function already
-                                            if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_ANALYTIC ||
-                                                    !synthetic.getAliasToColumnMap().contains(qc.getName())) {
-                                                synthetic.addBottomUpColumn(qc);
-                                            }
+                                            synthetic.addBottomUpColumn(qc);
                                         }
                                     }
                                     synthetic.setNestedModel(base);
