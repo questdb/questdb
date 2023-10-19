@@ -45,7 +45,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public VirtualRecordCursorFactory(
             RecordMetadata metadata,
             ObjList<Function> functions,
-            RecordCursorFactory baseFactory) {
+            RecordCursorFactory baseFactory
+    ) {
         super(metadata);
         this.functions = functions;
         boolean supportsRandomAccess = baseFactory.recordCursorSupportsRandomAccess();
@@ -81,6 +82,11 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return baseFactory.getScanDirection();
+    }
+
+    @Override
+    public boolean implementsLimit() {
+        return baseFactory.implementsLimit();
     }
 
     @Override

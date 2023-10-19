@@ -183,9 +183,9 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
-    private static boolean isOrderedByDesignatedTimestamp(QueryModel baseModel) {
-        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1
-                && Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
+    private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
+        return model.getTimestamp() != null && model.getOrderBy().size() == 1
+                && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
     private static void linkDependencies(QueryModel model, int parent, int child) {
@@ -1879,21 +1879,27 @@ public class SqlOptimiser implements Mutable {
         return func;
     }
 
-    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) throws SqlException {
+    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model, int orderByMnemonic) {
         orderByAdvice.clear();
-        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
-        final int len = orderBy.size();
+        ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        int len = orderBy.size();
         if (len == 0) {
-            return orderByAdvice;
+            // propagate advice in case nested model can implement it efficiently (e.g. with backward scan)
+            if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && model.getOrderByAdvice().size() > 0) {
+                orderBy = model.getOrderByAdvice();
+                len = orderBy.size();
+            } else {
+                return orderByAdvice;
+            }
         }
 
         LowerCaseCharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
             ExpressionNode orderByNode = orderBy.getQuick(i);
             QueryColumn queryColumn = map.get(orderByNode.token);
-            if (queryColumn == null) {
-                throw SqlException.position(orderByNode.position)
-                        .put("Unexpected order by column: ").put(orderByNode.token);
+            if (queryColumn == null) { // order by can't be pushed down
+                orderByAdvice.clear();
+                break;
             }
 
             if (queryColumn.getAst().type == LITERAL) {
@@ -1904,6 +1910,15 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return orderByAdvice;
+    }
+
+    private IntList getOrderByAdviceDirection(QueryModel model, int orderByMnemonic) {
+        IntList orderByDirection = model.getOrderByDirection();
+        if (orderByDirection.size() == 0
+                && orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
+            return model.getOrderByDirectionAdvice();
+        }
+        return orderByDirection;
     }
 
     private QueryColumn getQueryColumn(QueryModel model, CharSequence columnName, int dot) {
@@ -2752,7 +2767,8 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
                 }
-                if (model.getSampleBy() == null) {
+                if (model.getSampleBy() == null
+                        && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
                         if (hasAggregates(col.getAst())) {
@@ -2772,7 +2788,7 @@ public class SqlOptimiser implements Mutable {
                 }
                 break;
             default:
-                // sub-query ordering is not needed
+                // sub-query ordering is not needed but we'd like to propagate order by advice (if possible)
                 model.getOrderBy().clear();
                 if (model.getSampleBy() != null) {
                     orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
@@ -2782,13 +2798,15 @@ public class SqlOptimiser implements Mutable {
                 break;
         }
 
-        final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model);
-        final IntList orderByDirectionAdvice = model.getOrderByDirection();
+        final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
+        final IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
         final ObjList<QueryModel> jm = model.getJoinModels();
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                if (model.getGroupBy().size() == 0 && model.getSampleBy() == null) { // order by should not copy through group by or sample by
+                if (model.getGroupBy().size() == 0
+                        && model.getSampleBy() == null
+                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT) { // order by should not copy through group by, sample by or distinct
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
@@ -2878,28 +2896,29 @@ public class SqlOptimiser implements Mutable {
         propagateTopDownColumns0(model, true, null, allowColumnChange);
     }
 
-    /*
-        Pushes columns from top to bottom models .
-
-        Adding or removing columns to/from union, except, intersect should not happen!
-        UNION/INTERSECT/EXCEPT-ed columns MUST be exactly as specified in the query, otherwise they might produce different result, e.g.
-
-        select a from (
-            select 1 as a, 'b' as status
-            union
-            select 1 as a, 'c' as status
-        )
-
-        Now if we push a top-to-bottom and remove b from union column list then we'll get a single '1' but we should get two !
-        Same thing applies to INTERSECT & EXCEPT
-        The only thing that'd be safe to add SET models is a constant literal (but what's the point?) .
-        Column/expression pushdown should (probably) ONLY happen for UNION with ALL!
-
-        allowColumnsChange - determines whether changing columns of given model is acceptable.
-        It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
-    */
+    /**
+     * Pushes columns from top to bottom models.
+     * <p>
+     * Adding or removing columns to/from union, except, intersect should not happen!
+     * UNION/INTERSECT/EXCEPT-ed columns MUST be exactly as specified in the query, otherwise they might produce different result, e.g.
+     * <pre>
+     * SELECT a
+     * FROM (
+     *   SELECT 1 as a, 'b' as status
+     *   UNION
+     *   SELECT 1 as a, 'c' as status
+     * );
+     * </pre>
+     * Now if we push a top-to-bottom and remove b from union column list then we'll get a single '1' but we should get two!
+     * Same thing applies to INTERSECT & EXCEPT
+     * The only thing that'd be safe to add SET models is a constant literal (but what's the point?).
+     * Column/expression pushdown should (probably) ONLY happen for UNION with ALL!
+     * <p>
+     * allowColumnsChange - determines whether changing columns of given model is acceptable.
+     * It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
+     */
     private void propagateTopDownColumns0(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel, boolean allowColumnsChange) {
-        //copy columns to 'protect' column list that shouldn't be modified
+        // copy columns to 'protect' column list that shouldn't be modified
         if (!allowColumnsChange && model.getBottomUpColumns().size() > 0) {
             model.copyBottomToTopColumns();
         }
@@ -2908,10 +2927,10 @@ public class SqlOptimiser implements Mutable {
         final QueryModel nested = skipNoneTypeModels(model.getNestedModel());
         model.setNestedModel(nested);
         final boolean nestedIsFlex = modelIsFlex(nested);
-        final boolean nestedAllowsColumnChange = nested != null && nested.allowsColumnsChange();
+        final boolean nestedAllowsColumnChange = nested != null && nested.allowsColumnsChange()
+                && model.allowsNestedColumnsChange();
 
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
-
         if (!topLevel && modelIsFlex(union)) {
             emitColumnLiteralsTopDown(model.getColumns(), union);
         }
@@ -2974,17 +2993,13 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        // latest by
+        // latest on
         if (model.getLatestBy().size() > 0) {
             emitLiteralsTopDown(model.getLatestBy(), model);
         }
 
         // propagate explicit timestamp declaration
-        if (
-                model.getTimestamp() != null &&
-                        nestedIsFlex &&
-                        nestedAllowsColumnChange
-        ) {
+        if (model.getTimestamp() != null && nestedIsFlex && nestedAllowsColumnChange) {
             emitLiteralsTopDown(model.getTimestamp(), nested);
 
             QueryModel unionModel = nested.getUnionModel();
@@ -2998,7 +3013,7 @@ public class SqlOptimiser implements Mutable {
             if (allowColumnsChange) {
                 emitLiteralsTopDown(model.getWhereClause(), model);
             }
-            if (nested != null && nestedAllowsColumnChange) {
+            if (nestedAllowsColumnChange) {
                 emitLiteralsTopDown(model.getWhereClause(), nested);
 
                 QueryModel unionModel = nested.getUnionModel();
@@ -3044,7 +3059,7 @@ public class SqlOptimiser implements Mutable {
 
         final QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
-            //we've to use this value because union-ed models don't have a back-reference and might not know they participate in set operation
+            // we've to use this value because union-ed models don't have a back-reference and might not know they participate in set operation
             propagateTopDownColumns(unionModel, allowColumnsChange);
         }
     }

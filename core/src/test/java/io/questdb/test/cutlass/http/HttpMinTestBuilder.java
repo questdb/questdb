@@ -47,6 +47,7 @@ public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
     private Scrapable scrapable;
+    private int tcpSndBufSize;
     private TemporaryFolder temp;
 
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
@@ -54,6 +55,7 @@ public class HttpMinTestBuilder {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(temp.getRoot().getAbsolutePath())
+                    .withTcpSndBufSize(tcpSndBufSize)
                     .build();
 
             final WorkerPool workerPool = new TestWorkerPool(1);
@@ -89,6 +91,11 @@ public class HttpMinTestBuilder {
 
     public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
         this.scrapable = scrapable;
+        return this;
+    }
+
+    public HttpMinTestBuilder withTcpSndBufSize(int tcpSndBufSize) {
+        this.tcpSndBufSize = tcpSndBufSize;
         return this;
     }
 

@@ -16,7 +16,7 @@
 </p>
 
 [English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) |
-Español | [Português](README.pt.md) | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md)
+Español | [Português](README.pt.md) | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./README.hn-in.md)
 
 # QuestDB
 
@@ -75,6 +75,12 @@ questdb stop  // To stop questdb
 
 La [página de descargas de QuestDB](https://questdb.io/get-questdb/) proporciona acceso a los binarios y ofrece métodos
 de instalacion en una variedad de plataformas.
+
+### QuestDB Cloud
+
+QuestDB Cloud es la versión gestionada de QuestDB, con funcionalidades añadidas como control de acceso basado en roles (RBAC), 
+replicación nativa en nube, compresión, monitorización, o snapshots en nube. La [prueba gratuita](https://cloud.questdb.com)
+incluye un crédito de $200.
 
 ### Conéctate con QuestDB
 
