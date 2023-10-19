@@ -163,7 +163,6 @@ JNIEXPORT void JNICALL JavaCritical_io_questdb_std_bytes_DirectByteSink_implDest
     destroy((questdb_byte_sink_t*) impl);
 }
 
-// Book
 JNIEXPORT jlong JNICALL Java_io_questdb_std_bytes_DirectByteSink_implBook(
         JNIEnv *env,
         jclass cl,
