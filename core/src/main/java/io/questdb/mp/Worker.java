@@ -131,10 +131,9 @@ public class Worker extends Thread {
                 }
 
                 // enter main loop
-                WorkerMetrics workerMetrics = metrics.workerMetrics().begin(workerName);
+                WorkerMetrics workerMetrics = metrics.workerMetrics().init(workerName);
                 long ticker = 0L;
                 while (running.get() == Lifecycle.RUNNING) {
-                    workerMetrics.beginRun(workerName);
                     boolean runAsap = false;
                     for (int i = 0, n = jobs.size(); i < n; i++) {
                         workerMetrics.beginJob(workerName);
@@ -156,6 +155,7 @@ public class Worker extends Thread {
                                     stdErrCritical(e);
                                 }
                                 if (haltOnError) {
+                                    workerMetrics.endJob(workerName);
                                     throw e;
                                 }
                             }
@@ -164,20 +164,17 @@ public class Worker extends Thread {
                         }
                         workerMetrics.endJob(workerName);
                     }
-                    workerMetrics.endRun(workerName);
-
-                    if (runAsap) {
-                        ticker = 0L;
-                        continue;
-                    }
 
                     if (++ticker < 0L) {
                         ticker = sleepThreshold + 1L; // overflow
                     }
-                    if (ticker > sleepThreshold) {
-                        Os.sleep(sleepMs);
-                    } else if (ticker > yieldThreshold) {
-                        Os.pause();
+                    if (!runAsap) {
+                        if (ticker > sleepThreshold) {
+                            ticker = 0L;
+                            Os.sleep(sleepMs);
+                        } else if (ticker % yieldThreshold == 0L) {
+                            Os.pause();
+                        }
                     }
                 }
             }

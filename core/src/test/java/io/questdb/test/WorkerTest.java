@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.*;
+import io.questdb.cairo.wal.WorkerMetrics;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.mp.*;
 import io.questdb.std.ObjHashSet;
@@ -57,9 +58,7 @@ public class WorkerTest {
                 Worker.NO_THREAD_AFFINITY,
                 jobs,
                 workerHaltLatch,
-                (err) -> {
-                    Assert.assertEquals(END_MESSAGE, err.getMessage());
-                },
+                ex -> Assert.assertEquals(END_MESSAGE, ex.getMessage()),
                 true,
                 3L,
                 9L,
@@ -73,6 +72,10 @@ public class WorkerTest {
         }
         Assert.assertEquals(0, endLatch.get());
         Assert.assertTrue(count.get() > 0);
+        WorkerMetrics metrics = METRICS.workerMetrics();
+        long min = metrics.getMinElapsed(worker.getName());
+        long max = metrics.getMaxElapsed(worker.getName());
+        System.out.printf("MIN: %d, MAX: %d%n", min, max);
     }
 
     private static Job countDown(AtomicInteger endLatch) {
