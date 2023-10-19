@@ -199,6 +199,7 @@ public final class Unsafe {
     public static void incrFreeCount() {
         FREE_COUNT.incrementAndGet();
     }
+
     public static void incrMallocCount() {
         MALLOC_COUNT.incrementAndGet();
     }
