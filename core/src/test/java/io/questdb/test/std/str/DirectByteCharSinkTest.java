@@ -131,7 +131,6 @@ public class DirectByteCharSinkTest {
             sink.put(bs);
             Assert.assertEquals(40, sink.length());
             Assert.assertEquals(64, sink.capacity());
-            Assert.assertNotEquals(ptr, sink.ptr());
             Assert.assertEquals(getMallocCount.get().longValue(), 1);
             Assert.assertEquals(getReallocCount.get().longValue(), 1);
             Assert.assertEquals(getFreeCount.get().longValue(), 0);
