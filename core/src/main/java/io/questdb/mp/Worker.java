@@ -51,18 +51,18 @@ public class Worker extends Thread {
     private final long yieldThreshold;
 
     public Worker(
+            String poolName,
+            final int workerId,
+            final int affinity,
             final ObjHashSet<? extends Job> jobs,
             final SOCountDownLatch haltLatch,
-            final int affinity,
-            final Log log,
             final WorkerCleaner cleaner,
             final boolean haltOnError,
-            final int workerId,
-            String poolName,
             long yieldThreshold,
             long sleepThreshold,
             long sleepMs,
-            Metrics metrics
+            Metrics metrics,
+            final Log log
     ) {
         this.log = log;
         this.jobs = jobs;

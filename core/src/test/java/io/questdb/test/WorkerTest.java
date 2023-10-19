@@ -52,20 +52,20 @@ public class WorkerTest {
 
         SOCountDownLatch workerHaltLatch = new SOCountDownLatch(1);
         Worker worker = new Worker(
+                "test_pool",
+                0,
+                Worker.NO_THREAD_AFFINITY,
                 jobs,
                 workerHaltLatch,
-                Worker.NO_THREAD_AFFINITY,
-                null,
                 (err) -> {
                     Assert.assertEquals(END_MESSAGE, err.getMessage());
                 },
                 true,
-                0,
-                "test_pool",
                 3L,
                 9L,
                 100L,
-                METRICS
+                METRICS,
+                null
         );
         worker.start();
         if (!workerHaltLatch.await(TimeUnit.SECONDS.toNanos(10L))) {

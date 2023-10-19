@@ -172,10 +172,11 @@ public class WorkerPool implements Closeable {
             for (int i = 0; i < workerCount; i++) {
                 final int index = i;
                 Worker worker = new Worker(
+                        poolName,
+                        i,
+                        workerAffinity[i],
                         workerJobs.getQuick(i),
                         halted,
-                        workerAffinity[i],
-                        log,
                         (ex) -> {
                             Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index));
                             if (log != null) {
@@ -186,12 +187,11 @@ public class WorkerPool implements Closeable {
                             }
                         },
                         haltOnError,
-                        i,
-                        poolName,
                         yieldThreshold,
                         sleepThreshold,
                         sleepMs,
-                        metrics
+                        metrics,
+                        log
                 );
                 worker.setDaemon(daemons);
                 workers.add(worker);

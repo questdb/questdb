@@ -147,7 +147,7 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testStartCloseAreOneOff() {
+    public void testStartHaltAreOneOff() {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
         workerPoolManager.start(null);
         workerPoolManager.start(null);
@@ -214,7 +214,7 @@ public class WorkerPoolManagerTest {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
                 if (call != null) {
-                    call.accept(getSharedPool());
+                    call.accept(sharedPool);
                 }
             }
         };
