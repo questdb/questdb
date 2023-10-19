@@ -65,7 +65,7 @@ public class WorkerTest {
                 3L,
                 9L,
                 100L,
-                METRICS.health()
+                METRICS
         );
         worker.start();
         if (!workerHaltLatch.await(TimeUnit.SECONDS.toNanos(10L))) {

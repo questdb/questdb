@@ -31,7 +31,6 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.HealthMetrics;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -44,7 +43,7 @@ import java.util.function.Consumer;
 
 public class WorkerPoolManagerTest {
 
-    private static final HealthMetrics METRICS = Metrics.disabled().health();
+    private static final Metrics METRICS = Metrics.disabled();
 
     @Test
     public void testConstructor() {

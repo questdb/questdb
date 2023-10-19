@@ -26,7 +26,6 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.HealthMetrics;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -38,17 +37,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public abstract class WorkerPoolManager {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
+    protected final WorkerPool sharedPool;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
     private final AtomicBoolean running = new AtomicBoolean();
-    private final WorkerPool sharedPool;
 
-    public WorkerPoolManager(ServerConfiguration config, HealthMetrics metrics) {
+    public WorkerPoolManager(ServerConfiguration config, Metrics metrics) {
         sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
         configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
     }
 
-    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull HealthMetrics metrics, @NotNull Requester requester) {
+    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics, @NotNull Requester requester) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }

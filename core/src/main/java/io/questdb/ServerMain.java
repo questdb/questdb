@@ -89,7 +89,7 @@ public class ServerMain implements Closeable {
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
         final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
-        workerPoolManager = new WorkerPoolManager(config, metrics.health()) {
+        workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
                 try {
@@ -150,9 +150,10 @@ public class ServerMain implements Closeable {
         };
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
+            // dedicated pool
             WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
                     config.getWalApplyPoolConfiguration(),
-                    metrics.health(),
+                    metrics,
                     WorkerPoolManager.Requester.WAL_APPLY
             );
             setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());

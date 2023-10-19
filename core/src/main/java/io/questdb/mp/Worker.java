@@ -24,8 +24,8 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
-import io.questdb.metrics.HealthMetrics;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -42,7 +42,7 @@ public class Worker extends Thread {
     private final boolean haltOnError;
     private final ObjHashSet<? extends Job> jobs;
     private final Log log;
-    private final HealthMetrics metrics;
+    private final Metrics metrics;
     private final AtomicInteger running = new AtomicInteger();
     private final Job.RunStatus runStatus = () -> running.get() == 2;
     private final long sleepMs;
@@ -62,7 +62,7 @@ public class Worker extends Thread {
             long yieldThreshold,
             long sleepThreshold,
             long sleepMs,
-            HealthMetrics metrics
+            Metrics metrics
     ) {
         this.log = log;
         this.jobs = jobs;
@@ -162,7 +162,7 @@ public class Worker extends Thread {
 
     private void onError(int i, Throwable e) throws Throwable {
         try {
-            metrics.incrementUnhandledErrors();
+            metrics.health().incrementUnhandledErrors();
         } catch (Throwable t) {
             stdErrCritical(e);
         }

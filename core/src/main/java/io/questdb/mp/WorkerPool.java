@@ -24,8 +24,8 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
-import io.questdb.metrics.HealthMetrics;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -37,22 +37,13 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
-    private static final HealthMetrics DISABLED = new HealthMetrics() {
-        @Override
-        public void incrementUnhandledErrors() {
-        }
-
-        @Override
-        public long unhandledErrorsCount() {
-            return 0;
-        }
-    };
+    private static final Metrics DISABLED = Metrics.disabled();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
-    private final HealthMetrics metrics;
+    private final Metrics metrics;
     private final String poolName;
     private final AtomicBoolean running = new AtomicBoolean();
     private final long sleepMs;
@@ -69,7 +60,7 @@ public class WorkerPool implements Closeable {
         this(configuration, DISABLED);
     }
 
-    public WorkerPool(WorkerPoolConfiguration configuration, HealthMetrics metrics) {
+    public WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
         int[] workerAffinity = configuration.getWorkerAffinity();
         if (workerAffinity != null && workerAffinity.length > 0) {
