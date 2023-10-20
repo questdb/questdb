@@ -118,6 +118,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
 
     @Override
     public DirectByteCharSink put(CharSequence cs) {
+        // TODO: Improve UTF-8 compatibility.
         // This is not UTF-8 safe. It assumes `cs` is ASCII without checks.
         final int charCount = cs.length();
         final long destPtr = sink.book(charCount);
