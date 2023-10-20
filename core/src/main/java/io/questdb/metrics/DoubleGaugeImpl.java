@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8DirectCharSink;
 
 public class DoubleGaugeImpl implements Scrapable, DoubleGauge {
     private final CharSequence name;
@@ -35,7 +36,7 @@ public class DoubleGaugeImpl implements Scrapable, DoubleGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(Utf8DirectCharSink sink) {
         appendType(sink);
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);

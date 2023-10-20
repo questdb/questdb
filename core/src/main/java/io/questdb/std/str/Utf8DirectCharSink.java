@@ -22,37 +22,11 @@
  *
  ******************************************************************************/
 
+package io.questdb.std.str;
 
-package io.questdb.metrics;
+import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 
-import io.questdb.std.str.Utf8DirectCharSink;
+/** A groawable Utf8 buffer that can be written as a char sink and borrowed for writing in native code. */
+public interface Utf8DirectCharSink extends CharSink, BorrowableAsNativeByteSink {
 
-import java.util.concurrent.atomic.LongAdder;
-
-public class CounterImpl implements Counter {
-    private final LongAdder counter;
-    private final CharSequence name;
-
-    public CounterImpl(CharSequence name) {
-        this.name = name;
-        this.counter = new LongAdder();
-    }
-
-    @Override
-    public void add(long value) {
-        counter.add(value);
-    }
-
-    @Override
-    public long getValue() {
-        return counter.sum();
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(Utf8DirectCharSink sink) {
-        PrometheusFormatUtils.appendCounterType(name, sink);
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
-        PrometheusFormatUtils.appendNewLine(sink);
-    }
 }

@@ -28,7 +28,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
@@ -36,7 +35,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, BorrowableAsNativeByteSink {
+public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, Utf8DirectCharSink {
     private final DirectByteSink sink;
 
     public DirectByteCharSink(long capacity) {

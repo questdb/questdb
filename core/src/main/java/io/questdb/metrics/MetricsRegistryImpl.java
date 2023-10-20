@@ -25,7 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8DirectCharSink;
 
 public class MetricsRegistryImpl implements MetricsRegistry {
     private final ObjList<Scrapable> metrics = new ObjList<>();
@@ -87,7 +87,7 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(Utf8DirectCharSink sink) {
         for (int i = 0, n = metrics.size(); i < n; i++) {
             Scrapable metric = metrics.getQuick(i);
             metric.scrapeIntoPrometheus(sink);

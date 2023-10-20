@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8DirectCharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -58,7 +59,7 @@ public class LongGaugeImpl implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(Utf8DirectCharSink sink) {
         appendType(sink);
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
