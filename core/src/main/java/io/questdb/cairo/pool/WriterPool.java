@@ -173,10 +173,10 @@ public class WriterPool extends AbstractPool {
     }
 
     /**
-     * Locks writer. Locking operation is always non-blocking. Lock is usually successful
-     * when writer is in pool or owned by calling thread, in which case
-     * writer instance is closed. Lock will also succeed when writer does not exist.
-     * This will prevent from writer being created before it is unlocked.
+     * Locks writer. Lock is usually successful when writer is in pool or
+     * owned by calling thread, in which case writer instance is closed.
+     * Lock will also succeed when writer does not exist. This will prevent
+     * from writer being created before it is unlocked.
      * <p>
      * Lock fails immediately with {@link EntryUnavailableException} when writer is used by another thread and with
      * {@link PoolClosedException} when pool is closed.
@@ -194,37 +194,47 @@ public class WriterPool extends AbstractPool {
 
         long thread = Thread.currentThread().getId();
 
-        Entry e = entries.get(tableToken.getDirName());
-        if (e == null) {
-            // We are racing to create new writer!
-            e = new Entry(clock.getTicks());
-            Entry other = entries.putIfAbsent(tableToken.getDirName(), e);
-            if (other == null) {
+        while (true) {
+            Entry e = entries.get(tableToken.getDirName());
+            if (e == null) {
+                // We are racing to create new writer!
+                e = new Entry(clock.getTicks());
+                Entry other = entries.putIfAbsent(tableToken.getDirName(), e);
+                if (other == null) {
+                    if (lockAndNotify(thread, e, tableToken, lockReason)) {
+                        return OWNERSHIP_REASON_NONE;
+                    } else {
+                        entries.remove(tableToken.getDirName());
+                        return reinterpretOwnershipReason(e.ownershipReason);
+                    }
+                } else {
+                    e = other;
+                }
+            }
+
+            // try to change owner
+            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                 if (lockAndNotify(thread, e, tableToken, lockReason)) {
                     return OWNERSHIP_REASON_NONE;
-                } else {
-                    entries.remove(tableToken.getDirName());
-                    return reinterpretOwnershipReason(e.ownershipReason);
                 }
-            } else {
-                e = other;
+                return reinterpretOwnershipReason(e.ownershipReason);
             }
-        }
 
-        // try to change owner
-        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) /*|| (e.owner == thread)*/)) {
-            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
-            if (lockAndNotify(thread, e, tableToken, lockReason)) {
-                return OWNERSHIP_REASON_NONE;
+            long owner = e.owner;
+            if (owner < 0) {
+                // writer is about to be released from the pool by release method.
+                // try again, it should become available soon.
+                Os.pause();
+                continue;
             }
+
+            LOG.error().$("could not lock, busy [table=`").utf8(tableToken.getDirName())
+                    .$("`, owner=").$(owner)
+                    .$(", thread=").$(thread).I$();
+            notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY);
             return reinterpretOwnershipReason(e.ownershipReason);
         }
-
-        LOG.error().$("could not lock, busy [table=`").utf8(tableToken.getDirName())
-                .$("`, owner=").$(e.owner)
-                .$(", thread=").$(thread).I$();
-        notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY);
-        return reinterpretOwnershipReason(e.ownershipReason);
     }
 
     public int size() {
@@ -437,9 +447,10 @@ public class WriterPool extends AbstractPool {
                 }
             }
 
-            long owner = e.owner;
             // try to change owner
             if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                // we managed to grab the writer
+
                 // in an extreme race condition it is possible that e.writer will be null
                 // in this case behaviour should be identical to entry missing entirely
                 if (e.writer == null) {
@@ -447,6 +458,7 @@ public class WriterPool extends AbstractPool {
                 }
                 return checkClosedAndGetWriter(tableToken, e, lockReason);
             } else {
+                long owner = e.owner;
                 if (owner < 0) {
                     // writer is about to be released from the pool by release method.
                     // try again, it should become available soon.
