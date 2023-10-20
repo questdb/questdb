@@ -160,8 +160,19 @@ public class FastMap implements Map, Reopenable {
         offsets.setPos(this.keyCapacity);
         offsets.zero(0);
         long maxPagesFromMaxHeap = MAX_HEAP_SIZE/pageSize;
-        long maxPagesFromMaxResizes = 1L << maxResizes ;
-        int maxPages = maxPagesFromMaxHeap < maxPagesFromMaxResizes ? (int) maxPagesFromMaxHeap : (int) maxPagesFromMaxResizes;
+        int maxPages = (int) maxPagesFromMaxHeap;
+        long maxPagesFromMaxResizes = 1L;
+        int nResizes = 0;
+        while(nResizes < maxResizes){
+            maxPagesFromMaxResizes <<= 1;
+            if(maxPagesFromMaxResizes > maxPagesFromMaxHeap) {
+                break;
+            }
+            nResizes++;
+        }
+        if(nResizes == maxResizes){
+            maxPages = (int) maxPagesFromMaxResizes;
+        }
         this.mem = new MemoryCARWImpl(pageSize, maxPages, mapMemoryTag);
 
         final int keyColumnCount = keyTypes.getColumnCount();
@@ -315,13 +326,13 @@ public class FastMap implements Map, Reopenable {
     }
 
     private FastMapValue asNew(BaseKey keyWriter, int index, int hashCode, FastMapValue value) {
-        long kPos = mem.getAddress() + keyWriter.appendOffset;
+        long appendOffset = keyWriter.appendOffset;
         // Align current pointer to 8 bytes, so that we can store compressed offsets.
-        if ((kPos & 0x7) != 0) {
-            kPos |= 0x7;
-            kPos++;
+        if ((appendOffset & 0x7) != 0) {
+            appendOffset |= 0x7;
+            appendOffset++;
         }
-        mem.jumpTo(kPos);
+        mem.jumpTo(appendOffset);
         setPackedOffset(offsets, index, keyWriter.startOffset, hashCode);
         if (--free == 0) {
             rehash();
@@ -487,7 +498,7 @@ public class FastMap implements Map, Reopenable {
 
         public FixedSizeKey init() {
             super.init();
-            mem.appendAddressFor(keySize + valueSize);
+            mem.appendAddressFor(startOffset, valueSize + keySize);
             return this;
         }
 
