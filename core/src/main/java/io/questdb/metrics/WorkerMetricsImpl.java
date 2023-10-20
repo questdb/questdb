@@ -72,8 +72,8 @@ public class WorkerMetricsImpl implements WorkerMetrics {
             record.init();
         }
         workerRecords.put(workerName, new WorkerRecord(
-                metricsRegistry.newLongGauge("worker_" + workerName + "_elapsed_micros_min"),
-                metricsRegistry.newLongGauge("worker_" + workerName + "_elapsed_micros_max")
+                metricsRegistry.newLongGauge("worker_" + workerName.replace("-", "_") + "_elapsed_micros_min"),
+                metricsRegistry.newLongGauge("worker_" + workerName.replace("-", "_") + "_elapsed_micros_max")
         ));
         return this;
     }
