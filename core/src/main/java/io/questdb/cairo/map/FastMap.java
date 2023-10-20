@@ -86,7 +86,6 @@ public class FastMap implements Map, Reopenable {
     private final int listMemoryTag;
     private final double loadFactor;
     private final int mapMemoryTag;
-    private final int maxResizes;
     private final FastMapRecord record;
     private final FastMapValue value;
     private final FastMapValue value2;
@@ -97,7 +96,6 @@ public class FastMap implements Map, Reopenable {
     private int free;
     private int keyCapacity;
     private int mask;
-    private int nResizes;
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
     private DirectLongList offsets;
     private int size = 0;
@@ -161,10 +159,10 @@ public class FastMap implements Map, Reopenable {
         offsets = new DirectLongList(this.keyCapacity, listMemoryTag);
         offsets.setPos(this.keyCapacity);
         offsets.zero(0);
-        nResizes = 0;
-        this.maxResizes = maxResizes;
-
-        this.mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, mapMemoryTag);
+        long maxPagesFromMaxHeap = MAX_HEAP_SIZE/pageSize;
+        long maxPagesFromMaxResizes = 1L << maxResizes ;
+        int maxPages = maxPagesFromMaxHeap < maxPagesFromMaxResizes ? (int) maxPagesFromMaxHeap : (int) maxPagesFromMaxResizes;
+        this.mem = new MemoryCARWImpl(pageSize, maxPages, mapMemoryTag);
 
         final int keyColumnCount = keyTypes.getColumnCount();
         int keySize = 0;
@@ -279,7 +277,6 @@ public class FastMap implements Map, Reopenable {
         offsets.setCapacity(keyCapacity);
         offsets.setPos(keyCapacity);
         offsets.zero(0);
-        nResizes = 0;
     }
 
     @Override
