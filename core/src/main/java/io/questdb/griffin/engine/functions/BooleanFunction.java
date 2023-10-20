@@ -179,6 +179,11 @@ public abstract class BooleanFunction implements ScalarFunction {
         return ColumnType.BOOLEAN;
     }
 
+    @Override
+    public boolean getBool(Record rec) {
+        return getBool(rec);
+    }
+
     protected String getStr0(Record rec) {
         return getBool(rec) ? "true" : "false";
     }
