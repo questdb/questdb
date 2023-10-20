@@ -35,7 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8DirectCharSink;
+import io.questdb.std.str.DirectUtf8CharSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -283,7 +283,7 @@ public class MetricsIODispatcherTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(Utf8DirectCharSink sink) {
+        public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
             metricsRegistry.scrapeIntoPrometheus(sink);
         }
 

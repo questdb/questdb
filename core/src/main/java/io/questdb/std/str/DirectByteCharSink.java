@@ -35,7 +35,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, Utf8DirectCharSink {
+public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, DirectUtf8CharSink {
     private final DirectByteSink sink;
 
     public DirectByteCharSink(long capacity) {

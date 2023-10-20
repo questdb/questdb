@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.Utf8DirectCharSink;
+import io.questdb.std.str.DirectUtf8CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -50,7 +50,7 @@ public class CounterWithOneLabelImpl implements CounterWithOneLabel {
     }
 
     @Override
-    public void scrapeIntoPrometheus(Utf8DirectCharSink sink) {
+    public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
         for (int i = 0, n = counters.length; i < n; i++) {
             PrometheusFormatUtils.appendCounterNamePrefix(name, sink);

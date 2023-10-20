@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.Utf8DirectCharSink;
+import io.questdb.std.str.DirectUtf8CharSink;
 
 public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
     public static final NullCounter INSTANCE = new NullCounter();
@@ -54,6 +54,6 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
     }
 
     @Override
-    public void scrapeIntoPrometheus(Utf8DirectCharSink sink) {
+    public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
     }
 }

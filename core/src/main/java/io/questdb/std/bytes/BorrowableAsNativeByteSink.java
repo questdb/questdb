@@ -24,9 +24,11 @@
 
 package io.questdb.std.bytes;
 
+import org.jetbrains.annotations.NotNull;
+
 /**
  * Implement to temporarily expose a {@link NativeByteSink} to the caller.
  */
 public interface BorrowableAsNativeByteSink {
-    NativeByteSink borrowDirectByteSink();
+    @NotNull NativeByteSink borrowDirectByteSink();
 }
