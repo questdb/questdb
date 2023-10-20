@@ -33,9 +33,8 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.DirectUtf8CharSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -132,26 +131,26 @@ public class MetricsIODispatcherTest {
         }
 
         final HttpQueryTestBuilder.HttpClientCode makeRequest = engine -> {
-            try (HttpClient client = HttpClientFactory.newInstance();
-                 HttpClient.ResponseHeaders response = client.newRequest()
-                         .GET()
-                         .url("/metrics")
-                         .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort())) {
+            try (HttpClient client = HttpClientFactory.newInstance()) {
+                for (int i = 0; i < 5; i++) {
+                    HttpClient.ResponseHeaders response = client.newRequest()
+                            .GET()
+                            .url("/metrics")
+                            .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort());
 
-                Os.sleep(1000); // wait before consuming response to increase chances of server filling up its tcp send buffer
+                    response.await(5_000);
+                    TestUtils.assertEquals("200", response.getStatusCode());
 
-                response.await(5_000);
-                TestUtils.assertEquals("200", response.getStatusCode());
+                    Assert.assertTrue(response.isChunked());
+                    ChunkedResponse chunkedResponse = response.getChunkedResponse();
+                    StringSink responseSink = new StringSink();
 
-                Assert.assertTrue(response.isChunked());
-                ChunkedResponse chunkedResponse = response.getChunkedResponse();
-                StringSink responseSink = new StringSink();
-
-                Chunk chunk;
-                while ((chunk = chunkedResponse.recv(5_000)) != null) {
-                    Chars.utf8toUtf16(chunk.lo(), chunk.hi(), responseSink);
+                    Chunk chunk;
+                    while ((chunk = chunkedResponse.recv(5_000)) != null) {
+                        Chars.utf8toUtf16(chunk.lo(), chunk.hi(), responseSink);
+                    }
+                    TestUtils.assertEquals(expectedResponse, responseSink);
                 }
-                TestUtils.assertEquals(expectedResponse, responseSink);
             }
         };
 
