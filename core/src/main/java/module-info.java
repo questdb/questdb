@@ -110,6 +110,7 @@ open module io.questdb {
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
     exports io.questdb.client;
+    exports io.questdb.std.bytes;
 
     provides FunctionFactory with
             // test functions
