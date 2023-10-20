@@ -29,9 +29,11 @@ import io.questdb.metrics.Scrapable;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Files;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectByteCharSink;
+import org.jetbrains.annotations.TestOnly;
 
 public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
@@ -99,8 +101,13 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     }
 
     private RequestState setupState(HttpConnectionContext context) {
-        RequestState state = pool.take();
-        LV.set(context, state);
+        RequestState state = LV.get(context);
+        if (state == null) {
+            state = pool.take();
+            LV.set(context, state);
+        } else {
+            state.clear();
+        }
         return state;
     }
 
@@ -108,7 +115,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
      * State for processing a single request across multiple response chunks.
      * Each object is used for the lifetime of one request, then returned the pool.
      */
-    private static class RequestState implements QuietCloseable {
+    private static class RequestState implements QuietCloseable, Mutable {
         /**
          * Metrics serialization destination, sent into one or more chunks later.
          */
@@ -123,13 +130,18 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
             this.pool = pool;
         }
 
+        @Override
+        public void clear() {
+            sink.clear();
+            written = 0;
+        }
+
         /**
          * Return to pool at the end of a request.
          */
         @Override
         public void close() {
-            sink.clear();
-            written = 0;
+            clear();
             pool.give(this);
         }
 
@@ -145,7 +157,12 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         private final ObjList<RequestState> objects;
 
         public RequestStatePool() {
-            this.objects = new ObjList<>();
+            objects = new ObjList<>();
+        }
+
+        @TestOnly
+        public synchronized int size() {
+            return objects.size();
         }
 
         @Override

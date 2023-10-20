@@ -47,6 +47,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
+    private PrometheusMetricsProcessor.RequestStatePool prometheusRequestStatePool;
     private Scrapable scrapable;
     private int sendBufferSize;
     private int tcpSndBufSize;
@@ -71,7 +72,9 @@ public class HttpMinTestBuilder {
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                final PrometheusMetricsProcessor.RequestStatePool requestStatePool = new PrometheusMetricsProcessor.RequestStatePool();
+                final PrometheusMetricsProcessor.RequestStatePool requestStatePool = prometheusRequestStatePool != null
+                        ? prometheusRequestStatePool
+                        : new PrometheusMetricsProcessor.RequestStatePool();
                 httpServer.registerClosable(requestStatePool);
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -109,6 +112,11 @@ public class HttpMinTestBuilder {
                 }
             }
         });
+    }
+
+    public HttpMinTestBuilder withPrometheusPool(PrometheusMetricsProcessor.RequestStatePool pool) {
+        this.prometheusRequestStatePool = pool;
+        return this;
     }
 
     public HttpMinTestBuilder withScrapable(Scrapable scrapable) {

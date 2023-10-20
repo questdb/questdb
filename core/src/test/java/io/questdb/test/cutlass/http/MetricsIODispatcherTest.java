@@ -28,6 +28,7 @@ import io.questdb.cutlass.http.client.Chunk;
 import io.questdb.cutlass.http.client.ChunkedResponse;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
@@ -120,6 +121,8 @@ public class MetricsIODispatcherTest {
     }
 
     public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches) throws Exception {
+        final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool();
+
         MetricsRegistry metrics = new MetricsRegistryImpl();
         for (int i = 0; i < metricCount; i++) {
             metrics.newCounter("testMetrics" + i).add(i);
@@ -132,6 +135,8 @@ public class MetricsIODispatcherTest {
 
         final HttpQueryTestBuilder.HttpClientCode makeRequest = engine -> {
             try (HttpClient client = HttpClientFactory.newInstance()) {
+                // Repeated requests over the same connection.
+                // This is to stress out the RequestState pooling logic.
                 for (int i = 0; i < 5; i++) {
                     HttpClient.ResponseHeaders response = client.newRequest()
                             .GET()
@@ -154,7 +159,7 @@ public class MetricsIODispatcherTest {
             }
         };
 
-        // Repeat each request 5 times, for each parallel request batch.
+        // Repeat each connection 5 times, for each parallel request batch.
         // This is to stress out the RequestState pooling logic.
         final HttpQueryTestBuilder.HttpClientCode repeatedRequest = engine -> {
             for (int i = 0; i < 5; i++) {
@@ -166,11 +171,13 @@ public class MetricsIODispatcherTest {
         final HttpQueryTestBuilder.HttpClientCode clientCode = parallelizeRequests(parallelRequestBatches, repeatedRequest);
         final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
         new HttpMinTestBuilder()
+
                 .withTempFolder(temp)
                 .withScrapable(metrics)
                 .withTcpSndBufSize(tcpSndBufSize)
                 .withSendBufferSize(sendBufferSize)
                 .withWorkerCount(workerCount)
+                .withPrometheusPool(pool)
                 .run(clientCode);
     }
 
