@@ -28,76 +28,76 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.BorrowableAsNativeByteSink;
+import io.questdb.std.bytes.DirectByteSink;
+import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable {
-    private final long initialCapacity;
-    private long capacity;
-    private long hi;
-    private long lo;
-    private long ptr;
+public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, BorrowableAsNativeByteSink {
+    private final DirectByteSink sink;
 
     public DirectByteCharSink(long capacity) {
-        ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
-        this.capacity = capacity;
-        this.initialCapacity = capacity;
-        this.lo = ptr;
-        this.hi = ptr + capacity;
+        sink = new DirectByteSink(capacity) {
+            @Override
+            protected int memoryTag() {
+                return MemoryTag.NATIVE_DIRECT_CHAR_SINK;
+            }
+        };
+    }
+
+    @Override
+    public NativeByteSink borrowDirectByteSink() {
+        return sink.borrowDirectByteSink();
     }
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(ptr + index);
+        return sink.byteAt(index);
     }
 
     @Override
     public void clear() {
-        lo = ptr;
+        sink.clear();
     }
 
     @Override
     public void close() {
-        Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+        sink.close();
     }
 
     @TestOnly
-    public long getCapacity() {
-        return capacity;
-    }
-
-    public long getPtr() {
-        return ptr;
+    public long capacity() {
+        return sink.capacity();
     }
 
     @Override
     public int length() {
-        return (int) (lo - ptr);
+        // TODO: This is incorrect as it returns the number of bytes, not UTF-16 code units.
+        // As such it breaks the contract of CharSequence.
+        return size();
     }
 
-    public DirectByteCharSink put(ByteSequence cs) {
-        if (cs != null) {
-            int l = cs.length();
+    public long ptr() {
+        return sink.ptr();
+    }
 
-            if (lo + l >= hi) {
-                resize(Math.max(capacity * 2L, (lo - ptr + l) * 2L));
+    public DirectByteCharSink put(ByteSequence bs) {
+        if (bs != null) {
+            final int bsLen = bs.length();
+            final long dest = sink.book(bsLen);
+            for (int i = 0; i < bsLen; i++) {
+                Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
             }
-
-            for (int i = 0; i < l; i++) {
-                Unsafe.getUnsafe().putByte(lo + i, cs.byteAt(i));
-            }
-            this.lo += l;
+            sink.advance(bsLen);
         }
         return this;
     }
 
     public DirectByteCharSink put(byte b) {
-        if (lo == hi) {
-            resize(this.capacity * 2);
-        }
-        Unsafe.getUnsafe().putByte(lo++, b);
+        sink.put(b);
         return this;
     }
 
@@ -107,9 +107,8 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         return this;
     }
 
-    public void resetCapacity() {
-        resize(initialCapacity);
-        clear();
+    public int size() {
+        return sink.size();
     }
 
     @NotNull
@@ -118,34 +117,13 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         return Chars.stringFromUtf8Bytes(this);
     }
 
-    private void resize(long cap) {
-        long temp = Unsafe.realloc(ptr, capacity, cap, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
-        int len = (int) (lo - ptr);
-        this.ptr = temp;
-        this.capacity = cap;
-        this.lo = ptr + len;
-        this.hi = ptr + cap;
-    }
-
-    private void ensureAtLeast(long required) {
-        final long avail = hi - lo;
-        if (required > avail) {
-            final long used = lo - ptr;
-            long newCapacity = capacity;
-            do {
-                newCapacity *= 2;
-            } while (newCapacity - used < required);
-            resize(newCapacity);
-        }
-    }
-
     @Override
     public DirectByteCharSink put(CharSequence cs) {
         // This is not UTF-8 safe. It assumes `cs` is ASCII without checks.
         final int charCount = cs.length();
-        ensureAtLeast(charCount);
-        Chars.asciiStrCpy(cs, charCount, lo);
-        lo += charCount;
+        final long destPtr = sink.book(charCount);
+        Chars.asciiStrCpy(cs, charCount, destPtr);
+        sink.advance(charCount);
         return this;
     }
 }
