@@ -264,15 +264,15 @@ public class ServerMain implements Closeable {
             readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
 
             return new CombiningUsernamePasswordMatcher(
-                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.getPtr(), defaultUserPasswordSink.length()),
-                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.getPtr(), readOnlyUserPasswordSink.length())
+                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.length()),
+                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.length())
             );
         } else if (defaultUserEnabled) {
             defaultUserPasswordSink.encodeUtf8(defaultPassword);
-            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.getPtr(), defaultUserPasswordSink.length());
+            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.length());
         } else if (readOnlyUserEnabled) {
             readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
-            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.getPtr(), readOnlyUserPasswordSink.length());
+            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.length());
         } else {
             return NeverMatchUsernamePasswordMatcher.INSTANCE;
         }
