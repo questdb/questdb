@@ -32,11 +32,6 @@ public class AnonymousAuthenticator implements Authenticator {
     public static final AnonymousAuthenticator INSTANCE = new AnonymousAuthenticator();
 
     @Override
-    public int denyAccess() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public CharSequence getPrincipal() {
         return null;
     }

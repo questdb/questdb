@@ -36,7 +36,9 @@ public interface Authenticator extends QuietCloseable {
     int OK = -1;
     int QUEUE_FULL = 2;
 
-    int denyAccess() throws AuthenticatorException;
+    default int denyAccess() throws AuthenticatorException  {
+        throw new UnsupportedOperationException();
+    }
 
     default void clear() {
     }
@@ -56,4 +58,8 @@ public interface Authenticator extends QuietCloseable {
     void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
 
     boolean isAuthenticated();
+
+    default int loginOK() throws AuthenticatorException {
+        throw new UnsupportedOperationException();
+    }
 }

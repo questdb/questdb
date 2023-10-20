@@ -247,6 +247,10 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             // Note that `configuration.getBindPort()` might also be 0.
             // In such case, we will bind to an ephemeral port.
             this.port = configuration.getBindPort();
+            if (Os.isWindows()) {
+                // Make windows release listening port faster, same as Linux
+                nf.setReusePort(serverFd);
+            }
         }
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), this.port)) {
             if (this.port == 0) {

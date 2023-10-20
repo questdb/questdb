@@ -223,6 +223,14 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         return state == State.AUTH_SUCCESS;
     }
 
+    @Override
+    public int loginOK() throws AuthenticatorException {
+        compactRecvBuf();
+        prepareLoginOk();
+        state = State.WRITE_AND_AUTH_SUCCESS;
+        return handleIO();
+    }
+
     private static int getIntUnsafe(long address) {
         return Numbers.bswap(Unsafe.getUnsafe().getInt(address));
     }
@@ -391,9 +399,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
         if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
             recvBufReadPos = msgLimit;
-            compactRecvBuf();
-            prepareLoginOk();
-            state = State.WRITE_AND_AUTH_SUCCESS;
+            state = State.AUTH_SUCCESS;
         } else {
             LOG.info().$("bad password for user [user=").$(username).$(']').$();
             prepareWrongUsernamePasswordResponse("invalid username/password");

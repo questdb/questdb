@@ -68,12 +68,6 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     @Override
-    public int denyAccess() throws AuthenticatorException {
-        authState = AuthState.FAILED;
-        throw AuthenticatorException.INSTANCE;
-    }
-
-    @Override
     public CharSequence getPrincipal() {
         return principal;
     }

@@ -1704,10 +1704,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
                 try {
                     securityContext.authorizePGWIRE();
+                    sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+                    r = authenticator.loginOK();
                 } catch (CairoException e) {
                     r = authenticator.denyAccess();
                 }
-                sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
             }
         } catch (AuthenticatorException e) {
             throw PeerDisconnectedException.INSTANCE;
