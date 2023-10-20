@@ -36,9 +36,9 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
+    protected final Function arg;
     private final StringSink sink = new StringSink();
-    private int valueIndex;
+    protected int valueIndex;
 
     public FirstStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -52,7 +52,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public CharSequence getStr(Record rec) {
         boolean hasStr = rec.getBool(valueIndex);
-        return hasStr ? sink : null;
+        return hasStr ? sink.toString() : null;
     }
 
     @Override

@@ -35,8 +35,8 @@ import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.Numbers;
 
 public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstUuidGroupByFunction(Function arg) {
         this.arg = arg;
