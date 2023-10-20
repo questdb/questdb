@@ -25,8 +25,8 @@
 package io.questdb.test;
 
 import io.questdb.*;
-import io.questdb.cairo.wal.WorkerMetrics;
 import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.metrics.WorkerMetricsImpl;
 import io.questdb.mp.*;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
@@ -45,11 +45,13 @@ public class WorkerTest {
     public void testJobs() {
         ObjHashSet<Job> jobs = new ObjHashSet<>();
 
-        AtomicInteger count = new AtomicInteger();
-        jobs.add(countUp(count));
+        int events = 20;
 
-        AtomicInteger endLatch = new AtomicInteger(25);
-        jobs.add(countDown(endLatch));
+        AtomicInteger count = new AtomicInteger();
+        jobs.add(slowCountUp(count));
+
+        AtomicInteger endLatch = new AtomicInteger(events);
+        jobs.add(fastCountDown(endLatch)); // counts down, on 0 it halts the worker
 
         SOCountDownLatch workerHaltLatch = new SOCountDownLatch(1);
         Worker worker = new Worker(
@@ -60,27 +62,27 @@ public class WorkerTest {
                 workerHaltLatch,
                 ex -> Assert.assertEquals(END_MESSAGE, ex.getMessage()),
                 true,
-                3L,
-                9L,
-                100L,
+                10000L,
+                5L,
+                20L,
                 METRICS,
                 null
         );
         worker.start();
-        if (!workerHaltLatch.await(TimeUnit.SECONDS.toNanos(10L))) {
+        if (!workerHaltLatch.await(TimeUnit.SECONDS.toNanos(60L))) {
             Assert.fail();
         }
         Assert.assertEquals(0, endLatch.get());
-        Assert.assertTrue(count.get() > 0);
-        WorkerMetrics metrics = METRICS.workerMetrics();
+        Assert.assertEquals(events, count.get());
+        WorkerMetricsImpl metrics = (WorkerMetricsImpl) METRICS.workerMetrics();
         long min = metrics.getMinElapsed(worker.getName());
         long max = metrics.getMaxElapsed(worker.getName());
-        System.out.printf("MIN: %d, MAX: %d%n", min, max);
+        Assert.assertTrue(min < max);
+        Assert.assertTrue(min > 0L);
     }
 
-    private static Job countDown(AtomicInteger endLatch) {
+    private static Job fastCountDown(AtomicInteger endLatch) {
         return (workerId, runStatus) -> {
-            System.out.printf("pff: %d%n", endLatch.get());
             if (endLatch.decrementAndGet() < 1) {
                 throw new RuntimeException(END_MESSAGE);
             }
@@ -89,10 +91,10 @@ public class WorkerTest {
         };
     }
 
-    private static Job countUp(AtomicInteger count) {
+    private static Job slowCountUp(AtomicInteger count) {
         return (workerId, runStatus) -> {
             count.incrementAndGet();
-            Os.sleep(20L);
+            Os.sleep(30L);
             return false; // not eager
         };
     }

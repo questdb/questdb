@@ -25,7 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.wal.WorkerMetrics;
+import io.questdb.metrics.WorkerMetrics;
 import io.questdb.log.Log;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
@@ -47,8 +47,8 @@ public class Worker extends Thread {
     private final Metrics metrics;
     private final OnHaltAction onHaltAction;
     private final String poolName;
-    private final AtomicReference<Lifecycle> running = new AtomicReference<>(Lifecycle.BORN);
-    private final Job.RunStatus runStatus = () -> running.get() == Lifecycle.HALTED;
+    private final AtomicReference<Lifecycle> lifecycle = new AtomicReference<>(Lifecycle.BORN);
+    private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
     private final int workerId;
@@ -68,6 +68,7 @@ public class Worker extends Thread {
             Metrics metrics,
             @Nullable Log log
     ) {
+        assert yieldThreshold > 0L;
         this.setName("questdb-" + poolName + "-" + UNIQUE_ID.incrementAndGet());
         this.poolName = poolName;
         this.workerId = workerId;
@@ -89,14 +90,14 @@ public class Worker extends Thread {
     }
 
     public void halt() {
-        running.set(Lifecycle.HALTED);
+        lifecycle.set(Lifecycle.HALTED);
     }
 
     @Override
     public void run() {
         Throwable ex = null;
         try {
-            if (running.compareAndSet(Lifecycle.BORN, Lifecycle.RUNNING)) {
+            if (lifecycle.compareAndSet(Lifecycle.BORN, Lifecycle.RUNNING)) {
 
                 String workerName = getName();
 
@@ -131,9 +132,9 @@ public class Worker extends Thread {
                 }
 
                 // enter main loop
-                WorkerMetrics workerMetrics = metrics.workerMetrics().init(workerName);
+                WorkerMetrics workerMetrics = metrics.workerMetrics().initWorker(workerName);
                 long ticker = 0L;
-                while (running.get() == Lifecycle.RUNNING) {
+                while (lifecycle.get() == Lifecycle.RUNNING) {
                     boolean runAsap = false;
                     for (int i = 0, n = jobs.size(); i < n; i++) {
                         workerMetrics.beginJob(workerName);
@@ -165,16 +166,17 @@ public class Worker extends Thread {
                         workerMetrics.endJob(workerName);
                     }
 
-                    if (++ticker < 0L) {
+                    if (runAsap) {
+                        ticker = 0L;
+                        continue;
+                    }
+                    if (++ticker < 1L) {
                         ticker = sleepThreshold + 1L; // overflow
                     }
-                    if (!runAsap) {
-                        if (ticker > sleepThreshold) {
-                            ticker = 0L;
-                            Os.sleep(sleepMs);
-                        } else if (ticker % yieldThreshold == 0L) {
-                            Os.pause();
-                        }
+                    if (ticker > sleepThreshold) {
+                        Os.sleep(sleepMs);
+                    } else if (ticker % yieldThreshold == 0L) {
+                        Os.pause();
                     }
                 }
             }

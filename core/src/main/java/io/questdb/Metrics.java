@@ -26,7 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.wal.WalMetrics;
-import io.questdb.cairo.wal.WorkerMetrics;
+import io.questdb.metrics.WorkerMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
@@ -63,7 +63,7 @@ public class Metrics implements Scrapable {
         this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
-        this.workerMetrics = new WorkerMetrics(metricsRegistry);
+        this.workerMetrics = new WorkerMetricsImpl(metricsRegistry);
     }
 
     public static Metrics disabled() {
