@@ -163,7 +163,7 @@ public class Worker extends Thread {
                         ticker = 0L;
                         continue;
                     }
-                    if (++ticker < 1L) {
+                    if (++ticker < 0L) {
                         ticker = sleepThreshold + 1L; // overflow
                     }
                     if (ticker > sleepThreshold) {
