@@ -193,13 +193,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             symLinkTarget = null;
                         }
                     }
-                    ff.rmdir(pathToDelete, false);
+                    boolean fullyDeleted = ff.rmdir(pathToDelete, false);
                     if (symLinkTarget != null) {
                         ff.rmdir(symLinkTarget, false);
                     }
                     TableUtils.lockName(pathToDelete);
-                    ff.remove(pathToDelete);
-                    engine.removeTableToken(tableToken);
+                    if (fullyDeleted) {
+                        // Sometimes on Windows seq files can be open, wait for the to be closed before fully removing
+                        // the token
+                        engine.removeTableToken(tableToken);
+                    }
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();
                     // Ping ApplyWal2TableJob to clean up the table files
