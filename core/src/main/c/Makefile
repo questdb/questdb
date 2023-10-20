@@ -28,7 +28,7 @@ $(error "No jq in $(PATH)")
 endif
 
 ifndef AZURE_DEVOPS_EXT_PAT
-$(error AZURE_DEVOPS_EXT_PAT is undefined, check README)
+$(error AZURE_DEVOPS_EXT_PAT is undefined, check 'make README')
 endif
 
 get_cbinaries: az_login az_trigger_pipeline

@@ -22,14 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
-
-import io.questdb.std.bytes.ByteSequence;
+package io.questdb.std.bytes;
 
 /**
- * A sequence of UTF-8 bytes.
+ * Read-only interface for a sequence of bytes.
  */
-public interface Utf8Sequence extends ByteSequence {
+public interface ByteSequence {
     /**
      * Returns byte at index.
      * Note: Unchecked bounds.
@@ -37,13 +35,11 @@ public interface Utf8Sequence extends ByteSequence {
      * @param index byte index
      * @return byte at index
      */
-    byte byteAt(int index);
+    byte byteAt(int index);  // TODO: Convert to take `long` instead of `int`.
 
     /**
-     * Number of bytes in the string.
-     * <p>
-     * This is NOT the number of 16-bit chars or code points in the string.
-     * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
+     * Number of bytes in the sequence.
+     * Note that this is not called `length()` to avoid collision with `CharSequence` (and other) interfaces.
      */
-    int size();
+    int size();  // TODO: Convert this to return `long`. Also see `byte_sink.cpp` which restricts the size to `int`.
 }
