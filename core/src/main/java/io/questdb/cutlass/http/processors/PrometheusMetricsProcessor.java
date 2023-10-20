@@ -28,6 +28,7 @@ import io.questdb.cutlass.http.*;
 import io.questdb.metrics.Scrapable;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Files;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectByteCharSink;
@@ -111,7 +112,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         /**
          * Metrics serialization destination, sent into one or more chunks later.
          */
-        public final DirectByteCharSink sink = new DirectByteCharSink(4096);  // One page on most systems.
+        public final DirectByteCharSink sink = new DirectByteCharSink(Files.PAGE_SIZE);
         private final RequestStatePool pool;
         /**
          * Total number of bytes written to one or more chunks (`HttpChunkedResponseSocket` objects).
