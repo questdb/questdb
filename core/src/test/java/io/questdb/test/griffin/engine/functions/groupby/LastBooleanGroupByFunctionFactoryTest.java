@@ -60,47 +60,27 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLastBoolean() throws Exception {
-        ddl("create table tab (f boolean)");
-
-        try (TableWriter w = getWriter("tab")) {
-            TableWriter.Row r = w.newRow();
-            r.append();
-            r = w.newRow();
-            r.putBool(0, true);
-            r.append();
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = select("select last(f) from tab")) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(record.getBool(0));
-            }
-        }
+        assertQuery(
+                "a\n" +
+                        "false\n",
+                "select last(a)a from tab",
+                "create table tab as (select false a union select true a union select false a)",
+                null,
+                false,
+                true
+        );
     }
 
     @Test
     public void testLastBoolean2() throws Exception {
-        ddl("create table tab (f boolean)");
-
-        try (TableWriter w = getWriter("tab")) {
-            TableWriter.Row r = w.newRow();
-            r.putBool(0, true);
-            r.append();
-            r = w.newRow();
-            r.append();
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = select("select last(f) from tab")) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertFalse(record.getBool(0));
-            }
-        }
+        assertQuery(
+                "a\n" +
+                        "true\n",
+                "select last(a)a from tab",
+                "create table tab as (select false a union select true a union select true a)",
+                null,
+                false,
+                true
+        );
     }
 }
