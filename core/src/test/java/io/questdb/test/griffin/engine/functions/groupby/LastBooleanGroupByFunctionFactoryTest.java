@@ -64,7 +64,7 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "a\n" +
                         "false\n",
                 "select last(a)a from tab",
-                "create table tab as (select false a union select true a union select false a)",
+                "create table tab as (select true a union select true a union select false a)",
                 null,
                 false,
                 true
@@ -77,7 +77,7 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "a\n" +
                         "true\n",
                 "select last(a)a from tab",
-                "create table tab as (select false a union select true a union select true a)",
+                "create table tab as (select false a union select false a union select true a)",
                 null,
                 false,
                 true
