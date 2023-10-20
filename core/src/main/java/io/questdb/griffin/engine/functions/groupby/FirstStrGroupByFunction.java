@@ -51,7 +51,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public CharSequence getStr(Record rec) {
-        var hasStr = rec.getBool(valueIndex);
+        boolean hasStr = rec.getBool(valueIndex);
         return hasStr ? sink : null;
     }
 
@@ -78,7 +78,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        var str = arg.getStr(record);
+        CharSequence str = arg.getStr(record);
         sink.clear();
         if (null != str) {
             mapValue.putBool(this.valueIndex, true);
