@@ -183,6 +183,13 @@ public final class Chars {
         }
     }
 
+    public static void copyStrCharsLowerCase(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = Character.toLowerCase(value.charAt(i + pos));
+            Unsafe.getUnsafe().putChar(address + 2L * i, c);
+        }
+    }
+
     public static boolean empty(@Nullable CharSequence value) {
         return value == null || value.length() < 1;
     }
