@@ -72,15 +72,10 @@ public class WorkerMetricsImpl implements WorkerMetrics {
             record.init();
         }
         workerRecords.put(workerName, new WorkerRecord(
-                metricsRegistry.newLongGauge("worker_" + workerName + "_min_elapsed_micros"),
-                metricsRegistry.newLongGauge("worker_" + workerName + "_max_elapsed_micros")
+                metricsRegistry.newLongGauge("worker_" + workerName + "_elapsed_micros_min"),
+                metricsRegistry.newLongGauge("worker_" + workerName + "_elapsed_micros_max")
         ));
         return this;
-    }
-
-    private static long getValue(ConcurrentHashMap<LongGauge> source, String workerName) {
-        LongGauge gauge = source.get(workerName);
-        return gauge != null ? gauge.getValue() : null;
     }
 
     private static class WorkerRecord {

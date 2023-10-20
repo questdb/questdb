@@ -32,22 +32,20 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class Worker extends Thread {
     public final static int NO_THREAD_AFFINITY = -1;
-    private final static AtomicInteger UNIQUE_ID = new AtomicInteger();
     private final int affinity;
     private final String criticalErrorLine;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
     private final ObjHashSet<? extends Job> jobs;
+    private final AtomicReference<Lifecycle> lifecycle = new AtomicReference<>(Lifecycle.BORN);
     private final Log log;
     private final Metrics metrics;
     private final OnHaltAction onHaltAction;
     private final String poolName;
-    private final AtomicReference<Lifecycle> lifecycle = new AtomicReference<>(Lifecycle.BORN);
     private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
@@ -69,7 +67,7 @@ public class Worker extends Thread {
             @Nullable Log log
     ) {
         assert yieldThreshold > 0L;
-        this.setName("questdb-" + poolName + "-" + UNIQUE_ID.incrementAndGet());
+        this.setName(poolName + '-' + workerId);
         this.poolName = poolName;
         this.workerId = workerId;
         this.affinity = affinity;
@@ -140,30 +138,25 @@ public class Worker extends Thread {
                         workerMetrics.beginJob(workerName);
                         Unsafe.getUnsafe().loadFence();
                         try {
+                            runAsap |= jobs.get(i).run(workerId, runStatus);
+                        } catch (Throwable e) {
                             try {
-                                runAsap |= jobs.get(i).run(workerId, runStatus);
-                            } catch (Throwable e) {
-                                try {
-                                    metrics.health().incrementUnhandledErrors();
-                                } catch (Throwable t) {
-                                    stdErrCritical(t);
-                                }
-
-                                // Log error even then halt if halt error setting is on.
-                                if (log != null) {
-                                    log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
-                                } else {
-                                    stdErrCritical(e);
-                                }
-                                if (haltOnError) {
-                                    workerMetrics.endJob(workerName);
-                                    throw e;
-                                }
+                                metrics.health().incrementUnhandledErrors();
+                            } catch (Throwable t) {
+                                stdErrCritical(t);
+                            }
+                            if (log != null) {
+                                log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
+                            } else {
+                                stdErrCritical(e); // log regardless
+                            }
+                            if (haltOnError) {
+                                throw e;
                             }
                         } finally {
                             Unsafe.getUnsafe().storeFence();
+                            workerMetrics.endJob(workerName);
                         }
-                        workerMetrics.endJob(workerName);
                     }
 
                     if (runAsap) {
