@@ -889,6 +889,41 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE 'weather' (\n" +
+                            "  city SYMBOL capacity 256,\n" +
+                            "  temperature DOUBLE,\n" +
+                            "  humidity DOUBLE,\n" +
+                            "  timestamp TIMESTAMP,\n" +
+                            "  country SYMBOL capacity 256 CACHE\n" +
+                            ") timestamp (timestamp) PARTITION BY DAY WAL"
+            );
+
+            insert("insert into weather values('city', 1, 1, '1982-01-01', 'abc')");
+
+            drainWalQueue();
+            assertSql("city\ttemperature\thumidity\ttimestamp\tcountry\n" +
+                    "city\t1.0\t1.0\t1982-01-01T00:00:00.000000Z\tabc\n", "select * from weather");
+
+            engine.releaseInactive();
+
+            compile("alter table weather drop column city");
+            insert("insert into weather values(1, 1, '1982-01-01', 'abc')");
+            drainWalQueue();
+
+            engine.releaseInactive();
+            compile("alter table weather add column city symbol");
+            insert("insert into weather values(1, 1, '1982-01-01', 'abc', 'city')");
+            drainWalQueue();
+
+            engine.releaseInactive();
+            compile("alter table weather drop column city");
+        });
+    }
+
+    @Test
     public void testDropTableAndConvertAnother() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
