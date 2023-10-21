@@ -22,28 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.std.bytes;
 
-import io.questdb.std.bytes.ByteSequence;
+import io.questdb.std.Unsafe;
 
 /**
- * A sequence of UTF-8 bytes.
+ * Read-only interface for a sequence of bytes with native ptr access.
  */
-public interface Utf8Sequence extends ByteSequence {
-    /**
-     * Returns byte at index.
-     * Note: Unchecked bounds.
-     *
-     * @param index byte index
-     * @return byte at index
-     */
-    byte byteAt(int index);
+public interface DirectByteSequence extends ByteSequence {
+    @Override
+    default byte byteAt(int index) {
+        return Unsafe.getUnsafe().getByte(ptr() + index);
+    }
 
     /**
-     * Number of bytes in the string.
-     * <p>
-     * This is NOT the number of 16-bit chars or code points in the string.
-     * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
+     * Address one past the last byte.
      */
-    int size();
+    default long hi() {
+        return ptr() + size();
+    }
+
+    /**
+     * Address of the first byte (alias of `.ptr()`).
+     */
+    default long lo() {
+        return ptr();
+    }
+
+    /**
+     * Address of the first byte.
+     */
+    long ptr();
 }
