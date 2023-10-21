@@ -528,6 +528,7 @@ public class FastMapTest extends AbstractCairoTest {
 
             Assert.assertTrue(keyCapacityBefore > map.getKeyCapacity());
             Assert.assertTrue(memUsedBefore > Unsafe.getMemUsed());
+            // TODO: current MemoryCARWImpl does not have shrink
             Assert.assertTrue(areaSizeBefore > map.getAreaSize());
         }
     }
