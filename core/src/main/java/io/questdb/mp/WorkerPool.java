@@ -26,6 +26,7 @@ package io.questdb.mp;
 
 import io.questdb.Metrics;
 import io.questdb.log.Log;
+import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -194,6 +195,23 @@ public class WorkerPool implements Closeable {
             }
             started.countDown();
         }
+    }
+
+    public void updateWorkerMetrics(long now) {
+        WorkerMetrics workerMetrics = metrics.workerMetrics();
+        long min = workerMetrics.getMinElapsedMicros();
+        long max = workerMetrics.getMaxElapsedMicros();
+        for (int i = 0, n = workers.size(); i < n; i++) {
+            long elapsed = now - workers.getQuick(i).getJobStartMicros();
+            if (elapsed > 0L) {
+                if (elapsed < min) {
+                    min = elapsed;
+                } else if (elapsed > max) {
+                    max = elapsed;
+                }
+            }
+        }
+        workerMetrics.update(min, max);
     }
 
     private void setupPathCleaner() {

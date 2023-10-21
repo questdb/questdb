@@ -63,7 +63,7 @@ public class Metrics implements Scrapable {
         this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
-        this.workerMetrics = new WorkerMetricsImpl(metricsRegistry);
+        this.workerMetrics = new WorkerMetrics(metricsRegistry);
     }
 
     public static Metrics disabled() {
@@ -112,6 +112,10 @@ public class Metrics implements Scrapable {
 
     public WorkerMetrics workerMetrics() {
         return workerMetrics;
+    }
+
+    void addScrapable(Scrapable scrapable){
+        metricsRegistry.addScrapable(scrapable);
     }
 
     private void createMemoryGauges(MetricsRegistry metricsRegistry) {

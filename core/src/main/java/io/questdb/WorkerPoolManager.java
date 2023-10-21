@@ -26,15 +26,18 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.Scrapable;
+import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class WorkerPoolManager {
+public abstract class WorkerPoolManager implements Scrapable {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
     protected final WorkerPool sharedPool;
@@ -45,6 +48,7 @@ public abstract class WorkerPoolManager {
     public WorkerPoolManager(ServerConfiguration config, Metrics metrics) {
         sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
         configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
+        metrics.addScrapable(this);
     }
 
     public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics, @NotNull Requester requester) {
@@ -118,6 +122,16 @@ public abstract class WorkerPoolManager {
                         .$(", workers=").$(pool.getWorkerCount())
                         .I$();
             }
+        }
+    }
+
+    @Override
+    public void scrapeIntoPrometheus(CharSink sink) {
+        long now = Worker.CLOCK_MICROS.getTicks();
+        sharedPool.updateWorkerMetrics(now);
+        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics(now);
         }
     }
 

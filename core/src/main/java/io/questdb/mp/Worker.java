@@ -25,17 +25,20 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
-import io.questdb.metrics.WorkerMetrics;
 import io.questdb.log.Log;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class Worker extends Thread {
     public final static int NO_THREAD_AFFINITY = -1;
+    public final static MicrosecondClock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
     private final int affinity;
     private final String criticalErrorLine;
     private final SOCountDownLatch haltLatch;
@@ -51,6 +54,7 @@ public class Worker extends Thread {
     private final long sleepThreshold;
     private final int workerId;
     private final long yieldThreshold;
+    private final AtomicLong jobStartMicros = new AtomicLong();
 
     public Worker(
             String poolName,
@@ -67,7 +71,7 @@ public class Worker extends Thread {
             @Nullable Log log
     ) {
         assert yieldThreshold > 0L;
-        this.setName(poolName + '-' + workerId);
+        this.setName(poolName + '_' + workerId);
         this.poolName = poolName;
         this.workerId = workerId;
         this.affinity = affinity;
@@ -89,6 +93,10 @@ public class Worker extends Thread {
 
     public void halt() {
         lifecycle.set(Lifecycle.HALTED);
+    }
+
+    long getJobStartMicros() {
+        return jobStartMicros.get();
     }
 
     @Override
@@ -130,12 +138,11 @@ public class Worker extends Thread {
                 }
 
                 // enter main loop
-                WorkerMetrics workerMetrics = metrics.workerMetrics().initWorker(workerName);
                 long ticker = 0L;
                 while (lifecycle.get() == Lifecycle.RUNNING) {
                     boolean runAsap = false;
                     for (int i = 0, n = jobs.size(); i < n; i++) {
-                        workerMetrics.beginJob(workerName);
+                        jobStartMicros.set(CLOCK_MICROS.getTicks());
                         Unsafe.getUnsafe().loadFence();
                         try {
                             runAsap |= jobs.get(i).run(workerId, runStatus);
@@ -155,7 +162,6 @@ public class Worker extends Thread {
                             }
                         } finally {
                             Unsafe.getUnsafe().storeFence();
-                            workerMetrics.endJob(workerName);
                         }
                     }
 

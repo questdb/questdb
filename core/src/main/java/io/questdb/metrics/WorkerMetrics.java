@@ -24,11 +24,32 @@
 
 package io.questdb.metrics;
 
-public interface WorkerMetrics {
+public class WorkerMetrics {
 
-    void beginJob(String workerName);
+    private final LongGauge max;
+    private final LongGauge min;
 
-    void endJob(String workerName);
+    public WorkerMetrics(MetricsRegistry metricsRegistry) {
+        min = metricsRegistry.newLongGauge("workers_job_start_micros_min");
+        max = metricsRegistry.newLongGauge("workers_job_start_micros_max");
+        min.setValue(Long.MAX_VALUE);
+        max.setValue(Long.MIN_VALUE);
+    }
 
-    WorkerMetrics initWorker(String workerName);
+    public void update(long candidateMin, long candidateMax) {
+        if (candidateMin < min.getValue()) {
+            min.setValue(candidateMin);
+        }
+        if (candidateMax > max.getValue()) {
+            max.setValue(candidateMax);
+        }
+    }
+
+    public long getMinElapsedMicros() {
+        return min.getValue();
+    }
+
+    public long getMaxElapsedMicros() {
+        return max.getValue();
+    }
 }

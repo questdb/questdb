@@ -150,7 +150,6 @@ public class ServerMain implements Closeable {
         };
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
-            // dedicated pool
             WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
                     config.getWalApplyPoolConfiguration(),
                     metrics,
