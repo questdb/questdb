@@ -69,7 +69,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
             Unsafe.getUnsafe().putInt(addr, (int) len);
             value.copyTo(addr + Integer.BYTES, 0, len);
         } else {
-            putNullBin32();
+            putNullBin32(offset);
         }
     }
 
@@ -203,9 +203,8 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         return getAppendOffset();
     }
 
-    default long putNullBin32() {
-        putInt(TableUtils.NULL_LEN);
-        return getAppendOffset();
+    default void putNullBin32(long offset) {
+        putInt(offset, TableUtils.NULL_LEN);
     }
 
     default long putNullStr() {
