@@ -27,10 +27,10 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.MemoryCARWSpillable;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,8 +77,8 @@ public class FastMap implements Map, Reopenable {
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final FastMapCursor cursor;
+    private final int initialHeapSize;
     private final int initialKeyCapacity;
-    private final int initialPageSize;
     private final BaseKey key;
     private final int keyOffset;
     // Set to -1 when key is var-size.
@@ -92,27 +92,26 @@ public class FastMap implements Map, Reopenable {
     private final FastMapValue value3;
     private final int valueColumnCount;
     private final int valueSize;
-    private long capacity;
     private int free;
     private int keyCapacity;
     private int mask;
+    private MemoryCARWSpillable mem;
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
     private DirectLongList offsets;
     private int size = 0;
-    private MemoryCARWImpl mem;
 
     public FastMap(
-            int pageSize,
+            int heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             int keyCapacity,
             double loadFactor,
             int maxResizes
     ) {
-        this(pageSize, keyTypes, null, keyCapacity, loadFactor, maxResizes);
+        this(heapSize, keyTypes, null, keyCapacity, loadFactor, maxResizes);
     }
 
     public FastMap(
-            int pageSize,
+            int heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
@@ -120,22 +119,22 @@ public class FastMap implements Map, Reopenable {
             int maxResizes,
             int memoryTag
     ) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag);
     }
 
     public FastMap(
-            int pageSize,
+            int heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
             int maxResizes
     ) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
     }
 
     FastMap(
-            int pageSize,
+            int heapSize,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes,
             int keyCapacity,
@@ -144,13 +143,13 @@ public class FastMap implements Map, Reopenable {
             int mapMemoryTag,
             int listMemoryTag
     ) {
-        assert pageSize > 3;
+        assert heapSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
 
         this.mapMemoryTag = mapMemoryTag;
         this.listMemoryTag = listMemoryTag;
         initialKeyCapacity = keyCapacity;
-        initialPageSize = pageSize;
+        initialHeapSize = heapSize;
         this.loadFactor = loadFactor;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
@@ -159,7 +158,7 @@ public class FastMap implements Map, Reopenable {
         offsets = new DirectLongList(this.keyCapacity, listMemoryTag);
         offsets.setPos(this.keyCapacity);
         offsets.zero(0);
-        long maxPagesFromMaxHeap = MAX_HEAP_SIZE/pageSize;
+        long maxPagesFromMaxHeap = MAX_HEAP_SIZE/heapSize;
         int maxPages = (int) maxPagesFromMaxHeap;
         long maxPagesFromMaxResizes = 1L;
         int nResizes = 0;
@@ -173,7 +172,8 @@ public class FastMap implements Map, Reopenable {
         if(nResizes == maxResizes){
             maxPages = (int) maxPagesFromMaxResizes;
         }
-        this.mem = new MemoryCARWImpl(pageSize, maxPages, mapMemoryTag);
+        // TODO: what to set for default size
+        this.mem = new MemoryCARWSpillable(heapSize, maxPages, heapSize*3, Path.getThreadLocal("/tmp/questdb/fastmap"), mapMemoryTag, MemoryTag.MMAP_FAST_MAP);
 
         final int keyColumnCount = keyTypes.getColumnCount();
         int keySize = 0;
@@ -220,7 +220,7 @@ public class FastMap implements Map, Reopenable {
 
         record = new FastMapRecord(valueOffsets, keyOffset, value, keyTypes, valueTypes);
 
-        assert keySize + valueSize < pageSize : "page size is too small to fit a single key";
+        assert keySize + valueSize < heapSize : "page size is too small to fit a single key";
         cursor = new FastMapCursor(record, this);
         key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
     }
@@ -240,7 +240,6 @@ public class FastMap implements Map, Reopenable {
             mem.close();
             free = 0;
             size = 0;
-            capacity = 0;
         }
     }
 
@@ -279,7 +278,7 @@ public class FastMap implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
-        mem.resize(initialPageSize);
+        mem.truncate();
         keyCapacity = (int) (initialKeyCapacity / loadFactor);
         keyCapacity = keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(keyCapacity);
         mask = keyCapacity - 1;
@@ -402,8 +401,8 @@ public class FastMap implements Map, Reopenable {
     }
 
     private abstract class BaseKey implements MapKey {
-        protected long startOffset;
         protected long appendOffset;
+        protected long startOffset;
 
         @Override
         public MapValue createValue() {

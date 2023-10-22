@@ -140,6 +140,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public long getExtendSegmentSize() {
+        // TODO: looks inconsistent
         return extendSegmentMsb;
     }
 
@@ -174,6 +175,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         close();
         assert fd > 0;
         this.ff = ff;
+        // TODO: (1) this looks weird? Size vs Msb
         this.extendSegmentMsb = ff.getMapPageSize();
         this.minMappedMemorySize = this.extendSegmentMsb;
         this.fd = fd;
@@ -183,6 +185,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
         of(ff, fd, null, size, memoryTag);
+        // TODO: (2) Well here is overwritten but above of() is public
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
     }
 

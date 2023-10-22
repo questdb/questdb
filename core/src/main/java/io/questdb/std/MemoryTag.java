@@ -41,6 +41,7 @@ public final class MemoryTag {
     public static final int MMAP_TX_LOG = 53;
     public static final int MMAP_TX_LOG_CURSOR = 52;
     public static final int MMAP_UPDATE = 27;
+    public static final int MMAP_FAST_MAP = 54;
     public static final int NATIVE_CB1 = 28;
     public static final int NATIVE_CB2 = 29;
     public static final int NATIVE_CB3 = 30;
@@ -79,7 +80,7 @@ public final class MemoryTag {
     public static final int NATIVE_TEXT_PARSER_RSS = 48;
     public static final int NATIVE_TLS_RSS = 47;
     public static final int NATIVE_TREE_CHAIN = 6;
-    public static final int SIZE = MMAP_TX_LOG + 1;
+    public static final int SIZE = MMAP_FAST_MAP + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -141,5 +142,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_TX_LOG_CURSOR, "MMAP_TX_LOG_CURSOR");
         tagNameMap.extendAndSet(MMAP_TX_LOG, "MMAP_TX_LOG");
         tagNameMap.extendAndSet(NATIVE_SQL_COMPILER, "NATIVE_SQL_COMPILER");
+        tagNameMap.extendAndSet(MMAP_FAST_MAP, "MMAP_FAST_MAP");
     }
 }

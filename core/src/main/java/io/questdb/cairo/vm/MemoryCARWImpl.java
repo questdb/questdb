@@ -79,6 +79,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     @Override
     public void close() {
         clear();
+        // TODO: the following should'nt be necessary as it is duplicate with handleMemoryReleased()
         pageAddress = 0;
         lim = 0;
         appendAddress = 0;
