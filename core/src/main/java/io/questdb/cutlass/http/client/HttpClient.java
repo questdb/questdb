@@ -188,7 +188,7 @@ public abstract class HttpClient implements QuietCloseable {
             Chars.base64Encode(binarySequenceAdapter, (int) binarySequenceAdapter.length(), this);
             eol();
             if (cookieHandler != null) {
-                cookieHandler.setCookies(this);
+                cookieHandler.setCookies(this, username);
             }
             return this;
         }
