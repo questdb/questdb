@@ -110,6 +110,7 @@ open module io.questdb {
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
     exports io.questdb.client;
+    exports io.questdb.std.bytes;
 
     provides FunctionFactory with
             // test functions
@@ -545,6 +546,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.LastIPv4GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastShortGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastBooleanGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastSymbolGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunctionFactory,
@@ -560,6 +562,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.FirstIPv4GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstBooleanGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstTimestampGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunctionFactory,

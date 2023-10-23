@@ -22,28 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.std.bytes;
 
-import io.questdb.std.bytes.ByteSequence;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 
 /**
- * A sequence of UTF-8 bytes.
+ * A try-with-resource accessor to the `questdb_byte_sink_t` structure.
+ * <p>
+ * Note that the close method is simply meant to allow the owner object to
+ * update its memory bookkeeping. The underlying memory is not released.
  */
-public interface Utf8Sequence extends ByteSequence {
+public interface NativeByteSink extends QuietCloseable {
     /**
-     * Returns byte at index.
-     * Note: Unchecked bounds.
-     *
-     * @param index byte index
-     * @return byte at index
+     * Get the raw pointer to the `questdb_byte_sink_t` C structure.
      */
-    byte byteAt(int index);
-
-    /**
-     * Number of bytes in the string.
-     * <p>
-     * This is NOT the number of 16-bit chars or code points in the string.
-     * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
-     */
-    int size();
+    long ptr();
 }
