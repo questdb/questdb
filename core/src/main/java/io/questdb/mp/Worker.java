@@ -174,7 +174,7 @@ public class Worker extends Thread {
                     }
                     if (ticker > sleepThreshold) {
                         Os.sleep(sleepMs);
-                    } else if (ticker % yieldThreshold == 0L) {
+                    } else if (ticker > yieldThreshold) {
                         Os.pause();
                     }
                 }
