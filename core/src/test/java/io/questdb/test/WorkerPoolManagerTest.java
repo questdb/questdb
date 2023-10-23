@@ -168,12 +168,12 @@ public class WorkerPoolManagerTest {
             }
         };
         WorkerPool p0 = workerPoolManager.getInstance(
-                workerPoolConfiguration("UP", 1, 1L, 30L),
+                workerPoolConfiguration("UP", 30L),
                 METRICS,
                 WorkerPoolManager.Requester.OTHER
         );
         WorkerPool p1 = workerPoolManager.getInstance(
-                workerPoolConfiguration("DOWN", 1, 1L, 10L),
+                workerPoolConfiguration("DOWN", 10L),
                 METRICS,
                 WorkerPoolManager.Requester.OTHER
         );
@@ -300,7 +300,7 @@ public class WorkerPoolManagerTest {
         };
     }
 
-    private static WorkerPoolConfiguration workerPoolConfiguration(final String poolName, final int workerCount, final long sleepThreshold, final long sleepMillis) {
+    private static WorkerPoolConfiguration workerPoolConfiguration(String poolName, long sleepMillis) {
         return new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
@@ -309,7 +309,7 @@ public class WorkerPoolManagerTest {
 
             @Override
             public long getSleepThreshold() {
-                return sleepThreshold;
+                return 1L;
             }
 
             @Override
@@ -319,7 +319,7 @@ public class WorkerPoolManagerTest {
 
             @Override
             public int getWorkerCount() {
-                return workerCount;
+                return 1;
             }
 
             @Override
