@@ -97,7 +97,7 @@ public class LogFactory implements Closeable {
             public boolean isDaemonPool() {
                 return true;
             }
-        }, Metrics.disabled().health());
+        }, Metrics.disabled());
     }
 
     public static synchronized void closeInstance() {
