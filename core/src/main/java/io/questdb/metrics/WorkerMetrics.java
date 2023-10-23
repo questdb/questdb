@@ -22,37 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.mp;
+package io.questdb.metrics;
 
-import io.questdb.Metrics;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+public class WorkerMetrics {
 
-public class TestWorkerPool extends WorkerPool {
+    private final LongGauge max;
+    private final LongGauge min;
 
-    public TestWorkerPool(int workerCount) {
-        this("testing", workerCount, Metrics.disabled());
+    public WorkerMetrics(MetricsRegistry metricsRegistry) {
+        min = metricsRegistry.newLongGauge("workers_job_start_micros_min");
+        max = metricsRegistry.newLongGauge("workers_job_start_micros_max");
+        min.setValue(Long.MAX_VALUE);
+        max.setValue(Long.MIN_VALUE);
     }
 
-    public TestWorkerPool(String poolName, int workerCount) {
-        this(poolName, workerCount, Metrics.disabled());
+    public void update(long candidateMin, long candidateMax) {
+        if (candidateMin < min.getValue()) {
+            min.setValue(candidateMin);
+        }
+        if (candidateMax > max.getValue()) {
+            max.setValue(candidateMax);
+        }
     }
 
-    public TestWorkerPool(int workerCount, Metrics metrics) {
-        this("testing", workerCount, metrics);
+    public long getMinElapsedMicros() {
+        return min.getValue();
     }
 
-    public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
-        super(new WorkerPoolConfiguration() {
-            @Override
-            public String getPoolName() {
-                return poolName;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        }, metrics);
+    public long getMaxElapsedMicros() {
+        return max.getValue();
     }
 }
