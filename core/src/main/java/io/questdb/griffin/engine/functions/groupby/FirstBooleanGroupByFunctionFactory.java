@@ -22,28 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.std.bytes.ByteSequence;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-/**
- * A sequence of UTF-8 bytes.
- */
-public interface Utf8Sequence extends ByteSequence {
-    /**
-     * Returns byte at index.
-     * Note: Unchecked bounds.
-     *
-     * @param index byte index
-     * @return byte at index
-     */
-    byte byteAt(int index);
+public class FirstBooleanGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "first(T)";
+    }
 
-    /**
-     * Number of bytes in the string.
-     * <p>
-     * This is NOT the number of 16-bit chars or code points in the string.
-     * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
-     */
-    int size();
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new FirstBooleanGroupByFunction(args.getQuick(0));
+    }
 }

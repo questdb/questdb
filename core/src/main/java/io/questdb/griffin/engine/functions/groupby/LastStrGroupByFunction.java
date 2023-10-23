@@ -22,28 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.std.bytes.ByteSequence;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import org.jetbrains.annotations.NotNull;
 
-/**
- * A sequence of UTF-8 bytes.
- */
-public interface Utf8Sequence extends ByteSequence {
-    /**
-     * Returns byte at index.
-     * Note: Unchecked bounds.
-     *
-     * @param index byte index
-     * @return byte at index
-     */
-    byte byteAt(int index);
+public class LastStrGroupByFunction extends FirstStrGroupByFunction {
+    public LastStrGroupByFunction(@NotNull Function arg) {
+        super(arg);
+    }
 
-    /**
-     * Number of bytes in the string.
-     * <p>
-     * This is NOT the number of 16-bit chars or code points in the string.
-     * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
-     */
-    int size();
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        computeFirst(mapValue, record);
+    }
+
+    @Override
+    public String getName() {
+        return "last";
+    }
 }
