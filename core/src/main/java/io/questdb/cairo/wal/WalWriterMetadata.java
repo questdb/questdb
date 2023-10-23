@@ -216,7 +216,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     protected void clear(boolean truncate, byte truncateMode) {
         reset();
         if (metaMem != null) {
-            metaMem.close(true, truncateMode);
+            metaMem.close(truncate, truncateMode);
         }
         Misc.free(roMetaMem);
     }
