@@ -551,6 +551,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.LastBooleanGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastStrGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastLongGroupByFunctionFactory,
@@ -733,6 +734,7 @@ open module io.questdb {
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory,
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
             io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory,
