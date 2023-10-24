@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
@@ -37,7 +38,7 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if ((char) 0 == mapValue.getChar(valueIndex)) {
+        if (CharConstant.ZERO.getChar(null) == mapValue.getChar(valueIndex)) {
             computeFirst(mapValue, record);
         }
     }

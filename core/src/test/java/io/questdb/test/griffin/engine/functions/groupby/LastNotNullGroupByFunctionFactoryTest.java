@@ -114,7 +114,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals("a_symbol", record.getSym(6));
                 Assert.assertEquals(now + 700, record.getTimestamp(7));
                 Assert.assertEquals(firstUuid, new UUID(record.getLong128Hi(8), record.getLong128Lo(8)));
-                Assert.assertEquals("a_string", record.getStr(9));
+                Assert.assertEquals("a_string", record.getStr(9).toString());
             }
         }
     }

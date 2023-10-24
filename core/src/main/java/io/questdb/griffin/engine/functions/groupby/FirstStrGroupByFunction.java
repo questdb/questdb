@@ -52,7 +52,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public CharSequence getStr(Record rec) {
         boolean hasStr = rec.getBool(valueIndex);
-        return hasStr ? sink.toString() : null;
+        return hasStr ? sink : null;
     }
 
     @Override
@@ -73,7 +73,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.STRING);
     }
 
     @Override
@@ -108,4 +108,5 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
         mapValue.putBool(valueIndex, false);
         sink.clear();
     }
+
 }

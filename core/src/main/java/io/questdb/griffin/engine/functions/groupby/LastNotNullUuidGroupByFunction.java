@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.Numbers;
+import io.questdb.std.Uuid;
 
 public class LastNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
 
@@ -37,7 +37,7 @@ public class LastNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (Numbers.LONG_NaN != arg.getLong128Hi(record) && Numbers.LONG_NaN != arg.getLong128Lo(record)) {
+        if (Uuid.isNull(arg.getLong128Lo(record), arg.getLong128Hi(record))) {
             computeFirst(mapValue, record);
         }
     }
