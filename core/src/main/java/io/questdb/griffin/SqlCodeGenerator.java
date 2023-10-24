@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.*;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
+import io.questdb.griffin.engine.analytic.AnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -2781,6 +2782,175 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata chainMetadata = new GenericRecordMetadata();
         GenericRecordMetadata factoryMetadata = new GenericRecordMetadata();
 
+        ObjList<Function> functions = new ObjList<Function>();
+
+        // if all analytic function don't require sorting or more than one pass then use streaming factory
+        boolean isFastPath = true;
+
+        for (int i = 0; i < columnCount; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowColumn()) {
+
+                final AnalyticColumn ac = (AnalyticColumn) qc;
+                final ExpressionNode ast = qc.getAst();
+                if (ast.paramCount > 1) {
+                    Misc.free(base);
+                    throw SqlException.$(ast.position, "too many arguments");
+                }
+
+                ObjList<Function> partitionBy = null;
+                int psz = ac.getPartitionBy().size();
+                if (psz > 0) {
+                    partitionBy = new ObjList<>(psz);
+                    for (int j = 0; j < psz; j++) {
+                        partitionBy.add(
+                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext)
+                        );
+                    }
+                }
+
+                final VirtualRecord partitionByRecord;
+                final RecordSink partitionBySink;
+
+                if (partitionBy != null) {
+                    partitionByRecord = new VirtualRecord(partitionBy);
+                    keyTypes.clear();
+                    final int partitionByCount = partitionBy.size();
+
+                    for (int j = 0; j < partitionByCount; j++) {
+                        keyTypes.add(partitionBy.getQuick(j).getType());
+                    }
+                    entityColumnFilter.of(partitionByCount);
+                    partitionBySink = RecordSinkFactory.getInstance(
+                            asm,
+                            keyTypes,
+                            entityColumnFilter,
+                            false
+                    );
+                } else {
+                    partitionByRecord = null;
+                    partitionBySink = null;
+                }
+
+                final int osz = ac.getOrderBy().size();
+                executionContext.configureAnalyticContext(
+                        partitionByRecord,
+                        partitionBySink,
+                        keyTypes,
+                        osz > 0,
+                        base.recordCursorSupportsRandomAccess(),
+                        ac.getFramingMode(),
+                        ac.getRowsLo(),
+                        ac.getRowsLoKindPos(),
+                        ac.getRowsHi(),
+                        ac.getRowsHiKindPos(),
+                        ac.getExclusionKind(),
+                        ac.getExclusionKindPos()
+                );
+                final Function f;
+                try {
+                    f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                    if (!(f instanceof AnalyticFunction)) {
+                        Misc.free(base);
+                        Misc.free(f);
+                        throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                    }
+
+                    AnalyticFunction af = (AnalyticFunction) f;
+                    functions.extendAndSet(i, f);
+
+                    if (af.getAnalyticType() != AnalyticFunction.ZERO_PASS) {
+                        //multiple passes are required, so fall back to old implementation
+                        Misc.free(f);
+                        isFastPath = false;
+                        break;
+                    }
+                } finally {
+                    executionContext.clearAnalyticContext();
+                }
+
+                AnalyticFunction analyticFunction = (AnalyticFunction) f;
+
+                // analyze order by clause on the current model and optimise out
+                // order by on analytic function if it matches the one on the model
+                final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+                boolean dismissOrder = false;
+                int timestampIdx = base.getMetadata().getTimestampIndex();
+
+                if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
+                    dismissOrder = true;
+                    for (int j = 0; j < osz; j++) {
+                        ExpressionNode node = ac.getOrderBy().getQuick(j);
+                        int direction = ac.getOrderByDirection().getQuick(j);
+                        if (orderHash.get(node.token) != direction) {
+                            dismissOrder = false;
+                            break;
+                        }
+                    }
+                }
+                if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
+                    ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
+                    int orderByDirection = ac.getOrderByDirection().getQuick(0);
+
+                    if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
+                            (orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                            (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)) {
+                        dismissOrder = true;
+                    }
+                }
+
+                if (osz > 0 && !dismissOrder) {
+                    isFastPath = false;//sorting is required, so fall back to old implementation
+                    break;
+                }
+
+                analyticFunction.setColumnIndex(i);
+
+                factoryMetadata.add(new TableColumnMetadata(
+                        Chars.toString(qc.getAlias()),
+                        analyticFunction.getType(),
+                        false,
+                        0,
+                        false,
+                        null
+                ));
+            } // column
+            else {
+                final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
+
+                Function function = functionParser.parseFunction(
+                        qc.getAst(),
+                        baseMetadata,
+                        executionContext
+                );
+                functions.extendAndSet(i, function);
+
+                if (Chars.equals(qc.getAst().token, qc.getAlias())) {
+                    factoryMetadata.add(i, m);
+                } else {// keep alias
+                    factoryMetadata.add(i, new TableColumnMetadata(
+                                    Chars.toString(qc.getAlias()),
+                                    m.getType(),
+                                    m.isIndexed(),
+                                    m.getIndexValueBlockCapacity(),
+                                    m.isSymbolTableStatic(),
+                                    baseMetadata
+                            )
+                    );
+                }
+            }
+        }
+
+        if (isFastPath) {
+            return new AnalyticRecordCursorFactory(base, factoryMetadata, functions);
+        } else {
+            factoryMetadata.clear();
+            Misc.freeObjList(functions);
+            functions.clear();
+        }
+
+
         listColumnFilterA.clear();
         listColumnFilterB.clear();
 
@@ -2946,7 +3116,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         dismissOrder = true;
                     }
                 }
-
 
                 if (osz > 0 && !dismissOrder) {
                     IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());

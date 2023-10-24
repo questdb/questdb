@@ -94,6 +94,8 @@ public class RankFunctionFactory implements FunctionFactory {
         private long offset = 0;
         private RecordComparator recordComparator;
 
+        private long value;
+
         public OrderRankFunction() {
         }
 
@@ -102,9 +104,20 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void computeNext(Record record) {
+            assert recordComparator == null;
+            value = ++maxIndex;
+        }
+
+        @Override
+        public int getAnalyticType() {
+            return recordComparator == null ? AnalyticFunction.ZERO_PASS : AnalyticFunction.ONE_PASS;
+        }
+
+        @Override
         public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
+            assert recordComparator == null;
+            return value;
         }
 
         @Override
@@ -155,6 +168,11 @@ public class RankFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }
+
+        @Override
+        public void toTop() {
+            reset();
+        }
     }
 
     private static class RankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -167,6 +185,8 @@ public class RankFunctionFactory implements FunctionFactory {
         private final RecordSink partitionBySink;
         private int columnIndex;
         private RecordComparator recordComparator;
+
+        private long value;
 
         public RankFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
             this.partitionByRecord = partitionByRecord;
@@ -181,9 +201,35 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+
+            MapKey mapKey = map.withKey();
+            mapKey.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = mapKey.createValue();
+            long maxIndex = 0;
+            if (mapValue.isNew()) {
+                mapValue.putLong(VAL_MAX_INDEX, 0);
+                mapValue.putLong(VAL_CURRENT_INDEX, 0);
+                mapValue.putLong(VAL_OFFSET, 0);
+            } else {
+                maxIndex = mapValue.getLong(VAL_MAX_INDEX);
+            }
+
+            assert recordComparator == null;
+            value = maxIndex + 1;
+            mapValue.putLong(VAL_MAX_INDEX, value);
+        }
+
+        @Override
+        public int getAnalyticType() {
+            return recordComparator == null ? AnalyticFunction.ZERO_PASS : AnalyticFunction.ONE_PASS;
+        }
+
+        @Override
         public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
+            assert recordComparator == null;
+            return value;
         }
 
         @Override
@@ -252,11 +298,18 @@ public class RankFunctionFactory implements FunctionFactory {
             sink.val(partitionByRecord.getFunctions());
             sink.val(')');
         }
+
+        @Override
+        public void toTop() {
+            map.clear();
+        }
     }
 
     private static class SequenceRankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
 
         private int columnIndex;
+
+        private long rank;
 
         public SequenceRankFunction() {
         }
@@ -266,9 +319,13 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void computeNext(Record record) {
+            this.rank = 1;
+        }
+
+        @Override
         public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
+            return rank;
         }
 
         @Override
@@ -277,7 +334,8 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), 1);
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
         }
 
         @Override

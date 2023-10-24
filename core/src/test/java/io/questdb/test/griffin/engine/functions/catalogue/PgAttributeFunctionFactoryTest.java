@@ -30,7 +30,7 @@ import org.junit.Test;
 public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testAnalyticQueryOrderedByColumnNotOnSelectList() throws Exception {
+    public void testCachedAnalyticQueryOrderedByColumnNotOnSelectList() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y (a int, b int)");
             insert("insert into y select x/4, x from long_sequence(10)");

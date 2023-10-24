@@ -32,12 +32,19 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.std.IntList;
 
 public interface AnalyticFunction extends Function {
-    int STREAM = 1;
-    int THREE_PASS = 3;
+    int ONE_PASS = 1;
     int TWO_PASS = 2;
+    int ZERO_PASS = 0;
 
+    default void computeNext(Record record) {
+    }
+
+    /**
+     * @return number of additional passes over base data set required to calculate this function.
+     * {@link  #ZERO_PASS} means analytic function can be calculated on the fly and doesn't require additional passes .
+     */
     default int getAnalyticType() {
-        return STREAM;
+        return ONE_PASS;
     }
 
     void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order);
@@ -53,7 +60,7 @@ public interface AnalyticFunction extends Function {
     void reset();
 
     /*
-      Set index of record chain column used to store analytic function result.
-     */
+          Set index of record chain column used to store analytic function result.
+         */
     void setColumnIndex(int columnIndex);
 }

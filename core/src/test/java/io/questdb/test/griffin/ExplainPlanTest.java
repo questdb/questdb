@@ -103,7 +103,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                    Frame forward scan on: table_2\n"
         ));
     }
-    
+
     @Test
     public void test2686LeftJoinDoesntMoveOtherLeftJoinPredicate() throws Exception {
         test2686Prepare();
@@ -331,8 +331,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
-                    "CachedAnalytic\n" +
-                            "  unorderedFunctions: [avg(j) over (partition by [i])]\n" +
+                    "Analytic\n" +
+                            "  functions: [avg(j) over (partition by [i])]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
@@ -361,6 +361,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAnalyticRecordCursorFactoryWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as ( " +
+                    "  select " +
+                    "    cast(x as int) i, " +
+                    "    rnd_symbol('a','b','c') sym, " +
+                    "    timestamp_sequence(0, 100000000) ts " +
+                    "   from long_sequence(100)" +
+                    ") timestamp(ts) partition by hour");
+
+            String sql = "select i, row_number() over (partition by sym), avg(i) over (partition by i rows unbounded preceding) from x limit 3";
+            assertPlan(
+                    sql,
+                    "Limit lo: 3\n" +
+                            "    Analytic\n" +
+                            "      functions: [row_number() over (partition by [sym]),avg(i) over (partition by [i])]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+
+            assertSql("i\trow_number\tavg\n" +
+                    "1\t1\t1.0\n" +
+                    "2\t2\t2.0\n" +
+                    "3\t1\t3.0\n", sql);
+        });
+    }
 
     @Test
     public void testAsOfJoin0() throws Exception {
@@ -583,21 +611,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "   from long_sequence(100)" +
                     ") timestamp(ts) partition by hour");
 
-            String sql = "select i, row_number() over (partition by sym) from x limit 3";
+            String sql = "select i, row_number() over (partition by sym), avg(i) over () from x limit 3";
             assertPlan(
                     sql,
                     "Limit lo: 3\n" +
                             "    CachedAnalytic\n" +
-                            "      unorderedFunctions: [row_number() over (partition by [sym])]\n" +
+                            "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over ()]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\n" +
-                    "1\t1\n" +
-                    "2\t2\n" +
-                    "3\t1\n", sql);
+            assertSql("i\trow_number\tavg\n" +
+                    "1\t1\t50.5\n" +
+                    "2\t2\t50.5\n" +
+                    "3\t1\t50.5\n", sql);
         });
     }
 
@@ -4435,16 +4463,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp DESC " +
                         "LIMIT 1",
-                "Limit lo: 1\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 1\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row backward scan\n" +
-                        "                    Frame backward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 1\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
 
@@ -4453,16 +4480,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp  " +
                         "LIMIT -1",
-                "Limit lo: -1\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 1\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row backward scan\n" +
-                        "                    Frame backward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 1\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
 
@@ -4471,16 +4497,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp DESC " +
                         "LIMIT -2",
-                "Limit lo: -2\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 2\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 2\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000002Z\t2.0\t3.0\n" +
                         "1970-01-01T00:00:00.000001Z\t1.0\t2.0\n");

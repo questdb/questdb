@@ -67,30 +67,90 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAnalyticFunctionDoesntSortIfOrderByCompatibleWithBaseQuery() throws Exception {
+    public void testAnalyticFunctionDoesSortIfOrderByIsNotCompatibleWithBaseQuery() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row) from tab",
+                    "CachedAnalytic\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i])]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc",
+                    "CachedAnalytic\n" +
+                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i])]]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym in ( 'A', 'B') ",
+                    "CachedAnalytic\n" +
+                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i])]]\n" +
+                            "    FilterOnValues symbolOrder: desc\n" +
+                            "        Cursor-order scan\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='A'\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='B'\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'",
+                    "CachedAnalytic\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i])]]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: sym deferred: true\n" +
+                            "          filter: sym='A'\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testAnalyticFunctionDoesntSortIfOrderByIsCompatibleWithBaseQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
-                    "CachedAnalytic\n" +
-                            "  unorderedFunctions: [avg(1) over (partition by [i])]\n" +
+                    "Analytic\n" +
+                            "  functions: [avg(1) over (partition by [i])]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc",
-                    "CachedAnalytic\n" +
-                            "  unorderedFunctions: [avg(1) over (partition by [i])]\n" +
+                    "Analytic\n" +
+                            "  functions: [avg(1) over (partition by [i])]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc",
-                    "CachedAnalytic\n" +
-                            "  unorderedFunctions: [avg(1) over (partition by [i])]\n" +
+                    "Analytic\n" +
+                            "  functions: [avg(1) over (partition by [i])]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym = 'A'",
+                    "Analytic\n" +
+                            "  functions: [avg(1) over (partition by [i])]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: sym deferred: true\n" +
+                            "          filter: sym='A'\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row) " +
+                            "from tab where sym in ( 'A', 'B') order by ts asc",
+                    "Analytic\n" +
+                            "  functions: [avg(1) over (partition by [i])]\n" +
+                            "    FilterOnValues\n" +
+                            "        Table-order scan\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='A'\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='B'\n" +
+                            "        Frame forward scan on: tab\n");
         });
     }
 
@@ -182,6 +242,16 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, avg(d) over (order by ts rows current row) from tab");
 
             assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
+                    "select ts, i, j, avg(d) over (order by ts desc rows current row) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\n" +
@@ -200,6 +270,16 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000006Z\t1\t1\t3.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.3333333333333335\n",
                     "select ts, i, j, avg(d) over (order by ts rows between 4 preceding and 2 preceding) from tab");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.6666666666666667\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\tNaN\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n",
+                    "select ts, i, j, avg(d) over (order by ts desc rows between 4 preceding and 2 preceding) from tab");
 
             assertSql("ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\n" +
@@ -382,6 +462,28 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAverageResolvesSymbolTables() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu ( hostname symbol, usage_system double )");
+            insert("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
+
+            assertSql("hostname\tusage_system\tavg\n" +
+                            "A\t1.0\t1.0\n" +
+                            "A\t2.0\t1.5\n" +
+                            "B\t3.0\t3.0\n" +
+                            "C\t4.0\t4.0\n" +
+                            "C\t5.0\t4.5\n" +
+                            "C\t6.0\t5.0\n" +
+                            "C\t7.0\t5.5\n" +
+                            "B\t8.0\t5.5\n" +
+                            "A\t9.0\t4.0\n" +
+                            "B\t10.0\t7.0\n",
+                    "select hostname, usage_system, avg(usage_system) over(partition by hostname rows between 50 preceding and current row) " +
+                            "from cpu limit 10;");
+        });
+    }
+
     @Ignore
     @Test
     public void testAvgFailsInNonAnalyticContext() throws Exception {
@@ -429,6 +531,17 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "from tab order by ts asc");
 
             assertSql("row_number\n" +
+                            "3\n" +
+                            "2\n" +
+                            "1\n" +
+                            "4\n" +
+                            "3\n" +
+                            "2\n" +
+                            "1\n",
+                    "select row_number() over (partition by j order by i desc), i " +
+                            "from tab order by ts asc");
+
+            assertSql("row_number\n" +
                             "1\n" +
                             "2\n" +
                             "3\n" +
@@ -471,6 +584,19 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "1\n",
                     "select row_number() over (partition by i order by i, j asc) " +
                             "from tab order by ts desc");
+
+            assertPlan("select row_number() over (partition by i order by ts asc), " +
+                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                            "   rank() over (partition by i order by j asc) " +
+                            "from tab " +
+                            "order by ts asc",
+                    "SelectedRecord\n" +
+                            "    CachedAnalytic\n" +
+                            "      orderedFunctions: [[j] => [rank() over (partition by [i])],[ts desc] => [avg(j) over (partition by [i])]]\n" +
+                            "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
 
             //avg(), row_number() and rank()
             assertSql("row_number\tavg\trank\n" +
@@ -599,8 +725,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
-                false
+                false,
+                true
         );
     }
 
@@ -739,8 +865,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
-                false
+                false,
+                true
         );
     }
 
@@ -918,8 +1044,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
-                false
+                false,
+                true
         );
     }
 
@@ -946,8 +1072,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
-                false
+                false,
+                true
         );
     }
 
@@ -1001,8 +1127,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         "), index(s) timestamp(ts) partition by month",
                 null,
-                true,
-                false
+                false,
+                true
         );
     }
 
@@ -1056,8 +1182,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
-                false
+                false,
+                true
         );
     }
 

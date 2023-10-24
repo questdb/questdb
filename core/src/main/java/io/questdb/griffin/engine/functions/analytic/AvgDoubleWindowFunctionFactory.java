@@ -251,13 +251,31 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
     static class AvgOverCurrentRowFunction extends BaseAvgFunction {
 
+        private double avg;
+
         AvgOverCurrentRowFunction(Function arg) {
             super(arg);
         }
 
         @Override
+        public void computeNext(Record record) {
+            avg = arg.getDouble(record);
+        }
+
+        @Override
+        public int getAnalyticType() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return avg;
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), arg.getDouble(record));
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
     }
 
@@ -312,7 +330,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void preparePass2() {
-            // TODO: maybe skip this step and compute in pass2 ?
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
@@ -336,6 +353,8 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final boolean frameLoUnbounded;
         private final int frameSize;
 
+        private double avg;
+
         public AvgOverPartitionRowsFrameFunction(Map map, long rowsLo, long rowsHi, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -352,7 +371,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void computeNext(Record record) {
             // map stores:
             // 0 - sum, never store NaN in it
             // 1 - current number of non-null rows in frame
@@ -371,7 +390,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             long count;
             double sum;
             int loIdx;//current index of lo frame value ('oldest')
-            double avg;
             double d = arg.getDouble(record);
 
             if (value.isNew()) {
@@ -418,7 +436,21 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             value.putLong(1, count);
             value.putLong(2, (loIdx + 1) % bufferSize);
             value.putDouble(3 + loIdx, d);
+        }
 
+        @Override
+        public int getAnalyticType() {
+            return AnalyticFunction.ZERO_PASS;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return avg;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
     }
@@ -432,6 +464,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoUnbounded;
         private final int frameSize;
+        private double avg;
         private long count;
         private int loIdx = 0;
         private double sum = 0.0;
@@ -454,7 +487,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void computeNext(Record record) {
             double d = arg.getDouble(record);
 
             //compute value using top frame element (that could be current or previous row)
@@ -464,8 +497,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 count++;
             }
 
-            //here sum is correct for current row
-            double avg = count != 0 ? sum / count : Double.NaN;
+            avg = count != 0 ? sum / count : Double.NaN;
 
             if (!frameLoUnbounded) {
                 //remove the oldest element with newest
@@ -479,7 +511,21 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             //overwrite oldest element
             buffer[loIdx] = d;
             loIdx = (loIdx + 1) % bufferSize;
+        }
 
+        @Override
+        public int getAnalyticType() {
+            return AnalyticFunction.ZERO_PASS;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return avg;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
     }
@@ -488,12 +534,14 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     // Doesn't require value buffering.
     private static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
 
+        private double avg;
+
         public AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void computeNext(Record record) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -519,7 +567,22 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 value.putLong(1, count);
             }
 
-            double avg = count != 0 ? sum / count : Double.NaN;
+            avg = count != 0 ? sum / count : Double.NaN;
+        }
+
+        @Override
+        public int getAnalyticType() {
+            return AnalyticFunction.ZERO_PASS;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return avg;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
     }
@@ -527,6 +590,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     // Handles mavg() over (rows between unbounded preceding and current row); there's no partititon by.
     private static class AvgOverUnboundedRowsFrameFunction extends BaseAvgFunction {
 
+        private double avg;
         private long count = 0;
         private double sum = 0.0;
 
@@ -535,14 +599,30 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void computeNext(Record record) {
             double d = arg.getDouble(record);
             if (Double.isFinite(d)) {
                 sum += d;
                 count++;
             }
 
-            double avg = count != 0 ? sum / count : Double.NaN;
+            avg = count != 0 ? sum / count : Double.NaN;
+        }
+
+        @Override
+        public int getAnalyticType() {
+            return AnalyticFunction.ZERO_PASS;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return avg;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            computeNext(record);
+
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
     }

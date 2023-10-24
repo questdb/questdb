@@ -2018,18 +2018,6 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    private boolean hasAnalyticColumn(QueryModel limitModel) {
-        ObjList<QueryColumn> columns = limitModel.getColumns();
-
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            if (columns.getQuick(i).isWindowColumn()) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private void homogenizeCrossJoins(QueryModel parent) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
@@ -2744,7 +2732,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
-    private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) throws SqlException {
+    private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) {
         ObjList<QueryColumn> columns = model.getBottomUpColumns();
         int orderByMnemonic;
         int n = columns.size();
@@ -3648,8 +3636,7 @@ public class SqlOptimiser implements Mutable {
                             tempColumnAlias = null;
 
                             // if necessary, propagate column to limit model that'll receive order by
-                            if (limitModel != baseParent /*&&
-                                    !hasAnalyticColumn(limitModel)*/) { // analytic model doesn't support aliases
+                            if (limitModel != baseParent) {
                                 CharSequence translatedColumnAlias = getTranslatedColumnAlias(limitModel, baseParent, orderBy.token);
 
                                 if (translatedColumnAlias == null) {
