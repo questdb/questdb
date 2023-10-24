@@ -274,7 +274,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (argCount == 0) {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
-                    functionStack.push(createColumn(node.position, node.token));
+                    functionStack.push(createColumn(node.position, node.token, metadata));
                     break;
                 case ExpressionNode.BIND_VARIABLE:
                     functionStack.push(createBindVariable0(node.position, node.token));
@@ -374,6 +374,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
+    private static long parseDate(CharSequence str, int position) throws SqlException {
+        try {
+            return DateFormatUtils.parseDate(str);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(str, position);
+        }
+    }
+
     private Function checkAndCreateFunction(
             FunctionFactory factory,
             @Transient ObjList<Function> args,
@@ -396,19 +404,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (function == null) {
-            LOG.error().$("NULL function").$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
+            LOG.error().$("NULL function")
+                    .$(" [signature=").$(factory.getSignature())
+                    .$(", class=").$(factory.getClass().getName()).$(']')
+                    .$();
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
         }
         return function;
-    }
-
-    private long parseTimestamp(CharSequence str, int position) throws SqlException {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(str);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
-        }
     }
 
     private Function createBindVariable0(int position, CharSequence name) throws SqlException {
@@ -416,10 +419,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return parseIndexedParameter(position, name);
         }
         return createNamedParameter(position, name);
-    }
-
-    private Function createColumn(int position, CharSequence columnName) throws SqlException {
-        return createColumn(position, columnName, metadata);
     }
 
     private Function createConstant(int position, final CharSequence tok) throws SqlException {
@@ -430,21 +429,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (Chars.isQuoted(tok)) {
-            if (len == 3) {
-                // this is 'x' - char
-                return CharConstant.newInstance(tok.charAt(1));
+            switch (len) {
+                case 3: // this is 'x' - char
+                    return CharConstant.newInstance(tok.charAt(1));
+                case 2: // this is '' - char
+                    return StrConstant.EMPTY;
+                default:
+                    return new StrConstant(tok);
             }
-
-            if (len == 2) {
-                // empty
-                return StrConstant.EMPTY;
-            }
-            return new StrConstant(tok);
         }
 
-        // special case E'str'
-        // we treat it like normal string for now
-        if (len > 2 && tok.charAt(0) == 'E' && tok.charAt(1) == '\'') {
+        // special case E'str' - we treat it like normal string for now
+        if (len > 2 && tok.charAt(0) == 'E' && tok.charAt(1) == '\'' && tok.charAt(len - 1) == '\'') {
             return new StrConstant(Chars.toString(tok, 2, len - 1));
         }
 
@@ -802,14 +798,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
     }
 
-    private static long parseDate(CharSequence str, int position) throws SqlException {
-        try {
-            return DateFormatUtils.parseDate(str);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
-        }
-    }
-
     @Nullable
     private Function createImplicitCastOrNull(int position, Function function, int toType) throws SqlException {
         int fromType = function.getType();
@@ -1016,6 +1004,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return createIndexParameter(variableIndex - 1, position);
         } catch (NumericException e) {
             throw SqlException.$(position, "invalid bind variable index [value=").put(name).put(']');
+        }
+    }
+
+    private long parseTimestamp(CharSequence str, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(str);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(str, position);
         }
     }
 
