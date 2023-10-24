@@ -43,7 +43,7 @@ public interface AnalyticFunction extends Function {
      * @return number of additional passes over base data set required to calculate this function.
      * {@link  #ZERO_PASS} means analytic function can be calculated on the fly and doesn't require additional passes .
      */
-    default int getAnalyticType() {
+    default int getPassCount() {
         return ONE_PASS;
     }
 

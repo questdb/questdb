@@ -107,7 +107,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
             ObjList<AnalyticFunction> twoPassFunctions = null;
             for (int j = 0, k = functions.size(); j < k; j++) {
                 AnalyticFunction function = functions.getQuick(j);
-                if (function.getAnalyticType() > AnalyticFunction.ONE_PASS) {
+                if (function.getPassCount() > AnalyticFunction.ONE_PASS) {
                     if (twoPassFunctions == null) {
                         twoPassFunctions = new ObjList<AnalyticFunction>();
                     }
@@ -131,7 +131,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
             for (int i = 0, n = unorderedFunctions.size(); i < n; i++) {
                 AnalyticFunction function = unorderedFunctions.getQuick(i);
-                if (function.getAnalyticType() > AnalyticFunction.ONE_PASS) {
+                if (function.getPassCount() > AnalyticFunction.ONE_PASS) {
                     if (unorderedTmp == null) {
                         unorderedTmp = new ObjList<AnalyticFunction>();
                     }

@@ -263,13 +263,13 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return ZERO_PASS;
+        public double getDouble(Record rec) {
+            return avg;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            return avg;
+        public int getPassCount() {
+            return ZERO_PASS;
         }
 
         @Override
@@ -288,7 +288,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
+        public int getPassCount() {
             return AnalyticFunction.TWO_PASS;
         }
 
@@ -439,13 +439,13 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return AnalyticFunction.ZERO_PASS;
+        public double getDouble(Record rec) {
+            return avg;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            return avg;
+        public int getPassCount() {
+            return AnalyticFunction.ZERO_PASS;
         }
 
         @Override
@@ -514,13 +514,13 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return AnalyticFunction.ZERO_PASS;
+        public double getDouble(Record rec) {
+            return avg;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            return avg;
+        public int getPassCount() {
+            return AnalyticFunction.ZERO_PASS;
         }
 
         @Override
@@ -571,13 +571,13 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return AnalyticFunction.ZERO_PASS;
+        public double getDouble(Record rec) {
+            return avg;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            return avg;
+        public int getPassCount() {
+            return AnalyticFunction.ZERO_PASS;
         }
 
         @Override
@@ -610,13 +610,13 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return AnalyticFunction.ZERO_PASS;
+        public double getDouble(Record rec) {
+            return avg;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            return avg;
+        public int getPassCount() {
+            return AnalyticFunction.ZERO_PASS;
         }
 
         @Override
@@ -638,7 +638,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
+        public int getPassCount() {
             return AnalyticFunction.TWO_PASS;
         }
 

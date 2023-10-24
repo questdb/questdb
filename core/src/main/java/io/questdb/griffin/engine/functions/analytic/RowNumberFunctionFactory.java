@@ -125,13 +125,13 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return AnalyticFunction.ZERO_PASS;
+        public long getLong(Record rec) {
+            return rowNumber;
         }
 
         @Override
-        public long getLong(Record rec) {
-            return rowNumber;
+        public int getPassCount() {
+            return AnalyticFunction.ZERO_PASS;
         }
 
         @Override
@@ -185,13 +185,13 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return ZERO_PASS;
+        public long getLong(Record rec) {
+            return rowNumber;
         }
 
         @Override
-        public long getLong(Record rec) {
-            return rowNumber;
+        public int getPassCount() {
+            return ZERO_PASS;
         }
 
         @Override

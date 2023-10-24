@@ -2859,7 +2859,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     AnalyticFunction af = (AnalyticFunction) f;
                     functions.extendAndSet(i, f);
 
-                    if (af.getAnalyticType() != AnalyticFunction.ZERO_PASS) {
+                    if (af.getPassCount() != AnalyticFunction.ZERO_PASS) {
                         //multiple passes are required, so fall back to old implementation
                         Misc.free(f);
                         isFastPath = false;

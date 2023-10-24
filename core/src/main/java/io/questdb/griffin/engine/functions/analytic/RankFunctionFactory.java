@@ -110,14 +110,14 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return recordComparator == null ? AnalyticFunction.ZERO_PASS : AnalyticFunction.ONE_PASS;
-        }
-
-        @Override
         public long getLong(Record rec) {
             assert recordComparator == null;
             return value;
+        }
+
+        @Override
+        public int getPassCount() {
+            return recordComparator == null ? AnalyticFunction.ZERO_PASS : AnalyticFunction.ONE_PASS;
         }
 
         @Override
@@ -222,14 +222,14 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getAnalyticType() {
-            return recordComparator == null ? AnalyticFunction.ZERO_PASS : AnalyticFunction.ONE_PASS;
-        }
-
-        @Override
         public long getLong(Record rec) {
             assert recordComparator == null;
             return value;
+        }
+
+        @Override
+        public int getPassCount() {
+            return recordComparator == null ? AnalyticFunction.ZERO_PASS : AnalyticFunction.ONE_PASS;
         }
 
         @Override
