@@ -24,8 +24,9 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
-import io.questdb.metrics.HealthMetrics;
+import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -37,22 +38,13 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
-    private static final HealthMetrics DISABLED = new HealthMetrics() {
-        @Override
-        public void incrementUnhandledErrors() {
-        }
-
-        @Override
-        public long unhandledErrorsCount() {
-            return 0;
-        }
-    };
+    private static final Metrics DISABLED = Metrics.disabled();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
-    private final HealthMetrics metrics;
+    private final Metrics metrics;
     private final String poolName;
     private final AtomicBoolean running = new AtomicBoolean();
     private final long sleepMs;
@@ -69,7 +61,7 @@ public class WorkerPool implements Closeable {
         this(configuration, DISABLED);
     }
 
-    public WorkerPool(WorkerPoolConfiguration configuration, HealthMetrics metrics) {
+    public WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
         int[] workerAffinity = configuration.getWorkerAffinity();
         if (workerAffinity != null && workerAffinity.length > 0) {
@@ -181,26 +173,18 @@ public class WorkerPool implements Closeable {
             for (int i = 0; i < workerCount; i++) {
                 final int index = i;
                 Worker worker = new Worker(
+                        poolName,
+                        i,
+                        workerAffinity[i],
                         workerJobs.getQuick(i),
                         halted,
-                        workerAffinity[i],
-                        log,
-                        (ex) -> {
-                            Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index));
-                            if (log != null) {
-                                log.info().$("cleaned worker [name=").$(poolName)
-                                        .$(", worker=").$(index)
-                                        .$(", total=").$(workerCount)
-                                        .I$();
-                            }
-                        },
+                        ex -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
                         haltOnError,
-                        i,
-                        poolName,
                         yieldThreshold,
                         sleepThreshold,
                         sleepMs,
-                        metrics
+                        metrics,
+                        log
                 );
                 worker.setDaemon(daemons);
                 workers.add(worker);
@@ -211,6 +195,23 @@ public class WorkerPool implements Closeable {
             }
             started.countDown();
         }
+    }
+
+    public void updateWorkerMetrics(long now) {
+        WorkerMetrics workerMetrics = metrics.workerMetrics();
+        long min = workerMetrics.getMinElapsedMicros();
+        long max = workerMetrics.getMaxElapsedMicros();
+        for (int i = 0, n = workers.size(); i < n; i++) {
+            long elapsed = now - workers.getQuick(i).getJobStartMicros();
+            if (elapsed > 0L) {
+                if (elapsed < min) {
+                    min = elapsed;
+                } else if (elapsed > max) {
+                    max = elapsed;
+                }
+            }
+        }
+        workerMetrics.update(min, max);
     }
 
     private void setupPathCleaner() {
