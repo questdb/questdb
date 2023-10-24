@@ -81,11 +81,12 @@ public final class ColumnType {    //@formatter:off
 
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
-    public static final short TYPES_SIZE = MAX + 1;
-    private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
-    private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
+    private static final short[] TYPE_SIZE = new short[MAX + 1];
+    private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
+    // this value has to be larger than MAX type and be power of 2
+    private static final short OVERLOAD_MATRIX_SIZE = (short) Math.pow(2.0, Numbers.msb(MAX) + 1.0);
     // For function overload the priority is taken from left to right
-    private static final short[][] OVERLOAD_PRIORITY = {
+    private static final short[][] OVERLOAD_PRIORITY = new short[][]{
             /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
             /* 1  BOOLEAN   */, {BOOLEAN}
             /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
@@ -126,8 +127,6 @@ public final class ColumnType {    //@formatter:off
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final int BITS_OFFSET = 8;
-    // this value has to be larger than MAX type and be power of 2
-    private static final int OVERLOAD_MATRIX_SIZE = 32;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -274,8 +273,8 @@ public final class ColumnType {    //@formatter:off
     }
 
     public static int sizeOf(int columnType) {
-        short tag = tagOf(columnType); // tagOf
-        if (tag < TYPES_SIZE) {
+        short tag = tagOf(columnType);
+        if (tag < TYPE_SIZE.length) {
             return TYPE_SIZE[tag];
         }
         return -1;
@@ -299,15 +298,6 @@ public final class ColumnType {    //@formatter:off
         }
         assert columnType == ColumnType.BINARY;
         return Long.BYTES;
-    }
-
-    private static short indexOf(short[] list, short value) {
-        for (short i = 0; i < list.length; i++) {
-            if (list[i] == value) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
@@ -369,20 +359,26 @@ public final class ColumnType {    //@formatter:off
     }
 
     static {
-        overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
-        for (short i = UNDEFINED; i < MAX; i++) {
-            for (short j = BOOLEAN; j <= MAX; j++) {
-                if (i < OVERLOAD_PRIORITY.length) {
-                    int index = indexOf(OVERLOAD_PRIORITY[i], j);
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index != -1 ? index : NO_OVERLOAD;
-                } else {
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = NO_OVERLOAD;
+        overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE]; // NULL to any is 0
+        for (short fromTag = UNDEFINED; fromTag < MAX; fromTag++) {
+            for (short toTag = BOOLEAN; toTag <= MAX; toTag++) {
+                int value = NO_OVERLOAD; // default
+                // lookup toTag in priority list
+                if (fromTag < OVERLOAD_PRIORITY.length) {
+                    short[] priority = OVERLOAD_PRIORITY[fromTag];
+                    for (short i = 0; i < priority.length; i++) {
+                        if (priority[i] == toTag) {
+                            value = i;
+                            break;
+                        }
+                    }
                 }
+                overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * fromTag + toTag] = value;
             }
         }
-        //When null used as func arg, default to string as function factory arg to avoid weird behaviour
+        // When null used as func arg, default to string as function factory arg to avoid weird behaviour
         overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * NULL + STRING] = -1;
-        //Do the same for symbol -> avoids weird null behaviour
+        // Do the same for symbol -> avoids weird null behaviour
         overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * NULL + SYMBOL] = -1;
     }
 
