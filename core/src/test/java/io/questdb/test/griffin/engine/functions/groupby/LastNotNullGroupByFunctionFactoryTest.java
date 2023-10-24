@@ -24,13 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 import java.time.Instant;
@@ -58,65 +52,16 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLastNotNull() throws Exception {
 
-        ddl("create table tab (a0 char,a1 date,a2 double,a3 float,a4 int,a5 long,a6 symbol,a7 timestamp,a8 uuid,a9 string)");
-
-        long now = Instant.now().truncatedTo(ChronoUnit.DAYS).getEpochSecond() * 1_000_000;
         UUID lastUuid = UUID.randomUUID();
-        try (TableWriter w = getWriter("tab")) {
-            TableWriter.Row r = w.newRow();
-            r.putChar(0, 'b');
-            r.putDate(1, now + 1000);
-            r.putDouble(2, 22.2);
-            r.putFloat(3, 33.3f);
-            r.putInt(4, 44);
-            r.putLong(5, 55L);
-            r.putSym(6, "b_symbol");
-            r.putTimestamp(7, now + 1700);
-            r.putUuid(8, UUID.randomUUID().toString());
-            r.putStr(9, "b_string");
-            r.append();
 
-            r = w.newRow();
-            r.putChar(0, 'a');
-            r.putDate(1, now);
-            r.putDouble(2, 2.2);
-            r.putFloat(3, 3.3f);
-            r.putInt(4, 4);
-            r.putLong(5, 5L);
-            r.putSym(6, "a_symbol");
-            r.putTimestamp(7, now + 700);
-            r.putUuid(8, lastUuid.toString());
-            r.putStr(9, "a_string");
-            r.append();
-
-            w.commit();
-
-            for (int i = 10; i > 0; i--) {
-                TableWriter.Row rr = w.newRow();
-                rr.append();
-            }
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = select(
+        ddl("create table tab (a0 char,a1 date,a2 double,a3 float,a4 int,a5 long,a6 symbol,a7 timestamp,a8 uuid,a9 string)");
+        insert("insert into tab values('b',to_date('2023-10-22','yyyy-MM-dd'),22.2,33.3,44,55,'b_symbol',to_timestamp('2023-10-22T01:02:03.000000','yyyy-MM-ddTHH:mm:ss.SSSUUU'),rnd_uuid4(),'b_string')");
+        insert("insert into tab values('a',to_date('2023-10-23','yyyy-MM-dd'),2.2,3.3,4,5,'a_symbol',to_timestamp('2023-10-23T12:34:59.000000','yyyy-MM-ddTHH:mm:ss.SSSUUU'),'" + lastUuid + "','a_string')");
+        insert("insert into tab values(null,null,null,null,null,null,null,null,null,null)");
+        assertSql("a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\n" +
+                        "a\t2023-10-23T00:00:00.000Z\t2.2\t3.3000\t4\t5\ta_symbol\t2023-10-23T12:34:59.000000Z\t" + lastUuid + "\ta_string\n",
                 "select last_not_null(a0)a0,last_not_null(a1)a1,last_not_null(a2)a2,last_not_null(a3)a3,last_not_null(a4)a4," +
-                        "last_not_null(a5)a5,last_not_null(a6)a6,last_not_null(a7)a7,last_not_null(a8)a8,last_not_null(a9)a9 from tab")) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
+                        "last_not_null(a5)a5,last_not_null(a6)a6,last_not_null(a7)a7,last_not_null(a8)a8,last_not_null(a9)a9 from tab");
 
-                Assert.assertEquals('a', record.getChar(0));
-                Assert.assertEquals(now, record.getDate(1));
-                Assert.assertEquals(2.2, record.getDouble(2), 0.001);
-                Assert.assertEquals(3.3, record.getFloat(3), 0.001);
-                Assert.assertEquals(4, record.getInt(4));
-                Assert.assertEquals(5, record.getLong(5));
-                Assert.assertEquals("a_symbol", record.getSym(6));
-                Assert.assertEquals(now + 700, record.getTimestamp(7));
-                Assert.assertEquals(lastUuid, new UUID(record.getLong128Hi(8), record.getLong128Lo(8)));
-                TestUtils.assertEquals("a_string", record.getStr(9));
-            }
-        }
     }
 }
