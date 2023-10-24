@@ -37,7 +37,7 @@ public class LastNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        if (Uuid.isNull(arg.getLong128Lo(record), arg.getLong128Hi(record))) {
+        if (!Uuid.isNull(arg.getLong128Lo(record), arg.getLong128Hi(record))) {
             computeFirst(mapValue, record);
         }
     }

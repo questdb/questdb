@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -113,7 +114,7 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals("a_symbol", record.getSym(6));
                 Assert.assertEquals(now + 700, record.getTimestamp(7));
                 Assert.assertEquals(firstUuid, new UUID(record.getLong128Hi(8), record.getLong128Lo(8)));
-                Assert.assertEquals("a_string", record.getStr(9).toString());
+                TestUtils.assertEquals("a_string", record.getStr(9));
             }
         }
     }

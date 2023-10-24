@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -60,7 +61,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
         ddl("create table tab (a0 char,a1 date,a2 double,a3 float,a4 int,a5 long,a6 symbol,a7 timestamp,a8 uuid,a9 string)");
 
         long now = Instant.now().truncatedTo(ChronoUnit.DAYS).getEpochSecond() * 1_000_000;
-        UUID firstUuid = UUID.randomUUID();
+        UUID lastUuid = UUID.randomUUID();
         try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();
             r.putChar(0, 'b');
@@ -84,7 +85,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
             r.putLong(5, 5L);
             r.putSym(6, "a_symbol");
             r.putTimestamp(7, now + 700);
-            r.putUuid(8, firstUuid.toString());
+            r.putUuid(8, lastUuid.toString());
             r.putStr(9, "a_string");
             r.append();
 
@@ -113,8 +114,8 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(5, record.getLong(5));
                 Assert.assertEquals("a_symbol", record.getSym(6));
                 Assert.assertEquals(now + 700, record.getTimestamp(7));
-                Assert.assertEquals(firstUuid, new UUID(record.getLong128Hi(8), record.getLong128Lo(8)));
-                Assert.assertEquals("a_string", record.getStr(9).toString());
+                Assert.assertEquals(lastUuid, new UUID(record.getLong128Hi(8), record.getLong128Lo(8)));
+                TestUtils.assertEquals("a_string", record.getStr(9));
             }
         }
     }

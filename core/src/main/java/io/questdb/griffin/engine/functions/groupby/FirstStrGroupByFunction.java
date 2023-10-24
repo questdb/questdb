@@ -73,7 +73,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.STRING);
+        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
