@@ -22,37 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.mp;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.Metrics;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class TestWorkerPool extends WorkerPool {
-
-    public TestWorkerPool(int workerCount) {
-        this("testing", workerCount, Metrics.disabled());
+public class FirstBooleanGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "first(T)";
     }
 
-    public TestWorkerPool(String poolName, int workerCount) {
-        this(poolName, workerCount, Metrics.disabled());
+    @Override
+    public boolean isGroupBy() {
+        return true;
     }
 
-    public TestWorkerPool(int workerCount, Metrics metrics) {
-        this("testing", workerCount, metrics);
-    }
-
-    public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
-        super(new WorkerPoolConfiguration() {
-            @Override
-            public String getPoolName() {
-                return poolName;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        }, metrics);
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new FirstBooleanGroupByFunction(args.getQuick(0));
     }
 }

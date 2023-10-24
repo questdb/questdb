@@ -22,37 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.mp;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.Metrics;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import org.jetbrains.annotations.NotNull;
 
-public class TestWorkerPool extends WorkerPool {
+public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
 
-    public TestWorkerPool(int workerCount) {
-        this("testing", workerCount, Metrics.disabled());
+    public LastBooleanGroupByFunction(int position, @NotNull Function arg) {
+        super(arg);
     }
 
-    public TestWorkerPool(String poolName, int workerCount) {
-        this(poolName, workerCount, Metrics.disabled());
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        super.computeFirst(mapValue, record);
     }
 
-    public TestWorkerPool(int workerCount, Metrics metrics) {
-        this("testing", workerCount, metrics);
-    }
-
-    public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
-        super(new WorkerPoolConfiguration() {
-            @Override
-            public String getPoolName() {
-                return poolName;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        }, metrics);
+    @Override
+    public String getName() {
+        return "last";
     }
 }

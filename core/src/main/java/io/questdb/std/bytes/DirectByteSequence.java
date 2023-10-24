@@ -22,37 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.mp;
+package io.questdb.std.bytes;
 
-import io.questdb.Metrics;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.Unsafe;
 
-public class TestWorkerPool extends WorkerPool {
-
-    public TestWorkerPool(int workerCount) {
-        this("testing", workerCount, Metrics.disabled());
+/**
+ * Read-only interface for a sequence of bytes with native ptr access.
+ */
+public interface DirectByteSequence extends ByteSequence {
+    @Override
+    default byte byteAt(int index) {
+        return Unsafe.getUnsafe().getByte(ptr() + index);
     }
 
-    public TestWorkerPool(String poolName, int workerCount) {
-        this(poolName, workerCount, Metrics.disabled());
+    /**
+     * Address one past the last byte.
+     */
+    default long hi() {
+        return ptr() + size();
     }
 
-    public TestWorkerPool(int workerCount, Metrics metrics) {
-        this("testing", workerCount, metrics);
+    /**
+     * Address of the first byte (alias of `.ptr()`).
+     */
+    default long lo() {
+        return ptr();
     }
 
-    public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
-        super(new WorkerPoolConfiguration() {
-            @Override
-            public String getPoolName() {
-                return poolName;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        }, metrics);
-    }
+    /**
+     * Address of the first byte.
+     */
+    long ptr();
 }

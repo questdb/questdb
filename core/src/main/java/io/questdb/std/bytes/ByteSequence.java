@@ -22,37 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.mp;
+package io.questdb.std.bytes;
 
-import io.questdb.Metrics;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+/**
+ * Read-only interface for a sequence of bytes.
+ */
+public interface ByteSequence {
+    /**
+     * Returns byte at index.
+     * Note: Unchecked bounds.
+     *
+     * @param index byte index
+     * @return byte at index
+     */
+    byte byteAt(int index);  // TODO: Convert to take `long` instead of `int`.
 
-public class TestWorkerPool extends WorkerPool {
-
-    public TestWorkerPool(int workerCount) {
-        this("testing", workerCount, Metrics.disabled());
-    }
-
-    public TestWorkerPool(String poolName, int workerCount) {
-        this(poolName, workerCount, Metrics.disabled());
-    }
-
-    public TestWorkerPool(int workerCount, Metrics metrics) {
-        this("testing", workerCount, metrics);
-    }
-
-    public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
-        super(new WorkerPoolConfiguration() {
-            @Override
-            public String getPoolName() {
-                return poolName;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        }, metrics);
-    }
+    /**
+     * Number of bytes in the sequence.
+     * Note that this is not called `length()` to avoid collision with `CharSequence` (and other) interfaces.
+     */
+    int size();  // TODO: Convert this to return `long`. Also see `byte_sink.cpp` which restricts the size to `int`.
 }
