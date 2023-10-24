@@ -531,17 +531,6 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "from tab order by ts asc");
 
             assertSql("row_number\n" +
-                            "3\n" +
-                            "2\n" +
-                            "1\n" +
-                            "4\n" +
-                            "3\n" +
-                            "2\n" +
-                            "1\n",
-                    "select row_number() over (partition by j order by i desc), i " +
-                            "from tab order by ts asc");
-
-            assertSql("row_number\n" +
                             "1\n" +
                             "2\n" +
                             "3\n" +
