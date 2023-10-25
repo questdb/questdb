@@ -103,7 +103,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
     private final String confRoot;
+    private final int connectionPoolInitialCapacity;
+    private final int connectionStringPoolCapacity;
     private final int createAsSelectRetryCount;
+    private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
     private final CharSequence defaultMapType;
     private final boolean defaultSymbolCacheFlag;
@@ -112,17 +115,32 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
+    private final boolean httpAllowDeflateBeforeSend;
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
+    private final boolean httpFrozenClock;
+    private final boolean httpHealthCheckAuthRequired;
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private final PropHttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
     private final boolean httpMinServerEnabled;
+    private final boolean httpNetConnectionHint;
+    private final boolean httpPessimisticHealthCheckEnabled;
+    private final boolean httpReadOnlySecurityContext;
     private final HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
+    private final boolean httpServerCookiesEnabled;
     private final boolean httpServerEnabled;
+    private final boolean httpServerKeepAlive;
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
+    private final boolean httpStaticAuthRequired;
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
+    private final int[] httpWorkerAffinity;
+    private final int httpWorkerCount;
+    private final boolean httpWorkerHaltOnError;
+    private final long httpWorkerSleepThreshold;
+    private final long httpWorkerSleepTimeout;
+    private final long httpWorkerYieldThreshold;
     private final long idleCheckInterval;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
@@ -130,13 +148,18 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveReaderTTL;
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
+    private final CharSequence indexFileName;
     private final int indexValueBlockSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final long instanceHashHi;
     private final long instanceHashLo;
+    private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
     private final boolean isReadOnlyInstance;
+    private final int jsonCacheLimit;
+    private final int jsonCacheSize;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
+    private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String lineTcpAuthDB;
     private final boolean lineTcpEnabled;
@@ -159,13 +182,19 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale locale;
     private final Log log;
     private final int maxFileNameLength;
+    private final long maxHttpQueryResponseRowLimit;
+    private final double maxRequiredDelimiterStdDev;
+    private final double maxRequiredLineLengthStdDev;
     private final long maxRerunWaitCapMs;
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
+    private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
+    private final int multipartHeaderBufferSize;
+    private final long multipartIdleSpinCount;
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
@@ -184,15 +213,21 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
+    private final String publicDirectory;
     private final int readerPoolMaxSegments;
+    private final int recvBufferSize;
     private final int repeatMigrationFromVersion;
+    private final int requestHeaderBufferSize;
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
     private final int rerunMaxProcessingQueueSize;
     private final int rndFunctionMemoryMaxPages;
     private final int rndFunctionMemoryPageSize;
+    private final int rollBufferLimit;
+    private final int rollBufferSize;
     private final String root;
     private final int sampleByIndexSearchPageSize;
+    private final int sendBufferSize;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -278,7 +313,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryHideTables;
     private final int telemetryQueueCapacity;
     private final CharSequence tempRenamePendingTablePrefix;
+    private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
+    private final int textLexerStringPoolCapacity;
+    private final int timestampAdapterPoolCapacity;
+    private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
@@ -314,16 +353,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
     private long cairoSqlCopyMaxIndexChunkSize;
-    private int connectionPoolInitialCapacity;
-    private int connectionStringPoolCapacity;
-    private int dateAdapterPoolCapacity;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int forceRecvFragmentationChunkSize;
     private int forceSendFragmentationChunkSize;
-    private boolean httpAllowDeflateBeforeSend;
-    private boolean httpFrozenClock;
-    private boolean httpHealthCheckAuthRequired;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
     private boolean httpMinNetConnectionHint;
@@ -340,32 +373,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long httpMinWorkerYieldThreshold;
     private int httpNetBindIPv4Address;
     private int httpNetBindPort;
-    private boolean httpNetConnectionHint;
     private int httpNetConnectionLimit;
     private long httpNetConnectionQueueTimeout;
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
-    private boolean httpPessimisticHealthCheckEnabled;
-    private boolean httpReadOnlySecurityContext;
-    private boolean httpServerKeepAlive;
-    private boolean httpStaticAuthRequired;
     private String httpVersion;
-    private int[] httpWorkerAffinity;
-    private int httpWorkerCount;
-    private boolean httpWorkerHaltOnError;
-    private long httpWorkerSleepThreshold;
-    private long httpWorkerSleepTimeout;
-    private long httpWorkerYieldThreshold;
-    private CharSequence indexFileName;
     private short integerDefaultColumnType;
-    private boolean interruptOnClosedConnection;
-    private int jsonCacheLimit;
-    private int jsonCacheSize;
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
-    private String keepAliveHeader;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -397,14 +414,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
-    private long maxHttpQueryResponseRowLimit;
-    private double maxRequiredDelimiterStdDev;
-    private double maxRequiredLineLengthStdDev;
-    private int metadataStringPoolCapacity;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
-    private int multipartHeaderBufferSize;
-    private long multipartIdleSpinCount;
     private int netTestConnectionBufferSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
@@ -446,20 +457,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgWorkerCount;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private String publicDirectory;
-    private int recvBufferSize;
-    private int requestHeaderBufferSize;
-    private int rollBufferLimit;
-    private int rollBufferSize;
-    private int sendBufferSize;
     private boolean stringAsTagSupported;
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private int textAnalysisMaxLines;
-    private int textLexerStringPoolCapacity;
-    private int timestampAdapterPoolCapacity;
-    private int utf8SinkSize;
 
     public PropServerConfiguration(
             String root,
@@ -633,6 +634,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpFrozenClock = getBoolean(properties, env, PropertyKey.HTTP_FROZEN_CLOCK, false);
             this.httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
             this.httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
+            this.httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             this.httpVersion = getString(properties, env, PropertyKey.HTTP_VERSION, "HTTP/1.1");
             if (!httpVersion.endsWith(" ")) {
                 httpVersion += ' ';
@@ -689,7 +691,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.textLexerStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_LEXER_STRING_POOL_CAPACITY, 64);
             this.timestampAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY, 64);
             this.utf8SinkSize = getIntSize(properties, env, PropertyKey.HTTP_TEXT_UTF8_SINK_SIZE, 4096);
-
 
             this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
             this.httpHealthCheckAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED, true);
@@ -2642,6 +2643,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean allowDeflateBeforeSend() {
             return httpAllowDeflateBeforeSend;
+        }
+
+        @Override
+        public boolean areCookiesEnabled() {
+            return httpServerCookiesEnabled;
         }
 
         @Override

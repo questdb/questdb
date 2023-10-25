@@ -683,13 +683,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         String weather = "weather";
         String meteorology = "meteorology";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
-            private int count = 1;
+            private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && --count == 0
+                                && count.decrementAndGet() == 0
                 ) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);

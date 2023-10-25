@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.wal.WalMetrics;
+import io.questdb.metrics.WorkerMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
@@ -49,6 +50,7 @@ public class Metrics implements Scrapable {
     private final VirtualLongGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
     private final TableWriterMetrics tableWriter;
     private final WalMetrics walMetrics;
+    private final WorkerMetrics workerMetrics;
 
     public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
@@ -61,6 +63,7 @@ public class Metrics implements Scrapable {
         this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
+        this.workerMetrics = new WorkerMetrics(metricsRegistry);
     }
 
     public static Metrics disabled() {
@@ -105,6 +108,14 @@ public class Metrics implements Scrapable {
 
     public WalMetrics walMetrics() {
         return walMetrics;
+    }
+
+    public WorkerMetrics workerMetrics() {
+        return workerMetrics;
+    }
+
+    void addScrapable(Scrapable scrapable){
+        metricsRegistry.addScrapable(scrapable);
     }
 
     private void createMemoryGauges(MetricsRegistry metricsRegistry) {

@@ -41,6 +41,9 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.std.Chars.isBlank;
+
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
@@ -48,6 +51,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
     private final ChunkBuffer compressOutBuffer;
     private final boolean connectionCloseHeader;
+    private final boolean cookiesEnabled;
     private final boolean dumpNetworkTraffic;
     private final HttpResponseHeaderImpl headerImpl;
     private final String httpVersion;
@@ -76,6 +80,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.httpVersion = configuration.getHttpVersion();
         this.connectionCloseHeader = !configuration.getServerKeepAlive();
+        this.cookiesEnabled = configuration.areCookiesEnabled();
     }
 
     @Override
@@ -529,6 +534,13 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
+        public void setCookie(CharSequence name, CharSequence value) {
+            if (cookiesEnabled) {
+                put(HEADER_SET_COOKIE).put(name).putAscii(COOKIE_VALUE_SEPARATOR).put(value).putEOL();
+            }
+        }
+
+        @Override
         public String status(CharSequence httpProtocolVersion, int code, CharSequence contentType, long contentLength) {
             this.code = code;
             String status = httpStatusMap.get(code);
@@ -694,10 +706,23 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     public class SimpleResponseImpl {
-
         public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatus(code, message, null);
+        }
+
+        public void sendStatus(int code, CharSequence message, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatus(code, message, header, null, null);
+        }
+
+        public void sendStatus(int code, CharSequence message, CharSequence header, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
             buffer.clearAndPrepareToWriteToBuffer();
-            final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
+            final String std = headerImpl.status(httpVersion, code, CONTENT_TYPE_TEXT, -1L);
+            if (header != null) {
+                headerImpl.put(header).put(Misc.EOL);
+            }
+            if (cookieName != null) {
+                setCookie(cookieName, cookieValue);
+            }
             prepareHeaderSink();
             flushSingle();
             buffer.clearAndPrepareToWriteToBuffer();
@@ -708,9 +733,13 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
             buffer.clearAndPrepareToWriteToBuffer();
-            headerImpl.status(httpVersion, code, "text/html; charset=utf-8", -2L);
+            headerImpl.status(httpVersion, code, CONTENT_TYPE_HTML, -2L);
             prepareHeaderSink();
             flushSingle();
+        }
+
+        public void sendStatusWithCookie(int code, CharSequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatus(code, message, null, cookieName, cookieValue);
         }
 
         public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -718,15 +747,13 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         public void sendStatusWithHeader(int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
-            headerImpl.put(header).putEOL();
-            prepareHeaderSink();
-            flushSingle();
-            buffer.clearAndPrepareToWriteToBuffer();
-            sink.put(std).putEOL();
-            buffer.prepareToReadFromBuffer(true, true);
-            resumeSend();
+            sendStatus(code, null, header);
+        }
+
+        private void setCookie(CharSequence name, CharSequence value) {
+            if (cookiesEnabled) {
+                headerImpl.put(HEADER_SET_COOKIE).put(name).putAscii(COOKIE_VALUE_SEPARATOR).put(!isBlank(value) ? value : "").putEOL();
+            }
         }
     }
 
@@ -736,6 +763,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(304, "Not Modified");
         httpStatusMap.put(400, "Bad request");
         httpStatusMap.put(401, "Unauthorized");
+        httpStatusMap.put(403, "Forbidden");
         httpStatusMap.put(404, "Not Found");
         httpStatusMap.put(416, "Request range not satisfiable");
         httpStatusMap.put(431, "Headers too large");

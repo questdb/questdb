@@ -9984,7 +9984,7 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics.health());
+        WorkerPool pool = new WorkerPool(conf, metrics);
         pool.assign(engine.getEngineMaintenanceJob());
         try (CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
              final PGWireServer server = createPGWireServer(

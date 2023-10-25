@@ -31,6 +31,8 @@ import io.questdb.std.str.Utf8Sink;
 public interface HttpResponseHeader extends Utf8Sink {
     void send() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
+    void setCookie(CharSequence name, CharSequence value);
+
     default void setKeepAlive(CharSequence keepAliveHeader) {
         if (keepAliveHeader != null) {
             put(keepAliveHeader);

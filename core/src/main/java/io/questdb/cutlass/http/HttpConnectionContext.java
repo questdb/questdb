@@ -40,6 +40,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
 import static io.questdb.network.IODispatcher.*;
@@ -48,6 +49,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpAuthenticator authenticator;
     private final HttpContextConfiguration configuration;
+    private final HttpCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool;
     private final boolean dumpNetworkTraffic;
     private final HttpHeaderParser headerParser;
@@ -75,7 +77,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
 
+    @TestOnly
     public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
+        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE);
+    }
+
+    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler) {
         super(
                 socketFactory,
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
@@ -84,6 +91,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         );
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.configuration = contextConfiguration;
+        this.cookieHandler = cookieHandler;
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
@@ -172,6 +180,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public HttpChunkedResponseSocket getChunkedResponseSocket() {
         return responseSink.getChunkedSocket();
+    }
+
+    public HttpCookieHandler getCookieHandler() {
+        return cookieHandler;
     }
 
     public long getLastRequestBytesSent() {
@@ -274,6 +286,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         responseSink.of(socket);
         return this;
+    }
+
+    public boolean rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        reset();
+        LOG.error().$(userMessage).$(" [code=").$(code).I$();
+        simpleResponse().sendStatusWithCookie(code, userMessage, cookieName, cookieValue);
+        dispatcher.registerChannel(this, IOOperation.READ);
+        return false;
     }
 
     public void reset() {
@@ -646,6 +666,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return rejectUnauthenticatedRequest();
                 }
 
+                if (configuration.areCookiesEnabled()) {
+                    if (!cookieHandler.processCookies(this, securityContext)) {
+                        return false;
+                    }
+                }
+
                 if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
                     busyRecv = rejectRequest("Bad request. Non-multipart GET expected.");
@@ -765,11 +791,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        reset();
-        LOG.error().$(userMessage).$();
-        simpleResponse().sendStatus(404, userMessage);
-        dispatcher.registerChannel(this, IOOperation.READ);
-        return false;
+        return rejectRequest(404, userMessage, null, null);
     }
 
     private boolean rejectUnauthenticatedRequest() throws PeerDisconnectedException, PeerIsSlowToReadException {

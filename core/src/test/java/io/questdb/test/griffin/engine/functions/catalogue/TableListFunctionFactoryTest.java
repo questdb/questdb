@@ -49,9 +49,9 @@ public class TableListFunctionFactoryTest extends AbstractCairoTest {
         }
 
         assertSql(
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                         "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
-                        "1\ttable1\tts1\tDAY\t1000\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc"
+                        "1\ttable1\tts1\tDAY\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc"
         );
     }
 
@@ -67,8 +67,8 @@ public class TableListFunctionFactoryTest extends AbstractCairoTest {
         }
 
         assertSql(
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "1\ttable1\tts1\tDAY\t83737\t28291\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                        "1\ttable1\tts1\tDAY\t83737\t28291\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
         );
     }
 
@@ -96,8 +96,8 @@ public class TableListFunctionFactoryTest extends AbstractCairoTest {
 
         refreshTablesInBaseEngine();
         assertSql(
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "2\ttable2\tts2\tNONE\t1000\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                        "2\ttable2\tts2\tNONE\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
         );
     }
 
@@ -114,8 +114,8 @@ public class TableListFunctionFactoryTest extends AbstractCairoTest {
         }
 
         assertSql(
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "1\ttable1\tts1\tDAY\t1000\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'table1'"
+                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                        "1\ttable1\tts1\tDAY\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'table1'"
         );
     }
 
@@ -133,7 +133,7 @@ public class TableListFunctionFactoryTest extends AbstractCairoTest {
 
         assertSql(
                 "designatedTimestamp\n" +
-                        "ts1\n", "select designatedTimestamp from tables where name = 'table1'"
+                        "ts1\n", "select designatedTimestamp from tables where table_name = 'table1'"
         );
     }
 }

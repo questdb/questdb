@@ -163,9 +163,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                             TableUtils.isColumnDedupKey(metaMem, i)
                     )
             );
-            columnNameIndexMap.put(nameStr, i);
-            if (ColumnType.isSymbol(type)) {
-                symbolMapCount++;
+            if (type > -1) {
+                columnNameIndexMap.put(nameStr, i);
+                if (ColumnType.isSymbol(type)) {
+                    symbolMapCount++;
+                }
             }
             offset += Vm.getStorageLength(name);
         }

@@ -48,7 +48,9 @@ public final class MemoryTag {
     public static final int NATIVE_CB5 = 32;
     public static final int NATIVE_COMPACT_MAP = 8;
     public static final int NATIVE_DEFAULT = 1;
+    public static final int NATIVE_DIRECT_BYTE_SINK = 54;
     public static final int NATIVE_DIRECT_CHAR_SINK = 51;
+    public static final int NATIVE_DIRECT_UTF8_SINK = 55;
     public static final int NATIVE_FAST_MAP = 9;
     public static final int NATIVE_FAST_MAP_LONG_LIST = 10;
     public static final int NATIVE_FUNC_RSS = 50;
@@ -79,7 +81,7 @@ public final class MemoryTag {
     public static final int NATIVE_TEXT_PARSER_RSS = 48;
     public static final int NATIVE_TLS_RSS = 47;
     public static final int NATIVE_TREE_CHAIN = 6;
-    public static final int SIZE = MMAP_TX_LOG + 1;
+    public static final int SIZE = NATIVE_DIRECT_UTF8_SINK + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -138,6 +140,8 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_IO_DISPATCHER_RSS, "NATIVE_IO_DISPATCHER_RSS");
         tagNameMap.extendAndSet(NATIVE_FUNC_RSS, "NATIVE_FUNC_RSS");
         tagNameMap.extendAndSet(NATIVE_DIRECT_CHAR_SINK, "NATIVE_DIRECT_CHAR_SINK");
+        tagNameMap.extendAndSet(NATIVE_DIRECT_UTF8_SINK, "NATIVE_DIRECT_UTF8_SINK");
+        tagNameMap.extendAndSet(NATIVE_DIRECT_BYTE_SINK, "NATIVE_DIRECT_BYTE_SINK");
         tagNameMap.extendAndSet(MMAP_TX_LOG_CURSOR, "MMAP_TX_LOG_CURSOR");
         tagNameMap.extendAndSet(MMAP_TX_LOG, "MMAP_TX_LOG");
         tagNameMap.extendAndSet(NATIVE_SQL_COMPILER, "NATIVE_SQL_COMPILER");

@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.SocketFactory;
 import io.questdb.std.QuietCloseable;
@@ -39,6 +40,9 @@ public interface FactoryProvider extends QuietCloseable {
 
     @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
+
+    @NotNull
+    HttpCookieHandler getHttpCookieHandler();
 
     @NotNull
     SocketFactory getHttpMinSocketFactory();

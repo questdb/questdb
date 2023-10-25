@@ -434,7 +434,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (start == hi) {
             info().$("empty column in list '").$(columnNames).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "", 400);
+            JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
             socket.putAscii('{')
                     .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
                     .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty column in list")
@@ -447,7 +447,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
             info().$("invalid column in list: '").$(columnNames, start, hi).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "", 400);
+            JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
             socket.putAscii('{')
                     .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
                     .putAsciiQuoted("error").putAscii(':').putAscii('\'').putAscii("invalid column in list: ").put(columnNames, start, hi).putAscii('\'')
@@ -854,7 +854,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (!Utf8s.utf8ToUtf16(columnNames.lo(), columnNames.hi(), columnsQueryParameter)) {
                 info().$("utf8 error when decoding column list '").$(columnNames).$('\'').$();
                 HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-                JsonQueryProcessor.header(socket, "", 400);
+                JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
                 socket.putAscii('{')
                         .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("utf8 error in column list")
                         .putAscii('}');

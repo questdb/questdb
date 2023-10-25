@@ -1013,7 +1013,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
 
-                if (columnType == ColumnType.SYMBOL || columnType == -ColumnType.SYMBOL) {
+                if (columnType == ColumnType.SYMBOL) {
                     denseSymbolIndex++;
                 }
             }

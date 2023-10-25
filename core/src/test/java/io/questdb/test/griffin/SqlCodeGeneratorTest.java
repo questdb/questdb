@@ -7251,9 +7251,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
+                            "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                             sink,
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                                     "1\tпривет от штиблет\t\tNONE\t1000\t300000000\n"
                     );
 

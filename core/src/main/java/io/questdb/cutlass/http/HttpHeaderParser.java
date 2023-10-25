@@ -33,6 +33,8 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
+    // in theory, it is possible to send multiple cookies on separate lines in the header
+    // if we used more cookies, the below map would need to hold a list of CharSequences
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
     private final long hi;
     private final ObjectPool<DirectUtf8String> pool;

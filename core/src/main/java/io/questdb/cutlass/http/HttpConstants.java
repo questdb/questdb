@@ -27,11 +27,20 @@ package io.questdb.cutlass.http;
 import io.questdb.std.str.Utf8String;
 
 public final class HttpConstants {
+    public static final String CONTENT_TYPE_CSV = "text/csv; charset=utf-8";
+    public static final String CONTENT_TYPE_HTML = "text/html; charset=utf-8";
+    public static final String CONTENT_TYPE_JSON = "application/json; charset=utf-8";
+    public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
+
+    public static final char COOKIE_VALUE_SEPARATOR = '=';
+
     public static final Utf8String HEADER_CONTENT_ACCEPT_ENCODING = new Utf8String("Accept-Encoding");
     public static final Utf8String HEADER_CONTENT_DISPOSITION = new Utf8String("Content-Disposition");
     public static final Utf8String HEADER_CONTENT_TYPE = new Utf8String("Content-Type");
+    public static final Utf8String HEADER_COOKIE = new Utf8String("Cookie: ");
     public static final Utf8String HEADER_IF_NONE_MATCH = new Utf8String("If-None-Match");
     public static final Utf8String HEADER_RANGE = new Utf8String("Range");
+    public static final Utf8String HEADER_SET_COOKIE = new Utf8String("Set-Cookie: ");
     public static final Utf8String HEADER_STATEMENT_TIMEOUT = new Utf8String("Statement-Timeout");
     public static final Utf8String HEADER_TRANSFER_ENCODING = new Utf8String("Transfer-Encoding");
 

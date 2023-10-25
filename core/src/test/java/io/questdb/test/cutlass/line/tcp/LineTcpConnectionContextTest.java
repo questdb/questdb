@@ -1637,8 +1637,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
 
             assertSql(
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n",
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n",
+                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
             ddl("create table vbw(a int)");
         });
