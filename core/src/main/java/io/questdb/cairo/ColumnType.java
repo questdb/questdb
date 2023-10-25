@@ -95,7 +95,7 @@ public final class ColumnType {    //@formatter:off
             /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
             /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
             /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
-            /* 8  TIMESTAMP */, {TIMESTAMP, LONG}
+            /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE}
             /* 9  FLOAT     */, {FLOAT, DOUBLE}
             /* 10 DOUBLE    */, {DOUBLE}
             /* 11 STRING    */, {STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}

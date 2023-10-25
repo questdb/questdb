@@ -561,7 +561,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final boolean sigVarArg;
             final boolean sigVarArgConst;
 
-
             if (sigArgCount > 0) {
                 final int lastSigArgMask = descriptor.getArgTypeMask(sigArgCount - 1);
                 sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgMask) == ColumnType.VAR_ARG;
@@ -585,11 +584,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 candidateDescriptor = descriptor;
             }
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
-                int match = MATCH_NO_MATCH; // no match
-                if (sigArgCount == 0) {
-                    match = MATCH_EXACT_MATCH;
-                }
-
+                int match = sigArgCount == 0 ? MATCH_EXACT_MATCH : MATCH_NO_MATCH;
                 int sigArgTypeSum = 0;
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
@@ -779,18 +774,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else if (sigArgTypeTag == ColumnType.INT) {
                     args.setQuick(k, IntConstant.NULL);
                 }
-            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.TIMESTAMP) {
-                // convert arguments if necessary
-                assert arg.isConstant(); // casting from String/Symbol to Timestamp is supported for constants only
-                int position = argPositions.getQuick(k);
-                long timestamp = parseTimestamp(arg.getStr(null), position);
-                args.set(k, TimestampConstant.newInstance(timestamp));
-            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.DATE) {
-                // convert arguments if necessary
-                assert arg.isConstant(); // casting from String/Symbol to Date is supported for constants only
-                int position = argPositions.getQuick(k);
-                long millis = parseDate(arg.getStr(null), position);
-                args.set(k, DateConstant.newInstance(millis));
+            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && arg.isConstant()) {
+                if (sigArgTypeTag == ColumnType.TIMESTAMP) {
+                    int position = argPositions.getQuick(k);
+                    long timestamp = parseTimestamp(arg.getStr(null), position);
+                    args.set(k, TimestampConstant.newInstance(timestamp));
+                } else if (sigArgTypeTag == ColumnType.DATE) {
+                    int position = argPositions.getQuick(k);
+                    long millis = parseDate(arg.getStr(null), position);
+                    args.set(k, DateConstant.newInstance(millis));
+                }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             }
