@@ -536,7 +536,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public void setCookie(CharSequence name, CharSequence value) {
             if (cookiesEnabled) {
-                put(HEADER_SET_COOKIE).put(name).putAscii(COOKIE_VALUE_SEPARATOR).put(value).putEOL();
+                put(HEADER_SET_COOKIE).putAscii(": ").put(name).putAscii(COOKIE_VALUE_SEPARATOR).put(value).putEOL();
             }
         }
 
@@ -752,7 +752,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         private void setCookie(CharSequence name, CharSequence value) {
             if (cookiesEnabled) {
-                headerImpl.put(HEADER_SET_COOKIE).put(name).putAscii(COOKIE_VALUE_SEPARATOR).put(!isBlank(value) ? value : "").putEOL();
+                headerImpl.put(HEADER_SET_COOKIE).putAscii(": ").put(name).putAscii(COOKIE_VALUE_SEPARATOR).put(!isBlank(value) ? value : "").putEOL();
             }
         }
     }
