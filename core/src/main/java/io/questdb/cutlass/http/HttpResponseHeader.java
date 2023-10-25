@@ -31,6 +31,8 @@ import io.questdb.std.str.CharSink;
 public interface HttpResponseHeader extends CharSink {
     void send() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
+    void setCookie(CharSequence name, CharSequence value);
+
     default void setKeepAlive(CharSequence keepAliveHeader) {
         if (keepAliveHeader != null) {
             put(keepAliveHeader);
