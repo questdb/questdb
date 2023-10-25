@@ -388,24 +388,28 @@ public class Utf8sTest {
 
     @Test
     public void testUtf8SupportZ() {
-        StringBuilder expected = new StringBuilder();
-        for (int i = 1; i < 0xD800; i++) {
-            expected.append((char) i);
+        final int nChars = 128;
+        final StringBuilder expected = new StringBuilder();
+        for (int i = 0; i < nChars; i++) {
+            expected.append(i);
         }
 
         String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
+        byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
+        final int nBytes = bytes.length + 1; // +1 byte for the NULL terminator
+
+        long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
         try {
-            byte[] bytes = in.getBytes(Files.UTF_8);
-            for (int i = 0, n = bytes.length; i < n; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+            for (int i = 0; i < nBytes - 1; i++) {
+                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
             }
-            Unsafe.getUnsafe().putByte(p + bytes.length, (byte) 0);
-            CharSink b = new StringSink();
-            Utf8s.utf8ToUtf16Z(p, b);
+            Unsafe.getUnsafe().putByte(mem + nBytes - 1, (byte) 0);
+
+            StringSink b = new StringSink();
+            Utf8s.utf8ToUtf16Z(mem, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
-            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(mem, nBytes, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
