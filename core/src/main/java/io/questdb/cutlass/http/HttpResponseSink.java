@@ -474,7 +474,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public int writeBytes(long srcAddr, int len) {
-            assert len >= 0;
+            assert len > 0;
             len = (int) Math.min((long) len, buffer.getWriteNAvailable());
             Vect.memcpy(buffer.getWriteAddress(len), srcAddr, len);
             buffer.onWrite(len);
