@@ -208,7 +208,8 @@ public final class Services {
             }
         }, true);
         if (metrics.isEnabled()) {
-            final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool();
+            final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
+                    configuration.getWorkerCount());
             server.registerClosable(pool);
             server.bind(new HttpRequestProcessorFactory() {
                 @Override

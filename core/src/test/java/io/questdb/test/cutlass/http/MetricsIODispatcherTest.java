@@ -75,6 +75,16 @@ public class MetricsIODispatcherTest {
     }
 
     @Test
+    public void testLotsOfConnections() throws Exception {
+        // In this scenario we want to test pool reuse.
+        // This is dependent on thread scheduling so some runs may not achieve
+        // the desired coverage, but by repeating the number of requests we can
+        // increase the chances of hitting the desired `push()` and `pop()` pool method call
+        // sequences.
+        testPrometheusScenario(10, 1024, 1024 * 1024, PARALLEL_REQUESTS, 1, 100);
+    }
+
+    @Test
     public void testFewMetricsBigBuffersPar() throws Exception {
         testPrometheusScenario(100, 1024 * 1024, 1024 * 1024, PARALLEL_REQUESTS);
     }
@@ -120,8 +130,13 @@ public class MetricsIODispatcherTest {
         testPrometheusScenario(10_000, 1024, 1024 * 1024, PARALLEL_REQUESTS);
     }
 
-    public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches) throws Exception {
-        final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool();
+    private void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches) throws Exception {
+        testPrometheusScenario(metricCount, tcpSndBufSize, sendBufferSize, parallelRequestBatches, 5, 5);
+    }
+
+    private void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches, int repeatedRequests, int repeatedConnections) throws Exception {
+        final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
+        final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(workerCount);
 
         Assert.assertEquals(pool.size(), 0);
 
@@ -143,7 +158,7 @@ public class MetricsIODispatcherTest {
 
                 // Repeated requests over the same connection.
                 // This is to stress out the RequestState pooling logic.
-                for (int i = 0; i < 5; i++) {
+                for (int i = 0; i < repeatedRequests; i++) {
                     HttpClient.ResponseHeaders response = client.newRequest()
                             .GET()
                             .url("/metrics")
@@ -154,7 +169,7 @@ public class MetricsIODispatcherTest {
 
                     if (parallelRequestBatches == 1) {
                         // The request state is in use.
-                        Assert.assertTrue(pool.size() == 0);
+                        Assert.assertEquals(0, pool.size());
                     } else {
                         Assert.assertTrue(pool.size() <= parallelRequestBatches);
                     }
@@ -178,17 +193,9 @@ public class MetricsIODispatcherTest {
             }
         };
 
-        // Repeat each connection 5 times, for each parallel request batch.
+        // Repeat each connection `repeatedConnections` times, for each parallel request batch.
         // This is to stress out the RequestState pooling logic.
-        final HttpQueryTestBuilder.HttpClientCode repeatedRequest = engine -> {
-            for (int i = 0; i < 5; i++) {
-                makeRequest.run(engine);
-            }
-        };
-
-        // Parallel request batches.
-        final HttpQueryTestBuilder.HttpClientCode clientCode = parallelizeRequests(parallelRequestBatches, repeatedRequest);
-        final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
+        final HttpQueryTestBuilder.HttpClientCode clientCode = buildClientCode(parallelRequestBatches, repeatedConnections, makeRequest);
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
                 .withScrapable(metrics)
@@ -199,6 +206,17 @@ public class MetricsIODispatcherTest {
                 .run(clientCode);
 
         Assert.assertEquals(pool.size(), 0);
+    }
+
+    private static HttpQueryTestBuilder.HttpClientCode buildClientCode(int parallelRequestBatches, int repeatedConnections, HttpQueryTestBuilder.HttpClientCode makeRequest) {
+        final HttpQueryTestBuilder.HttpClientCode repeatedRequest = engine -> {
+            for (int i = 0; i < repeatedConnections; i++) {
+                makeRequest.run(engine);
+            }
+        };
+
+        // Parallel request batches.
+        return parallelizeRequests(parallelRequestBatches, repeatedRequest);
     }
 
     @Test

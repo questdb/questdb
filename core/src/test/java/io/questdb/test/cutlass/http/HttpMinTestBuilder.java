@@ -74,7 +74,7 @@ public class HttpMinTestBuilder {
             ) {
                 final PrometheusMetricsProcessor.RequestStatePool requestStatePool = prometheusRequestStatePool != null
                         ? prometheusRequestStatePool
-                        : new PrometheusMetricsProcessor.RequestStatePool();
+                        : new PrometheusMetricsProcessor.RequestStatePool(httpConfiguration.getWorkerCount());
                 httpServer.registerClosable(requestStatePool);
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override

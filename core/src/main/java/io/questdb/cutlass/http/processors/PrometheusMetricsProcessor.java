@@ -99,7 +99,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     private RequestState setupState(HttpConnectionContext context) {
         RequestState state = LV.get(context);
         if (state == null) {
-            state = pool.take();
+            state = pool.pop();
             LV.set(context, state);
         } else {
             state.clear();
@@ -138,7 +138,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         @Override
         public void close() {
             clear();
-            pool.give(this);
+            pool.push(this);
         }
 
         /**
@@ -157,10 +157,12 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
     }
 
     public static class RequestStatePool implements QuietCloseable {
-        private final ObjList<RequestState> objects;
+        private final ObjList<RequestState> objects = new ObjList<>();
+        private final int maxPoolSize;
 
-        public RequestStatePool() {
-            objects = new ObjList<>();
+        public RequestStatePool(int maxPoolSize) {
+            assert maxPoolSize > 0;
+            this.maxPoolSize = maxPoolSize;
         }
 
         @TestOnly
@@ -176,11 +178,15 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
             objects.clear();
         }
 
-        public synchronized void give(RequestState requestState) {
-            objects.add(requestState);
+        public synchronized void push(RequestState requestState) {
+            if (objects.size() < maxPoolSize) {
+                objects.add(requestState);
+            } else {
+                requestState.free();
+            }
         }
 
-        public synchronized RequestState take() {
+        public synchronized RequestState pop() {
             final RequestState state;
             if (objects.size() > 0) {
                 final int last = objects.size() - 1;
