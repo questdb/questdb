@@ -49,6 +49,9 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_CSV;
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
@@ -666,7 +669,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(statusCode, "text/csv; charset=utf-8");
+        socket.status(statusCode, CONTENT_TYPE_CSV);
         if (state.fileName != null && state.fileName.length() > 0) {
             socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
         } else {
@@ -677,13 +680,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     protected void headerJsonError(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(400, "application/json; charset=utf-8");
+        socket.status(400, CONTENT_TYPE_JSON);
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }
 
     protected void headerNoContentDisposition(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(200, "text/csv; charset=utf-8");
+        socket.status(200, CONTENT_TYPE_CSV);
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }
