@@ -135,12 +135,12 @@ public class MetricsRegistryTest {
     private static void assertScrapable(Scrapable scrapable, CharSequence expected) {
         final DirectByteCharSink sink = new DirectByteCharSink(32);
         scrapable.scrapeIntoPrometheus(sink);
-        TestUtils.assertEquals(expected, (CharSequence) sink);
+        TestUtils.assertEquals(expected, sink.toString());
     }
 
     private static void assetNull(Scrapable scrapable) {
         final DirectByteCharSink sink = new DirectByteCharSink(32);
         scrapable.scrapeIntoPrometheus(sink);
-        TestUtils.assertEquals("", (CharSequence) sink);
+        TestUtils.assertEquals("", sink.toString());
     }
 }
