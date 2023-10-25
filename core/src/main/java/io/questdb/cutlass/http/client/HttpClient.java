@@ -38,11 +38,15 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
+import static io.questdb.cutlass.http.HttpConstants.COOKIE_HEADER;
+import static io.questdb.cutlass.http.HttpConstants.COOKIE_VALUE_SEPARATOR;
+
 public abstract class HttpClient implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
     protected final NetworkFacade nf;
     protected final Socket socket;
     private final int bufferSize;
+    private final HttpClientCookieHandler cookieHandler;
     private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
     private final int defaultTimeout;
     private final Request request = new Request();
@@ -54,6 +58,7 @@ public abstract class HttpClient implements QuietCloseable {
         this.nf = configuration.getNetworkFacade();
         this.socket = socketFactory.newInstance(configuration.getNetworkFacade(), LOG);
         this.defaultTimeout = configuration.getTimeout();
+        this.cookieHandler = configuration.getCookieHandlerFactory().getInstance();
         this.bufferSize = configuration.getBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         this.responseHeaders = new ResponseHeaders(bufLo, bufferSize, defaultTimeout, 4096, csPool);
@@ -181,7 +186,11 @@ public abstract class HttpClient implements QuietCloseable {
             binarySequenceAdapter.clear();
             binarySequenceAdapter.put(username).colon().put(password);
             Chars.base64Encode(binarySequenceAdapter, (int) binarySequenceAdapter.length(), this);
-            return eol();
+            eol();
+            if (cookieHandler != null) {
+                cookieHandler.setCookies(this, username);
+            }
+            return this;
         }
 
         public Request header(CharSequence name, CharSequence value) {
@@ -249,6 +258,12 @@ public abstract class HttpClient implements QuietCloseable {
             doSend(timeout);
             responseHeaders.clear();
             return responseHeaders;
+        }
+
+        public void setCookie(CharSequence name, CharSequence value) {
+            beforeHeader();
+            put(COOKIE_HEADER).encodeUtf8(name).put(COOKIE_VALUE_SEPARATOR).encodeUtf8(value);
+            eol();
         }
 
         public Request url(CharSequence url) {
@@ -445,6 +460,10 @@ public abstract class HttpClient implements QuietCloseable {
                     // dataLo & dataHi are boundaries of unprocessed data left in the buffer
                     chunkedResponse.begin(parse(bufLo, bufLo + len, false, true), bufLo + len);
                 }
+            }
+
+            if (cookieHandler != null) {
+                cookieHandler.processCookies(this);
             }
         }
 
