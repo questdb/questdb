@@ -32,9 +32,7 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
         ddl("create table tab (a0 double, a1 double)");
-        insert("insert into tab values (null,null)");
-        insert("insert into tab values (null,1)");
-        insert("insert into tab values (1,null)");
+        insert("insert into tab values (null,null),(null,1),(1,null)");
         assertSql("vwap\n" +
                         "NaN\n",
                 "select vwap(a0, a1) from tab"
@@ -52,8 +50,7 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVwap() throws Exception {
         ddl("create table tab (a0 double, a1 double)");
-        insert("insert into tab values (100,10)");
-        insert("insert into tab values (105,40)");
+        insert("insert into tab values (100,10),(105,40)");
         assertSql("vwap\n" +
                         "104.0\n",
                 "select vwap(a0, a1) from tab"
@@ -61,18 +58,19 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIgnoreNullAndZeroQty() throws Exception {
+    public void testIgnoreNullAndZeroOrNegativeQty() throws Exception {
         ddl("create table tab (a0 double, a1 double)");
-        insert("insert into tab values (null,null)");
-        insert("insert into tab values (1,null)");
-        insert("insert into tab values (100,10)");
-        insert("insert into tab values (null,1)");
-        insert("insert into tab values (105,40)");
-        insert("insert into tab values (1,0)");
+        insert("insert into tab values (null,null),(1,null),(100,10),(null,1),(105,40),(1,0),(1,-1)");
         assertSql("vwap\n" +
                         "104.0\n",
                 "select vwap(a0, a1) from tab"
         );
+        assertSql("vwap\n" +
+                        "104.0\n",
+                "select (sum(a0*a1)/sum(a1))vwap from tab where a0 != null and a1 != null and a1 > 0"
+        );
+
+
 
     }
 
