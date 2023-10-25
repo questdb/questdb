@@ -631,7 +631,7 @@ public class SnapshotTest extends AbstractCairoTest {
             drop("drop table test;");
             drainWalQueue();
 
-            assertSql("count\n0\n", "select count() from tables() where name = 'test';");
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -642,7 +642,7 @@ public class SnapshotTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Dropped table should be there.
-            assertSql("count\n1\n", "select count() from tables() where name = 'test';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
             assertSql(
                     "ts\tname\tval\n" +
                             "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
@@ -667,8 +667,8 @@ public class SnapshotTest extends AbstractCairoTest {
             ddl("rename table test to test2;");
             drainWalQueue();
 
-            assertSql("count\n0\n", "select count() from tables() where name = 'test';");
-            assertSql("count\n1\n", "select count() from tables() where name = 'test2';");
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -679,8 +679,8 @@ public class SnapshotTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Renamed table should be there under the original name.
-            assertSql("count\n1\n", "select count() from tables() where name = 'test';");
-            assertSql("count\n0\n", "select count() from tables() where name = 'test2';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
         });
     }
 

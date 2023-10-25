@@ -151,11 +151,17 @@ public interface SecurityContext {
      * - logged in as a user and the user has been disabled,
      * - logged in as a service account and the service account has been disabled,
      * - logged in as a user, then assumed a service account and either the user or the service account has been disabled,
-     *      or access to the service account has been revoked from the user
+     * or access to the service account has been revoked from the user
      */
     void checkEntityEnabled();
 
     void exitServiceAccount(CharSequence serviceAccountName);
+
+    default CharSequence getAssumedServiceAccount() {
+        final CharSequence principal = getPrincipal();
+        final CharSequence sessionPrincipal = getSessionPrincipal();
+        return sessionPrincipal == null || sessionPrincipal.equals(principal) ? null : principal;
+    }
 
     /**
      * User account used for permission checks, i.e. the session user account

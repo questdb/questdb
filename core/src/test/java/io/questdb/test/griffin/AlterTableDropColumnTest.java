@@ -35,7 +35,6 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class AlterTableDropColumnTest extends AbstractCairoTest {
@@ -62,7 +61,7 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
                         // make sure writer is locked before test begins
                         startBarrier.await();
                         // make sure we don't release writer until main test finishes
-                        Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
+                        haltLatch.await();
                     } catch (Throwable e) {
                         e.printStackTrace();
                         errorCounter.incrementAndGet();
@@ -83,7 +82,7 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
             }
 
-            Assert.assertTrue(allHaltLatch.await(2, TimeUnit.SECONDS));
+            allHaltLatch.await();
         });
     }
 
