@@ -1799,7 +1799,7 @@ public final class WhereClauseParser implements Mutable {
                     hash = GeoHashes.fromStringTruncatingNl(token, 1, len - sddLen, bits);
                 } else {
                     int bits = len - 2;
-                    if (bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+                    if (bits <= ColumnType.GEOLONG_MAX_BITS) {
                         type = ColumnType.getGeoHashTypeWithBits(bits);
                         hash = GeoHashes.fromBitStringNl(token, 2);
                     } else {

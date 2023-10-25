@@ -60,13 +60,13 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.ColumnType.NO_OVERLOAD;
+import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
 
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void overloadFromCharToDoubleDoesNotExist() {
-        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), NO_OVERLOAD);
+        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), OVERLOAD_NONE);
     }
 
     @Test
@@ -1149,15 +1149,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testOverloadBetweenNullAndAnyType() {
-        for (short type = ColumnType.BOOLEAN; type < ColumnType.MAX; type++) {
+        for (short type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
             if (type == ColumnType.STRING || type == ColumnType.SYMBOL) {
                 String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
                 Assert.assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
-                Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
+                Assert.assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(type, ColumnType.NULL));
             } else {
                 String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
                 Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
-                Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
+                Assert.assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(type, ColumnType.NULL));
             }
         }
     }

@@ -540,7 +540,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         FunctionFactoryDescriptor candidateDescriptor = null;
         boolean candidateSigVarArgConst = false;
         int candidateSigArgCount = 0;
-        int candidateSigArgTypeSum = -1;
+        int candidateSigArgTypeScore = -1;
         int bestMatch = MATCH_NO_MATCH;
 
         undefinedVariables.clear();
@@ -574,21 +574,22 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 sigArgCount--;
             }
 
+            // this is no-arg function, match right away
             if (argCount == 0 && sigArgCount == 0) {
-                // this is no-arg function, match right away
                 return checkAndCreateFunction(factory, args, argPositions, node, configuration);
             }
 
-            // otherwise, is number of arguments the same?
             if (candidateDescriptor == null) {
                 candidateDescriptor = descriptor;
             }
+
+            // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = sigArgCount == 0 ? MATCH_EXACT_MATCH : MATCH_NO_MATCH;
-                int sigArgTypeSum = 0;
-                for (int k = 0; k < sigArgCount; k++) {
-                    final Function arg = args.getQuick(k);
-                    final int sigArgTypeMask = descriptor.getArgTypeMask(k);
+                int sigArgTypeScore = 0;
+                for (int argIdx = 0; argIdx < sigArgCount; argIdx++) {
+                    final Function arg = args.getQuick(argIdx);
+                    final int sigArgTypeMask = descriptor.getArgTypeMask(argIdx);
 
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
                         match = MATCH_NO_MATCH; // no match
@@ -630,10 +631,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     boolean overloadPossible = false;
                     // we do not want to use any overload when checking the output of a cast() function.
                     // the output must be the exact type as specified by a user. that's the whole point of casting. 
-                    // for all other functions else we want to explore possible casting opportunities
+                    // for all other functions, else, we want to explore possible casting opportunities
                     //
                     // output of a cast() function is always the 2nd argument in a function signature
-                    if (k != 1 || !Chars.equals("cast", node.token)) {
+                    if (argIdx != 1 || !Chars.equals("cast", node.token)) {
                         int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
 
                         if (argTypeTag == ColumnType.STRING &&
@@ -641,7 +642,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                             if (arg.isConstant()) {
                                 // string longer than 1 char can't be cast to char implicitly
                                 if (arg.getStrLen(null) > 1) {
-                                    overloadDistance = ColumnType.NO_OVERLOAD;
+                                    overloadDistance = ColumnType.OVERLOAD_NONE;
                                 }
                             } else {
                                 // prefer CHAR -> STRING to STRING -> CHAR conversion
@@ -649,9 +650,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                             }
                         }
 
-                        sigArgTypeSum += overloadDistance;
+                        sigArgTypeScore += overloadDistance;
                         // Overload with cast to higher precision
-                        overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
+                        overloadPossible = overloadDistance != ColumnType.OVERLOAD_NONE;
 
                         // Overload when arg is double NaN to func which accepts INT, LONG
                         overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
@@ -716,12 +717,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
 
                     if (match != MATCH_EXACT_MATCH) {
-                        if (candidateSigArgTypeSum > sigArgTypeSum || bestMatch < match) {
+                        if (candidateSigArgTypeScore > sigArgTypeScore || bestMatch < match) {
                             candidate = factory;
                             candidateDescriptor = descriptor;
                             candidateSigArgCount = sigArgCount;
                             candidateSigVarArgConst = sigVarArgConst;
-                            candidateSigArgTypeSum = sigArgTypeSum;
+                            candidateSigArgTypeScore = sigArgTypeScore;
                         }
                         bestMatch = match;
                     } else {

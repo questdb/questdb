@@ -64,7 +64,7 @@ public final class GeoHashAdapter extends AbstractTypeAdapter {
     }
 
     static {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             int type = ColumnType.getGeoHashTypeWithBits(b);
             typeToAdapterMap.put(type, new GeoHashAdapter(type));
         }
