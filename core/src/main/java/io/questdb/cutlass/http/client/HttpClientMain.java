@@ -49,7 +49,7 @@ public class HttpClientMain {
                         .url("/exec")
 //                        .query("query", "cpu%20limit%20400000")
                         .query("query", "cpu limit 2")
-//                .query("query", "cpu")
+//                        .query("query", "cpu")
                         .header("Accept", "gzip, deflate, br")
                         .header("SomethingElse", "vlad")
                         .authBasic("vlad", "hello")
@@ -73,7 +73,6 @@ public class HttpClientMain {
                     System.out.println(System.currentTimeMillis() - t);
                     System.out.println("done: " + i +", chunks: "+chunkCount);
                 }
-
             }
         }
     }

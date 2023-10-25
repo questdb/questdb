@@ -44,13 +44,13 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_TEXT;
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
     static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;
-    private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
-    private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private final static Log LOG = LogFactory.getLog(TextImportProcessor.class);
     // Local value has to be static because each thread will have its own instance of
     // processor. For different threads to lookup the same value from local value map the key,
@@ -511,11 +511,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         final TextImportProcessorState state = LV.get(context);
         state.responseState = RESPONSE_ERROR;
         state.errorMessage = message;
-        if (state.json) {
-            socket.status(200, CONTENT_TYPE_JSON);
-        } else {
-            socket.status(200, CONTENT_TYPE_TEXT);
-        }
+        socket.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
         socket.sendHeader();
         socket.sendChunk(false);
         resumeError(state, socket);
@@ -536,11 +532,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
         state.snapshotStateAndCloseWriter();
         if (state.state == TextImportProcessorState.STATE_OK) {
-            if (state.json) {
-                socket.status(200, CONTENT_TYPE_JSON);
-            } else {
-                socket.status(200, CONTENT_TYPE_TEXT);
-            }
+            socket.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
             socket.sendHeader();
             doResumeSend(state, socket);
         } else {
