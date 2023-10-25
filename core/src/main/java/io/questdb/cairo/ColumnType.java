@@ -294,46 +294,6 @@ public final class ColumnType {
     static {
         assert MIGRATION_VERSION >= VERSION;
         // For function overload the priority is taken from left to right
-
-        // public static final short UNDEFINED = 0;                    // = 0
-        //    public static final short BOOLEAN = UNDEFINED + 1;          // = 1
-        //    public static final short BYTE = BOOLEAN + 1;               // = 2
-        //    public static final short SHORT = BYTE + 1;                 // = 3
-        //    public static final short CHAR = SHORT + 1;                 // = 4
-        //    public static final short INT = CHAR + 1;                   // = 5
-        //    public static final short LONG = INT + 1;                   // = 6
-        //    public static final short DATE = LONG + 1;                  // = 7
-        //    public static final short TIMESTAMP = DATE + 1;             // = 8
-        //    public static final short FLOAT = TIMESTAMP + 1;            // = 9
-        //    public static final short DOUBLE = FLOAT + 1;               // = 10
-        //    public static final short STRING = DOUBLE + 1;              // = 11
-        //    public static final short SYMBOL = STRING + 1;              // = 12
-        //    public static final short LONG256 = SYMBOL + 1;             // = 13
-        //    public static final short GEOBYTE = LONG256 + 1;            // = 14
-        //    public static final short GEOSHORT = GEOBYTE + 1;           // = 15
-        //    public static final short GEOINT = GEOSHORT + 1;            // = 16
-        //    public static final short GEOLONG = GEOINT + 1;             // = 17
-        //    public static final short BINARY = GEOLONG + 1;             // = 18
-        //    public static final short UUID = BINARY + 1;                // = 19
-
-        //    public static final short CURSOR = UUID + 1;                // = 20
-        //    public static final short VAR_ARG = CURSOR + 1;             // = 21
-        //    public static final short RECORD = VAR_ARG + 1;             // = 22
-        //    // GEOHASH is not stored. It is used on function
-        //    // arguments to resolve overloads. We also build
-        //    // overload matrix, which logic relies on GEOHASH
-        //    // value >UUID and <MAX.
-        //    public static final short GEOHASH = RECORD + 1;             // = 23
-        //    public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
-        //    public static final short IPv4 = LONG128 + 1;               // = 25
-        //    // PG specific types to work with 3rd party software
-        //    // with canned catalogue queries:
-        //    // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-        //    public static final short REGCLASS = IPv4 + 1;              // = 26;
-        //    public static final short REGPROCEDURE = REGCLASS + 1;      // = 27;
-        //    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
-        //    public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
-        //    public static final short NULL = PARAMETER + 1;             // = 30; ALWAYS the last
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
                 /* 1  BOOLEAN   */, {BOOLEAN}
