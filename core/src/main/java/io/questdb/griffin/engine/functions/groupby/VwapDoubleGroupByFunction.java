@@ -115,7 +115,7 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
-        mapValue.putDouble(valueIndex + 1, valueIndex);
+        mapValue.putDouble(valueIndex + 1, value);
         mapValue.putDouble(valueIndex + 2, 1);
     }
 
