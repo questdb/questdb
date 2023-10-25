@@ -92,7 +92,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
 
     private void sendResponse(HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
         while (state.countPending() > 0) {
-           sendNextChunk(r, state);
+            sendNextChunk(r, state);
         }
     }
 
@@ -148,7 +148,9 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
             sink.close();
         }
 
-        /** Calculate the number of bytes that still need to be written to chunks. */
+        /**
+         * Calculate the number of bytes that still need to be written to chunks.
+         */
         public int countPending() {
             return sink.size() - written;
         }
@@ -171,6 +173,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
             for (int i = 0, n = objects.size(); i < n; i++) {
                 objects.getQuick(i).free();
             }
+            objects.clear();
         }
 
         public synchronized void give(RequestState requestState) {

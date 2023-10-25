@@ -123,6 +123,8 @@ public class MetricsIODispatcherTest {
     public void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches) throws Exception {
         final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool();
 
+        Assert.assertEquals(pool.size(), 0);
+
         MetricsRegistry metrics = new MetricsRegistryImpl();
         for (int i = 0; i < metricCount; i++) {
             metrics.newCounter("testMetrics" + i).add(i);
@@ -135,6 +137,10 @@ public class MetricsIODispatcherTest {
 
         final HttpQueryTestBuilder.HttpClientCode makeRequest = engine -> {
             try (HttpClient client = HttpClientFactory.newInstance()) {
+                if (parallelRequestBatches == 1) {
+                    Assert.assertEquals(pool.size(), 0);
+                }
+
                 // Repeated requests over the same connection.
                 // This is to stress out the RequestState pooling logic.
                 for (int i = 0; i < 5; i++) {
@@ -146,6 +152,13 @@ public class MetricsIODispatcherTest {
                     response.await(5_000);
                     TestUtils.assertEquals("200", response.getStatusCode());
 
+                    if (parallelRequestBatches == 1) {
+                        // The request state is in use.
+                        Assert.assertTrue(pool.size() == 0);
+                    } else {
+                        Assert.assertTrue(pool.size() <= parallelRequestBatches);
+                    }
+
                     Assert.assertTrue(response.isChunked());
                     ChunkedResponse chunkedResponse = response.getChunkedResponse();
                     StringSink responseSink = new StringSink();
@@ -155,6 +168,12 @@ public class MetricsIODispatcherTest {
                         Chars.utf8toUtf16(chunk.lo(), chunk.hi(), responseSink);
                     }
                     TestUtils.assertEquals(expectedResponse, responseSink);
+                }
+
+                if (parallelRequestBatches == 1) {
+                    if (pool.size() > 1) {
+                        Assert.fail("pool.size() > 1: " + pool.size());
+                    }
                 }
             }
         };
@@ -171,7 +190,6 @@ public class MetricsIODispatcherTest {
         final HttpQueryTestBuilder.HttpClientCode clientCode = parallelizeRequests(parallelRequestBatches, repeatedRequest);
         final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
         new HttpMinTestBuilder()
-
                 .withTempFolder(temp)
                 .withScrapable(metrics)
                 .withTcpSndBufSize(tcpSndBufSize)
@@ -179,6 +197,8 @@ public class MetricsIODispatcherTest {
                 .withWorkerCount(workerCount)
                 .withPrometheusPool(pool)
                 .run(clientCode);
+
+        Assert.assertEquals(pool.size(), 0);
     }
 
     @Test
