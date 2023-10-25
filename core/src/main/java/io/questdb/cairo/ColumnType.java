@@ -51,6 +51,7 @@ public final class ColumnType {
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int MIGRATION_VERSION = 427;
+    public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
     // our type system is absolutely ordered ranging
     // - from UNDEFINED: index 0, represents lack of type, an internal parsing concept.
@@ -356,8 +357,7 @@ public final class ColumnType {
                 /* 19 UUID      */, {UUID, STRING}};
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
-                short value = OVERLOAD_NONE; // default
-                // lookup toTag in priority list
+                short value = OVERLOAD_NONE;
                 if (fromTag < OVERLOAD_PRIORITY.length) {
                     short[] priority = OVERLOAD_PRIORITY[fromTag];
                     for (short i = 0; i < priority.length; i++) {
@@ -371,9 +371,9 @@ public final class ColumnType {
             }
         }
         // When null used as func arg, default to string as function factory arg to avoid weird behaviour
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = -1;
+        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
         // Do the same for symbol -> avoids weird null behaviour
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = -1;
+        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
 
 
         GEO_TYPE_SIZE_POW2 = new int[GEOLONG_MAX_BITS + 1];
