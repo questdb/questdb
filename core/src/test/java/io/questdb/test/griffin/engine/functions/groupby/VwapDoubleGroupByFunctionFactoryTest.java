@@ -65,13 +65,11 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "104.0\n",
                 "select vwap(a0, a1) from tab"
         );
-        assertSql("vwap\n" +
-                        "104.0\n",
-                "select (sum(a0*a1)/sum(a1))vwap from tab where a0 != null and a1 != null and a1 > 0"
+        // make sure they are the same.
+        assertSql("same_vwap\n" +
+                        "true\n",
+                "select (new_vwap=old_vwap)same_vwap from ((select vwap(a0, a1)new_vwap from tab)a, (select (sum(a0*a1)/sum(a1))old_vwap from tab where a0 != null and a1 != null and a1 > 0)b)"
         );
-
-
-
     }
 
 }
