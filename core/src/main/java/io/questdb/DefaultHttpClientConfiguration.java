@@ -24,44 +24,14 @@
 
 package io.questdb;
 
-import io.questdb.network.*;
+import io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory;
 
 public class DefaultHttpClientConfiguration implements HttpClientConfiguration {
-
-    public final static HttpClientConfiguration INSTANCE = new DefaultHttpClientConfiguration();
-
-    @Override
-    public int getBufferSize() {
-        return 64 * 1024;
-    }
+    public static final HttpClientConfiguration INSTANCE = new DefaultHttpClientConfiguration();
+    private static final HttpClientCookieHandlerFactory COOKIE_HANDLER_FACTORY = () -> null;
 
     @Override
-    public EpollFacade getEpollFacade() {
-        return EpollFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public KqueueFacade getKQueueFacade() {
-        return KqueueFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public SelectFacade getSelectFacade() {
-        return SelectFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getTimeout() {
-        return 60_000;
-    }
-
-    @Override
-    public int getWaitQueueCapacity() {
-        return 4;
+    public HttpClientCookieHandlerFactory getCookieHandlerFactory() {
+        return COOKIE_HANDLER_FACTORY;
     }
 }

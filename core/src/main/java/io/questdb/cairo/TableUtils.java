@@ -798,15 +798,15 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
-    public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
-        int l = seq.length();
-        if (l > fsFileNameLimit) {
-            // Most file systems don't support files name longer than 255 bytes
+    public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
+        final int length = columnName.length();
+        if (length > fsFileNameLimit) {
+            // Most file systems do not support file names longer than 255 bytes
             return false;
         }
 
-        for (int i = 0; i < l; i++) {
-            char c = seq.charAt(i);
+        for (int i = 0; i < length; i++) {
+            char c = columnName.charAt(i);
             switch (c) {
                 case '?':
                 case '.':
@@ -846,20 +846,21 @@ public final class TableUtils {
                     break;
             }
         }
-        return l > 0;
+        return length > 0;
     }
 
     public static boolean isValidTableName(CharSequence tableName, int fsFileNameLimit) {
-        int l = tableName.length();
-        if (l > fsFileNameLimit) {
-            // Most file systems don't support files name longer than 255 bytes
+        final int length = tableName.length();
+        if (length > fsFileNameLimit) {
+            // Most file systems do not support file names longer than 255 bytes
             return false;
         }
-        for (int i = 0; i < l; i++) {
+
+        for (int i = 0; i < length; i++) {
             char c = tableName.charAt(i);
             switch (c) {
                 case '.':
-                    if (i == 0 || i == l - 1 || tableName.charAt(i - 1) == '.') {
+                    if (i == 0 || i == length - 1 || tableName.charAt(i - 1) == '.') {
                         // Single dot in the middle is allowed only
                         // Starting from . hides directory in Linux
                         // Ending . can be trimmed by some Windows versions / file systems
@@ -903,7 +904,7 @@ public final class TableUtils {
                     return false;
             }
         }
-        return tableName.length() > 0 && tableName.charAt(0) != ' ' && tableName.charAt(l - 1) != ' ';
+        return length > 0 && tableName.charAt(0) != ' ' && tableName.charAt(length - 1) != ' ';
     }
 
     public static int lock(FilesFacade ff, Path path, boolean verbose) {
