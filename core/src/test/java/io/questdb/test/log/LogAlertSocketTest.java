@@ -172,7 +172,7 @@ public class LogAlertSocketTest {
             final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
             final CyclicBarrier startBarrier = new CyclicBarrier(2);
             final MockAlertTarget server = new MockAlertTarget(
-                    0,
+                    9863,
                     haltLatch::countDown,
                     () -> TestUtils.await(startBarrier)
             );
