@@ -65,8 +65,8 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_READER = "busyReader";
     public static final String REASON_SNAPSHOT_IN_PROGRESS = "snapshotInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
-    private final CairoConfiguration configuration;
     private final CopyContext copyContext;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
