@@ -29,10 +29,13 @@ import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_DISPOSITION_HEADER;
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_HEADER;
+
 public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
-    private static final String CONTENT_DISPOSITION_HEADER = "Content-Disposition";
-    private static final String CONTENT_TYPE_HEADER = "Content-Type";
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
+    // in theory, it is possible to send multiple cookies on separate lines in the header
+    // if we used more cookies, the below map would need to hold a list of CharSequences
     private final LowerCaseAsciiCharSequenceObjHashMap<DirectByteCharSequence> headers = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private final long hi;
     private final ObjectPool<DirectByteCharSequence> pool;
@@ -604,5 +607,4 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
             of0(BOUNDARY_PREFIX);
         }
     }
-
 }

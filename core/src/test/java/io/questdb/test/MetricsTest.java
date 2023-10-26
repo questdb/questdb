@@ -88,7 +88,7 @@ public class MetricsTest {
 
     @Test
     public void testMetricNamesContainGCMetrics() {
-        Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+        Metrics metrics = Metrics.enabled();
 
         StringSink sink = new StringSink();
         metrics.scrapeIntoPrometheus(sink);

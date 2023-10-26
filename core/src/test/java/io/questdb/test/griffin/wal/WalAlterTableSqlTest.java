@@ -276,14 +276,14 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "name\n" + tableName + "\n", "select name from tables()"
+                    "table_name\n" + tableName + "\n", "select table_name from tables()"
             );
 
             drop("drop table " + tableName);
             drainWalQueue();
 
             assertSql(
-                    "name\n", "select name from tables() where name = '" + tableName + "'"
+                    "table_name\n", "select table_name from tables() where table_name = '" + tableName + "'"
             );
         });
     }
@@ -303,7 +303,7 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "o3MaxLag\n117000000\n", "select o3MaxLag from tables() where name = '" + tableName + "'"
+                    "o3MaxLag\n117000000\n", "select o3MaxLag from tables() where table_name = '" + tableName + "'"
             );
         });
     }

@@ -387,9 +387,9 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                         " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
         );
         assertSql(
-                "name\tdedup\n" +
+                "table_name\tdedup\n" +
                         "testEnableDedup\ttrue\n",
-                "select name, dedup from tables() where name ='" + tableName + "'"
+                "select table_name, dedup from tables() where table_name ='" + tableName + "'"
         );
         assertSql(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
@@ -401,17 +401,17 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         compile("alter table " + tableName + " dedup disable");
         drainWalQueue();
         assertSql(
-                "name\tdedup\n" +
+                "table_name\tdedup\n" +
                         "testEnableDedup\tfalse\n",
-                "select name, dedup from tables() where name ='" + tableName + "'"
+                "select table_name, dedup from tables() where table_name ='" + tableName + "'"
         );
 
         compile("alter table " + tableName + " dedup enable upsert keys(ts)");
         drainWalQueue();
         assertSql(
-                "name\tdedup\n" +
+                "table_name\tdedup\n" +
                         "testEnableDedup\ttrue\n",
-                "select name, dedup from tables() where name ='" + tableName + "'"
+                "select table_name, dedup from tables() where table_name ='" + tableName + "'"
         );
         assertSql(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
