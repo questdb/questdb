@@ -31,7 +31,6 @@ import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.auth.AuthUtils;
@@ -245,7 +244,7 @@ public class ServerMain implements Closeable {
                         );
 
                         if (walSupported) {
-                            sharedPool.assign(new CheckWalTransactionsJob(engine));
+                            sharedPool.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
                             final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
                             engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
                             walPurgeJob.delayByHalfInterval();
