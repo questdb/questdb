@@ -2833,49 +2833,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 final int osz = ac.getOrderBy().size();
-                executionContext.configureAnalyticContext(
-                        partitionByRecord,
-                        partitionBySink,
-                        keyTypes,
-                        osz > 0,
-                        base.recordCursorSupportsRandomAccess(),
-                        ac.getFramingMode(),
-                        ac.getRowsLo(),
-                        ac.getRowsLoKindPos(),
-                        ac.getRowsHi(),
-                        ac.getRowsHiKindPos(),
-                        ac.getExclusionKind(),
-                        ac.getExclusionKindPos()
-                );
-                final Function f;
-                try {
-                    f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                    if (!(f instanceof AnalyticFunction)) {
-                        Misc.free(base);
-                        Misc.free(f);
-                        throw SqlException.$(ast.position, "non-analytic function called in analytic context");
-                    }
-
-                    AnalyticFunction af = (AnalyticFunction) f;
-                    functions.extendAndSet(i, f);
-
-                    if (af.getPassCount() != AnalyticFunction.ZERO_PASS) {
-                        //multiple passes are required, so fall back to old implementation
-                        Misc.free(f);
-                        isFastPath = false;
-                        break;
-                    }
-                } finally {
-                    executionContext.clearAnalyticContext();
-                }
-
-                AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
                 // analyze order by clause on the current model and optimise out
                 // order by on analytic function if it matches the one on the model
                 final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
                 boolean dismissOrder = false;
                 int timestampIdx = base.getMetadata().getTimestampIndex();
+                int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
                 if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                     dismissOrder = true;
@@ -2899,11 +2863,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                if (osz > 0 && !dismissOrder) {
-                    isFastPath = false;//sorting is required, so fall back to old implementation
-                    break;
+                executionContext.configureAnalyticContext(
+                        partitionByRecord,
+                        partitionBySink,
+                        keyTypes,
+                        osz > 0,
+                        dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                        orderByPos,
+                        base.recordCursorSupportsRandomAccess(),
+                        ac.getFramingMode(),
+                        ac.getRowsLo(),
+                        ac.getRowsLoKindPos(),
+                        ac.getRowsHi(),
+                        ac.getRowsHiKindPos(),
+                        ac.getExclusionKind(),
+                        ac.getExclusionKindPos(),
+                        baseMetadata.getTimestampIndex()
+                );
+                final Function f;
+                try {
+                    f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                    if (!(f instanceof AnalyticFunction)) {
+                        Misc.free(base);
+                        Misc.free(f);
+                        throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                    }
+
+                    AnalyticFunction af = (AnalyticFunction) f;
+                    functions.extendAndSet(i, f);
+
+                    //sorting  multiple passes are required, so fall back to old implementation
+                    if ((osz > 0 && !dismissOrder) || af.getPassCount() != AnalyticFunction.ZERO_PASS) {
+                        isFastPath = false;
+                        break;
+                    }
+                } finally {
+                    executionContext.clearAnalyticContext();
                 }
 
+                AnalyticFunction analyticFunction = (AnalyticFunction) f;
                 analyticFunction.setColumnIndex(i);
 
                 factoryMetadata.add(new TableColumnMetadata(
@@ -3061,39 +3059,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 final int osz = ac.getOrderBy().size();
-                executionContext.configureAnalyticContext(
-                        partitionByRecord,
-                        partitionBySink,
-                        keyTypes,
-                        osz > 0,
-                        base.recordCursorSupportsRandomAccess(),
-                        ac.getFramingMode(),
-                        ac.getRowsLo(),
-                        ac.getRowsLoKindPos(),
-                        ac.getRowsHi(),
-                        ac.getRowsHiKindPos(),
-                        ac.getExclusionKind(),
-                        ac.getExclusionKindPos()
-                );
-                final Function f;
-                try {
-                    //function needs to resolve args against chain metadata
-                    f = functionParser.parseFunction(ast, chainMetadata, executionContext);
-                    if (!(f instanceof AnalyticFunction)) {
-                        Misc.free(base);
-                        throw SqlException.$(ast.position, "non-analytic function called in analytic context");
-                    }
-                } finally {
-                    executionContext.clearAnalyticContext();
-                }
-
-                AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
                 // analyze order by clause on the current model and optimise out
                 // order by on analytic function if it matches the one on the model
                 final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
                 boolean dismissOrder = false;
                 int timestampIdx = base.getMetadata().getTimestampIndex();
+                int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
                 if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                     dismissOrder = true;
@@ -3116,6 +3088,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         dismissOrder = true;
                     }
                 }
+
+                executionContext.configureAnalyticContext(
+                        partitionByRecord,
+                        partitionBySink,
+                        keyTypes,
+                        osz > 0,
+                        dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                        orderByPos,
+                        base.recordCursorSupportsRandomAccess(),
+                        ac.getFramingMode(),
+                        ac.getRowsLo(),
+                        ac.getRowsLoKindPos(),
+                        ac.getRowsHi(),
+                        ac.getRowsHiKindPos(),
+                        ac.getExclusionKind(),
+                        ac.getExclusionKindPos(),
+                        chainMetadata.getTimestampIndex()
+                );
+                final Function f;
+                try {
+                    //function needs to resolve args against chain metadata
+                    f = functionParser.parseFunction(ast, chainMetadata, executionContext);
+                    if (!(f instanceof AnalyticFunction)) {
+                        Misc.free(base);
+                        throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                    }
+                } finally {
+                    executionContext.clearAnalyticContext();
+                }
+
+                AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
                 if (osz > 0 && !dismissOrder) {
                     IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());

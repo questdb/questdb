@@ -96,6 +96,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes partitionByKeyTypes,
             boolean ordered,
+            int orderByDirection,
+            int orderByPos,
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
@@ -103,13 +105,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             long rowsHi,
             int rowsHiKindPos,
             int exclusionKind,
-            int exclusionKindPos
+            int exclusionKindPos,
+            int timestampIndex
     ) {
         analyticContext.of(
                 partitionByRecord,
                 partitionBySink,
                 partitionByKeyTypes,
                 ordered,
+                orderByDirection,
+                orderByPos,
                 baseSupportsRandomAccess,
                 framingMode,
                 rowsLo,
@@ -117,7 +122,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 rowsHi,
                 rowsHiKindPos,
                 exclusionKind,
-                exclusionKindPos);
+                exclusionKindPos,
+                timestampIndex);
     }
 
     @Override

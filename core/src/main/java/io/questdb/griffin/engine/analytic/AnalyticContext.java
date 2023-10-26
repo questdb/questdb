@@ -37,6 +37,8 @@ public interface AnalyticContext {
 
     int getFramingMode();
 
+    int getOrderByPos();
+
     ColumnTypes getPartitionByKeyTypes();
 
     VirtualRecord getPartitionByRecord();
@@ -51,9 +53,13 @@ public interface AnalyticContext {
 
     int getRowsLoKindPos();
 
+    int getTimestampIndex();
+
     boolean isDefaultFrame();
 
     boolean isEmpty();
 
     boolean isOrdered();
+
+    boolean isOrderedByDesignatedTimestamp();
 }

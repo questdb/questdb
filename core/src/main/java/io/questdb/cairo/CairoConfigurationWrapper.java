@@ -512,6 +512,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAnalyticInitialRangeBufferSize() {
+        return delegate.getSqlAnalyticInitialRangeBufferSize();
+    }
+
+    @Override
     public int getSqlAnalyticMaxFrameSize() {
         return delegate.getSqlAnalyticMaxFrameSize();
     }

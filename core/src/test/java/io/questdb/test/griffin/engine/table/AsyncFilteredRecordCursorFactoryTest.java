@@ -889,6 +889,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 @Nullable RecordSink partitionBySink,
                 @Nullable ColumnTypes keyTypes,
                 boolean isOrdered,
+                int orderByDirection,
+                int orderByPos,
                 boolean baseSupportsRandomAccess,
                 int framingMode,
                 long rowsLo,
@@ -896,13 +898,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 long rowsHi,
                 int rowsHiKindPos,
                 int exclusionKind,
-                int exclusionKindPos
+                int exclusionKindPos,
+                int timestampIndex
         ) {
             sqlExecutionContext.configureAnalyticContext(
                     partitionByRecord,
                     partitionBySink,
                     keyTypes,
                     isOrdered,
+                    orderByDirection,
+                    orderByPos,
                     baseSupportsRandomAccess,
                     framingMode,
                     rowsLo,
@@ -910,7 +915,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     rowsHi,
                     rowsHiKindPos,
                     exclusionKind,
-                    exclusionKindPos);
+                    exclusionKindPos,
+                    timestampIndex);
         }
 
         @Override

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.analytic;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.model.AnalyticColumn;
 import io.questdb.std.Mutable;
@@ -39,6 +40,8 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
 
     private int exclusionKindPos;
     private int framingMode;
+    private int orderByDirection;
+    private int orderByPos;
     private boolean ordered;
     private ColumnTypes partitionByKeyTypes;
     private VirtualRecord partitionByRecord;
@@ -47,6 +50,8 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
     private int rowsHiKindPos;
     private long rowsLo;
     private int rowsLoKindPos;
+
+    private int timestampIndex;
 
     @Override
     public boolean baseSupportsRandomAccess() {
@@ -60,6 +65,8 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
         this.partitionBySink = null;
         this.partitionByKeyTypes = null;
         this.ordered = false;
+        this.orderByDirection = RecordCursorFactory.SCAN_DIRECTION_OTHER;
+        this.orderByPos = 0;
         this.baseSupportsRandomAccess = false;
         this.framingMode = AnalyticColumn.FRAMING_ROWS;
         this.rowsLo = Long.MIN_VALUE;
@@ -68,6 +75,7 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
         this.rowsLoKindPos = 0;
         this.rowsHiKindPos = 0;
         this.exclusionKindPos = 0;
+        this.timestampIndex = -1;
     }
 
     public int getExclusionKind() {
@@ -81,6 +89,10 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
 
     public int getFramingMode() {
         return framingMode;
+    }
+
+    public int getOrderByPos() {
+        return orderByPos;
     }
 
     @Override
@@ -117,6 +129,11 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
     }
 
     @Override
+    public int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    @Override
     public boolean isDefaultFrame() {
         // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
         // anything other than that is custom
@@ -135,11 +152,17 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
         return ordered;
     }
 
+    public boolean isOrderedByDesignatedTimestamp() {
+        return orderByDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD || orderByDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+    }
+
     public void of(
             VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes partitionByKeyTypes,
             boolean ordered,
+            int orderByDirection,
+            int orderByPos,
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
@@ -147,13 +170,16 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
             long rowsHi,
             int rowsHiKindPos,
             int exclusionKind,
-            int exclusionKindPos
+            int exclusionKindPos,
+            int timestampIndex
     ) {
         this.empty = false;
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
         this.partitionByKeyTypes = partitionByKeyTypes;
         this.ordered = ordered;
+        this.orderByDirection = orderByDirection;
+        this.orderByPos = orderByPos;
         this.baseSupportsRandomAccess = baseSupportsRandomAccess;
         this.framingMode = framingMode;
         this.rowsLo = rowsLo;
@@ -162,5 +188,6 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
         this.rowsHiKindPos = rowsHiKindPos;
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;
+        this.timestampIndex = timestampIndex;
     }
 }

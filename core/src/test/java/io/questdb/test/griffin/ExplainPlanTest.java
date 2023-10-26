@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.functions.eq.*;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.griffin.model.AnalyticColumn;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -2078,7 +2079,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         //TODO: test with partition by, order by and various frame modes
                         if (factory.isWindow()) {
-                            sqlExecutionContext.configureAnalyticContext(null, null, null, false, true, AnalyticColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, AnalyticColumn.EXCLUDE_NO_OTHERS, 0);
+                            sqlExecutionContext.configureAnalyticContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, AnalyticColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, AnalyticColumn.EXCLUDE_NO_OTHERS, 0, -1);
                         }
                         Function function = null;
                         try {

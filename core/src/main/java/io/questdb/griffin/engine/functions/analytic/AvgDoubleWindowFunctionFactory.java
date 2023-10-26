@@ -28,6 +28,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -107,20 +109,20 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         long windowSize = rowsHi != Long.MAX_VALUE ?
                 Math.abs(rowsLo != Long.MIN_VALUE ? rowsLo : rowsHi) : 0;
 
-        if (windowSize > configuration.getSqlAnalyticMaxFrameSize()) {
+        int framingMode = analyticContext.getFramingMode();
+
+        if (framingMode == AnalyticColumn.FRAMING_ROWS && windowSize > configuration.getSqlAnalyticMaxFrameSize()) {
             throw SqlException.$(position, "window buffer size exceeds configured limit [maxSize=").put(configuration.getSqlAnalyticMaxFrameSize()).put(",actual=").put(windowSize).put(']');
         }
 
-        int framingMode = analyticContext.getFramingMode();
         RecordSink partitionBySink = analyticContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = analyticContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = analyticContext.getPartitionByRecord();
 
         if (partitionByRecord != null) {
             if (framingMode == AnalyticColumn.FRAMING_RANGE) {
-                if (!analyticContext.isOrdered()
-                        && analyticContext.isDefaultFrame()) {
-                    // moving average over whole partition (no order by, default frame)
+                // moving average over whole partition (no order by, default frame)
+                if (!analyticContext.isOrdered() && analyticContext.isDefaultFrame()) {
                     Map map = MapFactory.createMap(
                             configuration,
                             partitionByKeyTypes,
@@ -133,16 +135,63 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             partitionBySink,
                             args.get(0)
                     );
+                } // between unbounded preceding and current row
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            AVG_COLUMN_TYPES
+                    );
+
+                    //same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    return new AvgOverUnboundedPartitionRowsFrameFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            args.get(0)
+                    );
+                } // range between [unbounded | x] preceding and [x preceding | current row]
+                else {
+                    if (analyticContext.isOrdered() && !analyticContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(analyticContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+
+                    int timestampIndex = analyticContext.getTimestampIndex();
+
+                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+                    columnTypes.add(ColumnType.DOUBLE);// current frame sum
+                    columnTypes.add(ColumnType.LONG);  // number of (non-null) values in current frame
+                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
+                    columnTypes.add(ColumnType.LONG);   // native buffer size
+                    columnTypes.add(ColumnType.LONG);   // native buffer capacity
+                    columnTypes.add(ColumnType.LONG);   // index of first buffered element
+                    columnTypes.add(ColumnType.LONG);  // number of (non-null) values in current unbounded frame
+
+                    Map map = MapFactory.createMap(
+                            configuration,
+                            partitionByKeyTypes,
+                            columnTypes
+                    );
+
+                    final int initialBufferSize = configuration.getSqlAnalyticInitialRangeBufferSize();
+                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlAnalyticStorePageSize(), configuration.getSqlAnalyticStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+
+                    // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                    return new AvgOverPartitionRangeFrameFunction(
+                            map,
+                            partitionByRecord,
+                            partitionBySink,
+                            rowsLo,
+                            rowsHi,
+                            args.get(0),
+                            mem,
+                            initialBufferSize,
+                            timestampIndex
+                    );
                 }
-
-                throw SqlException.$(position, "function not implemented for given window paramters");
-
             } else if (framingMode == AnalyticColumn.FRAMING_GROUPS) {
-
                 throw SqlException.$(position, "function not implemented for given window paramters");
-
             } else if (framingMode == AnalyticColumn.FRAMING_ROWS) {
-
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createMap(
@@ -202,23 +251,41 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     // moving average over preceding N rows
                     return new AvgOverPartitionRowsFrameFunction(
                             map,
-                            rowsLo,
-                            rowsHi,
                             partitionByRecord,
                             partitionBySink,
+                            rowsLo,
+                            rowsHi,
                             args.get(0)
                     );
                 }
             }
         } else { // no partition key
-
             if (framingMode == AnalyticColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
-                if (!analyticContext.isOrdered()) {
+                if (!analyticContext.isOrdered() && analyticContext.isDefaultFrame()) {
                     return new AvgOverWholeResultSetFunction(args.get(0));
+                } // between unbounded preceding and current row
+                else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    //same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    return new AvgOverUnboundedRowsFrameFunction(args.get(0));
+                } // range between [unbounded | x] preceding and [x preceding | current row]
+                else {
+                    if (analyticContext.isOrdered() && !analyticContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(analyticContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+
+                    int timestampIndex = analyticContext.getTimestampIndex();
+
+                    // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                    return new AvgOverRangeFrameFunction(
+                            rowsLo,
+                            rowsHi,
+                            args.get(0),
+                            configuration,
+                            timestampIndex
+                    );
                 }
 
-                throw SqlException.$(position, "function not implemented for given window paramters");
 
             } else if (framingMode == AnalyticColumn.FRAMING_GROUPS) {
 
@@ -343,6 +410,244 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
+    // handles mavg() over (partition by x order by ts range between y and z)
+    // removable cumulative aggregation with timestamp & value stored in resizable ring buffers
+    private static class AvgOverPartitionRangeFrameFunction extends BasePartitionedAvgFunction {
+
+        private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        // list of [size, startOffset] pairs marking free space within mem
+        private final LongList freeList = new LongList();
+        private final int initialBufferSize;
+        private final long maxDiff;
+        // holds resizable ring buffers
+        private final MemoryARW memory;
+        private final long minDiff;
+        private final int timestampIndex;
+        private double avg;
+
+        public AvgOverPartitionRangeFrameFunction(Map map,
+                                                  VirtualRecord partitionByRecord,
+                                                  RecordSink partitionBySink,
+                                                  long rangeLo,
+                                                  long rangeHi,
+                                                  Function arg,
+                                                  MemoryARW memory,
+                                                  int initialBufferSize,
+                                                  int timestampIdx) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            frameLoBounded = rangeLo != Long.MIN_VALUE;
+            maxDiff = frameLoBounded ? Math.abs(rangeLo) : Math.abs(rangeHi);
+            minDiff = Math.abs(rangeHi);
+            this.memory = memory;
+            this.initialBufferSize = initialBufferSize;
+            this.timestampIndex = timestampIdx;
+
+            frameIncludesCurrentValue = rangeHi == 0;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            // map stores
+            // 0 - sum, never a NaN
+            // 1 - current number of non-null rows in in-memory frame (equals to frame size because we don't store nulls)
+            // 2 - native array start offset (relative to memory address)
+            // 3 - size of ring buffer (number of elements stored in it; not all of them need to belong to frame)
+            // 4 - capacity of ring buffer
+            // 5 - index of first (the oldest) valid buffer element
+            // 6 - current number of non-null rows in frame (used when lower frame boundary is 'unbounded preceding' )
+            // actual frame data - [timestamp, value] pairs - is stored in mem at [ offset + first_idx*16, offset + last_idx*16]
+            // note: we ignore nulls to reduce memory usage
+
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+
+            double sum;
+            long frameSize;
+            long startOffset;
+            long size;
+            long capacity;
+            long firstIdx;
+            long unboundedFrameSize;
+
+            long timestamp = record.getTimestamp(timestampIndex);
+            double d = arg.getDouble(record);
+
+            if (mapValue.isNew()) {
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+
+                if (Numbers.isFinite(d)) {
+                    memory.putLong(startOffset, timestamp);
+                    memory.putDouble(startOffset + Long.BYTES, d);
+                    size = 1;
+
+                    if (frameIncludesCurrentValue) {
+                        sum = d;
+                        avg = d;
+                        frameSize = 1;
+                        unboundedFrameSize = 1;
+                    } else {
+                        sum = 0.0;
+                        avg = Double.NaN;
+                        frameSize = 0;
+                        unboundedFrameSize = 0;
+                    }
+                } else {
+                    size = 0;
+                    sum = 0.0;
+                    avg = Double.NaN;
+                    frameSize = 0;
+                    unboundedFrameSize = 0;
+                }
+            } else {
+                sum = mapValue.getDouble(0);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getInt(3);
+                capacity = mapValue.getInt(4);
+                firstIdx = mapValue.getInt(5);
+                unboundedFrameSize = mapValue.getInt(6);
+
+                long newFirstIdx = firstIdx;
+                // find new bottom border of range frame and remove unneeded elements
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) > maxDiff) {
+                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        if (frameLoBounded) {
+                            sum -= val;
+                        }
+                        frameSize--;
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+                firstIdx = newFirstIdx;
+
+                // add new element if not null
+                if (Numbers.isFinite(d)) {
+                    if (size == capacity) { //buffer full
+                        capacity <<= 1;
+
+                        long oldAddress = memory.getPageAddress(0) + startOffset;
+                        long newAddress = -1;
+
+                        // try to find matching block in free list
+                        for (int i = 0, n = freeList.size(); i < n; i += 2) {
+                            if (freeList.getQuick(i) == capacity) {
+                                newAddress = memory.getPageAddress(0) + freeList.getQuick(i + 1);
+                                // replace block info with ours
+                                freeList.setQuick(i, size);
+                                freeList.setQuick(i + 1, startOffset);
+                                break;
+                            }
+                        }
+
+                        if (newAddress == -1) {
+                            newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
+                            // call above can end up resizing and thus changing memory start address
+                            oldAddress = memory.getPageAddress(0) + startOffset;
+                            freeList.add(size, startOffset);
+                        }
+
+                        if (firstIdx == 0) {
+                            Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                        } else {
+                            //we can't simply copy because that'd leave a gap in the middle
+                            long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                            Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                            Vect.memcpy(newAddress + firstPieceSize, oldAddress, ((firstIdx + size) % size) * RECORD_SIZE);
+                            firstIdx = 0;
+                        }
+
+                        startOffset = newAddress - memory.getPageAddress(0);
+                    }
+
+                    // add element to buffer
+                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                    memory.putDouble(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                    size++;
+                }
+
+                // find new top border of range frame and add new elements
+                for (long i = frameSize, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    long diff = Math.abs(ts - timestamp);
+
+                    if (diff <= maxDiff && diff >= minDiff) {
+                        double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        sum += value;
+                        frameSize++;
+                        unboundedFrameSize++;
+                    } else {
+                        break;
+                    }
+                }
+
+                avg = frameLoBounded ?
+                        (frameSize != 0 ? sum / frameSize : Double.NaN) :
+                        (unboundedFrameSize != 0 ? sum / unboundedFrameSize : Double.NaN);
+            }
+
+            mapValue.putDouble(0, sum);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
+            mapValue.putLong(6, unboundedFrameSize);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return avg;
+        }
+
+        @Override
+        public int getPassCount() {
+            return AnalyticFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            computeNext(record);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            freeList.clear();//?
+        }
+    }
+
     // handles mavg() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
     private static class AvgOverPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
@@ -355,7 +660,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         private double avg;
 
-        public AvgOverPartitionRowsFrameFunction(Map map, long rowsLo, long rowsHi, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        public AvgOverPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, long rowsLo, long rowsHi, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
 
             if (rowsLo > Long.MIN_VALUE) {
@@ -423,7 +728,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 avg = count != 0 ? sum / count : Double.NaN;
 
                 if (!frameLoUnbounded) {
-                    //remove the oldest element with newest
+                    //remove the oldest element
                     double loValue = value.getDouble(3 + loIdx);
                     if (Numbers.isFinite(loValue)) {
                         sum -= loValue;
@@ -452,6 +757,154 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+        }
+    }
+
+    private static class AvgOverRangeFrameFunction extends BaseAvgFunction {
+        private final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        private final boolean frameLoBounded;
+        private final long initialCapacity;
+        // list of [size, startOffset] pairs marking free space within mem
+        private final long maxDiff;
+        // holds resizable ring buffers
+        // actual frame data - [timestamp, value] pairs - is stored in mem at [ offset + first_idx*16, offset + last_idx*16]
+        // note: we ignore nulls to reduce memory usage
+        private final MemoryARW memory;
+        private final long minDiff;
+        private final int timestampIndex;
+        private double avg;
+        private long capacity;
+        private long firstIdx;
+        private long frameSize;
+        private long size;
+        private long startOffset;
+        private double sum;
+        private long unboundedFrameSize;
+
+        public AvgOverRangeFrameFunction(long rangeLo,
+                                         long rangeHi,
+                                         Function arg,
+                                         CairoConfiguration configuration,
+                                         int timestampIdx) {
+            super(arg);
+            frameLoBounded = rangeLo != Long.MIN_VALUE;
+            maxDiff = frameLoBounded ? Math.abs(rangeLo) : Math.abs(rangeHi);
+            minDiff = Math.abs(rangeHi);
+            timestampIndex = timestampIdx;
+            initialCapacity = configuration.getSqlAnalyticStorePageSize() / RECORD_SIZE;
+            capacity = initialCapacity;
+            memory = Vm.getARWInstance(configuration.getSqlAnalyticStorePageSize(), configuration.getSqlAnalyticStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            long timestamp = record.getTimestamp(timestampIndex);
+            double d = arg.getDouble(record);
+
+            long newFirstIdx = firstIdx;
+            // find new bottom border of range frame and remove unneeded elements
+            for (long i = 0, n = size; i < n; i++) {
+                long idx = (firstIdx + i) % capacity;
+                long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                if (Math.abs(timestamp - ts) > maxDiff) {
+                    double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                    if (frameLoBounded) {
+                        sum -= val;
+                    }
+                    frameSize--;
+                    newFirstIdx = (idx + 1) % capacity;
+                    size--;
+                } else {
+                    break;
+                }
+            }
+            firstIdx = newFirstIdx;
+
+            // add new element if not null
+            if (Numbers.isFinite(d)) {
+                if (size == capacity) { //buffer full
+                    long newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
+                    // call above can end up resizing and thus changing memory start address
+                    long oldAddress = memory.getPageAddress(0) + startOffset;
+
+                    if (firstIdx == 0) {
+                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                    } else {
+                        //we can't simply copy because that'd leave a gap in the middle
+                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, ((firstIdx + size) % size) * RECORD_SIZE);
+                        firstIdx = 0;
+                    }
+
+                    startOffset = newAddress - memory.getPageAddress(0);
+                    capacity <<= 1;
+                }
+
+                // add element to buffer
+                memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                memory.putDouble(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                size++;
+            }
+
+            // find new top border of range frame and add new elements
+            for (long i = frameSize, n = size; i < n; i++) {
+                long idx = (firstIdx + i) % capacity;
+                long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                long diff = Math.abs(ts - timestamp);
+
+                if (diff <= maxDiff && diff >= minDiff) {
+                    double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                    sum += value;
+                    frameSize++;
+                    unboundedFrameSize++;
+                } else {
+                    break;
+                }
+            }
+
+            avg = frameLoBounded ?
+                    (frameSize != 0 ? sum / frameSize : Double.NaN) :
+                    (unboundedFrameSize != 0 ? sum / unboundedFrameSize : Double.NaN);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return avg;
+        }
+
+        @Override
+        public int getPassCount() {
+            return AnalyticFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            computeNext(record);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
         }
     }
 
@@ -530,7 +983,10 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    // Handles mavg() over (partition by x rows between unbounded preceding and current row).
+    // Handles:
+    // - mavg(a) over (partition by x rows between unbounded preceding and current row)
+    // - mavg(a) over (partition by x order by ts groups between unbounded preceding and current row)
+    // - mavg(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
     private static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
 
@@ -559,7 +1015,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             }
 
             double d = arg.getDouble(record);
-            if (Double.isFinite(d)) {
+            if (Numbers.isFinite(d)) {
                 sum += d;
                 count++;
 
@@ -601,7 +1057,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
-            if (Double.isFinite(d)) {
+            if (Numbers.isFinite(d)) {
                 sum += d;
                 count++;
             }

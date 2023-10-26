@@ -95,6 +95,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),
     CAIRO_SQL_JOIN_METADATA_MAX_RESIZES("cairo.sql.join.metadata.max.resizes"),
+    CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE("cairo.sql.analytic.initial.range.buffer.size"),
     CAIRO_SQL_ANALYTIC_MAX_FRAME_SIZE("cairo.sql.analytic.max.frame.size"),
     CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY("cairo.sql.analytic.column.pool.capacity"),
     CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY("cairo.sql.create.table.model.pool.capacity"),

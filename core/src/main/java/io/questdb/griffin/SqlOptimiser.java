@@ -1454,7 +1454,7 @@ public class SqlOptimiser implements Mutable {
                 }
             } else {
                 // column is already referenced
-                return nextLiteral(map.valueAt(index));
+                return nextLiteral(map.valueAt(index), node.position);
             }
         }
         return doReplaceLiteral0(node, translatingModel, innerModel, validatingModel);

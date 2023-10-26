@@ -53,6 +53,8 @@ public interface SqlExecutionContext extends Closeable {
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes keyTypes,
             boolean isOrdered,
+            int scanDirection,
+            int orderByDirection,
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
@@ -60,7 +62,8 @@ public interface SqlExecutionContext extends Closeable {
             long rowsHi,
             int rowsHiExprPos,
             int exclusionKind,
-            int exclusionKindPos
+            int exclusionKindPos,
+            int timestampIndex
     );
 
     default void containsSecret(boolean b) {

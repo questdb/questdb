@@ -520,6 +520,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAnalyticInitialRangeBufferSize() {
+        return 32;
+    }
+
+    @Override
     public int getSqlAnalyticMaxFrameSize() {
         return 10000;
     }
@@ -536,7 +541,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlAnalyticStoreMaxPages() {
-        return Integer.MAX_VALUE;
+        return 1024;
     }
 
     @Override
