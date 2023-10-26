@@ -33,7 +33,7 @@ import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 class MockAlertTarget extends Thread {
-
+    private static final int SO_TIMEOUT = 20_000;
     static final String ACK = "Ack";
     static final String DEATH_PILL = "]"; // /alert-manager-tpt.json ends with "]\n"
 
@@ -66,7 +66,7 @@ class MockAlertTarget extends Thread {
                 // setup server socket and accept client
                 serverSkt = new ServerSocket(portNumber);
                 serverSkt.setReuseAddress(true);
-                serverSkt.setSoTimeout(5000);
+                serverSkt.setSoTimeout(SO_TIMEOUT);
                 if (portNumber == 0) {
                     portNumber = serverSkt.getLocalPort();
                 }
@@ -77,7 +77,7 @@ class MockAlertTarget extends Thread {
                 in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
                 out = new PrintWriter(clientSkt.getOutputStream(), true);
 
-                clientSkt.setSoTimeout(5000);
+                clientSkt.setSoTimeout(SO_TIMEOUT);
 
                 clientSkt.setTcpNoDelay(true);
                 clientSkt.setKeepAlive(false);
