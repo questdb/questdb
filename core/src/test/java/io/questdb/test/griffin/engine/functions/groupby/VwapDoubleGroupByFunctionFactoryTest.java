@@ -72,4 +72,14 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testVwapGroupBy() throws Exception {
+        ddl("create table tab (price double, volume double, ticker symbol)");
+        insert("insert into tab values (100,10,'a'),(105,40,'a'),(102,20,'b'),(103,60,'b')");
+        assertSql("ticker\tvwap\n" +
+                        "a\t104.0\n" +
+                        "b\t102.75\n",
+                "select ticker,vwap(price, volume) from tab order by ticker"
+        );
+    }
 }

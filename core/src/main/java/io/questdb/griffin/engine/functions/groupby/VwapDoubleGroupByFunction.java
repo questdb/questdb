@@ -36,19 +36,19 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
-    private final Function prcFunc;
-    private final Function qtyFunc;
+    private final Function priceFunction;
+    private final Function volumeFunction;
     private int valueIndex;
 
     public VwapDoubleGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
-        this.prcFunc = arg0;
-        this.qtyFunc = arg1;
+        this.priceFunction = arg0;
+        this.volumeFunction = arg1;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final double prc = prcFunc.getDouble(record);
-        final double qty = qtyFunc.getDouble(record);
+        final double prc = priceFunction.getDouble(record);
+        final double qty = volumeFunction.getDouble(record);
 
         if (Numbers.isFinite(prc) && Numbers.isFinite(qty) && qty > 0.0d) {
             final double notional = prc * qty;
@@ -66,14 +66,14 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final double prc = prcFunc.getDouble(record);
-        final double qty = qtyFunc.getDouble(record);
+        final double price = priceFunction.getDouble(record);
+        final double volume = volumeFunction.getDouble(record);
 
-        if (Numbers.isFinite(prc) && Numbers.isFinite(qty) && qty > 0.0d) {
-            final double notional = prc * qty;
+        if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0.0d) {
+            final double notional = price * volume;
 
             mapValue.addDouble(valueIndex + 1, notional);
-            mapValue.addDouble(valueIndex + 2, qty);
+            mapValue.addDouble(valueIndex + 2, volume);
 
             mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex + 1) / mapValue.getDouble(valueIndex + 2));
         }
@@ -91,12 +91,12 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public Function getLeft() {
-        return prcFunc;
+        return priceFunction;
     }
 
     @Override
     public Function getRight() {
-        return qtyFunc;
+        return volumeFunction;
     }
 
     @Override
