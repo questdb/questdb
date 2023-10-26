@@ -28,7 +28,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
@@ -36,7 +35,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, BorrowableAsNativeByteSink {
+public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, DirectUtf8CharSink {
     private final DirectByteSink sink;
 
     public DirectByteCharSink(long capacity) {
@@ -49,7 +48,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     }
 
     @Override
-    public NativeByteSink borrowDirectByteSink() {
+    public @NotNull NativeByteSink borrowDirectByteSink() {
         return sink.borrowDirectByteSink();
     }
 
@@ -115,5 +114,15 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     @Override
     public String toString() {
         return Chars.stringFromUtf8Bytes(this);
+    }
+
+    @Override
+    public DirectByteCharSink put(CharSequence cs) {
+        // Note that this implementation is not UTF-8 safe: It assumes `cs` is ASCII without checks.
+        final int charCount = cs.length();
+        final long destPtr = sink.book(charCount);
+        Chars.asciiStrCpy(cs, charCount, destPtr);
+        sink.advance(charCount);
+        return this;
     }
 }

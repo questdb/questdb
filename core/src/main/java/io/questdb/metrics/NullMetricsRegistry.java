@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8CharSink;
 
 public class NullMetricsRegistry implements MetricsRegistry {
 
@@ -70,6 +70,6 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
     }
 }

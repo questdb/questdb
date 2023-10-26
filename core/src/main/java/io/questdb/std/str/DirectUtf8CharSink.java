@@ -22,38 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.std.str;
 
-import io.questdb.std.str.DirectUtf8CharSink;
+import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 
-public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
-    public static final NullCounter INSTANCE = new NullCounter();
+/** A groawable Utf8 buffer that can be written as a char sink and borrowed for writing in native code. */
+public interface DirectUtf8CharSink extends CharSink, BorrowableAsNativeByteSink {
 
-    private NullCounter() {
-    }
-
-    @Override
-    public void add(long value) {
-    }
-
-    @Override
-    public long getValue() {
-        return 0;
-    }
-
-    @Override
-    public void inc() {
-    }
-
-    @Override
-    public void inc(short label0) {
-    }
-
-    @Override
-    public void inc(short label0, short label1) {
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
-    }
 }

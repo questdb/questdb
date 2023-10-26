@@ -25,6 +25,7 @@
 package io.questdb.std.bytes;
 
 import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.nio.BufferOverflowException;
@@ -150,7 +151,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     @Override
-    public NativeByteSink borrowDirectByteSink() {
+    public @NotNull NativeByteSink borrowDirectByteSink() {
         lastCapacity = capacity();
         return byteSink;
     }
