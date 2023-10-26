@@ -642,6 +642,28 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(" range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
             freeList.clear();//?
@@ -655,7 +677,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final int bufferSize;
 
         private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoUnbounded;
+        private final boolean frameLoBounded;
         private final int frameSize;
 
         private double avg;
@@ -666,11 +688,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             if (rowsLo > Long.MIN_VALUE) {
                 frameSize = (int) (rowsHi - rowsLo);
                 bufferSize = (int) Math.abs(rowsLo);//number of values we need to keep to compute over frame
-                frameLoUnbounded = false;
+                frameLoBounded = true;
             } else {
                 frameSize = (int) Math.abs(rowsHi);
                 bufferSize = frameSize;
-                frameLoUnbounded = true;
+                frameLoBounded = false;
             }
             frameIncludesCurrentValue = rowsHi == 0;
         }
@@ -727,7 +749,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 //here sum is correct for current row
                 avg = count != 0 ? sum / count : Double.NaN;
 
-                if (!frameLoUnbounded) {
+                if (frameLoBounded) {
                     //remove the oldest element
                     double loValue = value.getDouble(3 + loIdx);
                     if (Numbers.isFinite(loValue)) {
@@ -757,6 +779,29 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (bufferSize - frameSize == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
         }
     }
 
@@ -903,6 +948,26 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val("range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
         }
@@ -915,7 +980,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private final double[] buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoUnbounded;
+        private final boolean frameLoBounded;
         private final int frameSize;
         private double avg;
         private long count;
@@ -928,11 +993,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             if (rowsLo > Long.MIN_VALUE) {
                 frameSize = (int) (rowsHi - rowsLo);
                 bufferSize = (int) Math.abs(rowsLo);//number of values we need to keep to compute over frame
-                frameLoUnbounded = false;
+                frameLoBounded = true;
             } else {
                 frameSize = (int) Math.abs(rowsHi);
                 bufferSize = frameSize;
-                frameLoUnbounded = true;
+                frameLoBounded = false;
             }
             buffer = new double[bufferSize];
             Arrays.fill(buffer, Double.NaN);
@@ -952,7 +1017,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
             avg = count != 0 ? sum / count : Double.NaN;
 
-            if (!frameLoUnbounded) {
+            if (frameLoBounded) {
                 //remove the oldest element with newest
                 double loValue = buffer[loIdx];
                 if (Numbers.isFinite(loValue)) {
@@ -980,6 +1045,27 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+        }
+
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (bufferSize - frameSize == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
         }
     }
 
@@ -1041,6 +1127,16 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(" rows between unbounded preceding and current row )");
+        }
     }
 
     // Handles mavg() over (rows between unbounded preceding and current row); there's no partititon by.
@@ -1080,6 +1176,13 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             computeNext(record);
 
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (rows between unbounded preceding and current row)");
         }
     }
 

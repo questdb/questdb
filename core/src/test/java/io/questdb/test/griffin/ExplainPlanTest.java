@@ -326,14 +326,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan("select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab",
                     "CachedAnalytic\n" +
-                            "  orderedFunctions: [[i, j] => [avg(j) over ()]]\n" +
+                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
                     "Analytic\n" +
-                            "  functions: [avg(j) over (partition by [i])]\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
@@ -343,7 +343,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "from tab order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedAnalytic\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i])]]\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n");
@@ -354,7 +354,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "from tab order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedAnalytic\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j])]]\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
                             "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
@@ -378,7 +378,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     sql,
                     "Limit lo: 3\n" +
                             "    Analytic\n" +
-                            "      functions: [row_number() over (partition by [sym]),avg(i) over (partition by [i])]\n" +
+                            "      functions: [row_number() over (partition by [sym]),avg(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"

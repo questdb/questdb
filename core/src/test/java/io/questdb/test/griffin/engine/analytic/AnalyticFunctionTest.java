@@ -73,21 +73,21 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row) from tab",
                     "CachedAnalytic\n" +
-                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i])]]\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc",
                     "CachedAnalytic\n" +
-                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i])]]\n" +
+                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym in ( 'A', 'B') ",
                     "CachedAnalytic\n" +
-                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i])]]\n" +
+                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
                             "    FilterOnValues symbolOrder: desc\n" +
                             "        Cursor-order scan\n" +
                             "            Index forward scan on: sym deferred: true\n" +
@@ -98,7 +98,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'",
                     "CachedAnalytic\n" +
-                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i])]]\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: sym deferred: true\n" +
                             "          filter: sym='A'\n" +
@@ -113,28 +113,28 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
                     "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i])]\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc",
                     "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i])]\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc",
                     "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i])]\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n");
 
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym = 'A'",
                     "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i])]\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: sym deferred: true\n" +
                             "          filter: sym='A'\n" +
@@ -143,7 +143,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
             assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row) " +
                             "from tab where sym in ( 'A', 'B') order by ts asc",
                     "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i])]\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    FilterOnValues\n" +
                             "        Table-order scan\n" +
                             "            Index forward scan on: sym deferred: true\n" +
@@ -1032,7 +1032,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "order by ts asc",
                     "SelectedRecord\n" +
                             "    CachedAnalytic\n" +
-                            "      orderedFunctions: [[j] => [rank() over (partition by [i])],[ts desc] => [avg(j) over (partition by [i])]]\n" +
+                            "      orderedFunctions: [[j] => [rank() over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
                             "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -1717,7 +1717,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             assertException("select avg(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                    7, "window buffer size exceeds configured limit [maxSize=100000,actual=100001]");
+                    7, "window buffer size exceeds configured limit [maxSize=10000,actual=100001]");
         });
     }
 }
