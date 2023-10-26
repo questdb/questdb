@@ -35,8 +35,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
