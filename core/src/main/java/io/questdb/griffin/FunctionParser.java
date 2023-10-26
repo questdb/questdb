@@ -668,10 +668,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
-                        // Implicit cast from STRING to DATE
-                        overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
-                                sigArgTypeTag == ColumnType.DATE && !factory.isGroupBy();
-
                         // Implicit cast from STRING to GEOHASH
                         overloadPossible |= argTypeTag == ColumnType.STRING &&
                                 sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
@@ -775,16 +771,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else if (sigArgTypeTag == ColumnType.INT) {
                     args.setQuick(k, IntConstant.NULL);
                 }
-            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && arg.isConstant()) {
-                if (sigArgTypeTag == ColumnType.TIMESTAMP) {
-                    int position = argPositions.getQuick(k);
-                    long timestamp = parseTimestamp(arg.getStr(null), position);
-                    args.set(k, TimestampConstant.newInstance(timestamp));
-                } else if (sigArgTypeTag == ColumnType.DATE) {
-                    int position = argPositions.getQuick(k);
-                    long millis = parseDate(arg.getStr(null), position);
-                    args.set(k, DateConstant.newInstance(millis));
-                }
+            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.TIMESTAMP) {
+                assert arg.isConstant() : "Matching non-constant String arguments to Timestamp signatures is not generally supported and there is no path to this code if the argument is not constant";
+                int position = argPositions.getQuick(k);
+                long timestamp = parseTimestamp(arg.getStr(null), position);
+                args.set(k, TimestampConstant.newInstance(timestamp));
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             }
