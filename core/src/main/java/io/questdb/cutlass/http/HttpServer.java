@@ -27,10 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
-import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
-import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.TextQueryProcessor;
+import io.questdb.cutlass.http.processors.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -52,9 +49,20 @@ public class HttpServer implements Closeable {
     private final HttpContextFactory httpContextFactory;
     private final WaitProcessor rescheduleContext;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
+    private final ObjList<Closeable> closeables = new ObjList<>();
     private final int workerCount;
 
-    public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool, SocketFactory socketFactory) {
+    public HttpServer(
+            HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool,
+            SocketFactory socketFactory
+    ) {
+        this(configuration, messageBus, metrics, pool, socketFactory, DefaultHttpCookieHandler.INSTANCE);
+    }
+
+    public HttpServer(
+            HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool,
+            SocketFactory socketFactory, HttpCookieHandler cookieHandler
+    ) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
 
@@ -62,7 +70,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory);
+        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler);
         this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
@@ -208,7 +216,12 @@ public class HttpServer implements Closeable {
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
         Misc.freeObjListAndClear(selectors);
+        Misc.freeObjListAndClear(closeables);
         Misc.free(httpContextFactory);
+    }
+
+    public void registerClosable(Closeable closeable) {
+        closeables.add(closeable);
     }
 
     @FunctionalInterface
@@ -217,8 +230,11 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
-        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
-            super(() -> new HttpConnectionContext(configuration, metrics, socketFactory), configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler) {
+            super(
+                    () -> new HttpConnectionContext(configuration, metrics, socketFactory, cookieHandler),
+                    configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
+            );
         }
     }
 

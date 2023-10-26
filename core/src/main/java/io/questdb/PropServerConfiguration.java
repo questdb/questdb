@@ -164,6 +164,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxUncommittedRows;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
+    private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
@@ -315,16 +316,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
     private long cairoSqlCopyMaxIndexChunkSize;
-    private int connectionPoolInitialCapacity;
-    private int connectionStringPoolCapacity;
-    private int dateAdapterPoolCapacity;
+    private final int connectionPoolInitialCapacity;
+    private final int connectionStringPoolCapacity;
+    private final int dateAdapterPoolCapacity;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int forceRecvFragmentationChunkSize;
     private int forceSendFragmentationChunkSize;
-    private boolean httpAllowDeflateBeforeSend;
-    private boolean httpFrozenClock;
-    private boolean httpHealthCheckAuthRequired;
+    private final boolean httpAllowDeflateBeforeSend;
+    private final boolean httpFrozenClock;
+    private final boolean httpHealthCheckAuthRequired;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
     private boolean httpMinNetConnectionHint;
@@ -341,32 +342,33 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long httpMinWorkerYieldThreshold;
     private int httpNetBindIPv4Address;
     private int httpNetBindPort;
-    private boolean httpNetConnectionHint;
+    private final boolean httpNetConnectionHint;
     private int httpNetConnectionLimit;
     private long httpNetConnectionQueueTimeout;
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
-    private boolean httpPessimisticHealthCheckEnabled;
-    private boolean httpReadOnlySecurityContext;
-    private boolean httpServerKeepAlive;
-    private boolean httpStaticAuthRequired;
+    private final boolean httpPessimisticHealthCheckEnabled;
+    private final boolean httpReadOnlySecurityContext;
+    private final boolean httpServerCookiesEnabled;
+    private final boolean httpServerKeepAlive;
+    private final boolean httpStaticAuthRequired;
     private String httpVersion;
-    private int[] httpWorkerAffinity;
-    private int httpWorkerCount;
-    private boolean httpWorkerHaltOnError;
-    private long httpWorkerSleepThreshold;
-    private long httpWorkerSleepTimeout;
-    private long httpWorkerYieldThreshold;
-    private CharSequence indexFileName;
+    private final int[] httpWorkerAffinity;
+    private final int httpWorkerCount;
+    private final boolean httpWorkerHaltOnError;
+    private final long httpWorkerSleepThreshold;
+    private final long httpWorkerSleepTimeout;
+    private final long httpWorkerYieldThreshold;
+    private final CharSequence indexFileName;
     private short integerDefaultColumnType;
-    private boolean interruptOnClosedConnection;
-    private int jsonCacheLimit;
-    private int jsonCacheSize;
+    private final boolean interruptOnClosedConnection;
+    private final int jsonCacheLimit;
+    private final int jsonCacheSize;
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
-    private String keepAliveHeader;
+    private final String keepAliveHeader;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -398,14 +400,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
-    private long maxHttpQueryResponseRowLimit;
-    private double maxRequiredDelimiterStdDev;
-    private double maxRequiredLineLengthStdDev;
-    private int metadataStringPoolCapacity;
+    private final long maxHttpQueryResponseRowLimit;
+    private final double maxRequiredDelimiterStdDev;
+    private final double maxRequiredLineLengthStdDev;
+    private final int metadataStringPoolCapacity;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
-    private int multipartHeaderBufferSize;
-    private long multipartIdleSpinCount;
+    private final int multipartHeaderBufferSize;
+    private final long multipartIdleSpinCount;
     private int netTestConnectionBufferSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
@@ -447,21 +449,20 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgWorkerCount;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private String publicDirectory;
-    private int recvBufferSize;
-    private int requestHeaderBufferSize;
-    private int rollBufferLimit;
-    private int rollBufferSize;
-    private int sendBufferSize;
+    private final String publicDirectory;
+    private final int recvBufferSize;
+    private final int requestHeaderBufferSize;
+    private final int rollBufferLimit;
+    private final int rollBufferSize;
+    private final int sendBufferSize;
     private boolean stringAsTagSupported;
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private int textAnalysisMaxLines;
-    private int textLexerStringPoolCapacity;
-    private int timestampAdapterPoolCapacity;
-    private int utf8SinkSize;
-    private final MicrosecondClock microsecondClock;
+    private final int textAnalysisMaxLines;
+    private final int textLexerStringPoolCapacity;
+    private final int timestampAdapterPoolCapacity;
+    private final int utf8SinkSize;
 
     public PropServerConfiguration(
             String root,
@@ -635,6 +636,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpFrozenClock = getBoolean(properties, env, PropertyKey.HTTP_FROZEN_CLOCK, false);
             this.httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
             this.httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
+            this.httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             this.httpVersion = getString(properties, env, PropertyKey.HTTP_VERSION, "HTTP/1.1");
             if (!httpVersion.endsWith(" ")) {
                 httpVersion += ' ';
@@ -1724,11 +1726,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
 
         @Override
-        public @NotNull MicrosecondClock getMicrosecondClock() {
-            return microsecondClock;
-        }
-
-        @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
         }
@@ -2025,6 +2022,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMetadataPoolCapacity() {
             return sqlModelPoolCapacity;
+        }
+
+        @Override
+        public @NotNull MicrosecondClock getMicrosecondClock() {
+            return microsecondClock;
         }
 
         @Override
@@ -2656,6 +2658,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean allowDeflateBeforeSend() {
             return httpAllowDeflateBeforeSend;
+        }
+
+        @Override
+        public boolean areCookiesEnabled() {
+            return httpServerCookiesEnabled;
         }
 
         @Override

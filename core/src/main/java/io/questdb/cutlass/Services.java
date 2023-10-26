@@ -87,7 +87,10 @@ public final class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, configuration.getFactoryProvider().getHttpSocketFactory());
+        final HttpCookieHandler cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
+        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool,
+                configuration.getFactoryProvider().getHttpSocketFactory(), cookieHandler
+        );
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
@@ -205,6 +208,10 @@ public final class Services {
             }
         }, true);
         if (metrics.isEnabled()) {
+            final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
+                    configuration.getWorkerCount()
+            );
+            server.registerClosable(pool);
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
@@ -213,7 +220,7 @@ public final class Services {
 
                 @Override
                 public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics, configuration);
+                    return new PrometheusMetricsProcessor(metrics, configuration, pool);
                 }
             });
         }
