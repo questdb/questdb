@@ -169,8 +169,10 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
 
         @Override
         public void close() {
-            Misc.freeObjListAndClear(objects);
-        }
+            for (int i = 0, n = objects.size(); i < n; i++) {
+                objects.getQuick(i).free();
+            }
+            objects.clear();        }
 
         public synchronized void push(RequestState requestState) {
             if (objects.size() < maxPoolSize) {
