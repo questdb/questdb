@@ -48,7 +48,7 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     }
 
     @Override
-    public NativeByteSink borrowDirectByteSink() {
+    public @NotNull NativeByteSink borrowDirectByteSink() {
         return sink.borrowDirectByteSink();
     }
 

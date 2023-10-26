@@ -28,10 +28,7 @@ import io.questdb.cutlass.http.*;
 import io.questdb.metrics.Scrapable;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Files;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSink;
 import org.jetbrains.annotations.TestOnly;
 
@@ -172,10 +169,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
 
         @Override
         public void close() {
-            for (int i = 0, n = objects.size(); i < n; i++) {
-                objects.getQuick(i).free();
-            }
-            objects.clear();
+            Misc.freeObjListAndClear(objects);
         }
 
         public synchronized void push(RequestState requestState) {
