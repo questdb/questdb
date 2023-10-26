@@ -24,61 +24,26 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.Uuid;
 
-public class FirstCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
-    protected final Function arg;
-    protected int valueIndex;
+public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
 
-    public FirstCharGroupByFunction(@NotNull Function arg) {
-        this.arg = arg;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putChar(this.valueIndex, this.arg.getChar(record));
+    public FirstNotNullUuidGroupByFunction(Function arg) {
+        super(arg);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        // empty
-    }
-
-    @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public char getChar(Record rec) {
-        return rec.getChar(this.valueIndex);
+        if (Uuid.isNull(mapValue.getLong128Lo(valueIndex), mapValue.getLong128Hi(valueIndex))) {
+            computeFirst(mapValue, record);
+        }
     }
 
     @Override
     public String getName() {
-        return "first";
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
-    }
-
-    public void setChar(MapValue mapValue, char value) {
-        mapValue.putChar(this.valueIndex, value);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        setChar(mapValue, (char) 0);
+        return "first_not_null";
     }
 }
