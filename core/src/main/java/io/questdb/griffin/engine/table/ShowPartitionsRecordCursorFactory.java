@@ -48,14 +48,14 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private static final RecordMetadata METADATA;
     private final ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private final Path path = new Path();
-    private final TableToken tableToken;
+    private final ObjList<TableToken> tableTokens;
     private CairoConfiguration cairoConfig;
     private SqlExecutionContext executionContext;
     private FilesFacade ff;
 
-    public ShowPartitionsRecordCursorFactory(TableToken tableToken) {
+    public ShowPartitionsRecordCursorFactory(ObjList<TableToken> tableTokens) {
         super(METADATA);
-        this.tableToken = tableToken;
+        this.tableTokens = tableTokens;
     }
 
     @Override
@@ -73,7 +73,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("show_partitions").meta("of").val(tableToken);
+        sink.type("show_partitions").meta("of").val(tableTokens);
     }
 
     @Override
@@ -98,7 +98,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         IS_ACTIVE(9, "active", ColumnType.BOOLEAN),
         IS_ATTACHED(10, "attached", ColumnType.BOOLEAN),
         IS_DETACHED(11, "detached", ColumnType.BOOLEAN),
-        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN);
+        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN),
+        TABLE_NAME(13, "tableName", ColumnType.STRING);
 
         private final int idx;
         private final TableColumnMetadata metadata;
@@ -138,6 +139,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int partitionIndex = -1;
         private long partitionSize = -1L;
         private int rootLen;
+        private int tableTokenIndex = 0;
+        private final StringSink tableName = new StringSink();
         private TableReader tableReader;
         private CharSequence tsColName;
 
@@ -165,6 +168,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 return true;
             }
             --partitionIndex;
+            if (++tableTokenIndex < tableTokens.size()){
+                partitionIndex=0;
+                initCursorForTable();
+                return true;
+            }
             return false;
         }
 
@@ -183,6 +191,14 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 // this call is idempotent
                 return this;
             }
+            initCursorForTable();
+            return this;
+        }
+
+        private void initCursorForTable(){
+            TableToken tableToken = tableTokens.get(tableTokenIndex);
+            tableName.clear();
+            tableName.put(tableToken.getTableName());
             tsColName = null;
             tableReader = executionContext.getReader(tableToken);
             partitionBy = tableReader.getPartitionedBy();
@@ -197,7 +213,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     attachablePartitions.size() +
                     detachedPartitions.size();
             toTop();
-            return this;
         }
 
         private void loadNextPartition() {
@@ -250,7 +265,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                             detachedMetaReader = new TableReaderMetadata(cairoConfig);
                         }
                         detachedMetaReader.load(path);
-                        if (tableToken.getTableId() == detachedMetaReader.getTableId() && partitionBy == detachedMetaReader.getPartitionBy()) {
+                        if (tableReader.getTableToken().getTableId() == detachedMetaReader.getTableId() && partitionBy == detachedMetaReader.getPartitionBy()) {
                             if (ff.exists(path.parent().concat(TableUtils.TXN_FILE_NAME).$())) {
                                 try {
                                     if (detachedTxReader == null) {
@@ -397,6 +412,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         return partitionName;
                     case 7:
                         return partitionSizeSink;
+                    case 13:
+                        return tableName;
                     default:
                         throw new UnsupportedOperationException();
                 }
@@ -442,6 +459,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.IS_ATTACHED.metadata());
         metadata.add(Column.IS_DETACHED.metadata());
         metadata.add(Column.IS_ATTACHABLE.metadata());
+        metadata.add(Column.TABLE_NAME.metadata());
         METADATA = metadata;
     }
 }

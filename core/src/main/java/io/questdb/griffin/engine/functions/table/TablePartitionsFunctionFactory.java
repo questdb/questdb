@@ -32,6 +32,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory;
+import io.questdb.griffin.engine.table.SequentialRowCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -39,7 +41,7 @@ import io.questdb.std.ObjList;
 public class TablePartitionsFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "table_partitions(s)";
+        return "table_partitions(V)";
     }
 
     @Override
@@ -49,12 +51,17 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
-        final TableToken tt;
+
+        final ObjList<TableToken> tts = new ObjList<>(args.size());
         try {
-            tt = context.getTableToken(args.getQuick(0).getStr(null));
+            for (int i = 0; i < args.size(); i++) {
+                final TableToken tt = context.getTableToken(args.getQuick(i).getStr(null));
+                tts.add(tt);
+            }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
-        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt));
+
+        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tts));
     }
 }
