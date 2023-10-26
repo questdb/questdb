@@ -56,6 +56,7 @@ public class HttpServerConfigurationBuilder {
     private boolean serverKeepAlive = true;
     private Boolean staticContentAuthRequired;
     private int tcpSndBufSize;
+    private int workerCount;
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -195,7 +196,7 @@ public class HttpServerConfigurationBuilder {
 
                     @Override
                     public int getSendBufferSize() {
-                        return sendBufferSize;
+                        return sendBufferSize == 0 ? super.getSendBufferSize() : sendBufferSize;
                     }
 
                     @Override
@@ -253,6 +254,11 @@ public class HttpServerConfigurationBuilder {
             @Override
             public boolean isPessimisticHealthCheckEnabled() {
                 return pessimisticHealthCheck;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount == 0 ? super.getWorkerCount() : workerCount;
             }
         };
     }
@@ -334,6 +340,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withTcpSndBufSize(int tcpSndBufSize) {
         this.tcpSndBufSize = tcpSndBufSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withWorkerCount(int workerCount) {
+        this.workerCount = workerCount;
         return this;
     }
 }
