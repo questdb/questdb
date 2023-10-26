@@ -37,6 +37,13 @@ public interface CharSink extends CharSinkBase<CharSink> {
         return this;
     }
 
+    default CharSink put(@Nullable Utf8Sequence us, int lo, int hi) {
+        if (us != null) {
+            Utf8s.utf8ToUtf16(us, lo, hi, this);
+        }
+        return this;
+    }
+
     default CharSink put(long lo, long hi) {
         for (long addr = lo; addr < hi; addr += Character.BYTES) {
             put(Unsafe.getUnsafe().getChar(addr));
