@@ -267,7 +267,7 @@ public class Utf8sTest {
         try {
             StringSink expectedSink = new StringSink();
             expectedSink.repeat("a", size);
-            expectedSink.putAscii("foobar"); // this should get ignored
+            expectedSink.putAscii("foobar"); // this should get ignored by Utf8s.strCpyAscii()
             Utf8s.strCpyAscii(expectedSink.toString().toCharArray(), 0, size, mem);
 
             expectedSink.clear(size);
