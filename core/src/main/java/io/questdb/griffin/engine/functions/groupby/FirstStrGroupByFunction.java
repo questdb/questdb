@@ -36,9 +36,9 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
+    protected final Function arg;
     private final StringSink sink = new StringSink();
-    private int valueIndex;
+    protected int valueIndex;
 
     public FirstStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -73,7 +73,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
@@ -108,4 +108,5 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
         mapValue.putBool(valueIndex, false);
         sink.clear();
     }
+
 }

@@ -24,63 +24,26 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
-    protected final Function arg;
-    protected int valueIndex;
+public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
 
-    public FirstLongGroupByFunction(@NotNull Function arg) {
-        this.arg = arg;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(this.valueIndex, this.arg.getLong(record));
+    public FirstNotNullFloatGroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        // empty
-    }
-
-    @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(this.valueIndex);
+        if (Float.isNaN(mapValue.getFloat(valueIndex))) {
+            computeFirst(mapValue, record);
+        }
     }
 
     @Override
     public String getName() {
-        return "first";
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putTimestamp(this.valueIndex, value);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        setLong(mapValue, Numbers.LONG_NaN);
+        return "first_not_null";
     }
 }
