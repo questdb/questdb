@@ -737,7 +737,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
-                    LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
                 }
 
                 // by the time we get here, definitely exists on disk

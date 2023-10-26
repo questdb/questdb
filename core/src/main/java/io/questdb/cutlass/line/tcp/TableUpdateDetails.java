@@ -142,7 +142,7 @@ public class TableUpdateDetails implements Closeable {
             closeLocals();
             if (writerAPI != null) {
                 try {
-                    authorizeWalCommit();
+                    authorizeCommit();
                     writerAPI.commit();
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
@@ -163,12 +163,7 @@ public class TableUpdateDetails implements Closeable {
     public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
-                LOG.debug()
-                        .$("time-based commit ").$(withLag ? "with lag " : "")
-                        .$("[rows=").$(writerAPI.getUncommittedRowCount())
-                        .$(", table=").$(tableToken)
-                        .I$();
-                authorizeWalCommit();
+                authorizeCommit();
                 if (withLag) {
                     writerAPI.ic();
                 } else {
@@ -263,7 +258,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    private void authorizeWalCommit() {
+    private void authorizeCommit() {
         if (ownSecurityContext != null) {
             ownSecurityContext.authorizeInsert(tableToken);
         }
@@ -291,8 +286,12 @@ public class TableUpdateDetails implements Closeable {
             return nextCommitTime;
         }
         if (writerAPI != null) {
-            long start = millisecondClock.getTicks();
-            commit(wallClockMillis - lastMeasurementMillis < commitInterval);
+            final long start = millisecondClock.getTicks();
+            final boolean withLag = wallClockMillis - lastMeasurementMillis < commitInterval;
+            LOG.debug().$("time-based commit ").$(withLag ? "with lag " : "")
+                    .$("[rows=").$(writerAPI.getUncommittedRowCount())
+                    .$(", table=").$(tableToken).I$();
+            commit(withLag);
             // Do not commit row by row if the commit takes longer than commitInterval.
             // Exclude time to commit from the commit interval.
             nextCommitTime += commitInterval + millisecondClock.getTicks() - start;
@@ -309,9 +308,10 @@ public class TableUpdateDetails implements Closeable {
             }
             return;
         }
-        LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableToken).I$();
         nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
+        LOG.debug().$("max-uncommitted-rows commit with lag [rows=").$(writerAPI.getUncommittedRowCount())
+                .$(", table=").$(tableToken).I$();
         try {
             commit(true);
         } catch (CommitFailedException ex) {
@@ -348,7 +348,7 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
-                    authorizeWalCommit();
+                    authorizeCommit();
                     writerAPI.commit();
                 }
             } catch (Throwable ex) {

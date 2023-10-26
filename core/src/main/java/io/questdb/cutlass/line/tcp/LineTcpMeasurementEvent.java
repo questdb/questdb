@@ -134,6 +134,7 @@ class LineTcpMeasurementEvent implements Closeable {
             if (metadataVersion > writer.getMetadataVersion()) {
                 // I/O thread has a more recent version of the WAL table metadata than the writer.
                 // Let the WAL writer commit, so that it refreshes its metadata copy.
+                // TODO: this method is not used for WAL tables, check if the below commit still needed
                 writer.commit();
             }
             long timestamp = buffer.readLong(offset);
@@ -186,6 +187,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         row = null;
                         final int colType = defaultColumnTypes.MAPPED_COLUMN_TYPES[entityType];
                         // we have to commit before adding a new column as WalWriter doesn't do that automatically
+                        // TODO: this method is not used for WAL tables, check if the below commit still needed
                         writer.commit();
                         try {
                             writer.addColumn(columnName, colType, principalOnlySecurityContext.of(principal));

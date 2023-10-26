@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
@@ -129,6 +130,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
+    private final QueryLogger queryLogger;
     private final int recvBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     private final SecurityContextFactory securityContextFactory;
@@ -217,6 +219,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 engine.getMetrics().pgWire().connectionCountGauge()
         );
         this.engine = engine;
+        queryLogger = engine.getConfiguration().getQueryLogger();
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
@@ -1282,15 +1285,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private boolean compileQuery(boolean doLog) throws SqlException {
         if (queryText != null && queryText.length() > 0) {
-            // try insert, peek because this is our private cache
+            // try insert, peek because this is our private cache,
             // and we do not want to remove statement from it
             typesAndInsert = typesAndInsertCache.peek(queryText);
 
             // not found or not insert, try select
-            // poll this cache because it is shared and we do not want
+            // poll this cache because it is shared, and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
-                logQuery(doLog);
+                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
                 return false;
@@ -1299,7 +1302,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
-                logQuery(doLog);
+                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 typesAndUpdate.defineBindVariables(bindVariableService);
                 queryTag = TAG_UPDATE;
                 typesAndUpdateIsCached = true;
@@ -1309,7 +1312,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
-                logQuery(doLog);
+                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 LOG.info().$("query cache used [fd=").$(getFd()).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
@@ -1324,7 +1327,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 processCompiledQuery(cc);
             }
         } else {
-            logQuery(doLog);
+            queryLogger.logEmptyQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
             isEmptyQuery = true;
         }
 
@@ -1775,12 +1778,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseAsciiSink.put(MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE);
         tlsSessionStarting = true;
         sendAndReset();
-    }
-
-    private void logQuery(boolean doLog) {
-        if (doLog) {
-            LOG.info().$("parse [fd=").$(getFd()).$(", q=").utf8(queryText).I$();
-        }
     }
 
     /**
