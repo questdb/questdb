@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.analytic;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -898,17 +898,17 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 following and 20 following) from tab", 73, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and 1 following) from tab", 89, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and unbounded following) from tab", 97, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 following and 20 following) from tab", 73, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and 1 following) from tab", 89, "frame end supports _number_ PRECEDING and CURRENT ROW only");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts rows between 10 preceding and unbounded following) from tab", 97, "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
 
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 following and 20 following) from tab", 75, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and 1 following) from tab", 91, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and unbounded following) from tab", 99, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 following and 20 following) from tab", 75, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and 1 following) from tab", 91, "frame end supports _number_ PRECEDING and CURRENT ROW only");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups between 10 preceding and unbounded following) from tab", 99, "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
 
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 following and 20 following) from tab", 74, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and 1 following) from tab", 90, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and unbounded following) from tab", 98, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 following and 20 following) from tab", 74, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and 1 following) from tab", 90, "frame end supports _number_ PRECEDING and CURRENT ROW only");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts range between 10 preceding and unbounded following) from tab", 98, "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
         });
     }
 
@@ -957,8 +957,10 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
-            assertException("select avg(j) over (partition by i rows between 10 following and 20 following) from tab", 51, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
-            assertException("select avg(j) over (partition by i rows between current row and 10 following) from tab", 67, "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            assertException("select avg(j) over (partition by i rows between 10 following and 20 following) from tab",
+                    51, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+            assertException("select avg(j) over (partition by i rows between current row and 10 following) from tab",
+                    67, "frame end supports _number_ PRECEDING and CURRENT ROW only");
         });
     }
 

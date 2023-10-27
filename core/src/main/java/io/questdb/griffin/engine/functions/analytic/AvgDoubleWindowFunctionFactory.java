@@ -78,10 +78,14 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         if (!analyticContext.isDefaultFrame()) {
             if (rowsLo > 0) {
-                throw SqlException.$(analyticContext.getRowsLoKindPos(), "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+                throw SqlException.$(analyticContext.getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
             }
-            if (rowsHi > 0 && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE)) {
-                throw SqlException.$(analyticContext.getRowsHiKindPos(), "frame boundaries that use FOLLOWING other than UNBOUNDED are not supported");
+            if (rowsHi > 0) {
+                if (rowsHi != Long.MAX_VALUE) {
+                    throw SqlException.$(analyticContext.getRowsHiKindPos(), "frame end supports _number_ PRECEDING and CURRENT ROW only");
+                } else if (rowsLo != Long.MIN_VALUE) {
+                    throw SqlException.$(analyticContext.getRowsHiKindPos(), "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
+                }
             }
         }
 
@@ -121,8 +125,8 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         if (partitionByRecord != null) {
             if (framingMode == AnalyticColumn.FRAMING_RANGE) {
-                // moving average over whole partition (no order by, default frame)
-                if (!analyticContext.isOrdered() && analyticContext.isDefaultFrame()) {
+                // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
+                if (analyticContext.isDefaultFrame() && (!analyticContext.isOrdered() || analyticContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createMap(
                             configuration,
                             partitionByKeyTypes,

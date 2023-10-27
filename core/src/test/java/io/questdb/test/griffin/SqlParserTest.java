@@ -458,7 +458,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "GROUPS mode requires an ORDER BY clause"
         );
     }
-
+    
     @Test
     public void testACRangeFrameAcceptsTimeUnits() throws Exception {
         String[] unitsAndValues = new String[]{
