@@ -36,8 +36,8 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstTimestampGroupByFunction(@NotNull Function arg) {
         this.arg = arg;

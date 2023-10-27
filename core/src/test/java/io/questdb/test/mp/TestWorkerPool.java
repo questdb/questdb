@@ -53,6 +53,6 @@ public class TestWorkerPool extends WorkerPool {
             public int getWorkerCount() {
                 return workerCount;
             }
-        }, metrics.health());
+        }, metrics);
     }
 }

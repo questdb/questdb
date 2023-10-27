@@ -24,10 +24,12 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.bytes.ByteSequence;
+
 /**
  * A sequence of UTF-8 bytes.
  */
-public interface Utf8Sequence {
+public interface Utf8Sequence extends ByteSequence {
     /**
      * Returns byte at index.
      * Note: Unchecked bounds.

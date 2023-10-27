@@ -40,8 +40,8 @@ public class HideTelemetryTablesTest extends AbstractCairoTest {
             ddl("create table " + TelemetryTask.TABLE_NAME + "(a int)");
             ddl("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)");
             assertSql(
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "1\ttest\t\tNONE\t1000\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "1\ttest\t\tNONE\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
         });
     }
@@ -53,10 +53,10 @@ public class HideTelemetryTablesTest extends AbstractCairoTest {
             ddl("create table " + TelemetryTask.TABLE_NAME + "(a int)");
             ddl("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)");
             assertSql(
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                             "2\ttelemetry\t\tNONE\t1000\t300000000\n" +
                             "3\ttelemetry_config\t\tNONE\t1000\t300000000\n" +
-                            "1\ttest\t\tNONE\t1000\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by 2"
+                            "1\ttest\t\tNONE\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by 2"
             );
         });
     }

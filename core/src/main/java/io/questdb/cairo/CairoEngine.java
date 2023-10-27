@@ -65,8 +65,8 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_READER = "busyReader";
     public static final String REASON_SNAPSHOT_IN_PROGRESS = "snapshotInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
-    private final CairoConfiguration configuration;
     private final CopyContext copyContext;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
@@ -286,7 +286,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        return createTableInsecure(securityContext, mem, path, ifNotExists, struct, keepLock, false);
+        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, false);
     }
 
     public @NotNull TableToken createTableInVolume(
@@ -298,10 +298,10 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        return createTableInsecure(securityContext, mem, path, ifNotExists, struct, keepLock, true);
+        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, true);
     }
 
-    public @NotNull TableToken createTableInsecure(
+    private @NotNull TableToken createTableUnsecure(
             SecurityContext securityContext,
             MemoryMARW mem,
             Path path,

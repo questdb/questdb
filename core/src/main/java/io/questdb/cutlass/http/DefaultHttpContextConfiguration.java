@@ -38,6 +38,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public boolean areCookiesEnabled() {
+        return true;
+    }
+
+    @Override
     public MillisecondClock getClock() {
         return MillisecondClockImpl.INSTANCE;
     }
