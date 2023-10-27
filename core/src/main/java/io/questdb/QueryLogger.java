@@ -2,6 +2,7 @@ package io.questdb;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.log.Log;
+import io.questdb.log.LogRecord;
 
 public interface QueryLogger {
     // called when an empty query received
@@ -19,5 +20,11 @@ public interface QueryLogger {
         logQuery(logger, doLog, fd, query, securityContext, "parse");
     }
 
-    void logQuery(Log logger, boolean doLog, int fd, CharSequence query, SecurityContext securityContext, String logText);
+    LogRecord logQuery(Log logger, int fd, CharSequence query, SecurityContext securityContext, String logText);
+
+    default void logQuery(Log logger, boolean doLog, int fd, CharSequence query, SecurityContext securityContext, String logText) {
+        if (doLog) {
+            logQuery(logger, fd, query, securityContext, logText).I$();
+        }
+    }
 }
