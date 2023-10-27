@@ -24,13 +24,15 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 import java.util.Arrays;
 
 /**
- * A copy implementation of CharSequenceIntHashMap. It is there to work with concrete classes
+ * A copy implementation of CharSequenceObjHashMap. It is there to work with concrete classes
  * and avoid incurring performance penalty of megamorphic virtual calls. These calls originate
  * from calling charAt() on CharSequence interface. C2 compiler cannot inline these calls due to
  * multiple implementations of charAt(). It resorts to a virtual method call via itable. ILP is the
@@ -38,120 +40,140 @@ import java.util.Arrays;
  * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
  * no longer present in the async profiler.
  * <p>
- * This map is optimized for ASCII and UTF8 DirectByteCharSequence lookups.
+ * This map is optimized for ASCII and UTF-8 DirectUtf8String lookups.
  */
-public class ByteCharSequenceIntHashMap implements Mutable {
+public class Utf8StringObjHashMap<V> implements Mutable {
 
-    public static final int NO_ENTRY_VALUE = -1;
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private final int initialCapacity;
+
+    private final ObjList<Utf8String> list;
     private final double loadFactor;
-    private final int noEntryValue;
     private int capacity;
     private int free;
     private int[] hashCodes;
-    private ByteCharSequence[] keys;
+    private Utf8String[] keys;
     private int mask;
-    private int[] values;
+    private V[] values;
 
-    public ByteCharSequenceIntHashMap() {
+    public Utf8StringObjHashMap() {
         this(8);
     }
 
-    public ByteCharSequenceIntHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5, NO_ENTRY_VALUE);
+    public Utf8StringObjHashMap(int initialCapacity) {
+        this(initialCapacity, 0.5);
     }
 
-    public ByteCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
+    @SuppressWarnings("unchecked")
+    private Utf8StringObjHashMap(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
         free = capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
-        this.initialCapacity = capacity;
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (capacity / loadFactor));
-        keys = new ByteCharSequence[len];
+        keys = new Utf8String[len];
         hashCodes = new int[len];
         mask = len - 1;
-        this.noEntryValue = noEntryValue;
-        values = new int[keys.length];
+        list = new ObjList<>(capacity);
+        values = (V[]) new Object[keys.length];
         clear();
     }
 
-    public int capacity() {
-        return capacity;
-    }
-
     @Override
-    public final void clear() {
+    public void clear() {
         Arrays.fill(keys, null);
         Arrays.fill(hashCodes, 0);
         free = capacity;
-        Arrays.fill(values, noEntryValue);
+        list.clear();
     }
 
-    public boolean contains(DirectByteCharSequence key) {
+    public boolean contains(DirectUtf8Sequence key) {
         return keyIndex(key) < 0;
     }
 
-    public boolean excludes(DirectByteCharSequence key) {
+    public boolean excludes(DirectUtf8Sequence key) {
         return keyIndex(key) > -1;
     }
 
-    public int get(DirectByteCharSequence key) {
+    public V get(DirectUtf8Sequence key) {
         return valueAt(keyIndex(key));
     }
 
-    public int get(ByteCharSequence key) {
+    public V get(Utf8String key) {
         return valueAt(keyIndex(key));
     }
 
-    public int keyIndex(DirectByteCharSequence key) {
+    public int keyIndex(DirectUtf8Sequence key) {
         int hashCode = Hash.hashMem32(key);
-        int index = hashCode & mask;
-
+        int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
         }
-
-        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
+        if (hashCode == hashCodes[index] && Utf8s.equals(key, keys[index])) {
             return -index - 1;
         }
-
         return probe(key, hashCode, index);
     }
 
-    public int keyIndex(ByteCharSequence key) {
+    public int keyIndex(Utf8String key) {
         int hashCode = Hash.hashMem32(key);
-        int index = hashCode & mask;
-
+        int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
         }
-
-        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
+        if (hashCode == hashCodes[index] && Utf8s.equals(key, keys[index])) {
             return -index - 1;
         }
-
         return probe(key, hashCode, index);
     }
 
-    public boolean put(ByteCharSequence key, int value) {
+    public ObjList<Utf8String> keys() {
+        return list;
+    }
+
+    public boolean put(Utf8String key, V value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, ByteCharSequence key, int value) {
+    public boolean put(DirectUtf8String key, V value) {
+        return putAt(keyIndex(key), key, value);
+    }
+
+    public boolean putAt(int index, Utf8String key, V value) {
+        assert value != null;
         if (index < 0) {
             values[-index - 1] = value;
             return false;
         }
-
-        putAt0(index, key, value);
+        keys[index] = key;
+        hashCodes[index] = Hash.hashMem32(key);
+        values[index] = value;
+        if (--free == 0) {
+            rehash();
+        }
+        list.add(key);
         return true;
     }
 
-    public int remove(DirectByteCharSequence key) {
+    public boolean putAt(int index, DirectUtf8String key, V value) {
+        assert value != null;
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
+        }
+        Utf8String onHeapKey = Utf8String.newInstance(key);
+        keys[index] = onHeapKey;
+        hashCodes[index] = Hash.hashMem32(key);
+        values[index] = value;
+        if (--free == 0) {
+            rehash();
+        }
+        list.add(onHeapKey);
+        return true;
+    }
+
+    public int remove(Utf8String key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);
@@ -161,6 +183,14 @@ public class ByteCharSequenceIntHashMap implements Mutable {
     }
 
     public void removeAt(int index) {
+        if (index < 0) {
+            Utf8String key = keys[-index - 1];
+            removeAt0(index);
+            list.remove(key);
+        }
+    }
+
+    public void removeAt0(int index) {
         if (index < 0) {
             int from = -index - 1;
             erase(from);
@@ -175,12 +205,12 @@ public class ByteCharSequenceIntHashMap implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    ByteCharSequence key = keys[from];
+                    Utf8String key = keys[from];
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
                 int hashCode = Hash.hashMem32(key);
-                int idealHit = hashCode & mask;
+                int idealHit = Hash.spread(hashCode) & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != null) {
@@ -197,37 +227,26 @@ public class ByteCharSequenceIntHashMap implements Mutable {
         }
     }
 
-    public void reset() {
-        if (capacity == initialCapacity) {
-            clear();
-        } else {
-            free = capacity = initialCapacity;
-            int len = Numbers.ceilPow2((int) (capacity / loadFactor));
-            keys = new ByteCharSequence[len];
-            hashCodes = new int[len];
-            mask = len - 1;
-            values = new int[keys.length];
-            clear();
-        }
-    }
-
     public int size() {
         return capacity - free;
     }
 
-    public int valueAt(int index) {
-        int index1 = -index - 1;
-        return index < 0 ? values[index1] : noEntryValue;
+    public V valueAt(int index) {
+        return index < 0 ? valueAtQuick(index) : null;
+    }
+
+    public V valueAtQuick(int index) {
+        return values[-index - 1];
+    }
+
+    public V valueQuick(int index) {
+        return get(list.getQuick(index));
     }
 
     private void erase(int index) {
         keys[index] = null;
         hashCodes[index] = 0;
-        values[index] = noEntryValue;
-    }
-
-    private int hash(CharSequence k) {
-        return Chars.hashCode(k) & mask;
+        values[index] = null;
     }
 
     private void move(int from, int to) {
@@ -237,52 +256,49 @@ public class ByteCharSequenceIntHashMap implements Mutable {
         erase(from);
     }
 
-    private int probe(DirectByteCharSequence key, long hashCode, int index) {
+    private int probe(DirectUtf8Sequence key, long hashCode, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
                 return index;
             }
-            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
+            if (hashCode == hashCodes[index] && Utf8s.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
     }
 
-    private int probe(ByteCharSequence key, long hashCode, int index) {
+    private int probe(Utf8String key, long hashCode, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
                 return index;
             }
-            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
+            if (hashCode == hashCodes[index] && Utf8s.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
     }
 
-    private void putAt0(int index, ByteCharSequence key, int value) {
-        keys[index] = key;
-        hashCodes[index] = Hash.hashMem32(key);
-        values[index] = value;
-        if (--free == 0) {
-            rehash();
-        }
-    }
-
+    @SuppressWarnings({"unchecked"})
     private void rehash() {
-        int[] oldValues = values;
-        ByteCharSequence[] oldKeys = keys;
+        int size = size();
+        int newCapacity = capacity * 2;
+        free = capacity = newCapacity;
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
+
+        V[] oldValues = values;
+        Utf8String[] oldKeys = keys;
         int[] oldHashCodes = hashCodes;
-        int size = capacity - free;
-        capacity = capacity * 2;
-        free = capacity - size;
-        mask = Numbers.ceilPow2((int) (capacity / loadFactor)) - 1;
-        keys = new ByteCharSequence[mask + 1];
-        hashCodes = new int[mask + 1];
-        values = new int[mask + 1];
-        for (int i = oldKeys.length - 1; i > -1; i--) {
-            ByteCharSequence key = oldKeys[i];
+        keys = new Utf8String[len];
+        hashCodes = new int[len];
+        values = (V[]) new Object[len];
+        Arrays.fill(keys, null);
+        mask = len - 1;
+
+        free -= size;
+        for (int i = oldKeys.length; i-- > 0; ) {
+            Utf8String key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;

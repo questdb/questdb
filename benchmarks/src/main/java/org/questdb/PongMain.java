@@ -29,10 +29,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.NullLongGauge;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.network.IODispatcher.*;
 
@@ -61,12 +62,12 @@ public class PongMain {
     }
 
     private static class PongConnectionContext extends IOContext<PongConnectionContext> {
-        private final static String PING = "PING";
-        private final static String PONG = "PONG";
+        private final static Utf8String PING = new Utf8String("PING");
+        private final static Utf8String PONG = new Utf8String("PONG");
         private final int bufSize = 1024;
         private final long bufStart = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         private long buf = bufStart;
-        private final DirectByteCharSequence flyweight = new DirectByteCharSequence();
+        private final DirectUtf8String flyweight = new DirectUtf8String();
         private int writtenLen;
 
         protected PongConnectionContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
@@ -91,8 +92,8 @@ public class PongMain {
             int n = Net.recv(getFd(), buf, (int) (bufSize - (buf - bufStart)));
             if (n > 0) {
                 flyweight.of(bufStart, buf + n);
-                if (Chars.startsWith(PING, flyweight)) {
-                    if (flyweight.length() < PING.length()) {
+                if (Utf8s.startsWith(PING, flyweight)) {
+                    if (flyweight.size() < PING.size()) {
                         // accrue protocol artefacts while they still make sense
                         buf += n;
                         // fair resource use
@@ -102,8 +103,8 @@ public class PongMain {
                         this.buf = bufStart;
                         // send PONG by preparing the buffer and asking client to receive
                         LOG.info().$(flyweight).$();
-                        Chars.asciiStrCpy(PONG, bufStart);
-                        writtenLen = PONG.length();
+                        Utf8s.strCpy(PONG, PONG.size(), bufStart);
+                        writtenLen = PONG.size();
                         getDispatcher().registerChannel(this, IOOperation.WRITE);
                     }
                 } else {

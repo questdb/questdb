@@ -36,8 +36,9 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
-import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import sun.misc.Signal;
 
@@ -62,8 +63,8 @@ public class Bootstrap {
     private final ServerConfiguration config;
     private final Log log;
     private final Metrics metrics;
-    private final String rootDirectory;
     private final MicrosecondClock microsecondClock;
+    private final String rootDirectory;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -238,14 +239,17 @@ public class Bootstrap {
         final CharSequence dbRoot = cairoConfiguration.getRoot();
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
-        NativeLPSZ name = new NativeLPSZ();
-        try (Path path = new Path().of(dbRoot).slash$(); Path other = new Path().of(dbRoot).slash$()) {
-            int plen = path.length();
+        DirectUtf8StringZ name = new DirectUtf8StringZ();
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
                 if (Files.notDots(pUtf8NameZ)) {
                     name.of(pUtf8NameZ);
-                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+                    if (Utf8s.startsWithAscii(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
                         path.trimTo(plen).concat(pUtf8NameZ).$();
                         boolean shouldRename = false;
                         do {
@@ -316,10 +320,6 @@ public class Bootstrap {
         }
     }
 
-    public MicrosecondClock getMicrosecondClock() {
-        return microsecondClock;
-    }
-
     public String getBanner() {
         return banner;
     }
@@ -338,6 +338,10 @@ public class Bootstrap {
 
     public Metrics getMetrics() {
         return metrics;
+    }
+
+    public MicrosecondClock getMicrosecondClock() {
+        return microsecondClock;
     }
 
     public String getRootDirectory() {

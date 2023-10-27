@@ -181,7 +181,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 RecordCursor cursor1 = factory.getCursor(context)
         ) {
             RecordMetadata meta = factory.getMetadata();
-            StringSink sink = Misc.getThreadLocalBuilder();
+            StringSink sink = Misc.getThreadLocalSink();
             RecordCursorPrinter printer = new RecordCursorPrinter();
             LongList rows = new LongList();
             for (int j = 0; j < 5; j++) {

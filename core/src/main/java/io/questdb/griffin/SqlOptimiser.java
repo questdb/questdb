@@ -1480,7 +1480,7 @@ public class SqlOptimiser implements Mutable {
             final int joinCount = validatingModel.getJoinModels().size();
             if (joinCount > 1) {
                 boolean found = false;
-                final StringSink sink = Misc.getThreadLocalBuilder();
+                final StringSink sink = Misc.getThreadLocalSink();
                 for (int i = 0; i < joinCount; i++) {
                     final QueryModel jm = validatingModel.getJoinModels().getQuick(i);
                     if (jm.getAliasToColumnMap().keyIndex(node.token) < 0) {

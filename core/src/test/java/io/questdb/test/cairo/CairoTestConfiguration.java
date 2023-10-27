@@ -200,11 +200,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return overrides.getQueryCacheEventQueueCapacity() < 0 ? super.getQueryCacheEventQueueCapacity() : overrides.getQueryCacheEventQueueCapacity();
-    }
-
-    @Override
     public int getRepeatMigrationsFromVersion() {
         return overrides.getRepeatMigrationsFromVersion();
     }

@@ -31,12 +31,13 @@ import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -67,7 +68,7 @@ public class HttpSecurityTest extends AbstractTest {
     private static final HttpAuthenticatorFactory SINGLE_USER_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
-            return Chars.equalsNc(VALID_CREDENTIALS, headers.getHeader("Authorization"));
+            return Utf8s.equalsNcAscii(VALID_CREDENTIALS, headers.getHeader(new Utf8String("Authorization")));
         }
 
         @Override

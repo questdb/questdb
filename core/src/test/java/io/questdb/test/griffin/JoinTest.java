@@ -34,6 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -4772,7 +4773,7 @@ public class JoinTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRO(LPSZ name) {
-                    if (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);

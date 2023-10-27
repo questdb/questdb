@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
@@ -108,7 +109,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     long getLong128Lo(Record rec);
 
-    void getLong256(Record rec, CharSink sink);
+    void getLong256(Record rec, CharSinkBase<?> sink);
 
     Long256 getLong256A(Record rec);
 

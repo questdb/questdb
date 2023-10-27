@@ -31,7 +31,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 
 public class LineTcpParser {
 
@@ -75,9 +76,9 @@ public class LineTcpParser {
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
 
     private static final boolean[] controlChars;
-    private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
+    private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
-    private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
+    private final DirectUtf8String measurementName = new DirectUtf8String();
     private final boolean stringAsTagSupported;
     private final boolean symbolAsFieldSupported;
     private long bufAt;
@@ -119,7 +120,7 @@ public class LineTcpParser {
         return errorCode;
     }
 
-    public DirectByteCharSequence getMeasurementName() {
+    public DirectUtf8Sequence getMeasurementName() {
         return measurementName;
     }
 
@@ -469,11 +470,11 @@ public class LineTcpParser {
 
     private boolean expectTimestamp(byte endOfEntityByte) {
         try {
-            if (endOfEntityByte == (byte) '\n') {
+            if (endOfEntityByte == '\n') {
                 final long entityHi = bufAt - nEscapedChars;
                 if (entityLo < entityHi) {
                     charSeq.of(entityLo, entityHi);
-                    final int charSeqLen = charSeq.length();
+                    final int charSeqLen = charSeq.size();
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
                         case 'n':
@@ -590,8 +591,8 @@ public class LineTcpParser {
     }
 
     public class ProtoEntity {
-        private final DirectByteCharSequence name = new DirectByteCharSequence();
-        private final DirectByteCharSequence value = new DirectByteCharSequence();
+        private final DirectUtf8String name = new DirectUtf8String();
+        private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
         private double floatValue;
         private long longValue;
@@ -610,7 +611,7 @@ public class LineTcpParser {
             return longValue;
         }
 
-        public DirectByteCharSequence getName() {
+        public DirectUtf8Sequence getName() {
             return name;
         }
 
@@ -622,7 +623,7 @@ public class LineTcpParser {
             return unit;
         }
 
-        public DirectByteCharSequence getValue() {
+        public DirectUtf8Sequence getValue() {
             return value;
         }
 
@@ -639,10 +640,10 @@ public class LineTcpParser {
         private boolean parse(byte last, int valueLen) {
             switch (last) {
                 case 'i':
-                    if (valueLen > 1 && value.charAt(1) != 'x') {
+                    if (valueLen > 1 && value.byteAt(1) != 'x') {
                         return parseLong(ENTITY_TYPE_INTEGER);
                     }
-                    if (valueLen > 3 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
+                    if (valueLen > 3 && value.byteAt(0) == '0' && (value.byteAt(1) | 32) == 'x') {
                         value.decHi(); // remove 'i'
                         type = ENTITY_TYPE_LONG256;
                         return true;
@@ -687,7 +688,7 @@ public class LineTcpParser {
                             type = ENTITY_TYPE_SYMBOL;
                         }
                     } else {
-                        charSeq.of(value.getLo(), value.getHi());
+                        charSeq.of(value.lo(), value.hi());
                         if (SqlKeywords.isTrueKeyword(charSeq)) {
                             booleanValue = true;
                             type = ENTITY_TYPE_BOOLEAN;
@@ -712,7 +713,7 @@ public class LineTcpParser {
                 // fall through
                 default:
                     try {
-                        floatValue = Numbers.parseDouble(value.getLo(), value.length());
+                        floatValue = Numbers.parseDouble(value.lo(), value.size());
                         type = ENTITY_TYPE_FLOAT;
                     } catch (NumericException ex) {
                         type = ENTITY_TYPE_SYMBOL;
@@ -723,7 +724,7 @@ public class LineTcpParser {
 
         private boolean parseLong(byte entityType) {
             try {
-                charSeq.of(value.getLo(), value.getHi() - 1);
+                charSeq.of(value.lo(), value.hi() - 1);
                 longValue = Numbers.parseLong(charSeq);
                 value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
                 type = entityType;

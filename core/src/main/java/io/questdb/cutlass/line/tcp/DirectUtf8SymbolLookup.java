@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
 
-public interface Sinkable {
-    void toSink(CharSink sink);
+@FunctionalInterface
+public interface DirectUtf8SymbolLookup {
+    int keyOf(DirectUtf8Sequence value);
 }

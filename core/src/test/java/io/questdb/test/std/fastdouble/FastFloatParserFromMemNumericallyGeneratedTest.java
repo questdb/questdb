@@ -22,48 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.test.std.fastdouble;
 
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.fastdouble.FastFloatParser;
+import io.questdb.std.str.Utf8s;
 
-public class FileNameExtractorCharSequence extends AbstractCharSequence {
-
-    private final static ThreadLocal<FileNameExtractorCharSequence> SINGLETON =
-            new ThreadLocal<>(FileNameExtractorCharSequence::new);
-
-    private static final char separator;
-    private CharSequence base;
-    private int hi;
-    private int lo;
-
-    public static CharSequence get(CharSequence that) {
-        return SINGLETON.get().of(that);
-    }
-
+public class FastFloatParserFromMemNumericallyGeneratedTest extends AbstractFloatNumericallyGeneratedTest {
     @Override
-    public char charAt(int index) {
-        return base.charAt(lo + index);
-    }
-
-    @Override
-    public int length() {
-        return hi - lo;
-    }
-
-    public CharSequence of(CharSequence base) {
-        this.base = base;
-        this.hi = base.length();
-        this.lo = 0;
-        for (int i = hi - 1; i > -1; i--) {
-            if (base.charAt(i) == separator) {
-                this.lo = i + 1;
-                break;
-            }
+    protected float parse(String str) throws NumericException {
+        int len = str.length();
+        long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Utf8s.strCpyAscii(str, mem);
+            return FastFloatParser.parseFloat(mem, len, false);
+        } finally {
+            Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
         }
-        return this;
-    }
-
-    static {
-        separator = System.getProperty("file.separator").charAt(0);
     }
 }

@@ -68,7 +68,7 @@ final class Mig506 {
             int symbolsCount,
             MemoryARW writeTo
     ) {
-        int rootLen = path.length();
+        int rootLen = path.size();
 
         long minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
         long maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
@@ -112,7 +112,7 @@ final class Mig506 {
         MigrationActions.LOG.info().$("rebuilding tx file [table=").$(migrationContext.getTablePath()).I$();
         Path path = migrationContext.getTablePath();
         final FilesFacade ff = migrationContext.getFf();
-        int pathDirLen = path.length();
+        int pathDirLen = path.size();
 
         path.concat(TXN_FILE_NAME).$();
         if (!ff.exists(path)) {

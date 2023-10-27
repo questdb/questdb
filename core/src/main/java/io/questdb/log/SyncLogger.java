@@ -26,16 +26,21 @@ package io.questdb.log;
 
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
+import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 
-public final class SyncLogger implements LogRecord, Log {
-    private final static ThreadLocal<StringSink> line = new ThreadLocal<>(StringSink::new);
+public final class SyncLogger extends AbstractLogRecord implements Log {
+    private final static ThreadLocal<Utf8StringSink> line = new ThreadLocal<>(Utf8StringSink::new);
     private final Sequence advisorySeq;
     private final MicrosecondClock clock;
     private final Sequence criticalSeq;
@@ -64,15 +69,25 @@ public final class SyncLogger implements LogRecord, Log {
 
     @Override
     public void $() {
-        StringSink sink = line.get();
-        System.out.println(sink);
+        Utf8StringSink sink = line.get();
+        System.out.println(sink.asAsciiCharSequence());
         sink.clear();
     }
 
     @Override
-    public LogRecord $(CharSequence sequence) {
+    public LogRecord $(@Nullable CharSequence sequence) {
         if (sequence == null) {
-            sink().put("null");
+            sink().putAscii("null");
+        } else {
+            sink().putAscii(sequence);
+        }
+        return this;
+    }
+
+    @Override
+    public LogRecord $(@Nullable Utf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
         } else {
             sink().put(sequence);
         }
@@ -80,7 +95,7 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(CharSequence sequence, int lo, int hi) {
+    public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
         sink().put(sequence, lo, hi);
         return this;
     }
@@ -116,27 +131,19 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(Throwable e) {
-        if (e != null) {
-            sink().put(Misc.EOL).put(e);
-        }
-        return this;
-    }
-
-    @Override
-    public LogRecord $(File x) {
+    public LogRecord $(@Nullable File x) {
         sink().put(x == null ? "null" : x.getAbsolutePath());
         return this;
     }
 
     @Override
-    public LogRecord $(Object x) {
+    public LogRecord $(@Nullable Object x) {
         sink().put(x == null ? "null" : x.toString());
         return this;
     }
 
     @Override
-    public LogRecord $(Sinkable x) {
+    public LogRecord $(@Nullable Sinkable x) {
         if (x == null) {
             sink().put("null");
         } else {
@@ -177,7 +184,7 @@ public final class SyncLogger implements LogRecord, Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        Chars.utf8toUtf16(lo, hi, this);
+        Utf8s.utf8ToUtf16(lo, hi, this);
         return this;
     }
 
@@ -250,11 +257,11 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord utf8(CharSequence sequence) {
+    public LogRecord utf8(@Nullable CharSequence sequence) {
         if (sequence == null) {
             sink().put("null");
         } else {
-            sink().encodeUtf8(sequence);
+            sink().put(sequence);
         }
         return this;
     }
@@ -313,7 +320,8 @@ public final class SyncLogger implements LogRecord, Log {
         return this;
     }
 
-    private StringSink sink() {
+    @Override
+    protected Utf8StringSink sink() {
         return line.get();
     }
 }

@@ -233,7 +233,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
+                        Misc.getThreadLocalSink(),
                         TABLE_START_CONTENT);
 
                 // so that we know when the table writer is returned to the pool
@@ -259,7 +259,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
+                        Misc.getThreadLocalSink(),
                         finallyExpected);
             }
         });

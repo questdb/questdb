@@ -26,7 +26,10 @@ package io.questdb.test.std;
 
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -608,6 +611,24 @@ public class NumbersTest {
         TestUtils.assertEquals("6103390276", sink);
     }
 
+    @Test
+    public void testLongUtf8Sequence() throws Exception {
+        Rnd rnd = new Rnd();
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+            for (int i = 0; i < 100; i++) {
+                long l1 = rnd.nextLong();
+                long l2 = rnd.nextLong();
+                sink.clear();
+
+                Numbers.append(sink, l1);
+                int p = sink.size();
+                Numbers.append(sink, l2);
+                Assert.assertEquals(l1, Numbers.parseLong(sink, 0, p));
+                Assert.assertEquals(l2, Numbers.parseLong(sink, p, sink.size()));
+            }
+        }
+    }
+
     @Test(expected = NumericException.class)
     public void testParse000Greedy0() throws NumericException {
         Numbers.parseInt000Greedy("", 0, 0);
@@ -875,8 +896,10 @@ public class NumbersTest {
 
     @Test
     public void testParseIPv42() throws Exception {
-        Assert.assertEquals(0, Numbers.parseIPv4(null));
+        Assert.assertEquals(0, Numbers.parseIPv4((CharSequence) null));
         Assert.assertEquals(0, Numbers.parseIPv4("null"));
+        Assert.assertEquals(0, Numbers.parseIPv4((Utf8Sequence) null));
+        Assert.assertEquals(0, Numbers.parseIPv4(new Utf8String("null")));
     }
 
     @Test(expected = NumericException.class)
@@ -1014,6 +1037,8 @@ public class NumbersTest {
     public void testParseInt() throws Exception {
         Assert.assertEquals(567963, Numbers.parseInt("567963"));
         Assert.assertEquals(-23346346, Numbers.parseInt("-23346346"));
+        Assert.assertEquals(567963, Numbers.parseInt(new Utf8String("567963")));
+        Assert.assertEquals(-23346346, Numbers.parseInt(new Utf8String("-23346346")));
     }
 
     @Test(expected = NumericException.class)
@@ -1023,7 +1048,8 @@ public class NumbersTest {
 
     @Test(expected = NumericException.class)
     public void testParseIntNull() throws Exception {
-        Numbers.parseInt(null);
+        Numbers.parseInt((CharSequence) null);
+        Numbers.parseInt((Utf8Sequence) null);
     }
 
     @Test(expected = NumericException.class)
@@ -1192,13 +1218,23 @@ public class NumbersTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongNull() throws Exception {
-        Numbers.parseLong(null);
+    public void testParseLongNullCharSequence() throws Exception {
+        Numbers.parseLong((CharSequence) null);
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongNull2() throws Exception {
-        Numbers.parseLong(null, 0, 10);
+    public void testParseLongNullCharSequence2() throws Exception {
+        Numbers.parseLong((CharSequence) null, 0, 10);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongNullUtf8Sequence() throws Exception {
+        Numbers.parseLong((Utf8Sequence) null);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongNullUtf8Sequence2() throws Exception {
+        Numbers.parseLong((Utf8Sequence) null, 0, 10);
     }
 
     @Test(expected = NumericException.class)

@@ -74,7 +74,6 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean parallelFilterEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
     private long partitionO3SplitThreshold;
-    private int queryCacheEventQueueCapacity = -1;
     private int recreateDistressedSequencerAttempts = 3;
     private int repeatMigrationsFromVersion = -1;
     private int rndFunctionMemoryMaxPages = -1;
@@ -254,11 +253,6 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public long getPartitionO3SplitThreshold() {
         return partitionO3SplitThreshold;
-    }
-
-    @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return queryCacheEventQueueCapacity;
     }
 
     @Override
@@ -442,7 +436,6 @@ public class Overrides implements ConfigurationOverrides {
         writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
-        queryCacheEventQueueCapacity = -1;
         pageFrameReduceShardCount = -1;
         pageFrameReduceQueueCapacity = -1;
         columnVersionPurgeQueueCapacity = -1;
@@ -653,11 +646,6 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setPartitionO3SplitThreshold(long value) {
         this.partitionO3SplitThreshold = value;
-    }
-
-    @Override
-    public void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity) {
-        this.queryCacheEventQueueCapacity = queryCacheEventQueueCapacity;
     }
 
     @Override

@@ -91,7 +91,7 @@ class FastDouble {
         // -----------------
         // Note: a multiplication by a constant is cheaper than an
         //       arbitrary integer multiplication.
-        long significand = 0;// significand is treated as an unsigned long
+        long significand = 0; // significand is treated as an unsigned long
         final int significandStartIndex = index;
         int virtualIndexOfPoint = -1;
         boolean illegal = false;

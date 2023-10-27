@@ -33,7 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import org.jetbrains.annotations.NotNull;
 
 public class RndLong256FunctionFactory implements FunctionFactory {
@@ -57,7 +57,7 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public void getLong256(Record rec, CharSinkBase<?> sink) {
             Numbers.appendLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), sink);
         }
 

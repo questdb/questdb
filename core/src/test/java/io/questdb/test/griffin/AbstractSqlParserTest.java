@@ -36,6 +36,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;

@@ -26,9 +26,9 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -147,8 +147,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return result;
     }
 
-    public SqlException put(CharSequence cs) {
-        message.put(cs);
+    public SqlException put(@Nullable CharSequence cs) {
+        if (cs != null) {
+            message.put(cs);
+        }
         return this;
     }
 
@@ -187,7 +189,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[').put(position).put("]: ").put(message);
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('[').put(position).putAscii("]: ").put(message);
     }
 }

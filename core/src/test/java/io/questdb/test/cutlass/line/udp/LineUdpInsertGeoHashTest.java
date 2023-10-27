@@ -61,7 +61,7 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
     private static Supplier<String> randomGeoHashGenerator(int chars) {
         final Rnd rnd = new Rnd();
         return () -> {
-            StringSink sink = Misc.getThreadLocalBuilder();
+            StringSink sink = Misc.getThreadLocalSink();
             GeoHashes.appendChars(rnd.nextGeoHash(chars * 5), chars, sink);
             return sink.toString();
         };

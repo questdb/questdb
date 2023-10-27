@@ -27,19 +27,22 @@ package io.questdb.std.str;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
-public class FloatingDirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
+public class FlyweightDirectCharSink extends AbstractCharSink implements MutableCharSink, CharSequence, DirectSequence {
     private long hi;
     private long lo;
     private long ptr;
 
-    public FloatingDirectCharSink() {
+    public FlyweightDirectCharSink() {
         lo = hi = ptr = 0;
     }
 
-    public FloatingDirectCharSink asCharSequence(long lo, long hi) {
+    public long appendPtr() {
+        return lo;
+    }
+
+    public FlyweightDirectCharSink asCharSequence(long lo, long hi) {
         this.ptr = lo;
         this.lo = hi;
         this.hi = hi;
@@ -53,10 +56,13 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
 
     @Override
     public void clear() {
-        lo = ptr;
+        clear(0);
     }
 
-    @Override
+    public void clear(int len) {
+        lo = ptr + len;
+    }
+
     public void close() {
         lo = hi = ptr = 0;
     }
@@ -64,10 +70,6 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
     @Override
     public boolean equals(Object obj) {
         return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
-    }
-
-    public long getLo() {
-        return lo;
     }
 
     @Override
@@ -80,7 +82,7 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
         return (int) (lo - ptr) / 2;
     }
 
-    public FloatingDirectCharSink of(long lo, long hi) {
+    public FlyweightDirectCharSink of(long lo, long hi) {
         this.ptr = lo;
         this.lo = lo;
         this.hi = hi;
@@ -88,19 +90,26 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
-        int l = cs.length();
-        assert checkCapacity(l);
-        int l2 = l * 2;
-        for (int i = 0; i < l; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2L, cs.charAt(i));
+    public long ptr() {
+        return ptr;
+    }
+
+    @Override
+    public CharSink put(@Nullable CharSequence cs) {
+        if (cs != null) {
+            int l = cs.length();
+            assert checkCapacity(l);
+            int l2 = l * 2;
+            for (int i = 0; i < l; i++) {
+                Unsafe.getUnsafe().putChar(lo + i * 2L, cs.charAt(i));
+            }
+            this.lo += l2;
         }
-        this.lo += l2;
         return this;
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
+    public CharSink put(char @NotNull [] chars, int start, int len) {
         assert checkCapacity(len);
         int l2 = len * 2;
         for (int i = 0; i < len; i++) {
@@ -120,7 +129,12 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
     }
 
     @Override
-    public CharSequence subSequence(int start, int end) {
+    public int size() {
+        return (int) (lo - ptr);
+    }
+
+    @Override
+    public @NotNull CharSequence subSequence(int start, int end) {
         throw new UnsupportedOperationException();
     }
 

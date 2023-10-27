@@ -225,7 +225,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
+        return DateFormatUtils.EN_LOCALE;
     }
 
     @Override
@@ -457,11 +457,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getPartitionPurgeListCapacity() {
         return 64;
-    }
-
-    @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return 4;
     }
 
     @Override

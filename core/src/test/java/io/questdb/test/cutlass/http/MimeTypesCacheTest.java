@@ -30,6 +30,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -221,13 +222,13 @@ public class MimeTypesCacheTest extends AbstractTest {
 
     private static void assertMimeTypes(MimeTypesCache mimeTypes) {
         Assert.assertEquals(981, mimeTypes.size());
-        TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
-        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));
-        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("inkml"));
-        TestUtils.assertEquals("application/mp21", mimeTypes.get("m21"));
-        TestUtils.assertEquals("application/mp21", mimeTypes.get("mp21"));
-        TestUtils.assertEquals("application/mp4", mimeTypes.get("mp4s"));
-        TestUtils.assertEquals("x-conference/x-cooltalk", mimeTypes.get("ice"));
+        TestUtils.assertEquals("application/andrew-inset", mimeTypes.get(new Utf8String("ez")));
+        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get(new Utf8String("ink")));
+        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get(new Utf8String("inkml")));
+        TestUtils.assertEquals("application/mp21", mimeTypes.get(new Utf8String("m21")));
+        TestUtils.assertEquals("application/mp21", mimeTypes.get(new Utf8String("mp21")));
+        TestUtils.assertEquals("application/mp4", mimeTypes.get(new Utf8String("mp4s")));
+        TestUtils.assertEquals("x-conference/x-cooltalk", mimeTypes.get(new Utf8String("ice")));
     }
 
     private void testFailure(FilesFacade ff, CharSequence startsWith) throws Exception {

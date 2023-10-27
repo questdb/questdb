@@ -28,6 +28,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -87,7 +88,7 @@ public class VolumeDefinitions {
         if (!Files.isDirOrSoftLinkDir(path.of(volumePath, 0, len).$())) {
             throw new ServerConfigurationException("inaccessible volume [path=" + volumePath + ']');
         }
-        String volumeRoot = Chars.toString(path);
+        String volumeRoot = Utf8s.toString(path);
         if (volumeRoot.equals(root)) {
             throw new ServerConfigurationException("standard volume cannot have an alias [alias=" + alias + ", root=" + root + ']');
         }

@@ -3332,7 +3332,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectCursor(
             @Transient QueryModel model,
-            @Transient SqlExecutionContext executionContext) throws SqlException {
+            @Transient SqlExecutionContext executionContext
+    ) throws SqlException {
         // sql parser ensures this type of model always has only one column
         return new RecordAsAFieldRecordCursorFactory(
                 generate(model.getNestedModel(), executionContext),
@@ -4010,12 +4011,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final TableToken tableToken = executionContext.getTableToken(tab);
-        if (model.isUpdate() && !executionContext.isWalApplication()) {
-            try (
-                    TableReader reader = executionContext.getReader(tableToken);
-                    TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getMetadataVersion())
-            ) {
-                return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, metadata);
+        if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
+            try (TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getMetadataVersion())) {
+                return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
             }
         } else {
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
@@ -4029,7 +4027,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Transient SqlExecutionContext executionContext,
             ObjList<ExpressionNode> latestBy,
             boolean supportsRandomAccess,
-            @Transient TableReader reader,
+            @Transient @Nullable TableReader reader,
             @Transient TableRecordMetadata metadata
     ) throws SqlException {
         // create metadata based on top-down columns that are required
@@ -4105,11 +4103,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(reader.getMetadata());
+        if (reader == null) {
+            // This is WAL serialisation compilation. We don't need to read data from table
+            // and don't need optimisation for query validation.
+            return new AbstractRecordCursorFactory(myMeta) {
+                @Override
+                public boolean recordCursorSupportsRandomAccess() {
+                    return false;
+                }
+
+                @Override
+                public boolean supportsUpdateRowId(TableToken tableToken) {
+                    return metadata.getTableToken() == tableToken;
+                }
+            };
+        }
+
+        GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
-        // Reader TableToken can have out of date table name in getLoggingName().
-        // We need to resolve it from the engine to get correct value.
-        final TableToken tableToken = reader.getTableToken();
+        final TableToken tableToken = metadata.getTableToken();
 
         final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
                 model,
