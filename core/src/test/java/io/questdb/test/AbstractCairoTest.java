@@ -1197,6 +1197,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setSampleByIndexSearchPageSize(sampleByIndexSearchPageSize);
     }
 
+    protected static void configOverrideSqlAnalyticStoreMaxPages(int analyticStoreMaxPages) {
+        node1.getConfigurationOverrides().setSqlAnalyticStoreMaxPages(analyticStoreMaxPages);
+    }
+
+    protected static void configOverrideSqlAnalyticStorePageSize(int analyticStorePageSize) {
+        node1.getConfigurationOverrides().setSqlAnalyticStorePageSize(analyticStorePageSize);
+    }
+
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
         node1.getConfigurationOverrides().setSqlJoinMetadataMaxResizes(sqlJoinMetadataMaxResizes);

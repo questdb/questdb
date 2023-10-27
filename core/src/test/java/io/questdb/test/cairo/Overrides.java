@@ -84,6 +84,8 @@ public class Overrides implements ConfigurationOverrides {
     private String snapshotInstanceId = null;
     private Boolean snapshotRecoveryEnabled = null;
     private long spinLockTimeout = -1;
+    private int sqlAnalyticStoreMaxPages;
+    private int sqlAnalyticStorePageSize;
     private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
@@ -302,6 +304,14 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public long getSpinLockTimeout() {
         return spinLockTimeout;
+    }
+
+    public int getSqlAnalyticStoreMaxPages() {
+        return sqlAnalyticStoreMaxPages;
+    }
+
+    public int getSqlAnalyticStorePageSize() {
+        return sqlAnalyticStorePageSize;
     }
 
     @Override
@@ -698,6 +708,16 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setSpinLockTimeout(long spinLockTimeout) {
         this.spinLockTimeout = spinLockTimeout;
+    }
+
+    @Override
+    public void setSqlAnalyticStoreMaxPages(int analyticStoreMaxPages) {
+        this.sqlAnalyticStoreMaxPages = analyticStoreMaxPages;
+    }
+
+    @Override
+    public void setSqlAnalyticStorePageSize(int analyticStorePageSize) {
+        this.sqlAnalyticStorePageSize = analyticStorePageSize;
     }
 
     @Override

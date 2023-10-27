@@ -115,6 +115,10 @@ public interface ConfigurationOverrides {
 
     long getSpinLockTimeout();
 
+    int getSqlAnalyticStoreMaxPages();
+
+    int getSqlAnalyticStorePageSize();
+
     int getSqlCopyBufferSize();
 
     int getSqlJoinMetadataMaxResizes();
@@ -254,6 +258,10 @@ public interface ConfigurationOverrides {
     void setSnapshotRecoveryEnabled(Boolean snapshotRecoveryEnabled);
 
     void setSpinLockTimeout(long spinLockTimeout);
+
+    void setSqlAnalyticStoreMaxPages(int analyticStoreMaxPages);
+
+    void setSqlAnalyticStorePageSize(int analyticStorePageSize);
 
     void setSqlCopyBufferSize(int sqlCopyBufferSize);
 

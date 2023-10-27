@@ -240,6 +240,16 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getSqlAnalyticStoreMaxPages() {
+        return overrides.getSqlAnalyticStoreMaxPages() > 0 ? overrides.getSqlAnalyticStoreMaxPages() : super.getSqlAnalyticStoreMaxPages();
+    }
+
+    @Override
+    public int getSqlAnalyticStorePageSize() {
+        return overrides.getSqlAnalyticStorePageSize() > 0 ? overrides.getSqlAnalyticStorePageSize() : super.getSqlAnalyticStorePageSize();
+    }
+
+    @Override
     public int getSqlCopyBufferSize() {
         return overrides.getSqlCopyBufferSize();
     }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.analytic;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -165,7 +166,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAverageOverNonPartitionedLongRange() throws Exception {
+    public void testAverageOverNonPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             //default buffer size holds 65k entries
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
@@ -196,7 +197,30 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAverageOverPartitionedLongRange() throws Exception {
+    public void testAverageOverNonPartitionedRowsWithLargeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            insert("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
+            insert("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
+
+            String expected = "ts\tj\tavg\n" +
+                    "1970-01-01T00:00:00.460000Z\t460000\t420000.0\n";
+
+            // cross-check with moving average re-write using aggregate functions
+            assertSql(expected,
+                    " select max(ts) as ts, max(j) j, avg(j) as avg from " +
+                            "( select ts, i, j, row_number() over (order by ts desc) as rn from tab order by ts desc) " +
+                            "where rn between 1 and 80001 ");
+
+            assertSql(expected,
+                    "select * from (" +
+                            "select * from (select ts, j, avg(j) over (order by ts rows between 80000 preceding and current row) from tab) limit -1) ");
+        });
+    }
+
+    @Test
+    public void testAverageOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             //default buffer size holds 65k entries in total, 32 per partition, see CairoConfiguration.getSqlAnalyticInitialRangeBufferSize()
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
@@ -221,6 +245,39 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
 
             assertSql(expected,
                     "select * from (select * from (select ts, i, j, avg(j) over (partition by i order by ts range between 80000 preceding and current row) from tab) limit -4) order by i");
+        });
+    }
+
+    @Test
+    public void testAverageOverPartitionedRowsWithLargeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            insert("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
+            insert("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
+
+            String expected = "ts\ti\tj\tavg\n" +
+                    "1970-01-01T00:00:00.460000Z\t0\t460000\t300000.0\n" +
+                    "1970-01-01T00:00:00.459997Z\t1\t459997\t299997.0\n" +
+                    "1970-01-01T00:00:00.459998Z\t2\t459998\t299998.0\n" +
+                    "1970-01-01T00:00:00.459999Z\t3\t459999\t299999.0\n";
+
+            // cross-check with moving average re-write using aggregate functions
+            assertSql(expected,
+                    " select max(ts) as ts, i, max(j) j, avg(j) as avg from " +
+                            "( select ts, i, j, row_number() over (partition by i order by ts desc) as rn from tab order by ts desc) " +
+                            "where rn between 1 and 80001 " +
+                            "group by i " +
+                            "order by i");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.460000Z\t0\t460000\t300000.0\n" +
+                            "1970-01-01T00:00:00.459997Z\t1\t459997\t299997.0\n" +
+                            "1970-01-01T00:00:00.459998Z\t2\t459998\t299998.0\n" +
+                            "1970-01-01T00:00:00.459999Z\t3\t459999\t299999.0\n",
+                    "select * from (" +
+                            "select * from (select ts, i, j, avg(j) over (partition by i order by ts rows between 80000 preceding and current row) from tab) limit -4) " +
+                            "order by i");
         });
     }
 
@@ -809,16 +866,15 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
                     "select ts, i, j, avg(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding) from tab");
 
-            //TODO: fix
-//            assertSql("ts\ti\tj\tavg\n" +
-//                            "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
-//                            "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
-//                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
-//                            "1970-01-01T00:00:00.000004Z\t1\t4\tNaN\n" +
-//                            "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
-//                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\n" +
-//                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
-//                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 1000 preceding and 2 preceding) from tab");
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tNaN\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding) from tab");
 
             // here avg returns j as double because it processes current row only
             assertSql("ts\ti\tj\tavg\n" +
@@ -1714,11 +1770,17 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowBufferExceedsLimit() throws Exception {
+        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        configOverrideSqlAnalyticStorePageSize(4096);
+        configOverrideSqlAnalyticStoreMaxPages(10);
+
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab select x::timestamp, 1, x from long_sequence(100000)");
 
+            //TODO: improve error message and position
             assertException("select avg(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                    7, "window buffer size exceeds configured limit [maxSize=10000,actual=100001]");
+                    0, "Maximum number of pages (10) breached in VirtualMemory");
         });
     }
 }
