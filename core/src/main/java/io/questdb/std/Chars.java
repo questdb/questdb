@@ -153,6 +153,10 @@ public final class Chars {
         return indexOf(sequence, 0, sequence.length(), term) != -1;
     }
 
+    public static boolean containsIgnoreCase(@NotNull CharSequence sequence, @NotNull CharSequence term) {
+        return indexOfIgnoreCase(sequence, 0, sequence.length(), term) != -1;
+    }
+
     public static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
@@ -178,12 +182,26 @@ public final class Chars {
         return !(csl == 0 || csl < l) && equals(ends, cs, csl - l, csl);
     }
 
-    public static boolean endsWith(CharSequence cs, char c) {
+    public static boolean endsWith(@Nullable CharSequence cs, char c) {
         if (cs == null) {
             return false;
         }
         final int csl = cs.length();
         return csl != 0 && c == cs.charAt(csl - 1);
+    }
+
+    public static boolean endsWithIgnoreCase(@Nullable CharSequence cs, @Nullable CharSequence ends) {
+        if (ends == null || cs == null) {
+            return false;
+        }
+
+        int l = ends.length();
+        if (l == 0) {
+            return true;
+        }
+
+        int csl = cs.length();
+        return !(csl == 0 || csl < l) && equalsIgnoreCase(ends, cs, csl - l, csl);
     }
 
     public static boolean equals(@NotNull CharSequence l, @NotNull CharSequence r) {
@@ -241,6 +259,24 @@ public final class Chars {
 
     public static boolean equals(@NotNull CharSequence l, char r) {
         return l.length() == 1 && l.charAt(0) == r;
+    }
+
+    public static boolean equalsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int rLo, int rHi) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll;
+        if ((ll = l.length()) != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i + rLo))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -489,6 +525,79 @@ public final class Chars {
         return -1;
     }
 
+    public static int indexOfIgnoreCase(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {
+        return indexOfIgnoreCase(sequence, sequenceLo, sequenceHi, term, 1);
+    }
+
+    public static int indexOfIgnoreCase(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term, int occurrence) {
+        int m = term.length();
+        if (m == 0) {
+            return -1;
+        }
+
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int foundIndex = -1;
+        int count = 0;
+        if (occurrence > 0) {
+            for (int i = sequenceLo; i < sequenceHi; i++) {
+                if (foundIndex == -1) {
+                    if (sequenceHi - i < m) {
+                        return -1;
+                    }
+                    if (Character.toLowerCase(sequence.charAt(i)) == Character.toLowerCase(term.charAt(0))) {
+                        foundIndex = i;
+                    }
+                } else { // first character matched, try to match the rest of the term
+                    if (Character.toLowerCase(sequence.charAt(i)) != Character.toLowerCase(term.charAt(i - foundIndex))) {
+                        // start again from after where the first character was found
+                        i = foundIndex;
+                        foundIndex = -1;
+                    }
+                }
+
+                if (foundIndex != -1 && i - foundIndex == m - 1) {
+                    count++;
+                    if (count == occurrence) {
+                        return foundIndex;
+                    } else {
+                        foundIndex = -1;
+                    }
+                }
+            }
+        } else { // if occurrence is negative, search in reverse
+            for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
+                if (foundIndex == -1) {
+                    if (i - sequenceLo + 1 < m) {
+                        return -1;
+                    }
+                    if (Character.toLowerCase(sequence.charAt(i)) == Character.toLowerCase(term.charAt(m - 1))) {
+                        foundIndex = i;
+                    }
+                } else { // last character matched, try to match the rest of the term
+                    if (Character.toLowerCase(sequence.charAt(i)) != Character.toLowerCase(term.charAt(m - 1 + i - foundIndex))) {
+                        // start again from after where the first character was found
+                        i = foundIndex;
+                        foundIndex = -1;
+                    }
+                }
+
+                if (foundIndex != -1 && foundIndex - i == m - 1) {
+                    count--;
+                    if (count == occurrence) {
+                        return foundIndex + 1 - m;
+                    } else {
+                        foundIndex = -1;
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
     public static boolean isBlank(CharSequence s) {
         if (s == null) {
             return true;
@@ -691,9 +800,17 @@ public final class Chars {
         return paths;
     }
 
-    public static boolean startsWith(CharSequence _this, CharSequence that) {
-        final int len = that.length();
-        return _this.length() >= len && equalsChars(_this, that, len);
+    public static boolean startsWith(@Nullable CharSequence cs, @Nullable CharSequence starts) {
+        if (cs == null || starts == null) {
+            return false;
+        }
+
+        int l = starts.length();
+        if (l == 0) {
+            return true;
+        }
+
+        return cs.length() >= l && equalsChars(cs, starts, l);
     }
 
     public static boolean startsWith(CharSequence _this, int thisLo, int thisHi, CharSequence that) {
@@ -715,9 +832,17 @@ public final class Chars {
         return _this.length() > 0 && _this.charAt(0) == c;
     }
 
-    public static boolean startsWithIgnoreCase(CharSequence _this, CharSequence that) {
-        final int len = that.length();
-        return _this.length() >= len && equalsCharsIgnoreCase(_this, that, len);
+    public static boolean startsWithIgnoreCase(@Nullable CharSequence cs, @Nullable CharSequence starts) {
+        if (cs == null || starts == null) {
+            return false;
+        }
+
+        int l = starts.length();
+        if (l == 0) {
+            return true;
+        }
+
+        return cs.length() >= l && equalsCharsIgnoreCase(cs, starts, l);
     }
 
     public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
