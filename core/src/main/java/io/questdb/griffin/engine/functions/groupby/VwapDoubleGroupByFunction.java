@@ -47,16 +47,16 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final double prc = priceFunction.getDouble(record);
-        final double qty = volumeFunction.getDouble(record);
+        final double price = priceFunction.getDouble(record);
+        final double volume = volumeFunction.getDouble(record);
 
-        if (Numbers.isFinite(prc) && Numbers.isFinite(qty) && qty > 0.0d) {
-            final double notional = prc * qty;
-            final double vwap = notional / qty;
+        if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0.0d) {
+            final double notional = price * volume;
+            final double vwap = notional / volume;
 
             mapValue.putDouble(valueIndex, vwap);
             mapValue.putDouble(valueIndex + 1, notional);
-            mapValue.putDouble(valueIndex + 2, qty);
+            mapValue.putDouble(valueIndex + 2, volume);
         } else {
             mapValue.putDouble(valueIndex, Double.NaN);
             mapValue.putDouble(valueIndex + 1, 0);
