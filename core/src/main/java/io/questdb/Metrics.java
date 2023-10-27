@@ -34,7 +34,7 @@ import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8CharSink;
 
 public class Metrics implements Scrapable {
     private final boolean enabled;
@@ -99,7 +99,7 @@ public class Metrics implements Scrapable {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
             gcMetrics.scrapeIntoPrometheus(sink);

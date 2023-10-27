@@ -3226,6 +3226,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInShortByteIntLong() throws Exception {
+        ddl("CREATE table abc (aa long, a int, b short, c byte)");
+        insert("insert into abc values(1, 1, 1, 1)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where aa in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where a in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where b in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where c in (1, 2)");
+    }
+
+    @Test
     public void testInnerJoinConditionPushdown() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table tab ( created timestamp, value long ) timestamp(created) ");
