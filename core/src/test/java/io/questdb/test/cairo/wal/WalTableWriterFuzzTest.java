@@ -26,7 +26,6 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -181,7 +180,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tt)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -840,10 +838,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 start += rowCount * tsIncrement + 1;
                 addRowsToWal(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
 
-                drainWalQueue(true);
-                new CheckWalTransactionsJob(engine).runSerially();
-
-                drainWalQueue(false);
+                drainWalQueue();
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });

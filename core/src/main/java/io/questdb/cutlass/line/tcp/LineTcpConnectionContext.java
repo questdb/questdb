@@ -113,6 +113,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         authenticator.clear();
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
         peerDisconnected = false;
+        clearYieldEvent();
         resetParser();
         ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
         for (int n = keys.size() - 1; n >= 0; --n) {
@@ -277,7 +278,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     LOG.error().$("unexpected authenticator result [result=").$(result).I$();
                     return IOContextResult.NEEDS_DISCONNECT;
             }
-        } catch (AuthenticatorException e) {
+        } catch (AuthenticatorException ex) {
             return IOContextResult.NEEDS_DISCONNECT;
         }
     }
@@ -345,7 +346,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
-                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
+                final ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
@@ -360,7 +361,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             logParseError();
                             goodMeasurement = true;
                         }
-
                         startNewMeasurement();
                         continue;
                     }
@@ -379,7 +379,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             doHandleDisconnectEvent();
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
-
                         if (peerDisconnected) {
                             return IOContextResult.NEEDS_DISCONNECT;
                         }

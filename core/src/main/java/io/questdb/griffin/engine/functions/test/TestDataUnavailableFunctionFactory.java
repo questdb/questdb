@@ -31,15 +31,15 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.YieldEvent;
+import io.questdb.network.YieldEventFactory;
+import io.questdb.network.YieldEventFactoryImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TestDataUnavailableFunctionFactory implements FunctionFactory {
 
-    public static SuspendEventCallback eventCallback;
+    public static YieldEventCallback eventCallback;
 
     @Override
     public String getSignature() {
@@ -56,12 +56,12 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
     ) {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);
-        return new CursorFunction(new DataUnavailableRecordCursorFactory(totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
+        return new CursorFunction(new DataUnavailableRecordCursorFactory(configuration, totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
     }
 
     @FunctionalInterface
-    public interface SuspendEventCallback {
-        void onSuspendEvent(SuspendEvent event);
+    public interface YieldEventCallback {
+        void onYieldEvent(YieldEvent event);
     }
 
     private static class DataUnavailableRecordCursor implements NoRandomAccessRecordCursor {
@@ -70,10 +70,17 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         private final SqlExecutionCircuitBreaker circuitBreaker;
         private final LongConstRecord record = new LongConstRecord();
         private final long totalRows;
+        private final YieldEventFactory yieldEventFactory;
         private long attempts;
         private long rows;
 
-        public DataUnavailableRecordCursor(long totalRows, long backoffCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        public DataUnavailableRecordCursor(
+                CairoConfiguration configuration,
+                long totalRows,
+                long backoffCount,
+                SqlExecutionCircuitBreaker circuitBreaker
+        ) {
+            yieldEventFactory = new YieldEventFactoryImpl(configuration);
             this.totalRows = totalRows;
             this.backoffCount = backoffCount;
             this.circuitBreaker = circuitBreaker;
@@ -95,11 +102,11 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
                 return false;
             }
             if (attempts++ < backoffCount) {
-                SuspendEvent event = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
+                YieldEvent event = yieldEventFactory.newInstance();
                 if (eventCallback != null) {
-                    eventCallback.onSuspendEvent(event);
+                    eventCallback.onYieldEvent(event);
                 }
-                throw DataUnavailableException.instance(new TableToken("foo", "foo", 1, false, false), "2022-01-01", event);
+                throw YieldException.instance(new TableToken("foo", "foo", 1, false, false), "2022-01-01", event);
             }
             rows++;
             record.of(rows);
@@ -128,9 +135,14 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         private static final RecordMetadata METADATA;
         private final DataUnavailableRecordCursor cursor;
 
-        public DataUnavailableRecordCursorFactory(long totalRows, long backoffCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        public DataUnavailableRecordCursorFactory(
+                CairoConfiguration configuration,
+                long totalRows,
+                long backoffCount,
+                SqlExecutionCircuitBreaker circuitBreaker
+        ) {
             super(METADATA);
-            cursor = new DataUnavailableRecordCursor(totalRows, backoffCount, circuitBreaker);
+            cursor = new DataUnavailableRecordCursor(configuration, totalRows, backoffCount, circuitBreaker);
         }
 
         @Override

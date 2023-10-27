@@ -6646,7 +6646,7 @@ nodejs code:
             ) {
                 workerPool.start(LOG);
                 try (Connection connection = getConnection(server.getPort(), true, false)) {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     try {
@@ -6685,12 +6685,12 @@ nodejs code:
                     int backoffCount = 3;
 
                     final AtomicInteger totalEvents = new AtomicInteger();
-                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
 
                     final Thread delayThread = new Thread(() -> {
                         while (!stopDelayThread.get()) {
-                            SuspendEvent event = eventRef.getAndSet(null);
+                            YieldEvent event = eventRef.getAndSet(null);
                             if (event != null) {
                                 Os.sleep(1);
                                 try {

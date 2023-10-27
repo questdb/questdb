@@ -1918,6 +1918,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getExplainPoolCapacity() {
             return sqlExplainModelPoolCapacity;
         }
@@ -1985,6 +1990,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInsertPoolCapacity() {
             return sqlInsertModelPoolCapacity;
+        }
+
+        @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
         }
 
         @Override

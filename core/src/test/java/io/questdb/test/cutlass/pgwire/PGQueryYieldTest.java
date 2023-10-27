@@ -48,11 +48,12 @@ import java.sql.ResultSet;
  * hasn't been suspended.
  */
 @SuppressWarnings("SqlNoDataSourceInspection")
-public class PGQuerySuspendTest extends BasePGTest {
+public class PGQueryYieldTest extends BasePGTest {
 
-    private static final Log LOG = LogFactory.getLog(PGQuerySuspendTest.class);
+    private static final Log LOG = LogFactory.getLog(PGQueryYieldTest.class);
     private static final StringSink sinkB = new StringSink();
-    private final static TestCases testCases = new TestCases();
+    private final static TestCases testCases = new TestCases(configuration);
+
     @Test
     public void testAllCases() throws Exception {
         assertMemoryLeak(() -> {

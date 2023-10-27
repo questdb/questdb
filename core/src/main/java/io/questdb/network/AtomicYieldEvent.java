@@ -22,28 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.network;
+package io.questdb.network;
 
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
-import org.junit.Assert;
-import org.junit.Test;
+/**
+ * Atomic flag-based event object. Used on Windows. Then events are checked
+ * by {@link IODispatcherWindows} in a loop, so O(n), but that fine with we already
+ * use an O(n) method (select) to check socket statuses.
+ */
+public class AtomicYieldEvent extends YieldEvent {
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+    private volatile boolean flag;
 
-public class SuspendEventTest {
+    @Override
+    public void _close() {
+        // no-op
+    }
 
-    @Test
-    public void testSmoke() throws Exception {
-        assertMemoryLeak(() -> {
-            SuspendEvent event = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
-            Assert.assertFalse(event.checkTriggered());
-            event.trigger();
-            Assert.assertTrue(event.checkTriggered());
-            // We need to close the event two times as if it's closed by both waiting and sending sides.
-            event.close();
-            event.close();
-        });
+    @Override
+    public boolean checkTriggered() {
+        return flag;
+    }
+
+    @Override
+    public int getFd() {
+        // no-op
+        return -1;
+    }
+
+    @Override
+    public void trigger() {
+        flag = true;
     }
 }

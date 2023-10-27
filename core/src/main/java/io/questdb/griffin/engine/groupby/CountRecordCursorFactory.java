@@ -104,7 +104,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
                             circuitBreaker.statefulThrowExceptionIfTripped();
                             count++;
                         }
-                    } catch (DataUnavailableException e) {
+                    } catch (YieldException e) {
                         baseCursor.toTop();
                         throw e;
                     }

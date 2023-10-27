@@ -24,26 +24,29 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.Os;
 
-public class SuspendEventFactory {
+public class YieldEventFactoryImpl implements YieldEventFactory {
+    private final CairoConfiguration configuration;
 
-    private SuspendEventFactory() {
+    public YieldEventFactoryImpl(CairoConfiguration configuration) {
+        this.configuration = configuration;
     }
 
-    public static SuspendEvent newInstance(IODispatcherConfiguration configuration) {
+    public YieldEvent newInstance() {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
-                return new EventFdSuspendEvent(configuration.getEpollFacade());
+                return new EventFdYieldEvent(configuration.getEpollFacade());
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
             case Os.FREEBSD:
-                return new PipeSuspendEvent(configuration.getKqueueFacade());
+                return new PipeYieldEvent(configuration.getKqueueFacade());
             case Os.WINDOWS:
-                return new AtomicSuspendEvent();
+                return new AtomicYieldEvent();
             default:
-                throw new RuntimeException();
+                throw new IllegalStateException("Unexpected OS type: " + Os.type);
         }
     }
 }

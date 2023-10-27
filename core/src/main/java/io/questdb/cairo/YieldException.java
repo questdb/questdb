@@ -25,22 +25,22 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.network.SuspendEvent;
+import io.questdb.network.YieldEvent;
 import io.questdb.std.ThreadLocal;
 
 /**
- * Thrown when the queried data is in a cold partition and a request to download it
- * to a local disk has been started. The querying side should switch to other tasks
- * and retry {@link RecordCursor#hasNext()} call later when the data is moved to
- * the local disk.
+ * Thrown when an event loop task has to be yielded to allow other tasks to proceed, e.g.
+ * when the queried data is in a cold partition and a request to download it to a local disk
+ * has been started. The querying side should switch to other tasks and retry
+ * {@link RecordCursor#hasNext()} call later when the data is moved to the local disk.
  */
-public class DataUnavailableException extends CairoException {
-    private static final ThreadLocal<DataUnavailableException> tlException = new ThreadLocal<>(DataUnavailableException::new);
+public class YieldException extends CairoException {
+    private static final ThreadLocal<YieldException> tlException = new ThreadLocal<>(YieldException::new);
 
-    private SuspendEvent event;
+    private YieldEvent event;
 
-    public static DataUnavailableException instance(TableToken tableToken, CharSequence partition, SuspendEvent event) {
-        DataUnavailableException ex = tlException.get();
+    public static YieldException instance(TableToken tableToken, CharSequence partition, YieldEvent event) {
+        YieldException ex = tlException.get();
         ex.message.clear();
         ex.errno = CairoException.NON_CRITICAL;
         ex.event = event;
@@ -50,7 +50,15 @@ public class DataUnavailableException extends CairoException {
         return ex;
     }
 
-    public SuspendEvent getEvent() {
+    public static YieldException instance(YieldEvent event) {
+        YieldException ex = tlException.get();
+        ex.message.clear();
+        ex.errno = CairoException.NON_CRITICAL;
+        ex.event = event;
+        return ex;
+    }
+
+    public YieldEvent getEvent() {
         return event;
     }
 }

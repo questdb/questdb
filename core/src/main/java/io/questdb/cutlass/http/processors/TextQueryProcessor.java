@@ -386,7 +386,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     default:
                         break OUT;
                 }
-            } catch (DataUnavailableException e) {
+            } catch (YieldException e) {
                 socket.resetToBookmark();
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {

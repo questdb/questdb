@@ -47,13 +47,13 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
+    private final RenameTrackingMetadataService renameTrackingMetadataService = new RenameTrackingMetadataService();
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     // Empty list means that all tables should be checked.
     private final ObjHashSet<TableToken> tablesToCheck = new ObjHashSet<>();
     private final TxReader txReader;
     private long lastProcessedCount = 0;
-    private final RenameTrackingMetadataService renameTrackingMetadataService = new RenameTrackingMetadataService();
     private Path threadLocalPath;
 
     public CheckWalTransactionsJob(CairoEngine engine) {

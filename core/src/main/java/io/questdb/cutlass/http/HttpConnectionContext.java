@@ -73,8 +73,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long recvBuffer;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
-    private SuspendEvent suspendEvent;
     private long totalBytesSent;
+    private YieldEvent yieldEvent;
 
     @TestOnly
     public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
@@ -136,8 +136,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
-    public void clearSuspendEvent() {
-        suspendEvent = Misc.free(suspendEvent);
+    public void clearYieldEvent() {
+        yieldEvent = Misc.free(yieldEvent);
     }
 
     @Override
@@ -222,13 +222,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return selectCache;
     }
 
-    @Override
-    public SuspendEvent getSuspendEvent() {
-        return suspendEvent;
-    }
-
     public long getTotalBytesSent() {
         return totalBytesSent;
+    }
+
+    @Override
+    public YieldEvent getYieldEvent() {
+        return yieldEvent;
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
@@ -305,7 +305,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.clear();
-        clearSuspendEvent();
+        clearYieldEvent();
     }
 
     public void resumeResponseSend() throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -366,7 +366,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         .$(", thread=").$(Thread.currentThread().getId()).I$();
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
-                suspendEvent = e.getEvent();
+                yieldEvent = e.getEvent();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
@@ -715,7 +715,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 // event off to dispatcher
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
-                suspendEvent = e.getEvent();
+                yieldEvent = e.getEvent();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
                 busyRecv = false;
             }
@@ -739,7 +739,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (QueryPausedException e) {
                 resumeProcessor.parkRequest(this, true);
-                suspendEvent = e.getEvent();
+                yieldEvent = e.getEvent();
                 LOG.debug().$("partition is in cold storage").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (PeerDisconnectedException ignore) {

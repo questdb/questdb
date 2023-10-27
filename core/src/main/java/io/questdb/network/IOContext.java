@@ -46,7 +46,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         _clear();
     }
 
-    public void clearSuspendEvent() {
+    public void clearYieldEvent() {
         // no-op
     }
 
@@ -73,7 +73,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return socket;
     }
 
-    public SuspendEvent getSuspendEvent() {
+    public YieldEvent getYieldEvent() {
         return null;
     }
 
@@ -109,6 +109,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         heartbeatId = -1;
         socket.close();
         dispatcher = null;
-        clearSuspendEvent();
+        clearYieldEvent();
     }
 }

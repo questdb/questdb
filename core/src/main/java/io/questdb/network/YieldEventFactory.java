@@ -24,33 +24,7 @@
 
 package io.questdb.network;
 
-/**
- * Atomic flag-based suspend event object. Used on Windows. Then events are checked
- * by {@link IODispatcherWindows} in a loop, so O(n), but that fine with we already
- * use an O(n) method (select) to check socket statuses.
- */
-public class AtomicSuspendEvent extends SuspendEvent {
-
-    private volatile boolean flag;
-
-    @Override
-    public void _close() {
-        // no-op
-    }
-
-    @Override
-    public boolean checkTriggered() {
-        return flag;
-    }
-
-    @Override
-    public int getFd() {
-        // no-op
-        return -1;
-    }
-
-    @Override
-    public void trigger() {
-        flag = true;
-    }
+@FunctionalInterface
+public interface YieldEventFactory {
+    YieldEvent newInstance();
 }

@@ -24,12 +24,13 @@
 
 package io.questdb.test.cutlass.suspend;
 
-import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.YieldException;
 import io.questdb.cairo.pool.ReaderPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.SuspendEvent;
-import io.questdb.network.SuspendEventFactory;
+import io.questdb.network.YieldEvent;
+import io.questdb.network.YieldEventFactory;
+import io.questdb.network.YieldEventFactoryImpl;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -48,10 +49,11 @@ public class TestCases {
             "), index(isym) timestamp(ts) partition by hour";
 
     private static final String TABLE_Y_DDL = "create table y as (select * from x), index(isym) timestamp(ts) partition by hour";
-    private final SuspendingReaderListener suspendingListener = new SuspendingReaderListener();
+    private final YieldingReaderListener suspendingListener;
     private final ObjList<TestCase> testCases = new ObjList<>();
 
-    public TestCases() {
+    public TestCases(CairoConfiguration configuration) {
+        this.suspendingListener = new YieldingReaderListener(configuration);
         addTestCase("select * from x");
         addTestCase("select * from x order by ts desc");
 
@@ -346,12 +348,17 @@ public class TestCases {
     }
 
     /**
-     * This listener varies DataUnavailableException and successful execution of TableReader#openPartition()
+     * This listener varies YieldException and successful execution of TableReader#openPartition()
      * in the following sequence: exception, success, exception, success, etc.
      */
-    private static class SuspendingReaderListener implements ReaderPool.ReaderListener, Mutable {
+    private static class YieldingReaderListener implements ReaderPool.ReaderListener, Mutable {
 
-        private final ConcurrentHashMap<SuspendEvent> suspendedPartitions = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<YieldEvent> suspendedPartitions = new ConcurrentHashMap<>();
+        private final YieldEventFactory yieldEventFactory;
+
+        public YieldingReaderListener(CairoConfiguration configuration) {
+            this.yieldEventFactory = new YieldEventFactoryImpl(configuration);
+        }
 
         @Override
         public void clear() {
@@ -361,20 +368,20 @@ public class TestCases {
         @Override
         public void onOpenPartition(TableToken tableToken, int partitionIndex) {
             final String key = tableToken + "$" + partitionIndex;
-            SuspendEvent computedEvent = suspendedPartitions.compute(key, (charSequence, prevEvent) -> {
+            YieldEvent computedEvent = suspendedPartitions.compute(key, (charSequence, prevEvent) -> {
                 if (prevEvent != null) {
                     // Success case.
                     prevEvent.close();
                     return null;
                 }
                 // Exception case.
-                SuspendEvent nextEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
+                YieldEvent nextEvent = yieldEventFactory.newInstance();
                 // Mark the event as immediately fulfilled.
                 nextEvent.trigger();
                 return nextEvent;
             });
             if (computedEvent != null) {
-                throw DataUnavailableException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
+                throw YieldException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
             }
         }
     }

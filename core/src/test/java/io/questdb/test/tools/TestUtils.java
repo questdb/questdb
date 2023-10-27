@@ -1035,7 +1035,6 @@ public final class TestUtils {
                     setupWorkerPool(pool, engine);
                     pool.start(log);
                 }
-
                 runnable.run(engine, compiler, sqlExecutionContext);
             } finally {
                 if (pool != null) {

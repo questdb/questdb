@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass;
 
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.NullLongGauge;
@@ -204,13 +205,13 @@ public class IODispatcherHeartbeatTest {
     }
 
     @Test
-    public void testHeartbeatsDoNotPreventSuspendEventDeadlines() throws Exception {
-        LOG.info().$("started testHeartbeatsDoNotPreventSuspendEventDeadlines").$();
+    public void testHeartbeatsDoNotPreventYieldEventDeadlines() throws Exception {
+        LOG.info().$("started testHeartbeatsDoNotPreventYieldEventDeadlines").$();
 
         final long heartbeatInterval = 5;
-        final long suspendEventDeadline = 10 * heartbeatInterval;
-        // the extra ticks are required to detect suspend event deadline
-        final long tickCount = suspendEventDeadline + 2;
+        final long yieldEventDeadline = 10 * heartbeatInterval;
+        // the extra ticks are required to detect yield event deadline
+        final long tickCount = yieldEventDeadline + 2;
         AtomicInteger connected = new AtomicInteger();
 
         assertMemoryLeak(() -> {
@@ -226,6 +227,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatInterval;
                 }
             };
+            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultCairoConfiguration(""));
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {
@@ -233,9 +235,9 @@ public class IODispatcherHeartbeatTest {
                         return new TestContext(fd, d, heartbeatInterval);
                     }
             )) {
-                SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
-                suspendEvent.setDeadline(suspendEventDeadline);
-                IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
+                YieldEvent yieldEvent = yieldEventFactory.newInstance();
+                yieldEvent.setDeadline(yieldEventDeadline);
+                IORequestProcessor<TestContext> processor = new YieldingTestProcessor(clock, yieldEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
                 int fd = Net.socketTcp(true);
@@ -263,12 +265,12 @@ public class IODispatcherHeartbeatTest {
 
                     TestUtils.assertEventually(() -> {
                         // Verify that the event is closed due to the deadline.
-                        Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
+                        Assert.assertTrue(yieldEvent.isClosedByAtLeastOneSide());
                     }, 10);
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                     Net.freeSockAddr(sockAddr);
-                    Misc.free(suspendEvent);
+                    Misc.free(yieldEvent);
                     Net.close(fd);
                 }
             }
@@ -276,8 +278,8 @@ public class IODispatcherHeartbeatTest {
     }
 
     @Test
-    public void testSuspendEventDoesNotPreventHeartbeats() throws Exception {
-        LOG.info().$("started testSuspendEventDoesNotPreventHeartbeats").$();
+    public void testYieldEventDoesNotPreventHeartbeats() throws Exception {
+        LOG.info().$("started testYieldEventDoesNotPreventHeartbeats").$();
 
         final long heartbeatInterval = 5;
         final long tickCount = 1000;
@@ -296,6 +298,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatInterval;
                 }
             };
+            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultCairoConfiguration(""));
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {
@@ -303,8 +306,8 @@ public class IODispatcherHeartbeatTest {
                         return new TestContext(fd, d, heartbeatInterval);
                     }
             )) {
-                SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
-                IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
+                YieldEvent yieldEvent = yieldEventFactory.newInstance();
+                IORequestProcessor<TestContext> processor = new YieldingTestProcessor(clock, yieldEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
                 int fd = Net.socketTcp(true);
@@ -332,17 +335,17 @@ public class IODispatcherHeartbeatTest {
                     }
 
                     // Trigger the event and wait until the dispatcher handles it.
-                    suspendEvent.trigger();
+                    yieldEvent.trigger();
                     TestUtils.assertEventually(() -> {
                         clock.setCurrent(tick.incrementAndGet());
                         dispatcher.run(0);
                         while (dispatcher.processIOQueue(processor)) ;
-                        Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
+                        Assert.assertTrue(yieldEvent.isClosedByAtLeastOneSide());
                     }, 10);
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                     Net.freeSockAddr(sockAddr);
-                    Misc.free(suspendEvent);
+                    Misc.free(yieldEvent);
                     Net.close(fd);
                 }
             }
@@ -350,8 +353,8 @@ public class IODispatcherHeartbeatTest {
     }
 
     @Test
-    public void testSuspendEventDoesNotPreventIdleDisconnects() throws Exception {
-        LOG.info().$("started testSuspendEventDoesNotPreventIdleDisconnects").$();
+    public void testYieldEventDoesNotPreventIdleDisconnects() throws Exception {
+        LOG.info().$("started testYieldEventDoesNotPreventIdleDisconnects").$();
 
         final long heartbeatInterval = 5;
         final long heartbeatToIdleRatio = 10;
@@ -377,6 +380,7 @@ public class IODispatcherHeartbeatTest {
                     return heartbeatToIdleRatio * heartbeatInterval;
                 }
             };
+            YieldEventFactory yieldEventFactory = new YieldEventFactoryImpl(new DefaultCairoConfiguration(""));
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
                     (fd, d) -> {
@@ -384,8 +388,8 @@ public class IODispatcherHeartbeatTest {
                         return new TestContext(fd, d, heartbeatInterval);
                     }
             )) {
-                SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
-                IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
+                YieldEvent yieldEvent = yieldEventFactory.newInstance();
+                IORequestProcessor<TestContext> processor = new YieldingTestProcessor(clock, yieldEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
                 int fd = Net.socketTcp(true);
@@ -415,38 +419,16 @@ public class IODispatcherHeartbeatTest {
                         // Verify that the connection is closed on idle timeout.
                         Assert.assertTrue(NetworkFacadeImpl.INSTANCE.testConnection(fd, buf, 1));
                         // Verify that the event is closed along with the context.
-                        Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
+                        Assert.assertTrue(yieldEvent.isClosedByAtLeastOneSide());
                     }, 10);
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                     Net.freeSockAddr(sockAddr);
-                    Misc.free(suspendEvent);
+                    Misc.free(yieldEvent);
                     Net.close(fd);
                 }
             }
         });
-    }
-
-    private static class SuspendingTestProcessor implements IORequestProcessor<TestContext> {
-        final TestClock clock;
-        final SuspendEvent suspendEvent;
-        boolean alreadySuspended;
-
-        public SuspendingTestProcessor(TestClock clock, SuspendEvent suspendEvent) {
-            this.clock = clock;
-            this.suspendEvent = suspendEvent;
-        }
-
-        @Override
-        public boolean onRequest(int operation, TestContext context) {
-            context.checkInvariant(operation, clock.getTicks());
-            if (operation != IOOperation.HEARTBEAT && !alreadySuspended) {
-                context.suspendEvent = suspendEvent;
-                alreadySuspended = true;
-            }
-            context.getDispatcher().registerChannel(context, operation);
-            return true;
-        }
     }
 
     private static class TestClock implements MillisecondClock {
@@ -469,7 +451,7 @@ public class IODispatcherHeartbeatTest {
         boolean isPreviousEventHeartbeat = true;
         long previousHeartbeatTs;
         long previousReadTs;
-        SuspendEvent suspendEvent;
+        YieldEvent yieldEvent;
 
         public TestContext(int fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
@@ -502,8 +484,8 @@ public class IODispatcherHeartbeatTest {
         }
 
         @Override
-        public void clearSuspendEvent() {
-            suspendEvent = Misc.free(suspendEvent);
+        public void clearYieldEvent() {
+            yieldEvent = Misc.free(yieldEvent);
         }
 
         @Override
@@ -518,8 +500,8 @@ public class IODispatcherHeartbeatTest {
         }
 
         @Override
-        public SuspendEvent getSuspendEvent() {
-            return suspendEvent;
+        public YieldEvent getYieldEvent() {
+            return yieldEvent;
         }
 
         @Override
@@ -538,6 +520,28 @@ public class IODispatcherHeartbeatTest {
         @Override
         public boolean onRequest(int operation, TestContext context) {
             context.checkInvariant(operation, clock.getTicks());
+            context.getDispatcher().registerChannel(context, operation);
+            return true;
+        }
+    }
+
+    private static class YieldingTestProcessor implements IORequestProcessor<TestContext> {
+        final TestClock clock;
+        final YieldEvent yieldEvent;
+        boolean alreadyYielded;
+
+        public YieldingTestProcessor(TestClock clock, YieldEvent yieldEvent) {
+            this.clock = clock;
+            this.yieldEvent = yieldEvent;
+        }
+
+        @Override
+        public boolean onRequest(int operation, TestContext context) {
+            context.checkInvariant(operation, clock.getTicks());
+            if (operation != IOOperation.HEARTBEAT && !alreadyYielded) {
+                context.yieldEvent = yieldEvent;
+                alreadyYielded = true;
+            }
             context.getDispatcher().registerChannel(context, operation);
             return true;
         }

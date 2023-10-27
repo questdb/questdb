@@ -320,7 +320,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected void send(int wait, Runnable sendToSocket, CharSequence... tableNames) {
-
         if (wait == WAIT_NO_WAIT) {
             sendToSocket.run();
             return;

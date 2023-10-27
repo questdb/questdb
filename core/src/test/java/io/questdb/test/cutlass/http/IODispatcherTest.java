@@ -3495,7 +3495,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(60_000) // use a large value for query timeout
                 .run((engine) -> {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final String query = "select * from test_data_unavailable(1, 10)";
@@ -5729,12 +5729,12 @@ public class IODispatcherTest extends AbstractTest {
                     int backoffCount = 3;
 
                     final AtomicInteger totalEvents = new AtomicInteger();
-                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
 
                     final Thread delayThread = new Thread(() -> {
                         while (!stopDelayThread.get()) {
-                            SuspendEvent event = eventRef.getAndSet(null);
+                            YieldEvent event = eventRef.getAndSet(null);
                             if (event != null) {
                                 Os.sleep(1);
                                 try {
@@ -6887,12 +6887,12 @@ public class IODispatcherTest extends AbstractTest {
                     int backoffCount = 3;
 
                     final AtomicInteger totalEvents = new AtomicInteger();
-                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     final AtomicBoolean stopDelayThread = new AtomicBoolean();
 
                     final Thread delayThread = new Thread(() -> {
                         while (!stopDelayThread.get()) {
-                            SuspendEvent event = eventRef.getAndSet(null);
+                            YieldEvent event = eventRef.getAndSet(null);
                             if (event != null) {
                                 Os.sleep(1);
                                 try {
@@ -7950,7 +7950,7 @@ public class IODispatcherTest extends AbstractTest {
                 .run(engine -> {
                     StringSink expected = new StringSink();
                     StringSink actual = new StringSink();
-                    final TestCases testCases = new TestCases();
+                    final TestCases testCases = new TestCases(engine.getConfiguration());
 
                     // create tables
                     testHttpClient.assertGet("{\"ddl\":\"OK\"}", testCases.getDdlX());
@@ -8309,7 +8309,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(100)
                 .run((engine) -> {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    AtomicReference<YieldEvent> eventRef = new AtomicReference<>();
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;

@@ -32,18 +32,16 @@ import java.io.Closeable;
 /**
  * Used for generic single-time events that can be used with
  * {@link IODispatcher}. Such events aren't necessarily network I/O
- * related, but instead provide an efficient way of suspending a task
- * done in the IODispatcher's event loop and resume it later when another
+ * related, but instead provide an efficient way of yielding a task
+ * in the IODispatcher's event loop and resume it later when another
  * thread sends us a notification through the event.
  * <p>
  * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
  */
-public abstract class SuspendEvent implements Closeable {
+public abstract class YieldEvent implements Closeable {
 
     private static final long REF_COUNT_OFFSET;
-
     private long deadline = Long.MAX_VALUE;
-
     // set by using Unsafe, see REF_COUNT_OFFSET, close().
     @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile int refCount = 2;
@@ -51,9 +49,9 @@ public abstract class SuspendEvent implements Closeable {
     public abstract void _close();
 
     /**
-     * Returns true if the event was triggered.
+     * Checks if the event was triggered.
      *
-     * @return true if the event was triggered
+     * @return true if the event was triggered, false - otherwise
      */
     public abstract boolean checkTriggered();
 
@@ -116,6 +114,6 @@ public abstract class SuspendEvent implements Closeable {
     public abstract void trigger();
 
     static {
-        REF_COUNT_OFFSET = Unsafe.getFieldOffset(SuspendEvent.class, "refCount");
+        REF_COUNT_OFFSET = Unsafe.getFieldOffset(YieldEvent.class, "refCount");
     }
 }

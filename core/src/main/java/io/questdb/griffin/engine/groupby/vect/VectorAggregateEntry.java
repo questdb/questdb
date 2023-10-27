@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
-import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.PerWorkerLocks;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rosti;

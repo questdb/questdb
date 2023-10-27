@@ -36,6 +36,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
+import io.questdb.network.YieldEvent;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -72,6 +73,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
+    private final WalTxnYieldEvents walTxnYieldEvents;
+    private final ObjList<YieldEvent> yieldEvents = new ObjList<>();
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -87,6 +90,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().walMetrics();
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
+        walTxnYieldEvents = engine.getWalTxnYieldEvents();
     }
 
     @Override
@@ -318,11 +322,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     commitTimestamp
                             );
 
-                            if (added > -1L) {
+                            if (added > -2L) {
                                 insertTimespan += microClock.getTicks() - start;
-                                rowsAdded += added;
                                 iTransaction++;
-                                physicalRowsAdded += writer.getPhysicallyWrittenRowsSinceLastCommit();
+                                if (added > -1L) {
+                                    rowsAdded += added;
+                                    physicalRowsAdded += writer.getPhysicallyWrittenRowsSinceLastCommit();
+                                }
                             }
                             if (added == -2L || isTerminating) {
                                 // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
@@ -337,6 +343,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (totalTransactionCount > 0) {
+                    notifyYieldedWaiters(writer.getTableToken());
                     LOG.info().$("job ")
                             .$(finishedAll ? "finished" : "ejected")
                             .$(" [table=").$(writer.getTableToken().getDirName())
@@ -360,6 +367,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     private void doStoreWalTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
         TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
+    }
+
+    /**
+     * Notifies I/O contexts yielded until a WAL transaction becomes visible for readers.
+     */
+    private void notifyYieldedWaiters(TableToken tableToken) {
+        yieldEvents.clear();
+        walTxnYieldEvents.takeRegisteredEvents(tableToken, yieldEvents);
+        for (int i = 0, n = yieldEvents.size(); i < n; i++) {
+            final YieldEvent yieldEvent = yieldEvents.getQuick(i);
+            yieldEvent.trigger();
+            yieldEvent.close();
+        }
+        if (yieldEvents.size() > 0) {
+            LOG.info().$("notified yielded waiters [n=").$(yieldEvents.size()).I$();
+        }
     }
 
     private long processWalCommit(
@@ -397,10 +420,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, seqTxn, rowsAdded, physicalRowCount, latency);
                         return rowCount;
                     } else {
-                        // re-build wal transaction details
+                        // re-build WAL transaction details
                         return -2L;
                     }
-
                 case SQL:
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     final long start = microClock.getTicks();
@@ -440,14 +462,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             }
         } catch (SqlException ex) {
             // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-            LOG.error().$("error applying SQL to wal table [table=")
-                    .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
+            LOG.error().$("error applying SQL to wal table [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$(", sql=").$(sql)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .I$();
             return -1;
         } catch (CairoException e) {
             if (e.isWALTolerable()) {
                 // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
-                LOG.error().$("error applying SQL to wal table [table=")
-                        .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
+                LOG.error().$("error applying SQL to wal table [table=").utf8(tableWriter.getTableToken().getTableName())
+                        .$(", sql=").$(sql)
+                        .$(", error=").$(e.getFlyweightMessage())
+                        .I$();
                 return -1;
             } else {
                 throw e;

@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalInitializer;
+import io.questdb.cairo.wal.WalTxnYieldEvents;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
@@ -55,6 +56,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 index,
                 tableToken,
                 engine.getTableSequencerAPI(),
+                engine.getWalTxnYieldEvents(),
                 engine.getDdlListener(tableToken),
                 engine.getWalInitializer(),
                 engine.getMetrics()
@@ -72,11 +74,12 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 int index,
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
+                WalTxnYieldEvents walTxnYieldEvents,
                 DdlListener ddlListener,
                 WalInitializer walInitializer,
                 Metrics metrics
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walInitializer, metrics);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI, walTxnYieldEvents, ddlListener, walInitializer, metrics);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

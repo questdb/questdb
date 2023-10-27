@@ -31,7 +31,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.mp.PerWorkerLocks;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -110,7 +110,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         filter.initCursor();
         if (perWorkerFilters != null) {
             // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
+            // YieldException thrown on worker threads when filtering.
             Function.initCursor(perWorkerFilters);
         }
     }

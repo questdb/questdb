@@ -2505,7 +2505,7 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testSameWalAfterEngineCleared() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
-            TableToken tableToken = createTable(testName.getMethodName());
+            TableToken tableToken = createTable(tableName);
 
             String wal1Name;
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -3079,6 +3079,108 @@ public class WalWriterTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
                 TestUtils.assertContains(e.getFlyweightMessage(), tableName);
+            }
+        });
+    }
+
+    @Test
+    public void testYieldUntilTxnDoesNotThrowWhenTableIsDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(tableName);
+
+            try (
+                    WalWriter walWriter = engine.getWalWriter(tableToken);
+                    Path path = new Path()
+            ) {
+                final TableWriter.Row row = walWriter.newRow();
+                row.putInt(0, 42);
+                row.append();
+                long txn = walWriter.commit();
+
+                engine.drop(path, tableToken);
+                drainWalQueue();
+                runWalPurgeJob();
+
+                try {
+                    walWriter.yieldUntilTxn(txn);
+                } catch (YieldException e) {
+                    e.getEvent().close();
+                    Assert.fail("No YieldException expected");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testYieldUntilTxnWaitsForTransactionWhenTrackerInitDone() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(tableName);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                // We need a preliminary transaction to initialize the SeqTxnTracker.
+                TableWriter.Row row = walWriter.newRow();
+                row.putInt(0, 42);
+                row.append();
+                walWriter.commit();
+
+                // Apply the first transaction.
+                drainWalQueue();
+
+                row = walWriter.newRow();
+                row.putInt(0, 42);
+                row.append();
+                long txn = walWriter.commit();
+
+                try {
+                    walWriter.yieldUntilTxn(txn);
+                    Assert.fail("YieldException expected before txn is applied");
+                } catch (YieldException e) {
+                    e.getEvent().close();
+                }
+
+                // Apply the second transaction.
+                drainWalQueue();
+
+                try {
+                    walWriter.yieldUntilTxn(txn);
+                } catch (YieldException e) {
+                    e.getEvent().close();
+                    Assert.fail("No YieldException expected once txn is applied");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testYieldUntilTxnWaitsForTransactionWhenTrackerInitPending() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(tableName);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                final TableWriter.Row row = walWriter.newRow();
+                row.putInt(0, 42);
+                row.append();
+                long txn = walWriter.commit();
+
+                try {
+                    walWriter.yieldUntilTxn(txn);
+                    Assert.fail("YieldException expected before txn is applied");
+                } catch (YieldException e) {
+                    e.getEvent().close();
+                }
+
+                // Apply the second transaction.
+                drainWalQueue();
+
+                try {
+                    walWriter.yieldUntilTxn(txn);
+                } catch (YieldException e) {
+                    e.getEvent().close();
+                    Assert.fail("No YieldException expected once txn is applied");
+                }
             }
         });
     }
