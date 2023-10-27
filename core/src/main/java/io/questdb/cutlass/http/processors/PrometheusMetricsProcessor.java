@@ -87,7 +87,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         final int pending = state.countPending();
         final int wrote = r.writeBytes(state.sink.ptr() + state.written, pending);
         state.written += wrote;
-        r.sendChunk(wrote == pending);  // Will raise `PeerIsSlowToReadException` if the tcp send buffer is full.
+        r.sendChunk(wrote == pending); // Will raise `PeerIsSlowToReadException` if the tcp send buffer is full.
     }
 
     private void sendResponse(HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {

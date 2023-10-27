@@ -237,6 +237,8 @@ public class MetricsIODispatcherTest {
                     Assert.assertEquals(pool.size(), 0);
                 }
 
+                final StringSink utf16Sink = new StringSink();
+
                 // Repeated requests over the same connection.
                 // This is to stress out the RequestState pooling logic.
                 for (int i = 0; i < repeatedRequests; i++) {
@@ -246,7 +248,9 @@ public class MetricsIODispatcherTest {
                             .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort());
 
                     response.await(5_000);
-                    TestUtils.assertEquals("200", response.getStatusCode());
+                    utf16Sink.clear();
+                    utf16Sink.put(response.getStatusCode());
+                    TestUtils.assertEquals("200", utf16Sink);
 
                     if (parallelRequestBatches == 1) {
                         // The request state is in use.
@@ -257,13 +261,13 @@ public class MetricsIODispatcherTest {
 
                     Assert.assertTrue(response.isChunked());
                     ChunkedResponse chunkedResponse = response.getChunkedResponse();
-                    StringSink responseSink = new StringSink();
 
+                    utf16Sink.clear();
                     Chunk chunk;
                     while ((chunk = chunkedResponse.recv(5_000)) != null) {
-                        Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), responseSink);
+                        Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), utf16Sink);
                     }
-                    TestUtils.assertEquals(expectedResponse, responseSink);
+                    TestUtils.assertEquals(expectedResponse, utf16Sink);
                 }
 
                 if (parallelRequestBatches == 1) {
