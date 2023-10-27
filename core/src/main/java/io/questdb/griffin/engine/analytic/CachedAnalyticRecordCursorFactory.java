@@ -277,7 +277,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                 for (int i = 0, n = orderedSources.size(); i < n; i++) {
                     Misc.free(orderedSources.getQuick(i));
                 }
-                resetFunctions(); // calls close on map within RowNumber
+                resetFunctions();
                 isOpen = false;
             }
         }

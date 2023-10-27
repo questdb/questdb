@@ -24,8 +24,13 @@
 
 package io.questdb.griffin.engine.analytic;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -117,7 +122,14 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
         }
         Misc.free(base);
         Misc.free(cursor);
-        Misc.freeObjList(functions);
+        //analytic functions are closed on cursor close above
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Function function = functions.getQuick(i);
+            if (!(function instanceof AnalyticFunction)) {
+                function.close();
+            }
+        }
+        functions.clear();
         closed = true;
     }
 
@@ -128,13 +140,14 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public AnalyticRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
             super(functions, supportsRandomAccess);
+            this.isOpen = true;
         }
 
         @Override
         public void close() {
             if (isOpen) {
                 super.close();
-                resetFunctions(); // calls close on map within RowNumber
+                resetFunctions();
                 isOpen = false;
             }
         }
@@ -159,20 +172,27 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
             baseCursor.toTop();
         }
 
+        private void init(ObjList<Function> functions, SqlExecutionContext context) throws SqlException {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                Function function = functions.getQuick(i);
+                function.init(baseCursor, context);
+            }
+        }
+
         private void of(RecordCursor base, SqlExecutionContext context) throws SqlException {
             super.of(base);
             circuitBreaker = context.getCircuitBreaker();
+            init(functions, context);
             if (!isOpen) {
-                reopen(functions, context);
+                reopen(functions);
                 isOpen = true;
             }
         }
 
-        private void reopen(ObjList<Function> list, SqlExecutionContext context) throws SqlException {
+        private void reopen(ObjList<Function> list) {
             for (int i = 0, n = list.size(); i < n; i++) {
                 Function function = list.getQuick(i);
-                function.init(baseCursor, context);
-                
+
                 if (function instanceof Reopenable) {
                     ((Reopenable) function).reopen();
                 }

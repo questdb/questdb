@@ -57,6 +57,9 @@ public interface AnalyticFunction extends Function {
     default void preparePass2() {
     }
 
+    /**
+     * Releases native memory and resets internal state to default/initial. Called on [Cached]Analytic cursor close.
+     **/
     void reset();
 
     /*
