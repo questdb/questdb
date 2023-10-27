@@ -38,6 +38,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -138,8 +139,8 @@ public class CairoMemoryTest extends AbstractTest {
         class X extends FilesFacadeImpl {
             @Override
             public int openRW(LPSZ name, long opts) {
-                int n = name.length();
-                if (n > 5 && Chars.equals(".fail", name, n - 5, n)) {
+                int n = name.size();
+                if (n > 5 && Utf8s.equalsAscii(".fail", name, n - 5, n)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -153,7 +154,7 @@ public class CairoMemoryTest extends AbstractTest {
         int failCount = 0;
         try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
-            int prefixLen = path.length();
+            int prefixLen = path.size();
             try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
@@ -209,8 +210,8 @@ public class CairoMemoryTest extends AbstractTest {
         class X extends FilesFacadeImpl {
             @Override
             public int openRW(LPSZ name, long opts) {
-                int n = name.length();
-                if (n > 5 && Chars.equals(".fail", name, n - 5, n)) {
+                int n = name.size();
+                if (n > 5 && Utf8s.equalsAscii(".fail", name, n - 5, n)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -224,7 +225,7 @@ public class CairoMemoryTest extends AbstractTest {
         int failCount = 0;
         try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
-            int prefixLen = path.length();
+            int prefixLen = path.size();
             try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {

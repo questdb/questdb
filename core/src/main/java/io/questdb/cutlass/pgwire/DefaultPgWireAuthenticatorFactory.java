@@ -27,7 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.ServerMain;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.std.str.DirectByteCharSink;
+import io.questdb.std.str.DirectUtf8Sink;
 
 public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
     public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory();
@@ -44,8 +44,8 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
         // But the Default implementation does not use FactoryProviders at all. There is a single static field INSTANCE, see above.
         // Thus, there is nothing what could own and close the buffers. So we allocate buffers for each authenticator
         // and the authenticator will be responsible for closing them.
-        DirectByteCharSink defaultUserPasswordSink = new DirectByteCharSink(4);
-        DirectByteCharSink readOnlyUserPasswordSink = new DirectByteCharSink(4);
+        DirectUtf8Sink defaultUserPasswordSink = new DirectUtf8Sink(4);
+        DirectUtf8Sink readOnlyUserPasswordSink = new DirectUtf8Sink(4);
         UsernamePasswordMatcher matcher = new CustomCloseActionPasswordMatcherDelegate(
                 ServerMain.newPgWireUsernamePasswordMatcher(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink),
                 () -> {

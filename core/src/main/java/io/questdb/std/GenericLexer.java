@@ -190,7 +190,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     @Override
     public CharSequence next() {
-        if (unparsed.size() > 0) {
+        if (!unparsed.isEmpty()) {
             this._lo = unparsedPosition.pollLast();
             this._pos = unparsedPosition.pollLast();
 
@@ -444,7 +444,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         @NotNull
         @Override
         public String toString() {
-            final CharSink b = Misc.getThreadLocalBuilder();
+            final CharSink b = Misc.getThreadLocalSink();
             b.put(cs0);
             if (sep != NO_SEPARATOR) {
                 b.put(sep);

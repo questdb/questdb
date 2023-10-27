@@ -26,8 +26,9 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Execution model for EXPLAIN statement.
@@ -70,8 +71,8 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("EXPLAIN");
-        sink.put(" (FORMAT ").put(format == FORMAT_TEXT ? "TEXT" : "JSON").put(") ");
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("EXPLAIN");
+        sink.putAscii(" (FORMAT ").putAscii(format == FORMAT_TEXT ? "TEXT" : "JSON").putAscii(") ");
     }
 }

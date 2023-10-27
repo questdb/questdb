@@ -32,7 +32,9 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -218,7 +220,7 @@ public class LogFactoryTest {
 
                 private void log(LogRecordSink record) {
                     sink.clear();
-                    sink.put(record);
+                    sink.put((Sinkable) record);
                     latch.countDown();
                 }
             }));
@@ -1003,7 +1005,7 @@ public class LogFactoryTest {
                 Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
-                    Chars.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
+                    Utf8s.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }
@@ -1087,7 +1089,7 @@ public class LogFactoryTest {
                 Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
-                    Chars.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
+                    Utf8s.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }

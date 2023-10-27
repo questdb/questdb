@@ -30,6 +30,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DirectCharSinkTest {
+
     @Test
     public void testResize() {
         final String expected = "string 0\n" +

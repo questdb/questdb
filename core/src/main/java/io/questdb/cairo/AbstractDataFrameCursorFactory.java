@@ -28,12 +28,13 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
     private final GenericRecordMetadata metadata;
-    private final TableToken tableToken;
     private final long metadataVersion;
+    private final TableToken tableToken;
 
     public AbstractDataFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
         this.tableToken = tableToken;
@@ -50,6 +51,11 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     @Override
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    @Override
     public boolean supportTableRowId(TableToken tableToken) {
         return this.tableToken.equals(tableToken);
     }
@@ -60,8 +66,12 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableToken).put("\"}");
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("{\"name\":\"")
+                .put(this.getClass().getSimpleName())
+                .putAscii("\", \"table\":\"")
+                .put(tableToken)
+                .putAscii("\"}");
     }
 
     protected TableReader getReader(SqlExecutionContext executionContext) {
@@ -69,10 +79,5 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
                 tableToken,
                 metadataVersion
         );
-    }
-
-    @Override
-    public TableToken getTableToken() {
-        return tableToken;
     }
 }

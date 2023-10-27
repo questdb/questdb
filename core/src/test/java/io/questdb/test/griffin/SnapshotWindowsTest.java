@@ -58,7 +58,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
 
         super.setUp();
         path.of(configuration.getSnapshotRoot()).slash();
-        rootLen = path.length();
+        rootLen = path.size();
     }
 
     @After

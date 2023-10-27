@@ -74,7 +74,7 @@ public class IDGenerator implements Closeable {
         if (path == null) {
             path = Path.getThreadLocal(configuration.getRoot());
         }
-        final int rootLen = path.length();
+        final int rootLen = path.size();
         try {
             path.concat(uniqueIdFileName).$();
             final FilesFacade ff = configuration.getFilesFacade();

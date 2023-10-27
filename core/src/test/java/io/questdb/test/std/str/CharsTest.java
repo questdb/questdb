@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.std;
+package io.questdb.test.std.str;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.*;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
@@ -40,7 +41,7 @@ import java.util.Random;
 import java.util.function.BiConsumer;
 
 public class CharsTest {
-    private static final FileNameExtractorCharSequence extractor = new FileNameExtractorCharSequence();
+    private static final FileNameExtractorUtf8Sequence extractor = new FileNameExtractorUtf8Sequence();
     private static char separator;
 
     @BeforeClass
@@ -272,7 +273,7 @@ public class CharsTest {
 
     @Test
     public void testEmptyString() {
-        TestUtils.assertEquals("", extractor.of(""));
+        TestUtils.assertEquals("", extractor.of(Utf8String.EMPTY));
     }
 
     @Test
@@ -281,7 +282,7 @@ public class CharsTest {
         Assert.assertFalse(Chars.endsWith("a", null));
         Assert.assertFalse(Chars.endsWith(null, "a"));
         Assert.assertFalse(Chars.endsWith("", "a"));
-        Assert.assertFalse(Chars.endsWith("a", ""));
+        Assert.assertTrue(Chars.endsWith("a", ""));
         Assert.assertFalse(Chars.endsWith("ab", "abc"));
         Assert.assertFalse(Chars.endsWith("abc", "x"));
         Assert.assertTrue(Chars.endsWith("abcd", "cd"));
@@ -340,7 +341,7 @@ public class CharsTest {
     public void testNameFromPath() {
         StringBuilder name = new StringBuilder();
         name.append(separator).append("xyz").append(separator).append("dir1").append(separator).append("dir2").append(separator).append("this is my name");
-        TestUtils.assertEquals("this is my name", extractor.of(name));
+        TestUtils.assertEquals("this is my name", extractor.of(new Utf8String(name)));
     }
 
     @Test
@@ -375,7 +376,7 @@ public class CharsTest {
 
     @Test
     public void testPlainName() {
-        TestUtils.assertEquals("xyz.txt", extractor.of("xyz.txt"));
+        TestUtils.assertEquals("xyz.txt", extractor.of(new Utf8String("xyz.txt")));
     }
 
     @Test
@@ -396,188 +397,29 @@ public class CharsTest {
         Assert.assertFalse(Chars.startsWithIgnoreCase("ABC", "ABCD"));
     }
 
-    @Test
-    public void testUtf8CharDecode() {
-        long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
-        try {
-            testUtf8Char("A", p, false); // 1 byte
-            testUtf8Char("Ч", p, false); // 2 bytes
-            testUtf8Char("∆", p, false); // 3 bytes
-            testUtf8Char("\uD83D\uDE00\"", p, true); // fail, cannot store it as one char
-        } finally {
-            Unsafe.free(p, 8, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testUtf8CharMalformedDecode() {
-        long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
-        try {
-            // empty
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p));
-            // one byte
-            Unsafe.getUnsafe().putByte(p, (byte) 0xFF);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
-            Unsafe.getUnsafe().putByte(p, (byte) 0xC0);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
-            Unsafe.getUnsafe().putByte(p, (byte) 0x80);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
-            // two bytes
-            Unsafe.getUnsafe().putByte(p, (byte) 0xC0);
-            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x80);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
-
-            Unsafe.getUnsafe().putByte(p, (byte) 0xC1);
-            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xBF);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
-
-            Unsafe.getUnsafe().putByte(p, (byte) 0xC2);
-            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x00);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
-
-            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
-            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x80);
-            Unsafe.getUnsafe().putByte(p + 2, (byte) 0xC0);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
-
-            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
-            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xC0);
-            Unsafe.getUnsafe().putByte(p + 2, (byte) 0xBF);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
-
-            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
-            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xA0);
-            Unsafe.getUnsafe().putByte(p + 2, (byte) 0x7F);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
-
-            Unsafe.getUnsafe().putByte(p, (byte) 0xED);
-            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xAE);
-            Unsafe.getUnsafe().putByte(p + 2, (byte) 0x80);
-            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
-
-        } finally {
-            Unsafe.free(p, 8, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testUtf8Support() {
-
-        StringBuilder expected = new StringBuilder();
-        for (int i = 0; i < 0xD800; i++) {
-            expected.append((char) i);
-        }
-
-        String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
-        try {
-            byte[] bytes = in.getBytes(Files.UTF_8);
-            for (int i = 0, n = bytes.length; i < n; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
-            }
-            CharSink b = new StringSink();
-            Chars.utf8toUtf16(p, p + bytes.length, b);
-            TestUtils.assertEquals(in, b.toString());
-        } finally {
-            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testUtf8SupportZ() {
-
-        StringBuilder expected = new StringBuilder();
-        for (int i = 1; i < 0xD800; i++) {
-            expected.append((char) i);
-        }
-
-        String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
-        try {
-            byte[] bytes = in.getBytes(Files.UTF_8);
-            for (int i = 0, n = bytes.length; i < n; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
-            }
-            Unsafe.getUnsafe().putByte(p + bytes.length, (byte) 0);
-            CharSink b = new StringSink();
-            Chars.utf8ToUtf16Z(p, b);
-            TestUtils.assertEquals(in, b.toString());
-        } finally {
-            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testUtf8toUtf16() {
-        StringSink utf16Sink = new StringSink();
-        String empty = "";
-        String ascii = "abc";
-        String cyrillic = "абв";
-        String chinese = "你好";
-        String emoji = "😀";
-        String mixed = "abcабв你好😀";
-        String[] strings = {empty, ascii, cyrillic, chinese, emoji, mixed};
-        byte[] terminators = {':', '-', ' ', '\0'};
-        try (DirectByteCharSink utf8Sink = new DirectByteCharSink(4)) {
-            for (String left : strings) {
-                for (String right : strings) {
-                    for (byte terminator : terminators) {
-                        // test with terminator (left + terminator + right)
-                        String input = left + (char) terminator + right;
-                        int expectedUtf8ByteRead = left.getBytes(StandardCharsets.UTF_8).length;
-                        assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, input, left, terminator, expectedUtf8ByteRead);
-                    }
-                    for (byte terminator : terminators) {
-                        //test without terminator (left + right)
-                        String input = left + right;
-                        int expectedUtf8ByteRead = input.getBytes(StandardCharsets.UTF_8).length;
-                        assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, input, input, terminator, expectedUtf8ByteRead);
-                    }
-                }
-            }
-        }
-    }
-
-    private static void assertUtf8ToUtf16WithTerminator(
-            DirectByteCharSink utf8Sink,
-            StringSink utf16Sink,
-            String inputString,
-            String expectedDecodedString,
-            byte terminator,
-            int expectedUtf8ByteRead
-    ) {
-        utf8Sink.clear();
-        utf16Sink.clear();
-
-        utf8Sink.encodeUtf8(inputString);
-        int n = Chars.utf8toUtf16(utf8Sink, utf16Sink, terminator);
-        Assert.assertEquals(expectedUtf8ByteRead, n);
-        TestUtils.assertEquals(expectedDecodedString, utf16Sink);
-    }
-
-    private static void base64DecodeByteSink(Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectByteCharSink> decoderUnderTest) {
+    private static void base64DecodeByteSink(Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectUtf8Sink> decoderUnderTest) {
         String encoded = "QmFzZTY0IGlzIGEgZ3JvdXAgb2Ygc2ltaWxhciBiaW5hcnktdG8tdGV4dA";
-        try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             decoderUnderTest.accept(encoded, sink);
 
             byte[] decode = jdkDecoder.decode(encoded);
-            Assert.assertEquals(decode.length, sink.length());
+            Assert.assertEquals(decode.length, sink.size());
             for (int i = 0; i < decode.length; i++) {
                 Assert.assertEquals(decode[i], sink.byteAt(i));
             }
         }
     }
 
-    private static void base64DecodeByteSinkInvalidInput(BiConsumer<CharSequence, DirectByteCharSink> decoder) {
+    private static void base64DecodeByteSinkInvalidInput(BiConsumer<CharSequence, DirectUtf8Sink> decoder) {
         String encoded = "a";
-        try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             decoder.accept(encoded, sink);
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 encoding");
         }
     }
 
-    private static void base64DecodeByteSinkMiscLengths(Base64.Encoder jdkEncoder, Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectByteCharSink> decoderUnderTest) {
+    private static void base64DecodeByteSinkMiscLengths(Base64.Encoder jdkEncoder, Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectUtf8Sink> decoderUnderTest) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 100; i++) {
             sb.setLength(0);
@@ -585,26 +427,16 @@ public class CharsTest {
                 sb.append(j % 10);
             }
             String encoded = jdkEncoder.encodeToString(sb.toString().getBytes());
-            try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
                 decoderUnderTest.accept(encoded, sink);
 
                 byte[] decode = jdkDecoder.decode(encoded);
-                Assert.assertEquals(decode.length, sink.length());
+                Assert.assertEquals(decode.length, sink.size());
                 for (int j = 0; j < decode.length; j++) {
                     Assert.assertEquals(decode[j], sink.byteAt(j));
                 }
             }
         }
-    }
-
-    private static void testUtf8Char(String x, long p, boolean failExpected) {
-        byte[] bytes = x.getBytes(Files.UTF_8);
-        for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
-            Unsafe.getUnsafe().putByte(p + i, bytes[i]);
-        }
-        int res = Chars.utf8CharDecode(p, p + bytes.length);
-        boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);
-        Assert.assertTrue(failExpected != eq);
     }
 
     private void assertThat(String expected, ObjList<Path> list) {
@@ -614,13 +446,13 @@ public class CharsTest {
         }
     }
 
-    private void base64DecodeByteSinkUtf8(Base64.Encoder jdkEncoder, Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectByteCharSink> decoderUnderTest) {
+    private void base64DecodeByteSinkUtf8(Base64.Encoder jdkEncoder, Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectUtf8Sink> decoderUnderTest) {
         String encoded = jdkEncoder.encodeToString("аз съм грут:गाजर का हलवा".getBytes());
-        try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             decoderUnderTest.accept(encoded, sink);
 
             byte[] decode = jdkDecoder.decode(encoded);
-            Assert.assertEquals(decode.length, sink.length());
+            Assert.assertEquals(decode.length, sink.size());
             for (int i = 0; i < decode.length; i++) {
                 Assert.assertEquals(decode[i], sink.byteAt(i));
             }

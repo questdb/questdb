@@ -31,7 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
 
 import java.nio.ByteBuffer;
 import java.security.InvalidKeyException;
@@ -43,7 +43,7 @@ public class StaticChallengeResponseMatcher implements ChallengeResponseMatcher 
     private final byte[] challengeBytes = new byte[AuthUtils.CHALLENGE_LEN];
     private final CharSequenceObjHashMap<PublicKey> publicKeyByKeyId;
     private final ByteBuffer signatureBuffer = ByteBuffer.allocate(AuthUtils.MAX_SIGNATURE_LENGTH);
-    private final DirectByteCharSequence signatureFlyweight = new DirectByteCharSequence();
+    private final DirectUtf8String signatureFlyweight = new DirectUtf8String();
 
     public StaticChallengeResponseMatcher(CharSequenceObjHashMap<PublicKey> authDb) {
         this.publicKeyByKeyId = authDb;
@@ -59,7 +59,7 @@ public class StaticChallengeResponseMatcher implements ChallengeResponseMatcher 
         }
         signatureBuffer.clear();
         signatureFlyweight.of(signaturePtr, signaturePtr + signatureLen);
-        Chars.base64Decode(signatureFlyweight, signatureBuffer);
+        Chars.base64Decode(signatureFlyweight.asAsciiCharSequence(), signatureBuffer);
         signatureBuffer.flip();
         for (int i = 0; i < challengeLen; i++) {
             challengeBytes[i] = Unsafe.getUnsafe().getByte(challengePtr + i);

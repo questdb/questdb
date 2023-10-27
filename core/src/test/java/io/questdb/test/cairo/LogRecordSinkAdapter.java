@@ -25,28 +25,15 @@
 package io.questdb.test.cairo;
 
 import io.questdb.log.LogRecord;
-import io.questdb.std.Sinkable;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class LogRecordSinkAdapter extends AbstractCharSink {
 
     private LogRecord line;
-
-    @Override
-    public CharSink encodeUtf8(CharSequence cs) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSink encodeUtf8(CharSequence cs, int lo, int hi) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public char[] getDoubleDigitsBuffer() {
-        throw new UnsupportedOperationException();
-    }
 
     public LogRecordSinkAdapter of(LogRecord line) {
         this.line = line;
@@ -54,7 +41,7 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
+    public CharSink put(@Nullable CharSequence cs) {
         line.$(cs);
         return this;
     }
@@ -102,19 +89,13 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     }
 
     @Override
-    public CharSink put(Throwable e) {
-        line.$(e);
-        return this;
-    }
-
-    @Override
-    public CharSink put(Sinkable sinkable) {
+    public CharSink put(@NotNull Sinkable sinkable) {
         line.$(sinkable);
         return this;
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
+    public CharSink put(char @NotNull [] chars, int start, int len) {
         throw new UnsupportedOperationException();
     }
 
@@ -131,7 +112,7 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     }
 
     @Override
-    public CharSink putQuoted(CharSequence cs) {
+    public CharSink putQuoted(@NotNull CharSequence cs) {
         line.$('\"').$(cs).I$();
         return this;
     }

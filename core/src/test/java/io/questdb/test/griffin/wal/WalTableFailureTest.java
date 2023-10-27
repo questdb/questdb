@@ -44,6 +44,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -166,7 +167,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long mode) {
-                if (Chars.endsWith(name, "2022-02-25" + Files.SEPARATOR + "x.d.1") && counter++ < 2) {
+                if (Utf8s.endsWithAscii(name, "2022-02-25" + Files.SEPARATOR + "x.d.1") && counter++ < 2) {
                     return -1;
                 }
                 return super.openRW(name, mode);
@@ -301,7 +302,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, "wal2" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
+                if (Utf8s.endsWithAscii(from, "wal2" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
                     return -1;
                 }
                 return super.rename(from, to);
@@ -608,7 +609,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "new_column.d") && fail.get()) {
+                if (Utf8s.endsWithAscii(name, "new_column.d") && fail.get()) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -652,7 +653,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "new_column.d.1") && fail.get()) {
+                if (Utf8s.endsWithAscii(name, "new_column.d.1") && fail.get()) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -831,7 +832,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "sym5.c")) {
+                if (Utf8s.containsAscii(name, "sym5.c")) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -852,7 +853,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, META_FILE_NAME)) {
                     fd = super.openRO(name);
                     return fd;
                 }
@@ -951,7 +952,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.") && attempt++ == 0) {
                     return -1;
                 }
                 return Files.openRW(name, opts);
@@ -1008,7 +1009,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return Files.openRW(name, opts);
@@ -1043,7 +1044,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return Files.openRW(name, opts);
@@ -1114,7 +1115,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return Files.openRW(name, opts);
@@ -1159,7 +1160,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -1253,7 +1254,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "1" + Files.SEPARATOR + failToRollFile)) {
+                if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
                     fd = super.openRW(name, opts);
                     return fd;
                 }
@@ -1347,7 +1348,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
             @Override
             public int hardLink(LPSZ src, LPSZ hardLink) {
-                if (Chars.endsWith(src, Files.SEPARATOR + fileName)) {
+                if (Utf8s.endsWithAscii(src, Files.SEPARATOR + fileName)) {
                     return -1;
                 }
                 return Files.hardLink(src, hardLink);
@@ -1365,7 +1366,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     try (Path path = new Path()) {
                         String columnName = "sym";
                         path.of(engine.getConfiguration().getRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());
-                        int trimTo = path.length();
+                        int trimTo = path.size();
 
                         if (Os.type != Os.WINDOWS) {
                             // TODO: find out why files remain on Windows. They are not opened by anything

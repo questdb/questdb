@@ -34,7 +34,7 @@ public final class PrefixedPath extends Path {
         super(capacity);
         super.of(prefix);
         ensureSeparator();
-        this.prefixLen = length();
+        this.prefixLen = size();
     }
 
     public PrefixedPath(CharSequence prefix) {

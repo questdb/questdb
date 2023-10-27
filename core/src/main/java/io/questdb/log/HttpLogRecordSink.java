@@ -24,9 +24,11 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class HttpLogRecordSink extends LogRecordSink {
@@ -74,7 +76,7 @@ public class HttpLogRecordSink extends LogRecordSink {
                 Unsafe.getUnsafe().putByte(p--, (byte) ' ');
             }
         }
-        return length(); // length of the http log record
+        return size(); // length of the http log record
     }
 
     @Override
@@ -86,22 +88,16 @@ public class HttpLogRecordSink extends LogRecordSink {
         hasContentLengthMarker = false;
     }
 
-    @Override
-    public HttpLogRecordSink encodeUtf8(CharSequence cs) {
-        super.encodeUtf8(cs);
-        return this;
-    }
-
     public long getMark() {
         return mark;
     }
 
     public HttpLogRecordSink put(LogRecordSink logRecord) {
-        final int len = logRecord.length();
-        final long address = logRecord.getAddress();
+        final int len = logRecord.size();
+        final long address = logRecord.ptr();
         for (long p = address, limit = address + len; p < limit; p++) {
-            byte c = Unsafe.getUnsafe().getByte(p);
-            switch (c) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+            switch (b) {
                 case '\b': // ignore chars
                 case '\f':
                 case '\r':
@@ -121,7 +117,7 @@ public class HttpLogRecordSink extends LogRecordSink {
                     break;
 
                 default:
-                    put((char) c);
+                    put(b);
                     break;
             }
         }
@@ -129,19 +125,19 @@ public class HttpLogRecordSink extends LogRecordSink {
     }
 
     @Override
-    public HttpLogRecordSink put(CharSequence cs) {
+    public HttpLogRecordSink put(@Nullable CharSequence cs) {
         super.put(cs);
         return this;
     }
 
     @Override
-    public HttpLogRecordSink put(CharSequence cs, int lo, int hi) {
+    public HttpLogRecordSink put(@NotNull CharSequence cs, int lo, int hi) {
         super.put(cs, lo, hi);
         return this;
     }
 
     @Override
-    public HttpLogRecordSink put(Sinkable sinkable) {
+    public HttpLogRecordSink put(@Nullable Sinkable sinkable) {
         super.put(sinkable);
         return this;
     }
@@ -152,21 +148,33 @@ public class HttpLogRecordSink extends LogRecordSink {
         return this;
     }
 
+    @Override
+    public HttpLogRecordSink putAscii(@Nullable CharSequence cs) {
+        super.putAscii(cs);
+        return this;
+    }
+
+    @Override
+    public HttpLogRecordSink putAscii(char c) {
+        super.putAscii(c);
+        return this;
+    }
+
     @TestOnly
     public void putContentLengthMarker() {
-        put("Content-Length:").put(CL_MARKER);
+        putAscii("Content-Length:").putAscii(CL_MARKER);
         contentLengthEnd = _wptr - 1; // will scan backwards from here
-        put(CRLF);
+        putAscii(CRLF);
         hasContentLengthMarker = true;
     }
 
     public HttpLogRecordSink putHeader(CharSequence localHostIp) {
         clear();
-        put("POST /api/v1/alerts HTTP/1.1").put(CRLF)
-                .put("Host: ").put(localHostIp).put(CRLF)
-                .put("User-Agent: QuestDB/LogAlert").put(CRLF)
-                .put("Accept: */*").put(CRLF)
-                .put("Content-Type: application/json").put(CRLF)
+        putAscii("POST /api/v1/alerts HTTP/1.1").putAscii(CRLF)
+                .putAscii("Host: ").put(localHostIp).putAscii(CRLF)
+                .putAscii("User-Agent: QuestDB/LogAlert").putAscii(CRLF)
+                .putAscii("Accept: */*").putAscii(CRLF)
+                .putAscii("Content-Type: application/json").putAscii(CRLF)
                 .putContentLengthMarker();
         put(CRLF); // header/body separator
         bodyStart = _wptr;
@@ -185,6 +193,6 @@ public class HttpLogRecordSink extends LogRecordSink {
 
     @Override
     public String toString() {
-        return Chars.stringFromUtf8Bytes(address, _wptr);
+        return Utf8s.stringFromUtf8Bytes(address, _wptr);
     }
 }

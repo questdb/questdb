@@ -28,7 +28,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
+import io.questdb.std.str.Sinkable;
 
 /**
  * Gathers important query execution plan details and prints them in a readable format.

@@ -29,12 +29,13 @@ import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -69,7 +70,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean remove(LPSZ path) {
-                    if (Chars.endsWith(path, ".v") || Chars.endsWith(path, ".k")) {
+                    if (Utf8s.endsWithAscii(path, ".v") || Utf8s.endsWithAscii(path, ".k")) {
                         return false;
                     }
                     return super.remove(path);
@@ -418,7 +419,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.contains(name, "sym2.k")) {
+                    if (Utf8s.containsAscii(name, "sym2.k")) {
                         if (count.incrementAndGet() == 29) {
                             return -1;
                         }
@@ -458,7 +459,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean touch(LPSZ path) {
-                    if (Chars.contains(path, "sym2.v") && count.incrementAndGet() == 17) {
+                    if (Utf8s.containsAscii(path, "sym2.v") && count.incrementAndGet() == 17) {
                         return false;
                     }
                     return Files.touch(path);
@@ -658,7 +659,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             changeTable.run(tablePath);
 
             indexBuilder.clear();
-            indexBuilder.of(tablePath);
+            indexBuilder.of(new Utf8String(tablePath));
             rebuildIndexAction.run(indexBuilder);
 
             int sym1A2 = countByFullScan("select * from xxx where sym1 = 'A'");
@@ -699,7 +700,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             path.put(Files.SEPARATOR);
             TableUtils.setPathForPartition(path, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
-            LOG.info().$("removing ").utf8(path).$();
+            LOG.info().$("removing ").$(path).$();
             Assert.assertTrue(Files.remove(path.$()));
         }
     }

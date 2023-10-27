@@ -43,7 +43,7 @@ public interface MapWriter extends SymbolCountProvider {
             int symbolCapacity,
             boolean symbolCacheFlag
     ) {
-        int plen = path.length();
+        int plen = path.size();
         try {
             mem.smallFile(ff, offsetFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
             mem.jumpTo(0);

@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -390,7 +390,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public void getLong256(int col, CharSink sink) {
+        public void getLong256(int col, CharSinkBase<?> sink) {
             mem.getLong256(fixedWithColumnOffset(col), sink);
         }
 

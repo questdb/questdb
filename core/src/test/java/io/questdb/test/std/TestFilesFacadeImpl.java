@@ -26,10 +26,12 @@ package io.questdb.test.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -37,8 +39,8 @@ import java.util.Map;
 public class TestFilesFacadeImpl extends FilesFacadeImpl {
     public static final TestFilesFacadeImpl INSTANCE = new TestFilesFacadeImpl();
     private final static Log LOG = LogFactory.getLog(TestFilesFacadeImpl.class);
-    private final static HashMap<Long, String> openFilesFds = new HashMap<>();
-    private final static CharSequenceIntHashMap openPaths = new CharSequenceIntHashMap();
+    private final static HashMap<Long, Utf8String> openFilesFds = new HashMap<>();
+    private final static Utf8SequenceIntHashMap openPaths = new Utf8SequenceIntHashMap();
 
     protected int fd = -1;
 
@@ -102,22 +104,22 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         }
         boolean ok = super.remove(name);
         if (!ok) {
-            LOG.info().$("cannot remove file: ").utf8(name).$(", errno:").$(errno()).$();
+            LOG.info().$("cannot remove file: ").$(name).$(", errno:").$(errno()).$();
         }
         return ok;
     }
 
     private static synchronized boolean checkRemove(LPSZ name) {
         if (openPaths.keyIndex(name) < 0) {
-            LOG.info().$("cannot remove, file is open: ").utf8(name).$(", fd=").$(getFdByPath(name)).$();
+            LOG.info().$("cannot remove, file is open: ").$(name).$(", fd=").$(getFdByPath(name)).$();
             return true;
         }
         return false;
     }
 
-    private static Long getFdByPath(CharSequence value) {
-        for (Map.Entry<Long, String> entry : openFilesFds.entrySet()) {
-            if (Chars.equals(value, entry.getValue())) {
+    private static Long getFdByPath(Utf8Sequence value) {
+        for (Map.Entry<Long, Utf8String> entry : openFilesFds.entrySet()) {
+            if (Utf8s.equals(value, entry.getValue())) {
                 return entry.getKey();
             }
         }
@@ -126,7 +128,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
 
     private static synchronized void track(LPSZ name, long fd) {
         if (fd > -1 && fd != Integer.MAX_VALUE - 1) {
-            String nameStr = Chars.toString(name);
+            Utf8String nameStr = Utf8String.newInstance(name);
             int keyIndex = openPaths.keyIndex(nameStr);
             if (keyIndex < 0) {
                 int count = openPaths.valueAt(keyIndex);
@@ -140,7 +142,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
 
     private static synchronized int untrack(long fd) {
         int count = 1;
-        String fileName = openFilesFds.get(fd);
+        Utf8String fileName = openFilesFds.get(fd);
         if (fileName != null) {
             int keyIndex = TestFilesFacadeImpl.openPaths.keyIndex(fileName);
             if (keyIndex < 0) {

@@ -28,8 +28,8 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
 import io.questdb.std.Uuid;
+import io.questdb.std.str.Sinkable;
 
 public class JsonPlanSink extends BasePlanSink {
     final int NODE_ATTR = 2;
@@ -96,7 +96,7 @@ public class JsonPlanSink extends BasePlanSink {
             case NODE_TYPE:
             case NODE_VALUE:
                 if (quoteValue) {
-                  sink.putNoEsc("\"");
+                    sink.putNoEsc("\"");
                 }
                 sink.putNoEsc("\n");
                 break;

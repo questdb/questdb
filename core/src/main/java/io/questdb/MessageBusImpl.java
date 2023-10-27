@@ -66,8 +66,6 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
     private final int pageFrameReduceShardCount;
     private final MCSequence[] pageFrameReduceSubSeq;
-    private final MPSequence queryCacheEventPubSeq;
-    private final FanOut queryCacheEventSubSeq;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
@@ -136,10 +134,6 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterEventPubSeq = new MPSequence(this.tableWriterEventQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
-
-        this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
-        this.queryCacheEventSubSeq = new FanOut();
-        this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
 
         this.columnPurgeQueue = new RingQueue<>(ColumnPurgeTask::new, configuration.getColumnPurgeQueueCapacity());
         this.columnPurgeSubSeq = new SCSequence();
@@ -350,16 +344,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getPageFrameReduceSubSeq(int shard) {
         return pageFrameReduceSubSeq[shard];
-    }
-
-    @Override
-    public FanOut getQueryCacheEventFanOut() {
-        return queryCacheEventSubSeq;
-    }
-
-    @Override
-    public MPSequence getQueryCacheEventPubSeq() {
-        return queryCacheEventPubSeq;
     }
 
     @Override

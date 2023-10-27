@@ -30,6 +30,7 @@ import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ProtoEntity;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cutlass.line.udp.LineUdpLexerTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -452,7 +453,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
     private void assembleLine() {
         int nEntities = lineTcpParser.getEntityCount();
-        Chars.utf8toUtf16(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink);
+        Utf8s.utf8ToUtf16(lineTcpParser.getMeasurementName().lo(), lineTcpParser.getMeasurementName().hi(), sink);
         int n = 0;
         boolean tagsComplete = false;
         while (n < nEntities) {
@@ -463,12 +464,12 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             } else {
                 sink.put(',');
             }
-            Chars.utf8toUtf16(entity.getName().getLo(), entity.getName().getHi(), sink);
+            Utf8s.utf8ToUtf16(entity.getName().lo(), entity.getName().hi(), sink);
             sink.put('=');
             switch (entity.getType()) {
                 case LineTcpParser.ENTITY_TYPE_STRING:
                     sink.put('"');
-                    Chars.utf8toUtf16(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    Utf8s.utf8ToUtf16(entity.getValue().lo(), entity.getValue().hi(), sink);
                     sink.put('"');
                     break;
                 case LineTcpParser.ENTITY_TYPE_INTEGER:
@@ -476,7 +477,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                     sink.put(entity.getValue()).put('i');
                     break;
                 default:
-                    Chars.utf8toUtf16(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    Utf8s.utf8ToUtf16(entity.getValue().lo(), entity.getValue().hi(), sink);
                     break;
             }
         }
@@ -519,7 +520,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                         assembleLine();
                     } else {
                         final StringSink tmpSink = new StringSink();
-                        if (Chars.utf8toUtf16(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
+                        if (Utf8s.utf8ToUtf16(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
                             sink.put(tmpSink.toString());
                         }
                         sink.put("--ERROR=");
