@@ -32,11 +32,11 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
@@ -7958,7 +7958,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);

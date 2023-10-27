@@ -166,7 +166,7 @@ public class GeoHashesTest {
     @Test
     public void testFromCoordinatesToFromStringMatch() throws NumericException {
         final long gh = GeoHashes.fromCoordinatesDeg(lat, lon, 8 * 5);
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         GeoHashes.appendChars(gh, 8, sink);
         final long gh1 = GeoHashes.fromString(sink, 0, 8);
         Assert.assertEquals(gh, gh1);
@@ -174,7 +174,7 @@ public class GeoHashesTest {
 
     @Test(expected = NumericException.class)
     public void testFromString() throws NumericException {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         sink.put("@s");
         GeoHashes.fromString(sink.toString(), 0, 2);
     }
@@ -197,7 +197,7 @@ public class GeoHashesTest {
     @Test
     public void testFromStringIgnoreQuotesTruncateChars() throws NumericException {
         Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 5));
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         GeoHashes.appendChars(807941, 4, sink);
         Assert.assertEquals("sp05", sink.toString());
     }
@@ -267,7 +267,7 @@ public class GeoHashesTest {
     @Test
     public void testFromStringTruncatingNlIgnoreQuotesTruncateBits1() throws NumericException {
         Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl("'sp052w92p1p'", 1, 11, 20));
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         GeoHashes.appendChars(807941, 4, sink);
         Assert.assertEquals("sp05", sink.toString());
     }
@@ -446,7 +446,7 @@ public class GeoHashesTest {
     @Test
     public void testIsValidBits1() {
         Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int len = 1; len <= 60; len++) {
             sink.clear();
             sink.put("##");
@@ -465,7 +465,7 @@ public class GeoHashesTest {
     @Test
     public void testIsValidBitsWhenIsNot() {
         Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int len = 1; len <= 60; len++) {
             sink.clear();
             rnd_geobits(rnd, sink, len);
@@ -491,7 +491,7 @@ public class GeoHashesTest {
     @Test
     public void testIsValidChars2() {
         Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int len = 1; len <= 12; len++) {
             sink.clear();
             sink.put('@');
@@ -510,7 +510,7 @@ public class GeoHashesTest {
     @Test
     public void testIsValidCharsWhenIsNot() {
         Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int len = 1; len <= 12; len++) {
             sink.clear();
             rnd_geochars(rnd, sink, len);
@@ -538,7 +538,7 @@ public class GeoHashesTest {
         String[] expectedStr = new String[maxGeoHashSizeChars];
         long[] expectedHash = new long[maxGeoHashSizeChars];
         StringSink everything = new StringSink();
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int precision = 1; precision <= maxGeoHashSizeChars; precision++) {
             int numBits = precision * 5;
             long hash = GeoHashes.fromCoordinatesDeg(39.982, 0.024, numBits);
@@ -614,7 +614,7 @@ public class GeoHashesTest {
         boolean assertsEnable = false;
         assert assertsEnable = true; // Test only when assertions enabled
         if (assertsEnable) {
-            StringSink sink = Misc.getThreadLocalBuilder();
+            StringSink sink = Misc.getThreadLocalSink();
             Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendBinary(-0, 0, sink));
             Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendBinary(-31, 0, sink));
         }
@@ -647,7 +647,7 @@ public class GeoHashesTest {
         boolean assertsEnabled = false;
         assert assertsEnabled = true; // Test only when assertions enabled
         if (assertsEnabled) {
-            StringSink sink = Misc.getThreadLocalBuilder();
+            StringSink sink = Misc.getThreadLocalSink();
             Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendChars(-0, 0, sink));
             Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendChars(-0, 31, sink));
         }
@@ -655,7 +655,7 @@ public class GeoHashesTest {
 
     private static void assertSuccess(long hash, int size, String message, StringConverter converter) {
         try {
-            StringSink sink = Misc.getThreadLocalBuilder();
+            StringSink sink = Misc.getThreadLocalSink();
             converter.convert(hash, size, sink);
             Assert.assertEquals(message, sink.toString());
         } catch (IllegalArgumentException err) {

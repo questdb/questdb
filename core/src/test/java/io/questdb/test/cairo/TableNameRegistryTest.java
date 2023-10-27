@@ -272,7 +272,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
                             // Remove _txn file first
                             rmPath.trimTo(rootLen).concat(tableName);
-                            int len = rmPath.length();
+                            int len = rmPath.size();
                             rmPath.concat(TableUtils.TXN_FILE_NAME).$();
                             ff.remove(rmPath);
 
@@ -477,7 +477,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.closeNameRegistry();
 
-            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.remove(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$()));
+            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.remove(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$()));
 
             engine.reloadTableNames();
 

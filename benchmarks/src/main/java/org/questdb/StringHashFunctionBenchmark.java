@@ -24,12 +24,12 @@
 
 package org.questdb;
 
-import io.questdb.std.ByteCharSequenceIntHashMap;
-import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Hash;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf8String;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -41,20 +41,17 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class ByteCharSequenceIntHashMapBenchmark {
+public class StringHashFunctionBenchmark {
 
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-    private ByteCharSequenceIntHashMap directMap = new ByteCharSequenceIntHashMap();
+    private final DirectString charSequence = new DirectString();
+    private final DirectUtf8String utf8Sequence = new DirectUtf8String();
     @Param({"7", "15", "31", "63"})
     private int len;
-    @Param({"16", "256"})
-    private int n;
-    private CharSequenceIntHashMap nonDirectMap = new CharSequenceIntHashMap();
     private long ptr;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(ByteCharSequenceIntHashMapBenchmark.class.getSimpleName())
+                .include(StringHashFunctionBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -64,44 +61,26 @@ public class ByteCharSequenceIntHashMapBenchmark {
 
     @Setup(Level.Iteration)
     public void setUp() {
-        ptr = Unsafe.malloc((long) n * len, MemoryTag.NATIVE_DEFAULT);
-        dbcs.of(ptr, ptr + len);
-        for (int i = 0; i < n; i++) {
-            StringBuilder sb = new StringBuilder();
-            for (int j = 0; j < len; j++) {
-                char ch = (char) ('a' + i + j);
-                Unsafe.getUnsafe().putByte(ptr + (long) i * len + j, (byte) ch);
-                sb.append(ch);
-            }
-            nonDirectMap.put(sb.toString(), 42);
-            directMap.put(ByteCharSequence.newInstance(dbcs), 42);
+        ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        charSequence.of(ptr, ptr + len);
+        utf8Sequence.of(ptr, ptr + len);
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(ptr + i, (byte) 'a');
         }
     }
 
     @TearDown(Level.Iteration)
     public void tearDown() {
-        ptr = Unsafe.free(ptr, (long) n * len, MemoryTag.NATIVE_DEFAULT);
-        directMap = new ByteCharSequenceIntHashMap();
-        nonDirectMap = new CharSequenceIntHashMap();
+        ptr = Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Benchmark
-    public int testDirectMap() {
-        int sum = 0;
-        for (int i = 0; i < n; i++) {
-            dbcs.of(ptr + (long) i * len, ptr + (long) (i + 1) * len);
-            sum += directMap.get(dbcs);
-        }
-        return sum;
+    public long testHashMemDirectByteCharSequence() {
+        return Hash.hashMem32(utf8Sequence);
     }
 
     @Benchmark
-    public long testNonDirectMap() {
-        int sum = 0;
-        for (int i = 0; i < n; i++) {
-            dbcs.of(ptr + (long) i * len, ptr + (long) (i + 1) * len);
-            sum += nonDirectMap.get(dbcs);
-        }
-        return sum;
+    public int testStandardDirectByteCharSequence() {
+        return Chars.hashCode(charSequence);
     }
 }

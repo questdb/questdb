@@ -26,7 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable {
     private TimestampCompatibleAdapter compatibleAdapter;
@@ -36,7 +36,7 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
         this.compatibleAdapter = null;
     }
 
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+    public long getTimestamp(DirectUtf8Sequence value) throws Exception {
         return compatibleAdapter.getTimestamp(value);
     }
 
@@ -46,12 +46,12 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         return compatibleAdapter.probe(text);
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         row.putTimestamp(column, getTimestamp(value));
     }
 }

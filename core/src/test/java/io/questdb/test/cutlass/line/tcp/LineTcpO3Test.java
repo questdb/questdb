@@ -43,7 +43,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUnboundedByteSink;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -226,8 +226,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 Assert.assertEquals(walEnabled, isWalTable("cpu"));
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from cpu", sink);
                 readGzResource("selectAll1");
-                DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
-                expectedSink.clear(resourceSize);
+                DirectUtf8String expectedSink = new DirectUtf8String().of(resourceAddress, resourceAddress + resourceSize);
                 TestUtils.assertEquals(expectedSink.toString(), sink);
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
             } finally {

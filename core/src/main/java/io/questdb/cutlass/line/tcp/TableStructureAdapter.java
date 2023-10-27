@@ -29,10 +29,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
-
-import static io.questdb.std.Chars.utf8ToUtf16;
+import io.questdb.std.str.Utf8s;
 
 class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
@@ -146,8 +145,8 @@ class TableStructureAdapter implements TableStructure {
         final boolean hasNonAsciiChars = parser.hasNonAsciiChars();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
-            final DirectByteCharSequence colNameUtf8 = entity.getName();
-            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink.get(), hasNonAsciiChars);
+            final DirectUtf8Sequence colNameUtf8 = entity.getName();
+            final CharSequence colNameUtf16 = Utf8s.utf8ToUtf16(colNameUtf8, tempSink.get(), hasNonAsciiChars);
             int index = entityNamesUtf16.keyIndex(colNameUtf16);
             if (index > -1) {
                 entityNamesUtf16.addAt(index, colNameUtf16.toString());

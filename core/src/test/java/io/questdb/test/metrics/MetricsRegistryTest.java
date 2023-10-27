@@ -25,9 +25,7 @@
 package io.questdb.test.metrics;
 
 import io.questdb.metrics.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -133,14 +131,16 @@ public class MetricsRegistryTest {
     }
 
     private static void assertScrapable(Scrapable scrapable, CharSequence expected) {
-        final DirectByteCharSink sink = new DirectByteCharSink(32);
-        scrapable.scrapeIntoPrometheus(sink);
-        TestUtils.assertEquals(expected, sink.toString());
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
+            scrapable.scrapeIntoPrometheus(sink);
+            TestUtils.assertEquals(expected, sink.toString());
+        }
     }
 
     private static void assetNull(Scrapable scrapable) {
-        final DirectByteCharSink sink = new DirectByteCharSink(32);
-        scrapable.scrapeIntoPrometheus(sink);
-        TestUtils.assertEquals("", sink.toString());
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
+            scrapable.scrapeIntoPrometheus(sink);
+            TestUtils.assertEquals("", sink.toString());
+        }
     }
 }

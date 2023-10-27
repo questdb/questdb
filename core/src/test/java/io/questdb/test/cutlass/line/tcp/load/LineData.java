@@ -25,10 +25,10 @@
 package io.questdb.test.cutlass.line.tcp.load;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.test.cutlass.line.tcp.ColumnNameType;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.line.tcp.ColumnNameType;
 
 import java.util.List;
 
@@ -117,8 +117,8 @@ public class LineData {
     }
 
     private String TimestampsToString(long uSecs) {
-        StringSink sink = Misc.getThreadLocalBuilder();
-        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, null, null, sink);
+        StringSink sink = Misc.getThreadLocalSink();
+        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, TimestampFormatUtils.EN_LOCALE, null, sink);
         return sink.toString();
     }
 

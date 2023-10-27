@@ -35,10 +35,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
@@ -3600,7 +3600,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRO(LPSZ name) {
-                    if (Chars.endsWith(name, "b.d")) {
+                    if (Utf8s.endsWithAscii(name, "b.d")) {
                         return -1;
                     }
                     return super.openRO(name);

@@ -45,12 +45,10 @@ final class FastDoubleMem {
                 b[i] = Unsafe.getUnsafe().getByte(str + startIndex + i);
             }
             double v = Double.parseDouble(new String(b, StandardCharsets.ISO_8859_1));
-            if (rejectOverflow && (
-                    v == Double.POSITIVE_INFINITY
+            if (rejectOverflow &&
+                    (v == Double.POSITIVE_INFINITY
                             || v == Double.NEGATIVE_INFINITY
-                            || v == 0.0
-            )
-            ) {
+                            || v == 0.0)) {
                 throw NumericException.INSTANCE;
             }
             return v;

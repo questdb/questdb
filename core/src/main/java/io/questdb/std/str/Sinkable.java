@@ -22,11 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.std.str;
 
-import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.NotNull;
 
-@FunctionalInterface
-public interface DirectByteSymbolLookup {
-    int keyOf(DirectByteCharSequence value);
+public interface Sinkable {
+    void toSink(@NotNull CharSinkBase<?> sink);
 }

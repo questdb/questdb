@@ -61,7 +61,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             RecordMetadata metadata
     ) {
         int dot = addAlias(tableAlias, columnName);
-        final CharSink b = Misc.getThreadLocalBuilder();
+        final CharSink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1) {
             cm = new TableColumnMetadata(
@@ -88,7 +88,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     public void add(CharSequence tableAlias, TableColumnMetadata m) {
         final CharSequence columnName = m.getName();
         final int dot = addAlias(tableAlias, columnName);
-        final CharSink b = Misc.getThreadLocalBuilder();
+        final CharSink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1) {
             cm = new TableColumnMetadata(

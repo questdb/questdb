@@ -33,10 +33,10 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -68,7 +68,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
                     engine,
                     context,
                     "SELECT count() FROM " + tableName,
-                    Misc.getThreadLocalBuilder(),
+                    Misc.getThreadLocalSink(),
                     "count\n" +
                             count + "\n"
             );
@@ -119,7 +119,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
 
     static Path doesConvertFileExist(CairoEngine engine, TableToken token, boolean doesExist) {
         final Path path = Path.PATH.get().of(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
-        Assert.assertEquals(Chars.toString(path), doesExist, Files.exists(path.$()));
+        Assert.assertEquals(Utf8s.toString(path), doesExist, Files.exists(path.$()));
         return doesExist ? path : null;
     }
 

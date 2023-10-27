@@ -34,6 +34,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -449,13 +450,13 @@ public class PartitionByTest {
 
                 // check formatting for day formatter
                 sink.clear();
-                dayFormat.format(timestamp, TimestampFormatUtils.enLocale, null, sink);
+                dayFormat.format(timestamp, TimestampFormatUtils.EN_LOCALE, null, sink);
                 String dayFormatted = sink.toString();
                 Assert.assertEquals(expectedDayFormatted, dayFormatted);
 
                 // check formatting for week formatter
                 sink.clear();
-                weekFormat.format(timestamp, TimestampFormatUtils.enLocale, null, sink);
+                weekFormat.format(timestamp, TimestampFormatUtils.EN_LOCALE, null, sink);
                 String weekFormatted = sink.toString();
                 Assert.assertEquals(expectedWeekFormatted, weekFormatted.substring(0, 8));
 
@@ -610,7 +611,7 @@ public class PartitionByTest {
         long expected = TimestampFormatUtils.parseTimestamp(timestampString);
         DateFormat dirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
         sink.clear();
-        dirFormatMethod.format(expected, TimestampFormatUtils.enLocale, null, sink);
+        dirFormatMethod.format(expected, TimestampFormatUtils.EN_LOCALE, null, sink);
         TestUtils.assertEquals(expectedDirName, sink);
         if (partitionBy == PartitionBy.WEEK) {
             int year = Timestamps.getYear(expected);
@@ -723,6 +724,10 @@ public class PartitionByTest {
         Assert.assertEquals(partitionBy, PartitionBy.fromString(partitionName));
         Assert.assertEquals(partitionBy, PartitionBy.fromString(Chars.toString(partitionName).toUpperCase()));
         Assert.assertEquals(partitionBy, PartitionBy.fromString(Chars.toString(partitionName).toLowerCase()));
+
+        Assert.assertEquals(partitionBy, PartitionBy.fromUtf8String(new Utf8String(partitionName)));
+        Assert.assertEquals(partitionBy, PartitionBy.fromUtf8String(new Utf8String(Chars.toString(partitionName).toUpperCase())));
+        Assert.assertEquals(partitionBy, PartitionBy.fromUtf8String(new Utf8String(Chars.toString(partitionName).toLowerCase())));
     }
 
     private void testDaySplitFuzz(int partitionBy, long multiplier, Rnd rnd) {
@@ -732,7 +737,7 @@ public class PartitionByTest {
         for (int i = 0; i < 10; i++) {
             long timestamp = rnd.nextLong(3000 * Timestamps.DAY_MICROS * 365L / multiplier);
             tsSink.clear();
-            formatter.format(timestamp, TimestampFormatUtils.enLocale, null, tsSink);
+            formatter.format(timestamp, TimestampFormatUtils.EN_LOCALE, null, tsSink);
             long actual = PartitionBy.parsePartitionDirName(tsSink, partitionBy);
 
             Assert.assertEquals(tsSink.toString(), timestamp, actual);

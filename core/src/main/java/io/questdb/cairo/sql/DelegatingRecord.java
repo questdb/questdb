@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 public class DelegatingRecord implements Record {
@@ -107,7 +108,7 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSinkBase<?> sink) {
         base.getLong256(col, sink);
     }
 

@@ -26,11 +26,12 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.log.*;
 import io.questdb.std.*;
-import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -54,7 +55,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
     public void testExtractSite() throws Exception {
         createDummyConfiguration();
         auxPath.of(root).$();
-        int plen = auxPath.length();
+        int plen = auxPath.size();
         Bootstrap bootstrap = new Bootstrap(getServerMainArgs());
         Assert.assertNotNull(bootstrap.getLog());
         Assert.assertNotNull(bootstrap.getConfiguration());
@@ -115,7 +116,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
 
             // create crash files
             auxPath.of(temp.getRoot().getAbsolutePath()).$();
-            int plen = auxPath.length();
+            int plen = auxPath.size();
             Files.touch(auxPath.concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
             Files.touch(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
             Files.mkdirs(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
@@ -139,28 +140,28 @@ public class BootstrapTest extends AbstractBootstrapTest {
                 while (true) {
                     int len = (int) Files.read(fd, buf, bufSize, 0);
                     if (len > 0) {
-                        NativeLPSZ str = new NativeLPSZ().of(buf);
-                        int index1 = Chars.indexOf(str, 0, len, configuration.getArchivedCrashFilePrefix() + "0.log");
+                        DirectUtf8StringZ str = new DirectUtf8StringZ().of(buf);
+                        int index1 = Utf8s.indexOfAscii(str, 0, len, configuration.getArchivedCrashFilePrefix() + "0.log");
                         Assert.assertTrue(index1 > -1);
                         // make sure max files (1) limit is not exceeded
-                        int index2 = Chars.indexOf(str, index1 + 1, len, configuration.getArchivedCrashFilePrefix() + "1.log");
+                        int index2 = Utf8s.indexOfAscii(str, index1 + 1, len, configuration.getArchivedCrashFilePrefix() + "1.log");
                         Assert.assertEquals(-1, index2);
 
                         // at this point we could have renamed file with either index '1' or '2'. This is random and
                         // depends on the order OS directory listing returns names.
                         String fileIndexThatRemains = "2.log";
-                        index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + fileIndexThatRemains);
+                        index2 = Utf8s.indexOfAscii(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + fileIndexThatRemains);
                         if (index2 == -1) {
                             // we could have renamed 2 and left 1 behind
                             fileIndexThatRemains = "1.log";
-                            index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + fileIndexThatRemains);
+                            index2 = Utf8s.indexOfAscii(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + fileIndexThatRemains);
                         }
 
                         Assert.assertTrue(index2 > -1 && index2 > index1);
 
                         Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix() + fileIndexThatRemains).$()));
 
-                        int index3 = Chars.indexOf(str, index2 + 1, len, configuration.getOGCrashFilePrefix() + "3");
+                        int index3 = Utf8s.indexOfAscii(str, index2 + 1, len, configuration.getOGCrashFilePrefix() + "3");
                         Assert.assertEquals(-1, index3);
                         Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix() + "3").$()));
                         break;

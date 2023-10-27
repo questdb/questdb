@@ -24,7 +24,10 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public final class Uuid implements Sinkable {
     public static final int FIRST_DASH_POS = 8;
@@ -41,7 +44,6 @@ public final class Uuid implements Sinkable {
     }
 
     public Uuid() {
-
     }
 
     /**
@@ -60,7 +62,6 @@ public final class Uuid implements Sinkable {
         if (lo < 0 || hi < lo || hi > uuid.length()) {
             throw NumericException.INSTANCE;
         }
-
         if (hi - lo != UUID_LENGTH) {
             throw NumericException.INSTANCE;
         }
@@ -165,13 +166,20 @@ public final class Uuid implements Sinkable {
         this.hi = hi;
     }
 
-    public void of(CharSequence uuid) throws NumericException {
+    public void of(@NotNull CharSequence uuid) throws NumericException {
         checkDashesAndLength(uuid);
         this.lo = parseLo(uuid);
         this.hi = parseHi(uuid);
     }
 
-    public void of(CharSequence uuid, int lo, int hi) throws NumericException {
+    public void of(@NotNull Utf8Sequence uuid) throws NumericException {
+        CharSequence csView = uuid.asAsciiCharSequence();
+        checkDashesAndLength(csView);
+        this.lo = parseLo(csView);
+        this.hi = parseHi(csView);
+    }
+
+    public void of(@NotNull CharSequence uuid, int lo, int hi) throws NumericException {
         checkDashesAndLength(uuid, lo, hi);
         this.lo = parseLo(uuid, lo);
         this.hi = parseHi(uuid, lo);
@@ -183,7 +191,7 @@ public final class Uuid implements Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         Numbers.appendUuid(lo, hi, sink);
     }
 }

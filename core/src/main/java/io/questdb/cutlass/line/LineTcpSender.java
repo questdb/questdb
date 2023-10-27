@@ -81,14 +81,14 @@ public class LineTcpSender extends AbstractLineSender {
     @Override
     public final void at(long timestamp, ChronoUnit unit) {
         // nanos
-        put(' ').put(timestamp * unitToNanos(unit));
+        putAsciiInternal(' ').put(timestamp * unitToNanos(unit));
         atNow();
     }
 
     @Override
     public final void at(Instant timestamp) {
         // nanos
-        put(' ').put(timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano());
+        putAsciiInternal(' ').put(timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano());
         atNow();
     }
 

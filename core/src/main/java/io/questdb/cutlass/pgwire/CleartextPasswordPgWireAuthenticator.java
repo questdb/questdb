@@ -36,10 +36,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.Socket;
 import io.questdb.std.*;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public final class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
@@ -56,7 +57,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final DirectUtf8String dus = new DirectUtf8String();
     private final boolean matcherOwned;
     private final OptionsListener optionsListener;
     private final CircuitBreakerRegistry registry;
@@ -410,15 +411,15 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
             // store user
             if (PGKeywords.isUser(nameLo, nameHi - nameLo)) {
                 CharacterStoreEntry e = characterStore.newEntry();
-                e.put(dbcs.of(valueLo, valueHi));
+                e.put(dus.of(valueLo, valueHi));
                 this.username = e.toImmutable();
             }
             boolean parsed = true;
             if (PGKeywords.isOptions(nameLo, nameHi - nameLo)) {
                 if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
                     try {
-                        dbcs.of(valueLo + 21, valueHi);
-                        long statementTimeout = Numbers.parseLong(dbcs);
+                        dus.of(valueLo + 21, valueHi);
+                        long statementTimeout = Numbers.parseLong(dus);
                         optionsListener.setStatementTimeout(statementTimeout);
                     } catch (NumericException ex) {
                         parsed = false;
@@ -428,9 +429,9 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
                 }
             }
             if (parsed) {
-                LOG.debug().$("property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+                LOG.debug().$("property [name=").$(dus.of(nameLo, nameHi)).$(", value=").$(dus.of(valueLo, valueHi)).$(']').$();
             } else {
-                LOG.info().$("invalid property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+                LOG.info().$("invalid property [name=").$(dus.of(nameLo, nameHi)).$(", value=").$(dus.of(valueLo, valueHi)).$(']').$();
             }
         }
         characterStore.clear();
@@ -479,17 +480,18 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         AUTH_FAILED
     }
 
-    private class ResponseSink extends AbstractCharSink {
+    private class ResponseSink implements Utf8Sink {
+
         @Override
-        public CharSink put(char c) {
-            ensureCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufWritePos++, (byte) c);
+        public Utf8Sink put(@Nullable Utf8Sequence us) {
             return this;
         }
 
-        public void put(byte c) {
+        @Override
+        public Utf8Sink put(byte b) {
             ensureCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufWritePos++, c);
+            Unsafe.getUnsafe().putByte(sendBufWritePos++, b);
+            return this;
         }
 
         public void putInt(int i) {
@@ -504,7 +506,7 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         }
 
         void encodeUtf8Z(CharSequence value) {
-            encodeUtf8(value);
+            put(value);
             ensureCapacity(Byte.BYTES);
             put((byte) 0);
         }

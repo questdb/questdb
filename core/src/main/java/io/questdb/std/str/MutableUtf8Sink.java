@@ -24,32 +24,7 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Unsafe;
+import io.questdb.std.Mutable;
 
-/**
- * Represents C LPSZ as Java' CharSequence. Bytes in native memory are interpreted as ASCII characters. Multi-byte
- * characters are NOT decoded.
- */
-public class NativeLPSZ extends AbstractCharSequence {
-    private long address;
-    private int len;
-
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(address + index);
-    }
-
-    @Override
-    public int length() {
-        return len;
-    }
-
-    @SuppressWarnings("StatementWithEmptyBody")
-    public NativeLPSZ of(long address) {
-        this.address = address;
-        long p = address;
-        while (Unsafe.getUnsafe().getByte(p++) != 0) ;
-        this.len = (int) (p - address - 1);
-        return this;
-    }
+public interface MutableUtf8Sink extends Utf8Sink, Utf8Sequence, Mutable {
 }

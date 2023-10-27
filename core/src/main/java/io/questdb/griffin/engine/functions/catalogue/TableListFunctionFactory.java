@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -238,7 +238,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         return false;
                     }
 
-                    int pathLen = path.length();
+                    int pathLen = path.size();
                     try {
                         path.concat(tableToken).$();
                         isSoftLink = Files.isSoftLink(path);

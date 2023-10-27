@@ -24,7 +24,8 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.DirectUtf8CharSink;
+import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
 
 public class NullLongGauge implements LongGauge {
     public static final NullLongGauge INSTANCE = new NullLongGauge();
@@ -50,7 +51,7 @@ public class NullLongGauge implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
     }
 
     @Override

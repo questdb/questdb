@@ -38,6 +38,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -1166,7 +1167,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 @Override
                 public boolean closeRemove(int fd, LPSZ name) {
-                    if (Chars.endsWith(name, ".lock")) {
+                    if (Utf8s.endsWithAscii(name, ".lock")) {
                         invoked = true;
                         super.close(fd);
                         return false;
@@ -1176,7 +1177,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 @Override
                 public boolean remove(LPSZ name) {
-                    if (Chars.endsWith(name, ".lock")) {
+                    if (Utf8s.endsWithAscii(name, ".lock")) {
                         invoked = true;
                         return false;
                     }
@@ -1284,7 +1285,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, fileUnderAttack)) {
+                    if (Utf8s.endsWithAscii(name, fileUnderAttack)) {
                         this.fd = super.openRW(name, opts);
                         return this.fd;
                     }
@@ -1433,7 +1434,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
-                    if (Chars.endsWith(name, fileUnderAttack)) {
+                    if (Utf8s.endsWithAscii(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
                     }
                     return super.openRW(name, opts);
@@ -1442,7 +1443,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public boolean remove(LPSZ name) {
                     // fail to remove file for good measure
-                    return !Chars.endsWith(name, fileUnderAttack) && super.remove(name);
+                    return !Utf8s.endsWithAscii(name, fileUnderAttack) && super.remove(name);
                 }
             };
 
@@ -1616,7 +1617,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
-                    if (Chars.endsWith(name, fileUnderAttack)) {
+                    if (Utf8s.endsWithAscii(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
                     }
                     return super.openRW(name, opts);
