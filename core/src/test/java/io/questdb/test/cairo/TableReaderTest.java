@@ -35,9 +35,8 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -1497,7 +1496,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, columnName + ".v" + suffix)) {
+                if (Utf8s.endsWithAscii(name, columnName + ".v" + suffix)) {
                     if (counterRef.get() == CANNOT_DELETE) {
                         return false;
                     }
@@ -1872,7 +1871,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public int openRO(LPSZ name) {
-                        if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
+                        if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
                             return TestFilesFacadeImpl.INSTANCE.openRO(temp);
                         }
                         return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -1918,7 +1917,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     @Override
                     public long length(LPSZ name) {
-                        if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
+                        if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
                             return Files.length(temp);
                         }
                         return Files.length(name);
@@ -1926,7 +1925,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     @Override
                     public int openRO(LPSZ name) {
-                        if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
+                        if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
                             return this.fd = TestFilesFacadeImpl.INSTANCE.openRO(name);
                         }
                         return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -2797,7 +2796,7 @@ public class TableReaderTest extends AbstractCairoTest {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean rmdir(Path name, boolean lazy) {
-                    if (Chars.endsWith(name, "2017-12-14" + Files.SEPARATOR)) {
+                    if (Utf8s.endsWithAscii(name, "2017-12-14" + Files.SEPARATOR)) {
                         return false;
                     }
                     return super.rmdir(name, lazy);
@@ -2834,7 +2833,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(PartitionBy.DAY);
                 assert fmt != null;
-                final long timestamp = fmt.parse("2017-12-14", null);
+                final long timestamp = fmt.parse("2017-12-14", DateFormatUtils.EN_LOCALE);
 
                 Assert.assertTrue(writer.removePartition(timestamp));
                 Assert.assertFalse(writer.removePartition(timestamp));
@@ -3471,12 +3470,12 @@ public class TableReaderTest extends AbstractCairoTest {
             @Override
             public boolean remove(LPSZ name) {
                 if (
-                        Chars.endsWith(name, columnName + ".i") ||
-                                Chars.endsWith(name, columnName + ".d" + suffix) ||
-                                Chars.endsWith(name, columnName + ".o" + suffix) ||
-                                Chars.endsWith(name, columnName + ".k" + suffix) ||
-                                Chars.endsWith(name, columnName + ".c" + suffix) ||
-                                Chars.endsWith(name, columnName + ".v" + suffix)
+                        Utf8s.endsWithAscii(name, columnName + ".i") ||
+                                Utf8s.endsWithAscii(name, columnName + ".d" + suffix) ||
+                                Utf8s.endsWithAscii(name, columnName + ".o" + suffix) ||
+                                Utf8s.endsWithAscii(name, columnName + ".k" + suffix) ||
+                                Utf8s.endsWithAscii(name, columnName + ".c" + suffix) ||
+                                Utf8s.endsWithAscii(name, columnName + ".v" + suffix)
                 ) {
                     if (counterRef.get() == CANNOT_DELETE) {
                         return false;
@@ -4152,7 +4151,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                     Assert.assertTrue(
                             // active partition
-                            writer.removePartition(fmt.parse(partitionNameToDelete, null))
+                            writer.removePartition(fmt.parse(partitionNameToDelete, DateFormatUtils.EN_LOCALE))
                     );
 
                     // check writer
@@ -4206,7 +4205,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
                 DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-                final long timestamp = fmt.parse(partitionNameToDelete, null);
+                final long timestamp = fmt.parse(partitionNameToDelete, DateFormatUtils.EN_LOCALE);
 
                 Assert.assertTrue(writer.removePartition(timestamp));
                 Assert.assertFalse(writer.removePartition(timestamp));
@@ -4290,7 +4289,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                     Assert.assertTrue(
-                            writer.removePartition(fmt.parse(partitionNameToDelete, null))
+                            writer.removePartition(fmt.parse(partitionNameToDelete, DateFormatUtils.EN_LOCALE))
                     );
 
                     Assert.assertEquals(N * (N_PARTITIONS - 1), writer.size());

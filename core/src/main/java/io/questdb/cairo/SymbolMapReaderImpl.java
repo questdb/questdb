@@ -140,7 +140,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         this.columnNameTxn = columnNameTxn;
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
-        final int plen = path.length();
+        final int plen = path.size();
         try {
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"

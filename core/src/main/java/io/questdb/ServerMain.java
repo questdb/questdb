@@ -50,7 +50,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.str.DirectByteCharSink;
+import io.questdb.std.str.DirectUtf8Sink;
 
 import java.io.Closeable;
 import java.io.File;
@@ -101,7 +101,7 @@ public class ServerMain implements Closeable {
         return authenticatorFactory;
     }
 
-    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration, DirectByteCharSink defaultUserPasswordSink, DirectByteCharSink readOnlyUserPasswordSink) {
+    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration, DirectUtf8Sink defaultUserPasswordSink, DirectUtf8Sink readOnlyUserPasswordSink) {
         UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
         return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
     }
@@ -131,7 +131,7 @@ public class ServerMain implements Closeable {
         }
     }
 
-    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration, DirectByteCharSink defaultUserPasswordSink, DirectByteCharSink readOnlyUserPasswordSink) {
+    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration, DirectUtf8Sink defaultUserPasswordSink, DirectUtf8Sink readOnlyUserPasswordSink) {
         String defaultUsername = configuration.getDefaultUsername();
         String defaultPassword = configuration.getDefaultPassword();
         boolean defaultUserEnabled = !Chars.empty(defaultUsername) && !Chars.empty(defaultPassword);
@@ -142,19 +142,19 @@ public class ServerMain implements Closeable {
         boolean readOnlyUserEnabled = configuration.isReadOnlyUserEnabled() && readOnlyUserValid;
 
         if (defaultUserEnabled && readOnlyUserEnabled) {
-            defaultUserPasswordSink.encodeUtf8(defaultPassword);
-            readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
+            defaultUserPasswordSink.put(defaultPassword);
+            readOnlyUserPasswordSink.put(readOnlyPassword);
 
             return new CombiningUsernamePasswordMatcher(
-                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.length()),
-                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.length())
+                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.size()),
+                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.size())
             );
         } else if (defaultUserEnabled) {
-            defaultUserPasswordSink.encodeUtf8(defaultPassword);
-            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.length());
+            defaultUserPasswordSink.put(defaultPassword);
+            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.size());
         } else if (readOnlyUserEnabled) {
-            readOnlyUserPasswordSink.encodeUtf8(readOnlyPassword);
-            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.length());
+            readOnlyUserPasswordSink.put(readOnlyPassword);
+            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.size());
         } else {
             return NeverMatchUsernamePasswordMatcher.INSTANCE;
         }

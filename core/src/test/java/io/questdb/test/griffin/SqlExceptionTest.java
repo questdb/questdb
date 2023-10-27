@@ -25,8 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.std.Sinkable;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 

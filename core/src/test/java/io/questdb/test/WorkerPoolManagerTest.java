@@ -37,8 +37,7 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.str.DirectByteCharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -159,7 +158,7 @@ public class WorkerPoolManagerTest {
         int events = 20;
         AtomicInteger count = new AtomicInteger();
         SOCountDownLatch endLatch = new SOCountDownLatch(events);
-        AtomicReference<DirectByteCharSink> sink = new AtomicReference<>(new DirectByteCharSink(32));
+        AtomicReference<Utf8StringSink> sink = new AtomicReference<>(new Utf8StringSink(32));
 
         final ServerConfiguration config = createServerConfig(1); // shared pool
         final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config, METRICS) {
@@ -285,9 +284,9 @@ public class WorkerPoolManagerTest {
         };
     }
 
-    private static Job scrapeIntoPrometheusJob(AtomicReference<DirectByteCharSink> sink) {
+    private static Job scrapeIntoPrometheusJob(AtomicReference<Utf8StringSink> sink) {
         return (workerId, runStatus) -> {
-            DirectByteCharSink s = sink.get();
+            Utf8StringSink s = sink.get();
             s.clear();
             METRICS.scrapeIntoPrometheus(s);
             return false; // not eager

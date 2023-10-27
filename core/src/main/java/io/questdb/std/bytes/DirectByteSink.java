@@ -79,45 +79,18 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         Unsafe.incrMallocCount();
     }
 
+    public static native long implBook(long impl, long len);
+
+    public static native long implCreate(long capacity);
+
+    public static native void implDestroy(long impl);
+
     /**
      * Low-level access to advance the internal write cursor by `written` bytes.
      * Use in conjunction with {@link #book(long)}.
      */
     public void advance(long written) {
         setImplPtr(getImplPtr() + written);
-    }
-
-    public DirectByteSink put(byte b) {
-        final long dest = book(1);
-        Unsafe.getUnsafe().putByte(dest, b);
-        advance(1);
-        return this;
-    }
-
-    public DirectByteSink put(ByteSequence bs) {
-        if (bs != null) {
-            final int bsSize = bs.size();
-            final long dest = book(bsSize);
-            for (int i = 0; i < bsSize; i++) {
-                Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
-            }
-            advance(bsSize);
-        }
-        return this;
-    }
-
-    public DirectByteSink put(DirectByteSequence dbs) {
-        if (dbs == null) {
-            return this;
-        }
-        return put(dbs.ptr(), dbs.size());
-    }
-
-    public DirectByteSink put(long src, long len) {
-        final long dest = book(len);
-        Vect.memcpy(dest, src, len);
-        advance(len);
-        return this;
     }
 
     /**
@@ -137,8 +110,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (p == 0) {
             if (getImplOverflow()) {  // TODO: Remove check once api is `long` (rather than `int`) based for size.
                 throw new BufferOverflowException();  // More than 2GiB requested.
-            }
-            else {
+            } else {
                 throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
             }
         }
@@ -194,6 +166,40 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return getImplLo();
     }
 
+    public DirectByteSink put(byte b) {
+        final long dest = book(1);
+        Unsafe.getUnsafe().putByte(dest, b);
+        advance(1);
+        return this;
+    }
+
+    public DirectByteSink put(ByteSequence bs) {
+        if (bs != null) {
+            final int bsSize = bs.size();
+            final long dest = book(bsSize);
+            for (int i = 0; i < bsSize; i++) {
+                Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
+            }
+            advance(bsSize);
+        }
+        return this;
+    }
+
+    public DirectByteSink put(DirectByteSequence dbs) {
+        if (dbs == null) {
+            return this;
+        }
+        return put(dbs.lo(), dbs.hi());
+    }
+
+    public DirectByteSink put(long lo, long hi) {
+        final long len = hi - lo;
+        final long dest = book(len);
+        Vect.memcpy(dest, lo, len);
+        advance(len);
+        return this;
+    }
+
     /**
      * Number of readable bytes in the sequence.
      */
@@ -218,6 +224,10 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return Unsafe.getUnsafe().getLong(impl + 8);
     }
 
+    private boolean getImplOverflow() {
+        return Unsafe.getUnsafe().getByte(impl + 24) != 0;
+    }
+
     private long getImplPtr() {
         return Unsafe.getUnsafe().getLong(impl);
     }
@@ -226,22 +236,9 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         Unsafe.getUnsafe().putLong(impl, ptr);
     }
 
-    private boolean getImplOverflow() {
-        return Unsafe.getUnsafe().getByte(impl + 24) != 0;
-    }
-
     protected int memoryTag() {
         return MemoryTag.NATIVE_DIRECT_BYTE_SINK;
     }
-
-    @TestOnly
-    public static native long implBook(long impl, long len);
-
-    @TestOnly
-    public static native long implCreate(long capacity);
-
-    @TestOnly
-    public static native void implDestroy(long impl);
 
     static {
         Os.init();

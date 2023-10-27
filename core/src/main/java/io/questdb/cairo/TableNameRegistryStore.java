@@ -32,6 +32,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -67,7 +69,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 long pUtf8NameZ = ff.findName(findPtr);
                 if (ff.findType(findPtr) == DT_FILE) {
                     nameSink.clear();
-                    boolean validUtf8 = Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
+                    boolean validUtf8 = Utf8s.utf8ToUtf16Z(pUtf8NameZ, nameSink);
                     assert validUtf8 : "invalid UTF-8 in file name";
                     if (Chars.startsWith(nameSink, TABLE_REGISTRY_NAME_FILE) && nameSink.length() > TABLE_REGISTRY_NAME_FILE.length() + 1) {
                         try {
@@ -140,8 +142,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     ) {
         // compact the memory, remove deleted entries.
         // write to the tmp file.
-        int pathRootLen = path.length();
-        path.concat(TABLE_REGISTRY_NAME_FILE).put(".tmp").$();
+        int pathRootLen = path.size();
+        path.concat(TABLE_REGISTRY_NAME_FILE).putAscii(".tmp").$();
 
         try {
             tableNameMemory.close(false);
@@ -168,19 +170,19 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             Path path2 = Path.getThreadLocal2(configuration.getRoot())
                     .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
             if (ff.rename(path, path2) == Files.FILES_RENAME_OK) {
-                LOG.info().$("compacted tables file [path=").utf8(path2).I$();
+                LOG.info().$("compacted tables file [path=").$(path2).I$();
                 lastFileVersion++;
                 currentOffset = newAppendOffset;
                 // best effort to remove old files, but we don't care if it fails
-                path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion - 1).$();
+                path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1).$();
                 ff.remove(path);
             } else {
                 // Not critical, if rename fails, compaction will be done next time
-                LOG.error().$("could not rename tables file, tables file will not be compacted [from=").utf8(path)
-                        .$(", to=").utf8(path2).I$();
+                LOG.error().$("could not rename tables file, tables file will not be compacted [from=").$(path)
+                        .$(", to=").$(path2).I$();
             }
         } finally {
-            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
+            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion).$();
             tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             tableNameMemory.jumpTo(currentOffset);
         }
@@ -200,7 +202,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         try {
             int tableId = ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_TABLE_ID);
             if (tableId < 0) {
-                LOG.error().$("cannot read table id from metadata file [path=").utf8(path).I$();
+                LOG.error().$("cannot read table id from metadata file [path=").$(path).I$();
                 return 0;
             }
             byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) & 0xFF);
@@ -215,17 +217,18 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         Path path = Path.getThreadLocal(configuration.getRoot()).$();
-        int plimit = path.length();
+        int plimit = path.size();
         FilesFacade ff = configuration.getFilesFacade();
         long findPtr = ff.findFirst(path);
         try {
-            StringSink sink = Misc.getThreadLocalBuilder();
+            Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
             do {
-                if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                    if (!reverseTableNameTokenMap.containsKey(sink)
-                            && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
-
-                        String dirName = Chars.toString(sink);
+                if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), dirNameSink)) {
+                    String dirName = Utf8s.toString(dirNameSink);
+                    if (
+                            !reverseTableNameTokenMap.containsKey(dirName)
+                                    && TableUtils.exists(ff, path, configuration.getRoot(), dirNameSink) == TableUtils.TABLE_EXISTS
+                    ) {
                         int tableId;
                         boolean isWal;
                         String tableName;
@@ -234,7 +237,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             tableId = readTableId(path, dirName, ff);
                             isWal = tableId < 0;
                             tableId = Math.abs(tableId);
-                            tableName = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirName), plimit, tableNameRoMemory, ff);
+                            tableName = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
                         } catch (CairoException e) {
                             if (e.errnoReadPathDoesNotExist()) {
                                 // table is being removed.
@@ -248,7 +251,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
                         if (tableName == null) {
                             if (isWal) {
-                                LOG.error().$("could not read table name, table will not be available [dirName=").utf8(dirName).I$();
+                                LOG.error().$("could not read table name, table will not be available [dirName=").$(dirNameSink).I$();
                                 continue;
                             } else {
                                 // Non-wal tables may not have _name file.
@@ -259,14 +262,15 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         if (tableId > -1L) {
                             if (tableIds.contains(tableId)) {
                                 LOG.critical().$("duplicate table id found, table will not be available " +
-                                        "[dirName=").utf8(dirName).$(", id=").$(tableId).I$();
+                                        "[dirName=").$(dirNameSink).$(", id=").$(tableId).I$();
                                 continue;
                             }
 
                             if (nameTableTokenMap.containsKey(tableName)) {
-                                LOG.critical().$("duplicate table name found, table will not be available " +
-                                                "[dirName=").utf8(dirName).$(", name=").utf8(tableName)
-                                        .$(", existingTableDir=").utf8(nameTableTokenMap.get(tableName).getDirName()).I$();
+                                LOG.critical().$("duplicate table name found, table will not be available [dirName=").$(dirNameSink)
+                                        .$(", name=").utf8(tableName)
+                                        .$(", existingTableDir=").utf8(nameTableTokenMap.get(tableName).getDirName())
+                                        .I$();
                                 continue;
                             }
 
@@ -291,15 +295,15 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         int lastFileVersion;
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot());
-        int plimit = path.length();
+        int plimit = path.size();
 
         MemoryMR memory = isLocked() ? tableNameMemory : tableNameRoMemory;
         do {
             lastFileVersion = findLastTablesFileVersion(ff, path.trimTo(plimit).$());
-            path.trimTo(plimit).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
+            path.trimTo(plimit).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion).$();
             try {
                 memory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                LOG.info().$("reloading tables file [path=").utf8(path).I$();
+                LOG.info().$("reloading tables file [path=").$(path).I$();
                 if (memory.size() >= 2 * Long.BYTES) {
                     break;
                 }
@@ -376,7 +380,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             // Check that the table directories exist
             for (TableToken token : nameTableTokenMap.values()) {
                 if (TableUtils.exists(ff, path, configuration.getRoot(), token.getDirName()) != TableUtils.TABLE_EXISTS) {
-                    LOG.error().$("table directory directly removed from File System, table will not be available [path=").utf8(path)
+                    LOG.error().$("table directory directly removed from File System, table will not be available [path=").$(path)
                             .$(", dirName=").utf8(token.getDirName()).
                             $(", table=").utf8(token.getTableName())
                             .I$();

@@ -26,20 +26,16 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOOperation;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.Socket;
-import io.questdb.network.SocketFactory;
+import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cutlass.http.HttpConstants.COOKIE_HEADER;
-import static io.questdb.cutlass.http.HttpConstants.COOKIE_VALUE_SEPARATOR;
+import static io.questdb.cutlass.http.HttpConstants.*;
 
 public abstract class HttpClient implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(HttpClient.class);
@@ -47,7 +43,7 @@ public abstract class HttpClient implements QuietCloseable {
     protected final Socket socket;
     private final int bufferSize;
     private final HttpClientCookieHandler cookieHandler;
-    private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
+    private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
     private final Request request = new Request();
     private long bufLo;
@@ -62,6 +58,13 @@ public abstract class HttpClient implements QuietCloseable {
         this.bufferSize = configuration.getBufferSize();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         this.responseHeaders = new ResponseHeaders(bufLo, bufferSize, defaultTimeout, 4096, csPool);
+    }
+
+    private void ensureCapacity(long capacity) {
+        final long requiredSize = ptr - bufLo + capacity;
+        if (requiredSize > bufferSize) {
+            throw BufferOverflowException.INSTANCE;
+        }
     }
 
     @Override
@@ -122,30 +125,30 @@ public abstract class HttpClient implements QuietCloseable {
     protected abstract void setupIoWait();
 
     private static class BinarySequenceAdapter implements BinarySequence, Mutable {
-        private final StringSink asciiSink = new StringSink();
+        private final Utf8StringSink baseSink = new Utf8StringSink();
 
         @Override
         public byte byteAt(long index) {
-            return (byte) asciiSink.charAt((int) index);
+            return baseSink.byteAt((int) index);
         }
 
         @Override
         public void clear() {
-            asciiSink.clear();
+            baseSink.clear();
         }
 
         @Override
         public long length() {
-            return asciiSink.length();
+            return baseSink.size();
         }
 
         BinarySequenceAdapter colon() {
-            asciiSink.put(':');
+            baseSink.putAscii(':');
             return this;
         }
 
         BinarySequenceAdapter put(CharSequence value) {
-            asciiSink.put(value);
+            baseSink.put(value);
             return this;
         }
     }
@@ -161,7 +164,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    public class Request extends AbstractCharSink {
+    public class Request implements Utf8Sink {
         private static final int STATE_HEADER = 4;
         private static final int STATE_QUERY = 3;
         private static final int STATE_REQUEST = 0;
@@ -179,7 +182,7 @@ public abstract class HttpClient implements QuietCloseable {
 
         public Request authBasic(CharSequence username, CharSequence password) {
             beforeHeader();
-            put("Authorization").put(": ").put("Basic ");
+            putAsciiInternal("Authorization: Basic ");
             if (binarySequenceAdapter == null) {
                 binarySequenceAdapter = new BinarySequenceAdapter();
             }
@@ -195,45 +198,89 @@ public abstract class HttpClient implements QuietCloseable {
 
         public Request header(CharSequence name, CharSequence value) {
             beforeHeader();
-            encodeUtf8(name).put(": ").encodeUtf8(value);
+            put(name).putAsciiInternal(": ").put(value);
             return eol();
         }
 
         @Override
-        public Request put(CharSequence str) {
-            int len = str.length();
-            Chars.asciiStrCpy(str, len, ptr);
-            ptr += len;
+        public Request put(@Nullable Utf8Sequence us) {
+            if (us != null) {
+                int size = us.size();
+                ensureCapacity(size);
+                Utf8s.strCpy(us, size, ptr);
+                ptr += size;
+            }
             return this;
         }
 
         @Override
-        public CharSink put(char c) {
-            Unsafe.getUnsafe().putByte(ptr, (byte) c);
+        public Request put(byte b) {
+            ensureCapacity(1);
+            Unsafe.getUnsafe().putByte(ptr, b);
             ptr++;
             return this;
         }
 
         @Override
-        public void putUtf8Special(char c) {
+        public Request put(long lo, long hi) {
+            final long size = hi - lo;
+            ensureCapacity(size);
+            Vect.memcpy(ptr, lo, size);
+            ptr += size;
+            return this;
+        }
+
+        @Override
+        public Request put(@Nullable CharSequence cs) {
+            Utf8Sink.super.put(cs);
+            return this;
+        }
+
+        @Override
+        public Request put(char c) {
+            Utf8Sink.super.put(c);
+            return this;
+        }
+
+        @Override
+        public Request putAscii(char c) {
             if (urlEncode) {
                 putUrlEncoded(c);
             } else {
-                put(c);
+                putAsciiInternal(c);
             }
+            return this;
+        }
+
+        @Override
+        public Request putAscii(@Nullable CharSequence cs) {
+            Utf8Sink.super.putAscii(cs);
+            return this;
+        }
+
+        @Override
+        public Request putAsciiQuoted(@NotNull CharSequence cs) {
+            putAsciiInternal('\"').putAscii(cs).putAsciiInternal('\"');
+            return this;
+        }
+
+        @Override
+        public Request putQuoted(@NotNull CharSequence cs) {
+            putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
+            return this;
         }
 
         public Request query(CharSequence name, CharSequence value) {
             assert state == STATE_URL_DONE || state == STATE_QUERY;
             if (state == STATE_URL_DONE) {
-                put('?');
+                putAsciiInternal('?');
             } else {
-                put('&');
+                putAsciiInternal('&');
             }
             state = STATE_QUERY;
             urlEncode = true;
             try {
-                encodeUtf8(name).put('=').encodeUtf8(value);
+                put(name).putAsciiInternal('=').put(value);
             } finally {
                 urlEncode = false;
             }
@@ -251,7 +298,7 @@ public abstract class HttpClient implements QuietCloseable {
             }
 
             if (state == STATE_URL_DONE || state == STATE_QUERY) {
-                put(" HTTP/1.1").eol();
+                putAscii(" HTTP/1.1").putEOL();
             }
 
             eol();
@@ -262,7 +309,7 @@ public abstract class HttpClient implements QuietCloseable {
 
         public void setCookie(CharSequence name, CharSequence value) {
             beforeHeader();
-            put(COOKIE_HEADER).encodeUtf8(name).put(COOKIE_VALUE_SEPARATOR).encodeUtf8(value);
+            put(HEADER_COOKIE).putAscii(": ").put(name).putAscii(COOKIE_VALUE_SEPARATOR).put(value);
             eol();
         }
 
@@ -326,112 +373,127 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         private Request eol() {
-            return put(Misc.EOL);
+            putEOL();
+            return this;
+        }
+
+        private Request putAsciiInternal(char c) {
+            Utf8Sink.super.putAscii(c);
+            return this;
+        }
+
+        private Request putAsciiInternal(@Nullable CharSequence cs) {
+            if (cs != null) {
+                int l = cs.length();
+                for (int i = 0; i < l; i++) {
+                    Utf8Sink.super.putAscii(cs.charAt(i));
+                }
+            }
+            return this;
         }
 
         private void putUrlEncoded(char c) {
             switch (c) {
                 case ' ':
-                    put("%20");
+                    putAsciiInternal("%20");
                     break;
                 case '!':
-                    put("%21");
+                    putAsciiInternal("%21");
                     break;
                 case '"':
-                    put("%22");
+                    putAsciiInternal("%22");
                     break;
                 case '#':
-                    put("%23");
+                    putAsciiInternal("%23");
                     break;
                 case '$':
-                    put("%24");
+                    putAsciiInternal("%24");
                     break;
                 case '%':
-                    put("%25");
+                    putAsciiInternal("%25");
                     break;
                 case '&':
-                    put("%26");
+                    putAsciiInternal("%26");
                     break;
                 case '\'':
-                    put("%27");
+                    putAsciiInternal("%27");
                     break;
                 case '(':
-                    put("%28");
+                    putAsciiInternal("%28");
                     break;
                 case ')':
-                    put("%29");
+                    putAsciiInternal("%29");
                     break;
                 case '*':
-                    put("%2A");
+                    putAsciiInternal("%2A");
                     break;
                 case '+':
-                    put("%2B");
+                    putAsciiInternal("%2B");
                     break;
                 case ',':
-                    put("%2C");
+                    putAsciiInternal("%2C");
                     break;
                 case '-':
-                    put("%2D");
+                    putAsciiInternal("%2D");
                     break;
                 case '.':
-                    put("%2E");
+                    putAsciiInternal("%2E");
                     break;
                 case '/':
-                    put("%2F");
+                    putAsciiInternal("%2F");
                     break;
                 case ':':
-                    put("%3A");
+                    putAsciiInternal("%3A");
                     break;
                 case ';':
-                    put("%3B");
+                    putAsciiInternal("%3B");
                     break;
                 case '<':
-                    put("%3C");
+                    putAsciiInternal("%3C");
                     break;
                 case '=':
-                    put("%3D");
+                    putAsciiInternal("%3D");
                     break;
                 case '>':
-                    put("%3E");
+                    putAsciiInternal("%3E");
                     break;
                 case '?':
-                    put("%3F");
+                    putAsciiInternal("%3F");
                     break;
                 case '@':
-                    put("%40");
+                    putAsciiInternal("%40");
                     break;
                 case '[':
-                    put("%5B");
+                    putAsciiInternal("%5B");
                     break;
                 case '\\':
-                    put("%5C");
+                    putAsciiInternal("%5C");
                     break;
                 case ']':
-                    put("%5D");
+                    putAsciiInternal("%5D");
                     break;
                 case '^':
-                    put("%5E");
+                    putAsciiInternal("%5E");
                     break;
                 case '_':
-                    put("%5F");
+                    putAsciiInternal("%5F");
                     break;
                 case '`':
-                    put("%60");
+                    putAsciiInternal("%60");
                     break;
-
                 case '{':
-                    put("%7B");
+                    putAsciiInternal("%7B");
                     break;
                 case '|':
-                    put("%7C");
+                    putAsciiInternal("%7C");
                     break;
                 case '}':
-                    put("%7D");
+                    putAsciiInternal("%7D");
                     break;
                 default:
                     // there are symbols to escape, but those we do not tend to use at all
                     // https://www.w3schools.com/tags/ref_urlencode.ASP
-                    put(c);
+                    putAsciiInternal(c);
                     break;
             }
         }
@@ -442,7 +504,7 @@ public abstract class HttpClient implements QuietCloseable {
         private final ChunkedResponseImpl chunkedResponse;
         private final int defaultTimeout;
 
-        public ResponseHeaders(long respParserBufLo, int respParserBufSize, int defaultTimeout, int headerBufSize, ObjectPool<DirectByteCharSequence> pool) {
+        public ResponseHeaders(long respParserBufLo, int respParserBufSize, int defaultTimeout, int headerBufSize, ObjectPool<DirectUtf8String> pool) {
             super(headerBufSize, pool);
             this.bufLo = respParserBufLo;
             this.defaultTimeout = defaultTimeout;
@@ -481,7 +543,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (isIncomplete()) {
                 throw new HttpClientException("http response headers not yet received");
             }
-            return Chars.equalsNc("chunked", getHeader("Transfer-Encoding"));
+            return Utf8s.equalsNcAscii("chunked", getHeader(HEADER_TRANSFER_ENCODING));
         }
     }
 }

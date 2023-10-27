@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -36,7 +37,8 @@ public final class Misc {
     public static final int CACHE_LINE_SIZE = 64;
     public static final String EOL = "\r\n";
     public static final BiConsumer<CharSequence, ? super Closeable> HASH_MAP_CLEANER = (k, v) -> Misc.free(v);
-    private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
+    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private final static ThreadLocal<Utf8StringSink> tlUtf8Sink = new ThreadLocal<>(Utf8StringSink::new);
 
     private Misc() {
     }
@@ -118,8 +120,14 @@ public final class Misc {
         }
     }
 
-    public static StringSink getThreadLocalBuilder() {
-        StringSink b = tlBuilder.get();
+    public static StringSink getThreadLocalSink() {
+        StringSink b = tlSink.get();
+        b.clear();
+        return b;
+    }
+
+    public static Utf8StringSink getThreadLocalUtf8Sink() {
+        Utf8StringSink b = tlUtf8Sink.get();
         b.clear();
         return b;
     }

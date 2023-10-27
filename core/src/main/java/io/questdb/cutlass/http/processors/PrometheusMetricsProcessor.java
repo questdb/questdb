@@ -28,8 +28,11 @@ import io.questdb.cutlass.http.*;
 import io.questdb.metrics.Scrapable;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSink;
+import io.questdb.std.Files;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.TestOnly;
 
 public class PrometheusMetricsProcessor implements HttpRequestProcessor {
@@ -84,7 +87,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         final int pending = state.countPending();
         final int wrote = r.writeBytes(state.sink.ptr() + state.written, pending);
         state.written += wrote;
-        r.sendChunk(wrote == pending);  // Will raise `PeerIsSlowToReadException` if the tcp send buffer is full.
+        r.sendChunk(wrote == pending); // Will raise `PeerIsSlowToReadException` if the tcp send buffer is full.
     }
 
     private void sendResponse(HttpChunkedResponseSocket r, RequestState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -112,7 +115,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         /**
          * Metrics serialization destination, sent into one or more chunks later.
          */
-        public final DirectByteCharSink sink = new DirectByteCharSink(Files.PAGE_SIZE);
+        public final DirectUtf8Sink sink = new DirectUtf8Sink(Files.PAGE_SIZE);
         private final RequestStatePool pool;
         /**
          * Total number of bytes written to one or more chunks (`HttpChunkedResponseSocket` objects).
@@ -139,32 +142,27 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         }
 
         /**
-         * Release off-heap buffer.
-         */
-        public void free() {
-            sink.close();
-        }
-
-        /**
          * Calculate the number of bytes that still need to be written to chunks.
          */
         public int countPending() {
             return sink.size() - written;
         }
+
+        /**
+         * Release off-heap buffer.
+         */
+        public void free() {
+            sink.close();
+        }
     }
 
     public static class RequestStatePool implements QuietCloseable {
-        private final ObjList<RequestState> objects = new ObjList<>();
         private final int maxPoolSize;
+        private final ObjList<RequestState> objects = new ObjList<>();
 
         public RequestStatePool(int maxPoolSize) {
             assert maxPoolSize > 0;
             this.maxPoolSize = maxPoolSize;
-        }
-
-        @TestOnly
-        public synchronized int size() {
-            return objects.size();
         }
 
         @Override
@@ -172,14 +170,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
             for (int i = 0, n = objects.size(); i < n; i++) {
                 objects.getQuick(i).free();
             }
-            objects.clear();        }
-
-        public synchronized void push(RequestState requestState) {
-            if (objects.size() < maxPoolSize) {
-                objects.add(requestState);
-            } else {
-                requestState.free();
-            }
+            objects.clear();
         }
 
         public synchronized RequestState pop() {
@@ -192,6 +183,19 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
                 state = new RequestState(this);
             }
             return state;
+        }
+
+        public synchronized void push(RequestState requestState) {
+            if (objects.size() < maxPoolSize) {
+                objects.add(requestState);
+            } else {
+                requestState.free();
+            }
+        }
+
+        @TestOnly
+        public synchronized int size() {
+            return objects.size();
         }
     }
 }

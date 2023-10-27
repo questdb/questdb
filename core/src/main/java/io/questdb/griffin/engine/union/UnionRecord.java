@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.union;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 public class UnionRecord extends AbstractUnionRecord {
@@ -169,7 +170,7 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSinkBase<?> sink) {
         if (useA) {
             recordA.getLong256(col, sink);
         } else {

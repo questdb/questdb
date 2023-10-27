@@ -72,7 +72,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         AbstractTest.setUpStatic();
         TestUtils.unchecked(() -> {
             dbPath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).$();
-            dbPathLen = dbPath.length();
+            dbPathLen = dbPath.size();
             auxPath = new Path();
             dbPath.trimTo(dbPathLen).$();
         });

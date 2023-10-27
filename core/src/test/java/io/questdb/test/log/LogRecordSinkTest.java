@@ -101,8 +101,8 @@ public class LogRecordSinkTest {
             final long sinkMaxLen = scenario[1];
             final long expectedLen = scenario[2];
             // System.err.printf(
-            //      "scenario: msgIdx: %d, msg: %s, sinkMaxLen: %d, expectedLen: %d\n",
-            //      msgIdx, msg, sinkMaxLen, expectedLen);
+            //         "scenario: msgIdx: %d, msg: %s, sinkMaxLen: %d, expectedLen: %d\n",
+            //         msgIdx, msg, sinkMaxLen, expectedLen);
 
             // Sanity-checking our test data.
             final byte[] msgBytes = msg.getBytes(Files.UTF_8);
@@ -129,16 +129,16 @@ public class LogRecordSinkTest {
                 LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
                 recordSink.setLevel(LogLevel.ERROR);
                 Assert.assertEquals(LogLevel.ERROR, recordSink.getLevel());
-                Assert.assertEquals(buffPtr, recordSink.getAddress());
-                recordSink.encodeUtf8(expected);
+                Assert.assertEquals(buffPtr, recordSink.ptr());
+                recordSink.put(expected);
                 recordSink.toSink(sink);
                 Assert.assertEquals(expected, sink.toString());
-                Assert.assertEquals(recordSink.length(), sink.length() * 2);
+                Assert.assertEquals(recordSink.size(), sink.length() * 2);
                 recordSink.clear();
-                Assert.assertEquals(0, recordSink.length());
+                Assert.assertEquals(0, recordSink.size());
                 sink.clear();
                 recordSink.toSink(sink);
-                Assert.assertEquals(0, recordSink.length());
+                Assert.assertEquals(0, recordSink.size());
                 Assert.assertEquals("", sink.toString());
             } finally {
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
@@ -165,7 +165,6 @@ public class LogRecordSinkTest {
         final byte inter = (byte) 0xBF; // 1011 1111
         final byte ascii = (byte) 'a';
 
-
         final byte[][] buffers = {
                 {lead5, inter, inter},
                 {inter, inter},
@@ -189,7 +188,7 @@ public class LogRecordSinkTest {
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, len + EOL_LENGTH);
                 for (int i = 0; i < len; i++) {
-                    logRecord.put((char) msgBytes[i]);
+                    logRecord.put(msgBytes[i]);
                 }
                 logRecord.toSink(sink);
                 Assert.assertEquals(expectedMsg, sink.toString());
@@ -208,7 +207,7 @@ public class LogRecordSinkTest {
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-                recordSink.encodeUtf8(expected.substring(1, len - 1));
+                recordSink.put(expected.substring(1, len - 1));
                 recordSink.toSink(sink);
                 TestUtils.assertEquals(expected.substring(1, len - 1), sink);
             } finally {
@@ -226,7 +225,7 @@ public class LogRecordSinkTest {
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-                recordSink.encodeUtf8(expected, 2, len - 1);
+                recordSink.put(expected, 2, len - 1);
                 recordSink.toSink(sink);
                 Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
             } finally {
@@ -259,13 +258,13 @@ public class LogRecordSinkTest {
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
-                logRecord.encodeUtf8(msg);
-                Assert.assertEquals(expectedLen, logRecord.length());
+                logRecord.put(msg);
+                Assert.assertEquals(expectedLen, logRecord.size());
                 if (sinkMaxLen > 0) {
                     // Now test that the log record can be cleared and reused.
                     logRecord.clear();
                     sink.clear();
-                    logRecord.encodeUtf8("x");
+                    logRecord.put("x");
                     logRecord.toSink(sink);
                     Assert.assertEquals("x", sink.toString());
                 }
@@ -281,8 +280,8 @@ public class LogRecordSinkTest {
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
-                logRecord.encodeUtf8(msg);
-                Assert.assertEquals(expectedLen, logRecord.length());
+                logRecord.put(msg);
+                Assert.assertEquals(expectedLen, logRecord.size());
             } finally {
                 Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             }
@@ -296,8 +295,8 @@ public class LogRecordSinkTest {
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
-                logRecord.putUtf8(utf8.lo(), utf8.hi());
-                Assert.assertEquals(expectedLen, logRecord.length());
+                logRecord.put(utf8.lo(), utf8.hi());
+                Assert.assertEquals(expectedLen, logRecord.size());
             } finally {
                 Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
                 Misc.free(utf8);

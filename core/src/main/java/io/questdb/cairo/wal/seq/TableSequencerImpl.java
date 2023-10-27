@@ -75,7 +75,7 @@ public class TableSequencerImpl implements TableSequencer {
             path = new Path();
             path.of(configuration.getRoot());
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
-            rootLen = path.length();
+            rootLen = path.size();
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();
 

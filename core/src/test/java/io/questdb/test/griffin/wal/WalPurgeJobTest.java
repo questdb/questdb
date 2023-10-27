@@ -34,9 +34,10 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -63,11 +64,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 new DefaultWalInitializer() {
                     @Override
                     public boolean isInUse(Path path) {
-                        int len = path.length();
+                        int size = path.size();
                         try {
                             return ff.exists(path.concat(".pending").concat("test.pending").$());
                         } finally {
-                            path.trimTo(len);
+                            path.trimTo(size);
                         }
                     }
                 }
@@ -156,8 +157,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         FilesFacade testFF = new TestFilesFacadeImpl() {
             @Override
             public void iterateDir(LPSZ path, FindVisitor func) {
-                if (Chars.endsWith(path, dirNamePath)) {
-                    final NativeLPSZ name = new NativeLPSZ();
+                if (Utf8s.endsWithAscii(path, dirNamePath)) {
+                    final DirectUtf8StringZ name = new DirectUtf8StringZ();
                     super.iterateDir(path, (long pUtf8NameZ, int type) -> {
                         name.of(pUtf8NameZ);
                         if (!name.toString().equals("wal2")) {
@@ -631,7 +632,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean rmdir(Path path, boolean lazy) {
-                if (Chars.endsWith(path, Files.SEPARATOR + WalUtils.WAL_NAME_BASE + "1") && !canDelete.get()) {
+                if (Utf8s.endsWithAscii(path, Files.SEPARATOR + WalUtils.WAL_NAME_BASE + "1") && !canDelete.get()) {
                     return false;
                 } else {
                     return super.rmdir(path, lazy);
@@ -756,7 +757,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TXN_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TXN_FILE_NAME)) {
                     return this.fd = super.openRO(name);
                 }
                 return super.openRO(name);
@@ -830,7 +831,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TXN_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TXN_FILE_NAME)) {
                     return this.fd = super.openRO(name);
                 }
                 return super.openRO(name);
@@ -1106,7 +1107,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat(dir).$();
-            Assert.assertEquals(Chars.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 

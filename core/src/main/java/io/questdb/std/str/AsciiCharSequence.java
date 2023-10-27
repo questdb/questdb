@@ -24,61 +24,36 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Arrays;
-
 /**
- * UTF8-encoded on-heap char sequence.
+ * A view on top of an ASCII-only {@link Utf8Sequence}.
  */
-public class ByteCharSequence extends AbstractCharSequence implements ByteSequence {
-    private final byte[] bytes;
-
-    public ByteCharSequence(byte[] bytes) {
-        this.bytes = bytes;
-    }
-
-    public static ByteCharSequence newInstance(DirectByteCharSequence src) {
-        byte[] bytes = new byte[src.length()];
-        for (int i = 0, n = src.length(); i < n; i++) {
-            bytes[i] = src.byteAt(i);
-        }
-        return new ByteCharSequence(bytes);
-    }
+public class AsciiCharSequence implements CharSequence {
+    private Utf8Sequence original;
 
     @Override
-    public byte byteAt(int index) {
-        return bytes[index];
-    }
-
-    @Override
-    public char charAt(int index) {
-        return (char) byteAt(index);
-    }
-
-    public int intAt(int index) {
-        return Unsafe.byteArrayGetInt(bytes, index);
+    public char charAt(int i) {
+        return (char) original.byteAt(i);
     }
 
     @Override
     public int length() {
-        return bytes.length;
+        return original.size();
     }
 
-    public long longAt(int index) {
-        return Unsafe.byteArrayGetLong(bytes, index);
-    }
-
-    @NotNull
-    @Override
-    public String toString() {
-        return Chars.stringFromUtf8Bytes(this);
+    public AsciiCharSequence of(Utf8Sequence original) {
+        this.original = original;
+        return this;
     }
 
     @Override
-    protected CharSequence _subSequence(int start, int end) {
-        return new ByteCharSequence(Arrays.copyOfRange(bytes, start, end));
+    public @NotNull CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull String toString() {
+        return original.toString();
     }
 }

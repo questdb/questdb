@@ -26,7 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class BadDateAdapter extends DateAdapter {
 
@@ -36,12 +36,12 @@ public final class BadDateAdapter extends DateAdapter {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
         row.putDate(column, Numbers.LONG_NaN);
     }
 }

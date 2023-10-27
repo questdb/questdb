@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -317,30 +319,30 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         toSink(sink, 0, size());
     }
 
-    public void toSink(CharSink sink, int from) {
+    public void toSink(CharSinkBase<?> sink, int from) {
         toSink(sink, from, size());
     }
 
-    public void toSink(CharSink sink, int from, int to) {
-        sink.put('[');
+    public void toSink(CharSinkBase<?> sink, int from, int to) {
+        sink.putAscii('[');
         for (int i = from; i < to; i++) {
             if (i > from) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             T obj = getQuick(i);
             if (obj instanceof Sinkable) {
                 sink.put((Sinkable) obj);
             } else if (obj == null) {
-                sink.put("null");
+                sink.putAscii("null");
             } else {
                 sink.put(obj.toString());
             }
         }
-        sink.put(']');
+        sink.putAscii(']');
     }
 
     /**

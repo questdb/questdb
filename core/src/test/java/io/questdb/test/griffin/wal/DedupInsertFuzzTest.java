@@ -856,7 +856,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         started = true;
                         sink.putISODate(timestamp).put(',').put(commit);
                         if (symbols != null) {
-                            sink.put(',').put(rec.getSym(2));
+                            sink.put(',');
+                            CharSequence cs = rec.getSym(2);
+                            if (cs != null) {
+                                sink.put(cs);
+                            }
                         }
                         sink.put('\n');
                     }

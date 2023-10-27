@@ -34,9 +34,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.NativeLPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 
 import java.io.Closeable;
 
@@ -57,7 +55,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final TxReader txReader;
     private final WalInitializer walInitializer;
-    private final NativeLPSZ walName = new NativeLPSZ();
+    private final DirectUtf8StringZ walName = new DirectUtf8StringZ();
     private long last = 0;
     private TableToken tableToken;
 
@@ -106,10 +104,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     /**
      * Validate equivalent of "^\d+$" regex.
      */
-    private static boolean matchesSegmentName(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            if (c < '0' || c > '9') {
+    private static boolean matchesSegmentName(Utf8Sequence name) {
+        for (int i = 0, n = name.size(); i < n; i++) {
+            final byte b = name.byteAt(i);
+            if (b < '0' || b > '9') {
                 return false;
             }
         }
@@ -119,23 +117,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     /**
      * Validate equivalent of "^wal\d+$" regex.
      */
-    private static boolean matchesWalNamePattern(CharSequence name) {
-        final int len = name.length();
+    private static boolean matchesWalNamePattern(Utf8Sequence name) {
+        final int len = name.size();
         if (len < (WalUtils.WAL_NAME_BASE.length() + 1)) {
             return false;
         }
-
-        if (name.charAt(0) != 'w' || name.charAt(1) != 'a' || name.charAt(2) != 'l') {
+        if (name.byteAt(0) != 'w' || name.byteAt(1) != 'a' || name.byteAt(2) != 'l') {
             return false;  // Not a "wal" prefix.
         }
-
         for (int i = 3; i < len; ++i) {
-            final char c = name.charAt(i);
-            if (c < '0' || c > '9') {
-                return false;  // Not a number.
+            final byte b = name.byteAt(i);
+            if (b < '0' || b > '9') {
+                return false; // Not a number.
             }
         }
-
         return true;
     }
 
@@ -219,7 +214,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void discoverWalSegments() {
         Path path = setTablePath(tableToken);
         long p = ff.findFirst(path);
-        int rootPathLen = path.length();
+        int rootPathLen = path.size();
         logic.sequencerHasPendingTasks(sequencerHasPendingTasks());
         if (p > 0) {
             try {
@@ -229,14 +224,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
                     if (type == Files.DT_DIR && matchesWalNamePattern(walName.of(pUtf8NameZ))) {
                         try {
-                            final int walId = Numbers.parseInt(walName, 3, walName.length());
+                            final int walId = Numbers.parseInt(walName, 3, walName.size());
                             onDiskWalIDSet.add(walId);
                             int walLockFd = TableUtils.lock(ff, setWalLockPath(tableToken, walId), false);
                             boolean walHasPendingTasks = false;
 
                             // Search for segments.
                             path.trimTo(rootPathLen).concat(pUtf8NameZ);
-                            final int walPathLen = path.length();
+                            final int walPathLen = path.size();
                             final long sp = ff.findFirst(path.$());
 
                             try {
@@ -334,7 +329,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private boolean recursiveDelete(Path path) {
         if (!ff.rmdir(path, false) && !CairoException.errnoRemovePathDoesNotExist(ff.errno())) {
             LOG.debug()
-                    .$("could not delete directory [path=").utf8(path)
+                    .$("could not delete directory [path=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
             return false;

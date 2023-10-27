@@ -49,7 +49,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     };
 
     public static void create(Path path, CharSequence name, int symbolCapacity, boolean useCache) {
-        int plen = path.length();
+        int plen = path.size();
         try {
             try (
                     MemoryCMARW mem = Vm.getSmallCMARWInstance(
@@ -441,7 +441,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
             try (Path path = new Path().of(configuration.getRoot())) {
-                int plen = path.length();
+                int plen = path.size();
                 create(path, "x", N, true);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -658,7 +658,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testReaderWithShortHeader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
-                int plen = path.length();
+                int plen = path.size();
                 Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
                 try {
                     new SymbolMapReaderImpl(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0);
@@ -758,7 +758,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testShortHeader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
-                int plen = path.length();
+                int plen = path.size();
                 Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
                 try {
                     new SymbolMapWriter(

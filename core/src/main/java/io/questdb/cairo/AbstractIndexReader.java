@@ -93,7 +93,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount) {
         this.unIndexedNullCount = unIndexedNullCount;
-        final int plen = path.length();
+        final int plen = path.size();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeout();
 
         try {

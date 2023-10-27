@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class SqlKeywords {
@@ -732,6 +733,19 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isFalseKeyword(Utf8Sequence tok) {
+        if (tok.size() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.byteAt(i++) | 32) == 'f'
+                && (tok.byteAt(i++) | 32) == 'a'
+                && (tok.byteAt(i++) | 32) == 'l'
+                && (tok.byteAt(i++) | 32) == 's'
+                && (tok.byteAt(i) | 32) == 'e';
+    }
+
     public static boolean isFillKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return false;
@@ -1400,6 +1414,18 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'l';
     }
 
+    public static boolean isNullKeyword(Utf8Sequence tok) {
+        if (tok.size() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.byteAt(i++) | 32) == 'n'
+                && (tok.byteAt(i++) | 32) == 'u'
+                && (tok.byteAt(i++) | 32) == 'l'
+                && (tok.byteAt(i) | 32) == 'l';
+    }
+
     public static boolean isO3MaxLagKeyword(CharSequence tok) {
         if (tok.length() != 8) {
             return false;
@@ -1942,6 +1968,18 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'r'
                 && (tok.charAt(i++) | 32) == 'u'
                 && (tok.charAt(i) | 32) == 'e';
+    }
+
+    public static boolean isTrueKeyword(Utf8Sequence tok) {
+        if (tok.size() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.byteAt(i++) | 32) == 't'
+                && (tok.byteAt(i++) | 32) == 'r'
+                && (tok.byteAt(i++) | 32) == 'u'
+                && (tok.byteAt(i) | 32) == 'e';
     }
 
     public static boolean isTxnKeyword(CharSequence tok) {

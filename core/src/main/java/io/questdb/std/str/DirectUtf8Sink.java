@@ -24,27 +24,36 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectByteCharSink extends AbstractCharSink implements Mutable, ByteSequence, Closeable, DirectUtf8CharSink {
+/**
+ * UTF-8 sink backed by native memory.
+ */
+public class DirectUtf8Sink implements MutableUtf8Sink, DirectUtf8Sequence, BorrowableAsNativeByteSink, Closeable {
+    private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final DirectByteSink sink;
 
-    public DirectByteCharSink(long capacity) {
-        sink = new DirectByteSink(capacity) {
+    public DirectUtf8Sink(long initialCapacity) {
+        sink = new DirectByteSink(initialCapacity) {
             @Override
             protected int memoryTag() {
-                return MemoryTag.NATIVE_DIRECT_CHAR_SINK;
+                return MemoryTag.NATIVE_DIRECT_UTF8_SINK;
             }
         };
+    }
+
+    @Override
+    public @NotNull CharSequence asAsciiCharSequence() {
+        return asciiCharSequence.of(this);
     }
 
     @Override
@@ -73,62 +82,54 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     }
 
     @Override
-    public int length() {
-        // TODO: This is incorrect as it returns the number of bytes, not UTF-16 code units.
-        // As such it breaks the contract of CharSequence.
-        return size();
-    }
-
     public long ptr() {
         return sink.ptr();
     }
 
-    public DirectByteCharSink put(ByteSequence bs) {
-        if (bs != null) {
-            final int bsLen = bs.length();
-            final long dest = sink.book(bsLen);
-            for (int i = 0; i < bsLen; i++) {
-                Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
+    @Override
+    public DirectUtf8Sink put(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            final int size = us.size();
+            final long dest = sink.book(size);
+            for (int i = 0; i < size; i++) {
+                Unsafe.getUnsafe().putByte(dest + i, us.byteAt(i));
             }
-            sink.advance(bsLen);
+            sink.advance(size);
         }
         return this;
     }
 
-    public DirectByteCharSink put(byte b) {
+    @Override
+    public DirectUtf8Sink put(byte b) {
         sink.put(b);
         return this;
     }
 
     @Override
-    public CharSink put(char c) {
-        this.put((byte) c);
+    public DirectUtf8Sink putAscii(char c) {
+        MutableUtf8Sink.super.putAscii(c);
         return this;
     }
 
     @Override
-    public DirectByteCharSink put(CharSequence cs) {
-        // Note that this implementation is not UTF-8 safe: It assumes `cs` is ASCII without checks.
-        final int charCount = cs.length();
-        final long destPtr = sink.book(charCount);
-        Chars.asciiStrCpy(cs, charCount, destPtr);
-        sink.advance(charCount);
+    public DirectUtf8Sink putAscii(@Nullable CharSequence cs) {
+        MutableUtf8Sink.super.putAscii(cs);
         return this;
     }
 
     @Override
-    public DirectByteCharSink putUtf8(long lo, long hi) {
-        sink.put(lo, hi - lo);
-        return this;
-    }
-
     public int size() {
         return sink.size();
     }
 
-    @NotNull
     @Override
-    public String toString() {
-        return Chars.stringFromUtf8Bytes(this);
+    public @NotNull String toString() {
+        return Utf8s.stringFromUtf8Bytes(sink.lo(), sink.hi());
+    }
+
+    @Override
+    public DirectUtf8Sink put(long lo, long hi) {
+        sink.put(lo, hi);
+        return this;
     }
 }

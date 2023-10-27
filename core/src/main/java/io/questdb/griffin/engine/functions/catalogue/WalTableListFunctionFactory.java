@@ -222,7 +222,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 private boolean switchTo(final TableToken tableToken) {
                     try {
                         tableName = tableToken.getTableName();
-                        int rootLen = rootPath.length();
+                        int rootLen = rootPath.size();
                         rootPath.concat(tableToken).concat(SEQ_DIR);
                         int metaFd = -1;
                         int txnFd = -1;

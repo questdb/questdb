@@ -70,6 +70,8 @@ public final class Vect {
 
     public static native long countLong(long pLong, long count);
 
+    public static native long dedupMergeVarColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr);
+
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
             long count,
@@ -242,8 +244,6 @@ public final class Vect {
             long dstVarOffset
     );
 
-    public static native long dedupMergeVarColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr);
-
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
     public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);
@@ -332,4 +332,8 @@ public final class Vect {
 
     // accept externally allocated memory for merged index of proper size
     private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
+
+    static {
+        Os.init();
+    }
 }

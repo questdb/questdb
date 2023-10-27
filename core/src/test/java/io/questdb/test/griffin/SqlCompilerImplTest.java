@@ -38,6 +38,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -2413,7 +2414,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             @Override
             public int openRO(LPSZ name) {
                 int fd = super.openRO(name);
-                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
                     metaFd = fd;
                 }
                 return fd;
@@ -2422,7 +2423,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                     txnFd = fd;
                 }
                 return fd;
@@ -2433,7 +2434,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 ff,
                 sql,
                 "Could not create table. See log for details"
-
         );
     }
 
@@ -2474,7 +2474,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         AbstractCairoTest.ff = new TestFilesFacadeImpl() {
             @Override
             public boolean isDirOrSoftLinkDir(LPSZ path) {
-                if (Chars.equals(path, target)) {
+                if (Utf8s.equalsAscii(target, path)) {
                     return false;
                 }
                 return super.exists(path);
@@ -3119,7 +3119,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralBinLength() throws Exception {
         assertMemoryLeak(() -> {
-            StringSink bitString = Misc.getThreadLocalBuilder();
+            StringSink bitString = Misc.getThreadLocalSink();
             bitString.put(Chars.repeat("0", 59)).put('1');
             assertSql("geobits\n" +
                     "000000000001\n", "select ##" + bitString + " as geobits");

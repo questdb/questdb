@@ -28,6 +28,7 @@ package io.questdb.std.bytes;
  * Read-only interface for a sequence of bytes.
  */
 public interface ByteSequence {
+
     /**
      * Returns byte at index.
      * Note: Unchecked bounds.

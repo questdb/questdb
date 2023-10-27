@@ -29,8 +29,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 import java.util.Iterator;
@@ -1208,7 +1210,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         if (modelType == ExecutionModel.QUERY) {
             toSink0(sink, false, false);
         } else if (modelType == ExecutionModel.UPDATE) {
@@ -1220,7 +1222,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // not using toString name to prevent debugger from trying to use it on all model variables (because toSink0 can fail).
     @SuppressWarnings("unused")
     public String toString0() {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         this.toSink0(sink, true, true);
         return sink.toString();
     }
@@ -1230,11 +1232,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return aliasToColumnNameMap.get(column);
     }
 
-    private static void aliasToSink(CharSequence alias, CharSink sink) {
-        sink.put(' ');
+    private static void aliasToSink(CharSequence alias, CharSinkBase<?> sink) {
+        sink.putAscii(' ');
         boolean quote = Chars.indexOf(alias, ' ') != -1;
         if (quote) {
-            sink.put('\'').put(alias).put('\'');
+            sink.putAscii('\'').put(alias).putAscii('\'');
         } else {
             sink.put(alias);
         }
@@ -1244,10 +1246,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return modelTypeName.get(selectModelType);
     }
 
-    private void sinkColumns(CharSink sink, ObjList<QueryColumn> columns) {
+    private void sinkColumns(CharSinkBase<?> sink, ObjList<QueryColumn> columns) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             if (i > 0) {
-                sink.put(", ");
+                sink.putAscii(", ");
             }
             QueryColumn column = columns.getQuick(i);
             CharSequence name = column.getName();
@@ -1263,13 +1265,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 // this can only be analytic column
                 if (name != null) {
                     AnalyticColumn ac = (AnalyticColumn) column;
-                    sink.put(" over (");
+                    sink.putAscii(" over (");
                     final ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
                     if (partitionBy.size() > 0) {
-                        sink.put("partition by ");
+                        sink.putAscii("partition by ");
                         for (int k = 0, z = partitionBy.size(); k < z; k++) {
                             if (k > 0) {
-                                sink.put(", ");
+                                sink.putAscii(", ");
                             }
                             partitionBy.getQuick(k).toSink(sink);
                         }
@@ -1280,18 +1282,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         if (partitionBy.size() > 0) {
                             sink.put(' ');
                         }
-                        sink.put("order by ");
+                        sink.putAscii("order by ");
                         for (int k = 0, z = orderBy.size(); k < z; k++) {
                             if (k > 0) {
-                                sink.put(", ");
+                                sink.putAscii(", ");
                             }
                             orderBy.getQuick(k).toSink(sink);
                             if (ac.getOrderByDirection().getQuick(k) == 1) {
-                                sink.put(" desc");
+                                sink.putAscii(" desc");
                             }
                         }
                     }
-                    sink.put(')');
+                    sink.putAscii(')');
                 }
             } else {
                 // do not repeat alias when it is the same as AST token, provided AST is a literal
@@ -1302,45 +1304,45 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    //returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
-    private void toSink0(CharSink sink, boolean joinSlave, boolean showOrderBy) {
+    // returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
+    private void toSink0(CharSinkBase<?> sink, boolean joinSlave, boolean showOrderBy) {
         final boolean hasColumns = this.topDownColumns.size() > 0 || this.bottomUpColumns.size() > 0;
         if (hasColumns) {
             sink.put(getSelectModelTypeText());
             if (this.topDownColumns.size() > 0) {
-                sink.put(' ');
-                sink.put('[');
+                sink.putAscii(' ');
+                sink.putAscii('[');
                 sinkColumns(sink, this.topDownColumns);
-                sink.put(']');
+                sink.putAscii(']');
             }
             if (this.bottomUpColumns.size() > 0) {
-                sink.put(' ');
+                sink.putAscii(' ');
                 sinkColumns(sink, this.bottomUpColumns);
             }
-            sink.put(" from ");
+            sink.putAscii(" from ");
         }
         if (tableNameExpr != null) {
             tableNameExpr.toSink(sink);
         } else {
-            sink.put('(');
+            sink.putAscii('(');
             nestedModel.toSink0(sink, false, showOrderBy);
-            sink.put(')');
+            sink.putAscii(')');
         }
         if (alias != null) {
             aliasToSink(alias.token, sink);
         }
 
         if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
-            sink.put(" timestamp (");
+            sink.putAscii(" timestamp (");
             timestamp.toSink(sink);
-            sink.put(')');
+            sink.putAscii(')');
         }
 
         if (getLatestByType() == LATEST_BY_DEPRECATED && getLatestBy().size() > 0) {
-            sink.put(" latest by ");
+            sink.putAscii(" latest by ");
             for (int i = 0, n = getLatestBy().size(); i < n; i++) {
                 if (i > 0) {
-                    sink.put(',');
+                    sink.putAscii(',');
                 }
                 getLatestBy().getQuick(i).toSink(sink);
             }
@@ -1352,29 +1354,29 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 if (model != this) {
                     switch (model.getJoinType()) {
                         case JOIN_OUTER:
-                            sink.put(" left join ");
+                            sink.putAscii(" left join ");
                             break;
                         case JOIN_ASOF:
-                            sink.put(" asof join ");
+                            sink.putAscii(" asof join ");
                             break;
                         case JOIN_SPLICE:
-                            sink.put(" splice join ");
+                            sink.putAscii(" splice join ");
                             break;
                         case JOIN_CROSS:
-                            sink.put(" cross join ");
+                            sink.putAscii(" cross join ");
                             break;
                         case JOIN_LT:
-                            sink.put(" lt join ");
+                            sink.putAscii(" lt join ");
                             break;
                         default:
-                            sink.put(" join ");
+                            sink.putAscii(" join ");
                             break;
                     }
 
                     if (model.getWhereClause() != null) {
-                        sink.put('(');
+                        sink.putAscii('(');
                         model.toSink0(sink, true, showOrderBy);
-                        sink.put(')');
+                        sink.putAscii(')');
                         if (model.getAlias() != null) {
                             aliasToSink(model.getAlias().token, sink);
                         } else if (model.getTableName() != null) {
@@ -1387,24 +1389,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     JoinContext jc = model.getContext();
                     if (jc != null && jc.aIndexes.size() > 0) {
                         // join clause
-                        sink.put(" on ");
+                        sink.putAscii(" on ");
                         for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
                             if (k > 0) {
-                                sink.put(" and ");
+                                sink.putAscii(" and ");
                             }
                             jc.aNodes.getQuick(k).toSink(sink);
-                            sink.put(" = ");
+                            sink.putAscii(" = ");
                             jc.bNodes.getQuick(k).toSink(sink);
                         }
                     }
 
                     if (model.getOuterJoinExpressionClause() != null) {
-                        sink.put(" outer-join-expression ");
+                        sink.putAscii(" outer-join-expression ");
                         model.getOuterJoinExpressionClause().toSink(sink);
                     }
 
                     if (model.getPostJoinWhereClause() != null) {
-                        sink.put(" post-join-where ");
+                        sink.putAscii(" post-join-where ");
                         model.getPostJoinWhereClause().toSink(sink);
                     }
                 }
@@ -1412,29 +1414,29 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         if (getWhereClause() != null) {
-            sink.put(" where ");
+            sink.putAscii(" where ");
             whereClause.toSink(sink);
         }
 
         if (constWhereClause != null) {
-            sink.put(" const-where ");
+            sink.putAscii(" const-where ");
             constWhereClause.toSink(sink);
         }
 
         if (!joinSlave && postJoinWhereClause != null) {
-            sink.put(" post-join-where ");
+            sink.putAscii(" post-join-where ");
             postJoinWhereClause.toSink(sink);
         }
 
         if (!joinSlave && outerJoinExpressionClause != null) {
-            sink.put(" outer-join-expressions ");
+            sink.putAscii(" outer-join-expressions ");
             outerJoinExpressionClause.toSink(sink);
         }
 
         if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {
-            sink.put(" latest on ");
+            sink.putAscii(" latest on ");
             timestamp.toSink(sink);
-            sink.put(" partition by ");
+            sink.putAscii(" partition by ");
             for (int i = 0, n = getLatestBy().size(); i < n; i++) {
                 if (i > 0) {
                     sink.put(',');
@@ -1444,119 +1446,118 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         if (sampleBy != null) {
-            sink.put(" sample by ");
+            sink.putAscii(" sample by ");
             sampleBy.toSink(sink);
 
             final int fillCount = sampleByFill.size();
             if (fillCount > 0) {
-                sink.put(" fill(");
+                sink.putAscii(" fill(");
                 sink.put(sampleByFill.getQuick(0));
 
                 if (fillCount > 1) {
                     for (int i = 1; i < fillCount; i++) {
-                        sink.put(',');
+                        sink.putAscii(',');
                         sink.put(sampleByFill.getQuick(i));
                     }
                 }
-                sink.put(')');
+                sink.putAscii(')');
             }
 
             if (sampleByTimezoneName != null || sampleByOffset != null) {
-                sink.put(" align to calendar");
+                sink.putAscii(" align to calendar");
                 if (sampleByTimezoneName != null) {
-                    sink.put(" time zone ");
+                    sink.putAscii(" time zone ");
                     sink.put(sampleByTimezoneName);
                 }
 
                 if (sampleByOffset != null) {
-                    sink.put(" with offset ");
+                    sink.putAscii(" with offset ");
                     sink.put(sampleByOffset);
                 }
             }
         }
 
         if (showOrderBy && orderBy.size() > 0) {
-            sink.put(" order by ");
+            sink.putAscii(" order by ");
             for (int i = 0, n = orderBy.size(); i < n; i++) {
                 if (i > 0) {
-                    sink.put(", ");
+                    sink.putAscii(", ");
                 }
                 sink.put(orderBy.get(i));
                 if (orderByDirection.get(i) == 1) {
-                    sink.put(" desc");
+                    sink.putAscii(" desc");
                 }
             }
         } else if (orderHash.size() > 0 && orderBy.size() > 0) {
-            sink.put(" order by ");
+            sink.putAscii(" order by ");
 
             ObjList<CharSequence> columnNames = orderHash.keys();
             for (int i = 0, n = columnNames.size(); i < n; i++) {
                 if (i > 0) {
-                    sink.put(", ");
+                    sink.putAscii(", ");
                 }
 
                 CharSequence key = columnNames.getQuick(i);
                 sink.put(key);
                 if (orderHash.get(key) == 1) {
-                    sink.put(" desc");
+                    sink.putAscii(" desc");
                 }
             }
         }
 
         if (getLimitLo() != null || getLimitHi() != null) {
-            sink.put(" limit ");
+            sink.putAscii(" limit ");
             if (getLimitLo() != null) {
                 getLimitLo().toSink(sink);
             }
             if (getLimitHi() != null) {
-                sink.put(',');
+                sink.putAscii(',');
                 getLimitHi().toSink(sink);
             }
         }
 
         if (unionModel != null) {
             if (setOperationType == QueryModel.SET_OPERATION_INTERSECT) {
-                sink.put(" intersect ");
+                sink.putAscii(" intersect ");
             } else if (setOperationType == QueryModel.SET_OPERATION_INTERSECT_ALL) {
-                sink.put(" intersect all ");
+                sink.putAscii(" intersect all ");
             } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT) {
-                sink.put(" except ");
+                sink.putAscii(" except ");
             } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT_ALL) {
-                sink.put(" except all ");
+                sink.putAscii(" except all ");
             } else {
-                sink.put(" union ");
+                sink.putAscii(" union ");
                 if (setOperationType == QueryModel.SET_OPERATION_UNION_ALL) {
-                    sink.put("all ");
+                    sink.putAscii("all ");
                 }
             }
             unionModel.toSink0(sink, false, showOrderBy);
         }
     }
 
-    private void updateToSink(CharSink sink) {
-        sink.put("update ");
+    private void updateToSink(CharSinkBase<?> sink) {
+        sink.putAscii("update ");
         tableNameExpr.toSink(sink);
         if (alias != null) {
-            sink.put(" as");
+            sink.putAscii(" as");
             aliasToSink(alias.token, sink);
         }
-        sink.put(" set ");
+        sink.putAscii(" set ");
         for (int i = 0, n = getUpdateExpressions().size(); i < n; i++) {
-
             if (i > 0) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             CharSequence columnExpr = getUpdateExpressions().get(i).token;
             sink.put(columnExpr);
-            sink.put(" = ");
+            sink.putAscii(" = ");
             QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);
             setColumn.getAst().toSink(sink);
         }
 
         if (getNestedModel() != null) {
-            sink.put(" from (");
+            sink.putAscii(" from (");
             getNestedModel().toSink(sink);
-            sink.put(")");
+            sink.putAscii(")");
         }
     }
 

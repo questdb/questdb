@@ -638,7 +638,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         sink.put(tableName, lo, hi);
         return tableNameRegistry.getTableToken(sink);
     }
@@ -1076,7 +1076,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken verifyTableName(final CharSequence tableName, int lo, int hi) {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         sink.put(tableName, lo, hi);
         return verifyTableName(sink);
     }
@@ -1165,8 +1165,8 @@ public class CairoEngine implements Closeable, WriterSource {
             if (ff.rename(fromPath, toPath) != Files.FILES_RENAME_OK) {
                 final int error = ff.errno();
                 LOG.error()
-                        .$("could not rename [from='").utf8(fromPath)
-                        .$("', to='").utf8(toPath)
+                        .$("could not rename [from='").$(fromPath)
+                        .$("', to='").$(toPath)
                         .$("', error=").$(error)
                         .I$();
                 throw CairoException.critical(error)

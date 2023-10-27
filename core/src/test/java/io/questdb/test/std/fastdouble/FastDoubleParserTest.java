@@ -24,11 +24,11 @@
 
 package io.questdb.test.std.fastdouble;
 
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.fastdouble.FastDoubleParser;
+import io.questdb.std.str.Utf8s;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -53,7 +53,7 @@ public class FastDoubleParserTest extends AbstractFastXParserTest {
                                         if (s.length() < u.charOffset() + u.charLength()) {
                                             throw NumericException.INSTANCE;
                                         }
-                                        Chars.asciiStrCpy(s, len, mem);
+                                        Utf8s.strCpyAscii(s, len, mem);
                                         return FastDoubleParser.parseDouble(mem, u.charOffset(), u.charLength(), false);
                                     } finally {
                                         Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);

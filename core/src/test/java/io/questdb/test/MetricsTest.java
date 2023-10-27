@@ -27,9 +27,10 @@ package io.questdb.test;
 import io.questdb.Metrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.str.DirectByteCharSink;
-import io.questdb.std.str.DirectUtf8CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -90,7 +91,7 @@ public class MetricsTest {
     public void testMetricNamesContainGCMetrics() {
         final Metrics metrics = Metrics.enabled();
 
-        final DirectByteCharSink sink = new DirectByteCharSink(32);
+        final Utf8StringSink sink = new Utf8StringSink(32);
         metrics.scrapeIntoPrometheus(sink);
 
         final String encoded = sink.toString();
@@ -185,7 +186,7 @@ public class MetricsTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
+        public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
             delegate.scrapeIntoPrometheus(sink);
         }
 

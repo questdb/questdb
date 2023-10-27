@@ -66,6 +66,7 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
 import java.sql.Timestamp;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CyclicBarrier;
@@ -339,6 +340,45 @@ public final class TestUtils {
         sink.clear();
         actual.toSink(sink);
         assertEquals(null, expected, sink);
+    }
+
+    public static void assertEquals(CharSequence expected, Utf8Sequence actual) {
+        sink.clear();
+        Utf8s.utf8ToUtf16(actual, sink);
+        assertEquals(null, expected, sink);
+    }
+
+    public static void assertEquals(byte[] expected, Utf8Sequence actual) {
+        if (expected == null && actual == null) {
+            return;
+        }
+
+        if (expected != null && actual == null) {
+            Assert.fail("Expected: \n`" + Arrays.toString(expected) + "`but have NULL");
+        }
+
+        if (expected == null) {
+            Assert.fail("Expected: NULL but have \n`" + actual + "`\n");
+        }
+
+        if (expected.length != actual.size()) {
+            Assert.fail("Expected size: " + expected.length + ", but have " + actual.size());
+        }
+
+        for (int i = 0; i < expected.length; i++) {
+            if (expected[i] != actual.byteAt(i)) {
+                Assert.fail("Expected byte: " + expected[i] + ", but have " + actual.byteAt(i) + " at index " + i);
+            }
+        }
+    }
+
+    public static void assertEquals(Utf8Sequence expected, Utf8Sequence actual) {
+        sink.clear();
+        Utf8s.utf8ToUtf16(expected, sink);
+        String expectedStr = sink.toString();
+        sink.clear();
+        Utf8s.utf8ToUtf16(actual, sink);
+        assertEquals(null, expectedStr, sink);
     }
 
     public static void assertEquals(CharSequence expected, CharSequence actual) {
@@ -1324,7 +1364,7 @@ public final class TestUtils {
                 } // Fall down to SYMBOL
             case ColumnType.SYMBOL:
                 CharSequence sym = r.getSym(i);
-                sink.put(sym == null ? nullStringValue : sym);
+                sink.put(sym != null ? sym : nullStringValue);
                 break;
             case ColumnType.SHORT:
                 sink.put(r.getShort(i));
@@ -1438,12 +1478,12 @@ public final class TestUtils {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(p + i, bytes[i]);
             }
-            DirectByteCharSequence seq = new DirectByteCharSequence();
+            DirectUtf8String seq = new DirectUtf8String();
             seq.of(p, p + len);
             if (symbol) {
                 r.putSymUtf8(columnIndex, seq, true);
             } else {
-                r.putStrUtf8AsUtf16(columnIndex, seq, true);
+                r.putStrUtf8(columnIndex, seq, true);
             }
         } finally {
             Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
@@ -1490,7 +1530,7 @@ public final class TestUtils {
 
     public static long toMemory(CharSequence sequence) {
         long ptr = Unsafe.malloc(sequence.length(), MemoryTag.NATIVE_DEFAULT);
-        Chars.asciiStrCpy(sequence, sequence.length(), ptr);
+        Utf8s.strCpyAscii(sequence, sequence.length(), ptr);
         return ptr;
     }
 

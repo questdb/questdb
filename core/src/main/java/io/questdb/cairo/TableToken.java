@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class TableToken implements Sinkable {
@@ -111,8 +111,8 @@ public class TableToken implements Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.encodeUtf8(tableName);
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.put(tableName);
     }
 
     @Override

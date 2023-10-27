@@ -32,6 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -179,14 +180,14 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             int mkdirMode = 509;
             try (Path src = new Path().of(temporaryFolder.getRoot().getAbsolutePath())) {
-                File f1 = new File(Chars.toString(src.concat("file")));
+                File f1 = new File(Utf8s.toString(src.concat("file")));
                 TestUtils.writeStringToFile(f1, "abcde");
 
                 src.parent();
                 src.concat("subdir");
                 Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
 
-                File f2 = new File(Chars.toString(src.concat("file2")));
+                File f2 = new File(Utf8s.toString(src.concat("file2")));
                 TestUtils.writeStringToFile(f2, "efgh");
 
                 src.of(temporaryFolder.getRoot().getAbsolutePath());
@@ -274,7 +275,7 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File noDir = temporaryFolder.newFolder("данные", "no");
             try (Path path = new Path().of(noDir.getParentFile().getAbsolutePath()).$()) {
-                int rootLen = path.length();
+                int rootLen = path.size();
                 createTempFile(path, "prose.txt", content);
                 long baseSize = Files.getDirSize(path.parent().$());
                 createTempFile(path, "dinner.txt", content);
@@ -329,8 +330,8 @@ public class FilesTest {
                     Path backupPath = new Path().of(backupDir.getParentFile().getParentFile().getAbsolutePath()).$();
                     Path auxPath = new Path()
             ) {
-                int dbPathLen = dbPath.length();
-                int backupPathLen = backupPath.length();
+                int dbPathLen = dbPath.size();
+                int backupPathLen = backupPath.size();
                 createTempFile(auxPath.of(tmpDir.getAbsolutePath()), "for_size.d", content);
                 long baseSize = Files.getDirSize(auxPath.parent().$());
 
@@ -450,14 +451,14 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             int mkdirMode = 509;
             try (Path src = new Path().of(temporaryFolder.getRoot().getAbsolutePath())) {
-                File f1 = new File(Chars.toString(src.concat("file")));
+                File f1 = new File(Utf8s.toString(src.concat("file")));
                 TestUtils.writeStringToFile(f1, "abcde");
 
                 src.parent();
                 src.concat("subdir");
                 Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
 
-                File f2 = new File(Chars.toString(src.concat("file2")));
+                File f2 = new File(Utf8s.toString(src.concat("file2")));
                 TestUtils.writeStringToFile(f2, "efgh");
 
                 src.of(temporaryFolder.getRoot().getAbsolutePath());
@@ -510,7 +511,7 @@ public class FilesTest {
                     try {
                         do {
                             nameSink.clear();
-                            Chars.utf8ToUtf16Z(Files.findName(pFind), nameSink);
+                            Utf8s.utf8ToUtf16Z(Files.findName(pFind), nameSink);
                             names.add(nameSink.toString());
                         } while (Files.findNext(pFind) > 0);
                     } finally {
@@ -996,7 +997,7 @@ public class FilesTest {
                 Path path3 = new Path()
         ) {
             path.of(dir.getAbsolutePath());
-            int plen = path.length();
+            int plen = path.size();
 
             path.concat("text.txt").$();
 
@@ -1025,17 +1026,17 @@ public class FilesTest {
             // test reading non-symbolic link, path2 is a file
             path3.of("");
             Assert.assertFalse(Files.readLink(path2, path3));
-            Assert.assertEquals(0, path3.length());
+            Assert.assertEquals(0, path3.size());
 
             // test non-existing file
             path2.trimTo(plen).concat("hello.txt").$();
             Assert.assertFalse(Files.readLink(path2, path3));
-            Assert.assertEquals(0, path3.length());
+            Assert.assertEquals(0, path3.size());
 
             // test directory
             path2.trimTo(plen).$();
             Assert.assertFalse(Files.readLink(path2, path3));
-            Assert.assertEquals(0, path3.length());
+            Assert.assertEquals(0, path3.size());
         }
     }
 
@@ -1224,8 +1225,8 @@ public class FilesTest {
                         size
                 ));
             }
-            StringSink sink = Misc.getThreadLocalBuilder();
-            Chars.utf8toUtf16(buffPtr, buffPtr + size, sink);
+            StringSink sink = Misc.getThreadLocalSink();
+            Utf8s.utf8ToUtf16(buffPtr, buffPtr + size, sink);
             TestUtils.assertEquals(fileContent, sink.toString());
         } finally {
             Files.close(fd);
