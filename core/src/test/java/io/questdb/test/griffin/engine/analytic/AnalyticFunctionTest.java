@@ -224,7 +224,6 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
         });
     }
 
-
     @Test
     public void testAverageOverRange() throws Exception {
         assertMemoryLeak(() -> {
@@ -290,7 +289,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000003Z\t0\t3\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t3.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 preceding and 2 preceding) from tab order by ts desc");
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding) from tab order by ts desc");
 
             assertSql("ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n" +

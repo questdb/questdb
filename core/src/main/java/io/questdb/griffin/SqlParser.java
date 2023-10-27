@@ -2150,17 +2150,17 @@ public class SqlParser {
     private long parseTimeUnit(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "'preceding' or time unit");
         long unit = -1;
-        if (SqlKeywords.isMicrosecondKeyword(tok)) {
+        if (SqlKeywords.isMicrosecondKeyword(tok) || SqlKeywords.isMicrosecondsKeyword(tok)) {
             unit = AnalyticColumn.ITME_UNIT_MICROSECOND;
-        } else if (SqlKeywords.isMillisecondKeyword(tok)) {
+        } else if (SqlKeywords.isMillisecondKeyword(tok) || SqlKeywords.isMillisecondsKeyword(tok)) {
             unit = AnalyticColumn.TIME_UNIT_MILLISECOND;
-        } else if (SqlKeywords.isSecondKeyword(tok)) {
+        } else if (SqlKeywords.isSecondKeyword(tok) || SqlKeywords.isSecondsKeyword(tok)) {
             unit = AnalyticColumn.TIME_UNIT_SECOND;
-        } else if (SqlKeywords.isMinuteKeyword(tok)) {
+        } else if (SqlKeywords.isMinuteKeyword(tok) || SqlKeywords.isMinutesKeyword(tok)) {
             unit = AnalyticColumn.TIME_UNIT_MINUTE;
-        } else if (SqlKeywords.isHourKeyword(tok)) {
+        } else if (SqlKeywords.isHourKeyword(tok) || SqlKeywords.isHoursKeyword(tok)) {
             unit = AnalyticColumn.TIME_UNIT_HOUR;
-        } else if (SqlKeywords.isDayKeyword(tok)) {
+        } else if (SqlKeywords.isDayKeyword(tok) || SqlKeywords.isDaysKeyword(tok)) {
             unit = AnalyticColumn.TIME_UNIT_DAY;
         }
         if (unit == -1) {

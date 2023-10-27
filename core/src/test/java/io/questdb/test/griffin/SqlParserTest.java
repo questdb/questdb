@@ -463,17 +463,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testACRangeFrameAcceptsTimeUnits() throws Exception {
         String[] unitsAndValues = new String[]{
                 "microsecond",
+                "microseconds",
                 "millisecond",
+                "milliseconds",
                 "second",
+                "seconds",
                 "minute",
+                "minutes",
                 "hour",
-                "day"
+                "hours",
+                "day",
+                "days"
         };
         for (int i = 0; i < unitsAndValues.length; i++) {
+            String expectedUnit = unitsAndValues[i].replaceAll("s$", "");
             assertQuery(
                     ("select-analytic a, b, f(c) f over (partition by b order by ts range between 10 #unit preceding and current row exclude no others) " +
                             "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
-                            .replace("#unit", unitsAndValues[i]),
+                            .replace("#unit", expectedUnit),
                     "select a,b, f(c) over (partition by b order by ts range 10 #unit preceding) from xyz"
                             .replace("#unit", unitsAndValues[i]),
                     modelOf("xyz")
@@ -486,7 +493,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery(
                     ("select-analytic a, b, f(c) f over (partition by b order by ts range between 10 #unit preceding and 1 #unit following exclude no others) " +
                             "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
-                            .replace("#unit", unitsAndValues[i]),
+                            .replace("#unit", expectedUnit),
                     "select a,b, f(c) over (partition by b order by ts range between 10 #unit preceding and 1 #unit following) from xyz"
                             .replace("#unit", unitsAndValues[i]),
                     modelOf("xyz")
