@@ -28,7 +28,9 @@ import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8CharSink;
 import io.questdb.std.str.Sinkable;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -81,7 +83,22 @@ public class MetricsScrapeBenchmark {
         metricsRegistry.scrapeIntoPrometheus(sink);
     }
 
-    private static class NullCharSink implements CharSink {
+    private static class NullCharSink implements DirectUtf8CharSink {
+
+        @Override
+        public NativeByteSink borrowDirectByteSink() {
+            return new NativeByteSink() {
+                @Override
+                public void close() {
+
+                }
+
+                @Override
+                public long ptr() {
+                    return 0;
+                }
+            };
+        }
 
         @Override
         public CharSink put(char c) {

@@ -27,6 +27,7 @@ package io.questdb.metrics;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * MemoryTag statistic dressed up as prometheus gauge .
@@ -67,7 +68,7 @@ public class MemoryTagLongGauge implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSinkBase<?> sink) {
+    public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
         appendType(sink);
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());

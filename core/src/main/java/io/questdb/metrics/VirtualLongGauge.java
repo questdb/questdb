@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Read-only gauge used to expose various stats.
@@ -60,7 +61,7 @@ public class VirtualLongGauge implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSinkBase<?> sink) {
+    public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
         appendType(sink);
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());

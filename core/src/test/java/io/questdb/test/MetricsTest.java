@@ -28,8 +28,9 @@ import io.questdb.Metrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.CharSinkBase;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -88,17 +89,18 @@ public class MetricsTest {
 
     @Test
     public void testMetricNamesContainGCMetrics() {
-        Metrics metrics = Metrics.enabled();
+        final Metrics metrics = Metrics.enabled();
 
-        StringSink sink = new StringSink();
+        final Utf8StringSink sink = new Utf8StringSink(32);
         metrics.scrapeIntoPrometheus(sink);
 
-        TestUtils.assertContains(sink, "jvm_major_gc_count");
-        TestUtils.assertContains(sink, "jvm_major_gc_time");
-        TestUtils.assertContains(sink, "jvm_minor_gc_count");
-        TestUtils.assertContains(sink, "jvm_minor_gc_time");
-        TestUtils.assertContains(sink, "jvm_unknown_gc_count");
-        TestUtils.assertContains(sink, "jvm_unknown_gc_time");
+        final String encoded = sink.toString();
+        TestUtils.assertContains(encoded, "jvm_major_gc_count");
+        TestUtils.assertContains(encoded, "jvm_major_gc_time");
+        TestUtils.assertContains(encoded, "jvm_minor_gc_count");
+        TestUtils.assertContains(encoded, "jvm_minor_gc_time");
+        TestUtils.assertContains(encoded, "jvm_unknown_gc_count");
+        TestUtils.assertContains(encoded, "jvm_unknown_gc_time");
     }
 
     @Test
@@ -184,7 +186,7 @@ public class MetricsTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(CharSinkBase<?> sink) {
+        public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
             delegate.scrapeIntoPrometheus(sink);
         }
 

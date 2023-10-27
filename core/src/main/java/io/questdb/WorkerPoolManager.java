@@ -107,7 +107,7 @@ public abstract class WorkerPoolManager implements Scrapable {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSinkBase<?> sink) {
+    public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
         long now = Worker.CLOCK_MICROS.getTicks();
         sharedPool.updateWorkerMetrics(now);
         ObjList<CharSequence> poolNames = dedicatedPools.keys();

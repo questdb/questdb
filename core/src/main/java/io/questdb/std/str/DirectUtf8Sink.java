@@ -57,7 +57,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, DirectUtf8Sequence, Borr
     }
 
     @Override
-    public NativeByteSink borrowDirectByteSink() {
+    public @NotNull NativeByteSink borrowDirectByteSink() {
         return sink.borrowDirectByteSink();
     }
 

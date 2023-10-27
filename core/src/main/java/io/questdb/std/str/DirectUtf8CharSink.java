@@ -22,28 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.std.str;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 
-public interface HttpChunkedResponseSocket extends Utf8Sink {
-    void bookmark();
+/** A groawable Utf8 buffer that can be written as a char sink and borrowed for writing in native code. */
+public interface DirectUtf8CharSink extends CharSink, BorrowableAsNativeByteSink {
 
-    void done() throws PeerDisconnectedException, PeerIsSlowToReadException;
-
-    HttpResponseHeader headers();
-
-    boolean resetToBookmark();
-
-    void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException;
-
-    void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException;
-
-    void shutdownWrite();
-
-    void status(int status, CharSequence contentType);
-
-    int writeBytes(long srcAddr, int len);
 }
