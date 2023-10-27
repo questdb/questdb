@@ -99,7 +99,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         IS_ACTIVE(9, "active", ColumnType.BOOLEAN),
         IS_ATTACHED(10, "attached", ColumnType.BOOLEAN),
         IS_DETACHED(11, "detached", ColumnType.BOOLEAN),
-        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN);
+        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN),
+
+        TABLE_NAME(12, "tableName", ColumnType.STRING);
 
         private final int idx;
         private final TableColumnMetadata metadata;
@@ -139,6 +141,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int partitionIndex = -1;
         private long partitionSize = -1L;
         private int rootLen;
+        private String tableName;
         private TableReader tableReader;
         private CharSequence tsColName;
 
@@ -184,6 +187,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 // this call is idempotent
                 return this;
             }
+            tableName= tableToken.getTableName();
             tsColName = null;
             tableReader = executionContext.getReader(tableToken);
             partitionBy = tableReader.getPartitionedBy();
@@ -359,6 +363,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         return isDetached;
                     case 12:
                         return isAttachable;
+
                     default:
                         throw new UnsupportedOperationException();
                 }
@@ -398,6 +403,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         return partitionName;
                     case 7:
                         return partitionSizeSink;
+                    case 13:
+                        return tableName;
                     default:
                         throw new UnsupportedOperationException();
                 }
@@ -443,6 +450,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.IS_ATTACHED.metadata());
         metadata.add(Column.IS_DETACHED.metadata());
         metadata.add(Column.IS_ATTACHABLE.metadata());
+        metadata.add(Column.TABLE_NAME.metadata());
         METADATA = metadata;
     }
 }

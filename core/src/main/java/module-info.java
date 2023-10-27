@@ -748,6 +748,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.VarPopGroupByFunctionFactory,
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.table.AllTablePartitionsFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TablePartitionsFunctionFactory,
