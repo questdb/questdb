@@ -32,11 +32,12 @@ import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectUtf8CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -75,6 +76,11 @@ public class MetricsIODispatcherTest {
     }
 
     @Test
+    public void testFewMetricsBigBuffersPar() throws Exception {
+        testPrometheusScenario(100, 1024 * 1024, 1024 * 1024, PARALLEL_REQUESTS);
+    }
+
+    @Test
     public void testLotsOfConnections() throws Exception {
         // In this scenario we want to test pool reuse.
         // This is dependent on thread scheduling so some runs may not achieve
@@ -82,11 +88,6 @@ public class MetricsIODispatcherTest {
         // increase the chances of hitting the desired `push()` and `pop()` pool method call
         // sequences.
         testPrometheusScenario(10, 1024, 1024 * 1024, PARALLEL_REQUESTS, 1, 100);
-    }
-
-    @Test
-    public void testFewMetricsBigBuffersPar() throws Exception {
-        testPrometheusScenario(100, 1024 * 1024, 1024 * 1024, PARALLEL_REQUESTS);
     }
 
     @Test
@@ -128,95 +129,6 @@ public class MetricsIODispatcherTest {
     @Test
     public void testPeerIsSlowToReadPar() throws Exception {
         testPrometheusScenario(10_000, 1024, 1024 * 1024, PARALLEL_REQUESTS);
-    }
-
-    private void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches) throws Exception {
-        testPrometheusScenario(metricCount, tcpSndBufSize, sendBufferSize, parallelRequestBatches, 5, 5);
-    }
-
-    private void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches, int repeatedRequests, int repeatedConnections) throws Exception {
-        final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
-        final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(workerCount);
-
-        Assert.assertEquals(pool.size(), 0);
-
-        MetricsRegistry metrics = new MetricsRegistryImpl();
-        for (int i = 0; i < metricCount; i++) {
-            metrics.newCounter("testMetrics" + i).add(i);
-        }
-        StringBuilder expectedResponse = new StringBuilder();
-        for (int i = 0; i < metricCount; i++) {
-            expectedResponse.append("# TYPE questdb_testMetrics").append(i).append("_total counter").append("\n");
-            expectedResponse.append("questdb_testMetrics").append(i).append("_total ").append(i).append("\n").append("\n");
-        }
-
-        final HttpQueryTestBuilder.HttpClientCode makeRequest = engine -> {
-            try (HttpClient client = HttpClientFactory.newInstance()) {
-                if (parallelRequestBatches == 1) {
-                    Assert.assertEquals(pool.size(), 0);
-                }
-
-                // Repeated requests over the same connection.
-                // This is to stress out the RequestState pooling logic.
-                for (int i = 0; i < repeatedRequests; i++) {
-                    HttpClient.ResponseHeaders response = client.newRequest()
-                            .GET()
-                            .url("/metrics")
-                            .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort());
-
-                    response.await(5_000);
-                    TestUtils.assertEquals("200", response.getStatusCode());
-
-                    if (parallelRequestBatches == 1) {
-                        // The request state is in use.
-                        Assert.assertEquals(0, pool.size());
-                    } else {
-                        Assert.assertTrue(pool.size() <= parallelRequestBatches);
-                    }
-
-                    Assert.assertTrue(response.isChunked());
-                    ChunkedResponse chunkedResponse = response.getChunkedResponse();
-                    StringSink responseSink = new StringSink();
-
-                    Chunk chunk;
-                    while ((chunk = chunkedResponse.recv(5_000)) != null) {
-                        Chars.utf8toUtf16(chunk.lo(), chunk.hi(), responseSink);
-                    }
-                    TestUtils.assertEquals(expectedResponse, responseSink);
-                }
-
-                if (parallelRequestBatches == 1) {
-                    if (pool.size() > 1) {
-                        Assert.fail("pool.size() > 1: " + pool.size());
-                    }
-                }
-            }
-        };
-
-        // Repeat each connection `repeatedConnections` times, for each parallel request batch.
-        // This is to stress out the RequestState pooling logic.
-        final HttpQueryTestBuilder.HttpClientCode clientCode = buildClientCode(parallelRequestBatches, repeatedConnections, makeRequest);
-        new HttpMinTestBuilder()
-                .withTempFolder(temp)
-                .withScrapable(metrics)
-                .withTcpSndBufSize(tcpSndBufSize)
-                .withSendBufferSize(sendBufferSize)
-                .withWorkerCount(workerCount)
-                .withPrometheusPool(pool)
-                .run(clientCode);
-
-        Assert.assertEquals(pool.size(), 0);
-    }
-
-    private static HttpQueryTestBuilder.HttpClientCode buildClientCode(int parallelRequestBatches, int repeatedConnections, HttpQueryTestBuilder.HttpClientCode makeRequest) {
-        final HttpQueryTestBuilder.HttpClientCode repeatedRequest = engine -> {
-            for (int i = 0; i < repeatedConnections; i++) {
-                makeRequest.run(engine);
-            }
-        };
-
-        // Parallel request batches.
-        return parallelizeRequests(parallelRequestBatches, repeatedRequest);
     }
 
     @Test
@@ -264,6 +176,16 @@ public class MetricsIODispatcherTest {
                 });
     }
 
+    private static HttpQueryTestBuilder.HttpClientCode buildClientCode(int parallelRequestBatches, int repeatedConnections, HttpQueryTestBuilder.HttpClientCode makeRequest) {
+        final HttpQueryTestBuilder.HttpClientCode repeatedRequest = engine -> {
+            for (int i = 0; i < repeatedConnections; i++) {
+                makeRequest.run(engine);
+            }
+        };
+        // Parallel request batches.
+        return parallelizeRequests(parallelRequestBatches, repeatedRequest);
+    }
+
     private static HttpQueryTestBuilder.HttpClientCode parallelizeRequests(int parallelRequests, HttpQueryTestBuilder.HttpClientCode makeRequest) {
         assert parallelRequests > 0;
         if (parallelRequests == 1) {
@@ -287,6 +209,88 @@ public class MetricsIODispatcherTest {
                 }
             }
         };
+    }
+
+    private void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches) throws Exception {
+        testPrometheusScenario(metricCount, tcpSndBufSize, sendBufferSize, parallelRequestBatches, 5, 5);
+    }
+
+    private void testPrometheusScenario(int metricCount, int tcpSndBufSize, int sendBufferSize, int parallelRequestBatches, int repeatedRequests, int repeatedConnections) throws Exception {
+        final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
+        final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(workerCount);
+
+        Assert.assertEquals(pool.size(), 0);
+
+        MetricsRegistry metrics = new MetricsRegistryImpl();
+        for (int i = 0; i < metricCount; i++) {
+            metrics.newCounter("testMetrics" + i).add(i);
+        }
+        StringBuilder expectedResponse = new StringBuilder();
+        for (int i = 0; i < metricCount; i++) {
+            expectedResponse.append("# TYPE questdb_testMetrics").append(i).append("_total counter").append("\n");
+            expectedResponse.append("questdb_testMetrics").append(i).append("_total ").append(i).append("\n").append("\n");
+        }
+
+        final HttpQueryTestBuilder.HttpClientCode makeRequest = engine -> {
+            try (HttpClient client = HttpClientFactory.newInstance()) {
+                if (parallelRequestBatches == 1) {
+                    Assert.assertEquals(pool.size(), 0);
+                }
+
+                final StringSink utf16Sink = new StringSink();
+
+                // Repeated requests over the same connection.
+                // This is to stress out the RequestState pooling logic.
+                for (int i = 0; i < repeatedRequests; i++) {
+                    HttpClient.ResponseHeaders response = client.newRequest()
+                            .GET()
+                            .url("/metrics")
+                            .send("localhost", DefaultIODispatcherConfiguration.INSTANCE.getBindPort());
+
+                    response.await(5_000);
+                    utf16Sink.clear();
+                    utf16Sink.put(response.getStatusCode());
+                    TestUtils.assertEquals("200", utf16Sink);
+
+                    if (parallelRequestBatches == 1) {
+                        // The request state is in use.
+                        Assert.assertEquals(0, pool.size());
+                    } else {
+                        Assert.assertTrue(pool.size() <= parallelRequestBatches);
+                    }
+
+                    Assert.assertTrue(response.isChunked());
+                    ChunkedResponse chunkedResponse = response.getChunkedResponse();
+
+                    utf16Sink.clear();
+                    Chunk chunk;
+                    while ((chunk = chunkedResponse.recv(5_000)) != null) {
+                        Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), utf16Sink);
+                    }
+                    TestUtils.assertEquals(expectedResponse, utf16Sink);
+                }
+
+                if (parallelRequestBatches == 1) {
+                    if (pool.size() > 1) {
+                        Assert.fail("pool.size() > 1: " + pool.size());
+                    }
+                }
+            }
+        };
+
+        // Repeat each connection `repeatedConnections` times, for each parallel request batch.
+        // This is to stress out the RequestState pooling logic.
+        final HttpQueryTestBuilder.HttpClientCode clientCode = buildClientCode(parallelRequestBatches, repeatedConnections, makeRequest);
+        new HttpMinTestBuilder()
+                .withTempFolder(temp)
+                .withScrapable(metrics)
+                .withTcpSndBufSize(tcpSndBufSize)
+                .withSendBufferSize(sendBufferSize)
+                .withWorkerCount(workerCount)
+                .withPrometheusPool(pool)
+                .run(clientCode);
+
+        Assert.assertEquals(pool.size(), 0);
     }
 
     private static class TestMetrics implements Scrapable {
@@ -327,7 +331,7 @@ public class MetricsIODispatcherTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
+        public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
             metricsRegistry.scrapeIntoPrometheus(sink);
         }
 

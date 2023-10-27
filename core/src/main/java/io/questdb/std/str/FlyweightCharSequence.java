@@ -41,7 +41,6 @@ public class FlyweightCharSequence extends AbstractCharSequence implements Mutab
 
     @Override
     public void clear() {
-
     }
 
     @Override

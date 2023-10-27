@@ -221,7 +221,7 @@ public class Mig620 {
 
         path.trimTo(pathLen);
         setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
-        int partitionPathLen = path.length();
+        int partitionPathLen = path.size();
 
         if (ff.exists(path.put(Files.SEPARATOR).$())) {
             for (int i = 0; i < columnCount; i++) {
@@ -313,7 +313,7 @@ public class Mig620 {
     static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
-        int pathLen = path.length();
+        int pathLen = path.size();
 
         path.concat(TXN_FILE_NAME_MIG).$();
         EngineMigration.backupFile(

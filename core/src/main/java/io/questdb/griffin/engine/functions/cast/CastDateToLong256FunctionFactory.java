@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 public class CastDateToLong256FunctionFactory implements FunctionFactory {
     @Override
@@ -52,7 +52,7 @@ public class CastDateToLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public void getLong256(Record rec, CharSinkBase<?> sink) {
             final long value = arg.getDate(rec);
             if (value == Numbers.LONG_NaN) {
                 return;

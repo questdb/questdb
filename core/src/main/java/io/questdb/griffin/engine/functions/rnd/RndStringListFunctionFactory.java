@@ -34,7 +34,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.Sinkable;
 
 public class RndStringListFunctionFactory implements FunctionFactory {
     @Override

@@ -28,6 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -38,15 +39,15 @@ import java.io.Closeable;
  * <p>
  * Instances of this class can be re-cycled for creating many different paths and
  * must be closed when no longer required.
- * </p>
  */
-public class Path extends AbstractCharSink implements Closeable, LPSZ {
+public class Path implements Utf8Sink, LPSZ, Closeable {
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
-    private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
+    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final int memoryTag;
     private int capacity;
     private long headPtr;
@@ -107,18 +108,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    public long address() {
-        return headPtr;
+    public @NotNull CharSequence asAsciiCharSequence() {
+        return asciiCharSequence.of(this);
     }
 
-    @Override
     public int capacity() {
         return capacity;
-    }
-
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(headPtr + index);
     }
 
     @Override
@@ -131,6 +126,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path concat(CharSequence str) {
         return concat(str, 0, str.length());
+    }
+
+    public Path concat(Utf8Sequence str) {
+        ensureSeparator();
+        return put(str);
     }
 
     public Path concat(TableToken token) {
@@ -146,7 +146,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
                 break;
             }
 
-            int requiredCapacity = length();
+            int requiredCapacity = size();
             if (requiredCapacity + OVERHEAD >= capacity) {
                 extend(requiredCapacity * 2 + OVERHEAD);
             }
@@ -157,32 +157,32 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path concat(CharSequence str, int from, int to) {
         ensureSeparator();
-        encodeUtf8(str, from, to);
+        put(str, from, to);
         return this;
     }
 
     public void extend(int newCapacity) {
         assert newCapacity > capacity;
-        int len = length();
+        int size = size();
         headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
-        tailPtr = headPtr + len;
+        tailPtr = headPtr + size;
         capacity = newCapacity;
     }
 
-    @Override
     public void flush() {
         $();
     }
 
-    @Override
-    public final int length() {
-        return (int) (tailPtr - headPtr);
-    }
-
     public Path of(CharSequence str) {
         checkClosed();
+        tailPtr = headPtr;
+        return concat(str);
+    }
+
+    public Path of(Utf8Sequence str) {
+        checkClosed();
         if (str == this) {
-            tailPtr = headPtr + str.length();
+            tailPtr = headPtr + str.size();
             return this;
         } else {
             tailPtr = headPtr;
@@ -198,7 +198,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         // This is different from of(CharSequence str) because
         // another Path is already UTF8 encoded and cannot be treated as CharSequence.
         // Copy binary array representation instead of trying to UTF8 encode it
-        int len = other.length();
+        int len = other.size();
         if (headPtr == 0L) {
             headPtr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_PATH);
             capacity = len;
@@ -207,7 +207,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
 
         if (len > 0) {
-            Unsafe.getUnsafe().copyMemory(other.address(), headPtr, len);
+            Unsafe.getUnsafe().copyMemory(other.ptr(), headPtr, len);
         }
         tailPtr = headPtr + len;
         return this;
@@ -229,7 +229,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
                 }
                 p--;
             }
-            while (p > headPtr && (char) Unsafe.getUnsafe().getByte(p) != Files.SEPARATOR) {
+            while (p > headPtr && Unsafe.getUnsafe().getByte(p) != Files.SEPARATOR) {
                 p--;
             }
             tailPtr = p;
@@ -237,82 +237,112 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
-    public Path prefix(Path prefix, int prefixLen) {
+    public Path prefix(@Nullable Path prefix, int prefixLen) {
         if (prefix != null) {
             if (prefixLen > 0) {
-                int thisLen = length();
-                checkExtend(thisLen + prefixLen);
-                Vect.memmove(headPtr + prefixLen, headPtr, thisLen);
-                Vect.memcpy(headPtr, prefix.address(), prefixLen);
+                int thisSize = size();
+                checkExtend(thisSize + prefixLen);
+                Vect.memmove(headPtr + prefixLen, headPtr, thisSize);
+                Vect.memcpy(headPtr, prefix.ptr(), prefixLen);
                 tailPtr += prefixLen;
             }
         }
         return this;
     }
 
-    public void put(int index, char c) {
-        Unsafe.getUnsafe().putByte(headPtr + index, (byte) c);
+    @Override
+    public long ptr() {
+        return headPtr;
+    }
+
+    public void put(int index, byte b) {
+        Unsafe.getUnsafe().putByte(headPtr + index, b);
     }
 
     @Override
-    public Path put(CharSequence str) {
-        int l = str.length();
-        checkExtend(l);
-        Chars.asciiStrCpy(str, l, tailPtr);
-        tailPtr += l;
-        return this;
-    }
-
-    @Override
-    public CharSink put(CharSequence cs, int lo, int hi) {
-        int l = hi - lo;
-        int requiredCapacity = length() + l;
-        if (requiredCapacity > capacity) {
-            extend(requiredCapacity);
+    public Path put(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            int size = us.size();
+            checkExtend(size + 1);
+            Utf8s.strCpy(us, size, tailPtr);
+            tailPtr += size;
         }
-        Chars.asciiStrCpy(cs, lo, l, tailPtr);
-        tailPtr += l;
         return this;
     }
 
     @Override
-    public Path put(char c) {
-        assert c != NULL;
-        int requiredCapacity = length() + 1;
+    public Path put(byte b) {
+        assert b != NULL;
+        int requiredCapacity = size() + 1;
         if (requiredCapacity >= capacity) {
             extend(requiredCapacity + 15);
         }
-        Unsafe.getUnsafe().putByte(tailPtr++, (byte) c);
+        Unsafe.getUnsafe().putByte(tailPtr++, b);
         return this;
     }
 
     @Override
     public Path put(int value) {
-        super.put(value);
+        Utf8Sink.super.put(value);
         return this;
     }
 
     @Override
     public Path put(long value) {
-        super.put(value);
+        Utf8Sink.super.put(value);
         return this;
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
-        checkExtend(len);
-        Chars.asciiCopyTo(chars, start, len, tailPtr);
-        tailPtr += len;
+    public Path put(@NotNull CharSequence cs, int lo, int hi) {
+        checkExtend(hi - lo + 1);
+        Utf8Sink.super.put(cs, lo, hi);
         return this;
     }
 
     @Override
-    public void putUtf8Special(char c) {
-        if (c == '/' && Os.isWindows()) {
-            put('\\');
-        } else {
-            put(c);
+    public Path put(@Nullable CharSequence cs) {
+        Utf8Sink.super.put(cs);
+        return this;
+    }
+
+    @Override
+    public Path put(char c) {
+        Utf8Sink.super.put(c);
+        return this;
+    }
+
+    @Override
+    public Path putAscii(char @NotNull [] chars, int start, int len) {
+        checkExtend(len + 1);
+        Utf8Sink.super.putAscii(chars, start, len);
+        return this;
+    }
+
+    @Override
+    public Path putAscii(@NotNull CharSequence cs, int start, int len) {
+        checkExtend(len + 1);
+        Utf8Sink.super.putAscii(cs, start, len);
+        return this;
+    }
+
+    @Override
+    public Path putAscii(@Nullable CharSequence cs) {
+        if (cs != null) {
+            checkExtend(cs.length() + 1);
+            Utf8Sink.super.putAscii(cs);
         }
+        return this;
+    }
+
+    @Override
+    public Path putAscii(char c) {
+        if (c == '/' && Os.isWindows()) {
+            Utf8Sink.super.putAscii('\\');
+        } else {
+            Utf8Sink.super.putAscii(c);
+        }
+        return this;
     }
 
     public Path seekZ() {
@@ -327,6 +357,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    @Override
+    public final int size() {
+        return (int) (tailPtr - headPtr);
+    }
+
     public Path slash() {
         ensureSeparator();
         return this;
@@ -337,13 +372,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return $();
     }
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
-    }
-
     public void toSink(CharSink sink) {
-        Chars.utf8toUtf16(headPtr, tailPtr, sink);
+        Utf8s.utf8ToUtf16(headPtr, tailPtr, sink);
     }
 
     @Override
@@ -353,7 +383,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
             // Don't use Misc.getThreadLocalBuilder() to convert Path to String.
             // This leads difficulties in debugging / running tests when FilesFacade tracks open files
             // when this method called implicitly
-            final StringSink b = tlBuilder.get();
+            final StringSink b = tlSink.get();
             b.clear();
             toSink(b);
             return b.toString();
@@ -378,8 +408,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
     }
 
-    private void checkExtend(int len) {
-        int requiredCapacity = length() + len;
+    private void checkExtend(int extra) {
+        int requiredCapacity = size() + extra;
         if (requiredCapacity > capacity) {
             extend(requiredCapacity);
         }

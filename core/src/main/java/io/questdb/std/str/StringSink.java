@@ -26,8 +26,9 @@ package io.questdb.std.str;
 
 import io.questdb.std.Chars;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class StringSink extends AbstractCharSink implements MutableCharSink, CloneableMutable {
+public class StringSink extends AbstractCharSink implements MutableCharSink, CharSequence, CloneableMutable {
 
     private char[] buffer;
     private int pos;
@@ -50,6 +51,7 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
         this.pos = pos;
     }
 
+    @Override
     public void clear() {
         clear(0);
     }
@@ -104,7 +106,7 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
+    public CharSink put(@Nullable CharSequence cs) {
         if (cs != null) {
             int len = cs.length();
             checkSize(len);
@@ -117,7 +119,7 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
     }
 
     @Override
-    public CharSink put(CharSequence cs, int lo, int hi) {
+    public CharSink put(@NotNull CharSequence cs, int lo, int hi) {
         int len = hi - lo;
         checkSize(len);
         for (int i = lo; i < hi; i++) {
@@ -135,7 +137,7 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
+    public CharSink put(char @NotNull [] chars, int start, int len) {
         checkSize(len);
         System.arraycopy(chars, start, buffer, pos, len);
         pos += len;
@@ -156,7 +158,7 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
     }
 
     @Override
-    public CharSequence subSequence(int lo, int hi) {
+    public @NotNull CharSequence subSequence(int lo, int hi) {
         return new String(buffer, lo, hi - lo);
     }
 

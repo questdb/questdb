@@ -50,7 +50,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) throws SqlException {
         int len = pattern.length();
 
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0; i < len; i++) {
             char c = pattern.charAt(i);
             if (c == '_')

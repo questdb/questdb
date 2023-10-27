@@ -107,7 +107,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-        final int rootLen = path.length();
+        final int rootLen = path.size();
         path.concat(fileName).$();
         try {
             return TableUtils.openRO(ff, path, LOG);
@@ -245,7 +245,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     void openFiles(Path path) {
-        final int pathLength = path.length();
+        final int pathLength = path.size();
         openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
         openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
         openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);

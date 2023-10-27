@@ -40,6 +40,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -973,7 +974,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ name) {
-                if (Chars.startsWith(name, pretendNotExist.get()) && count++ == 0) {
+                if (Utf8s.startsWithAscii(name, pretendNotExist.get()) && count++ == 0) {
                     return false;
                 }
                 return super.exists(name);
@@ -1014,7 +1015,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             @Override
             public boolean rmdir(Path path) {
-                if (Chars.equals(path, pretendNotExist.get()) && count++ == 0) {
+                if (Utf8s.equalsAscii(pretendNotExist.get(), path) && count++ == 0) {
                     super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR).$());
                     return false;
                 }
@@ -1088,7 +1089,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
                     TestUtils.unchecked(() -> drop("drop table " + tableName));
                 }
                 return super.openRO(name);
@@ -1370,7 +1371,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "2022-02-25") && i++ == 0) {
+                if (Utf8s.containsAscii(name, "2022-02-25") && i++ == 0) {
                     TestUtils.unchecked(() -> drop("drop table " + newTableName));
                 }
                 return fd;
@@ -1682,7 +1683,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             // terminate WAL apply Job as soon as first wal segment is opened.
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.contains(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
+                if (Utf8s.containsAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
                     isTerminating.set(true);
                 }
                 return super.openRO(name);
@@ -1731,21 +1732,21 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     private void checkTableFilesExist(TableToken sysTableName, String partition, String fileName, boolean value) {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
-        Assert.assertEquals(Chars.toString(sysPath), value, Files.exists(sysPath.$()));
+        Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
 
         sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(COLUMN_VERSION_FILE_NAME);
-        Assert.assertEquals(Chars.toString(sysPath), value, Files.exists(sysPath.$()));
+        Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
 
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat("sym.c");
-        Assert.assertEquals(Chars.toString(sysPath), value, Files.exists(sysPath.$()));
+        Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
 
         sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(partition).concat(fileName);
-        Assert.assertEquals(Chars.toString(sysPath), value, Files.exists(sysPath.$()));
+        Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
     }
 
     private void checkWalFilesRemoved(TableToken sysTableName) {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
-        Assert.assertTrue(Chars.toString(sysPath), Files.exists(sysPath.$()));
+        Assert.assertTrue(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
 
         engine.releaseInactiveTableSequencers();
         try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade(), configuration.getMicrosecondClock())) {
@@ -1753,10 +1754,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
         }
 
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
-        Assert.assertFalse(Chars.toString(sysPath), Files.exists(sysPath.$()));
+        Assert.assertFalse(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
 
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat(SEQ_DIR);
-        Assert.assertFalse(Chars.toString(sysPath), Files.exists(sysPath.$()));
+        Assert.assertFalse(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
     }
 
     private void runApplyOnce() {
@@ -1767,7 +1768,6 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     private void testCreateDropRestartRestart0() throws Exception {
         assertMemoryLeak(() -> {
-
             String tableName = testName.getMethodName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
@@ -1825,7 +1825,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, fileName) && latch.get()) {
+                if (Utf8s.endsWithAscii(name, fileName) && latch.get()) {
                     return false;
                 }
                 return super.remove(name);

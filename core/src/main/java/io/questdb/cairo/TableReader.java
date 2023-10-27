@@ -101,7 +101,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.messageBus = messageBus;
         this.path = new Path();
         this.path.of(configuration.getRoot()).concat(this.tableToken.getDirName());
-        this.rootLen = path.length();
+        this.rootLen = path.size();
         path.trimTo(rootLen);
         try {
             metadata = openMetaFile();
@@ -867,7 +867,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
                 if (partitionSize > -1L) {
                     LOG.info()
-                            .$("open partition ").utf8(path)
+                            .$("open partition ").$(path)
                             .$(" [rowCount=").$(partitionSize)
                             .$(", partitionNameTxn=").$(partitionNameTxn)
                             .$(", transientRowCount=").$(txFile.getTransientRowCount())
@@ -886,7 +886,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 return partitionSize;
             }
-            LOG.error().$("open partition failed, partition does not exist on the disk [path=").utf8(path).I$();
+            LOG.error().$("open partition failed, partition does not exist on the disk [path=").$(path).I$();
 
             if (PartitionBy.isPartitioned(getPartitionedBy())) {
                 CairoException exception = CairoException.critical(0).put("Partition '");
@@ -1052,7 +1052,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             int columnIndex,
             long partitionRowCount
     ) {
-        final int plen = path.length();
+        final int plen = path.size();
         try {
             final CharSequence name = metadata.getColumnName(columnIndex);
             final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);

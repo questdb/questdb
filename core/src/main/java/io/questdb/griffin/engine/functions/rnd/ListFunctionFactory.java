@@ -36,7 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
+import io.questdb.std.str.Sinkable;
 
 public class ListFunctionFactory implements FunctionFactory {
     @Override

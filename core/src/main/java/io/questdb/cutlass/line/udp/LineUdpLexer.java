@@ -25,10 +25,14 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cutlass.line.LineException;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -122,7 +126,7 @@ public class LineUdpLexer implements Mutable, Closeable {
     }
 
     private void fireEvent() throws LineException {
-        // two bytes less between these and one more byte so we don't have to use >=
+        // two bytes less between these and one more byte, so we don't have to use >=
         if (dstTop > dstPos - 3 && state != LineUdpParser.EVT_FIELD_VALUE) { // fields do take empty values, same as null
             errorCode = LineUdpParser.ERROR_EMPTY;
             throw LineException.INSTANCE;
@@ -218,7 +222,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             long errorLen = utf8ErrorPos - utf8ErrorTop;
             if (errorLen > 1) {
                 dstPos = utf8ErrorTop - 1;
-                n = Chars.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
+                n = Utf8s.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
             }
 
             if (n == -1 && errorLen > 3) {
@@ -251,7 +255,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             return repairMultiByteChar(lo, hi, b);
         }
 
-        int n = Chars.utf8DecodeMultiByte(lo, hi, b, sink);
+        int n = Utf8s.utf8DecodeMultiByte(lo, hi, b, sink);
         if (n == -1) {
             return repairMultiByteChar(lo, hi, b);
         } else {
@@ -288,9 +292,7 @@ public class LineUdpLexer implements Mutable, Closeable {
 
         byte lastByte = (byte) 0;
         while (p < hi && !partialComplete()) {
-
             final byte b = Unsafe.getUnsafe().getByte(p);
-
             if (skipLine) {
                 doSkipLine(b);
                 p++;

@@ -111,7 +111,7 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     public TxnScoreboard ofRO(@Transient Path root) {
         clear();
-        int rootLen = root.length();
+        int rootLen = root.size();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         this.fd = openCleanRW(ff, root, this.size);
         try {

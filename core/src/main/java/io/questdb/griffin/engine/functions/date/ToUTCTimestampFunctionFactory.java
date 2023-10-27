@@ -73,8 +73,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
                 try {
                     return new OffsetTimestampFunctionFromRules(
                             timestamp,
-                            TimestampFormatUtils.enLocale.getZoneRules(
-                                    Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                            TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                             ),
                             multiplier
                     );
@@ -121,7 +121,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             final long timestampValue = timestamp.getTimestamp(rec);
             try {
                 final CharSequence tz = timezone.getStr(rec);
-                return tz != null ? Timestamps.toUTC(timestampValue, TimestampFormatUtils.enLocale, tz) : timestampValue;
+                return tz != null ? Timestamps.toUTC(timestampValue, TimestampFormatUtils.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }

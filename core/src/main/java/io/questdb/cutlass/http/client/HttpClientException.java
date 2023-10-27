@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.client;
 
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class HttpClientException extends RuntimeException {
 
@@ -62,7 +63,7 @@ public class HttpClientException extends RuntimeException {
         return this;
     }
 
-    public HttpClientException put(CharSequence cs) {
+    public HttpClientException put(@Nullable CharSequence cs) {
         message.put(cs);
         return this;
     }

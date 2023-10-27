@@ -55,7 +55,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
         int stringStartIndex = -1;
         int stringEndIndex = -1;
         int lastBackslashIndex = -1;
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         int len = type.length();
 
         out:

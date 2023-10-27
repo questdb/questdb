@@ -65,7 +65,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             int symbolIndexInTxWriter,
             @NotNull SymbolValueCountCollector valueCountCollector
     ) {
-        final int plen = path.length();
+        final int plen = path.size();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
             final long mapPageSize = configuration.getMiscAppendPageSize();

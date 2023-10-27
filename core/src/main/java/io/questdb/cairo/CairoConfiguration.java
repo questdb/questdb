@@ -266,8 +266,6 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    int getQueryCacheEventQueueCapacity();
-
     default QueryLogger getQueryLogger() {
         return DefaultQueryLogger.INSTANCE;
     }

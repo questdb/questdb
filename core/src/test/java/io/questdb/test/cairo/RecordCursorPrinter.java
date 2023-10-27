@@ -69,8 +69,7 @@ public class RecordCursorPrinter {
 
     public void print(Record r, RecordMetadata m, CharSink sink) {
         printRecordNoNl(r, m, sink);
-        sink.put("\n");
-        sink.flush();
+        sink.putAscii("\n");
     }
 
     public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header, CharSink sink) {
@@ -81,13 +80,13 @@ public class RecordCursorPrinter {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             TestUtils.printColumn(record, metadata, i, sink, printTypes);
-            sink.put('\n');
+            sink.putAscii('\n');
         }
     }
 
     public void printHeader(RecordMetadata metadata, CharSink sink) {
         printHeaderNoNl(metadata, sink);
-        sink.put('\n');
+        sink.putAscii('\n');
     }
 
     public void printHeaderNoNl(RecordMetadata metadata, CharSink sink) {

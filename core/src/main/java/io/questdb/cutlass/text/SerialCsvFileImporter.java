@@ -30,6 +30,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -46,7 +49,7 @@ public final class SerialCsvFileImporter implements Closeable {
     private long importId;
     private Path inputFilePath;
     private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
-    private CharSequence tableName;
+    private String tableName;
     private TextLoader textLoader;
     private CharSequence timestampColumn;
     private CharSequence timestampFormat;
@@ -67,14 +70,14 @@ public final class SerialCsvFileImporter implements Closeable {
     }
 
     public void of(
-            String tableName,
-            String inputFileName,
+            @NotNull String tableName,
+            @NotNull String inputFileName,
             long importId,
             byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
+            @Nullable String timestampColumn,
+            @Nullable String timestampFormat,
             boolean forceHeader,
-            ExecutionCircuitBreaker circuitBreaker,
+            @NotNull ExecutionCircuitBreaker circuitBreaker,
             int atomicity
     ) {
         this.tableName = tableName;
@@ -172,12 +175,12 @@ public final class SerialCsvFileImporter implements Closeable {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination(
-                tableName,
+                new Utf8String(tableName),
                 false,
                 atomicity != -1 ? atomicity : Atomicity.SKIP_ROW,
                 PartitionBy.NONE,
-                timestampColumn,
-                timestampFormat
+                timestampColumn != null ? new Utf8String(timestampColumn) : null,
+                timestampFormat != null ? new Utf8String(timestampFormat) : null
         );
     }
 }

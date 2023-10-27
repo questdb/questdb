@@ -26,7 +26,11 @@ package io.questdb.test.log;
 
 import io.questdb.log.HttpLogRecordSink;
 import io.questdb.log.LogRecordSink;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -47,32 +51,32 @@ public class HttpLogRecordSinkTest {
 
             alertBuilder.clear();
             alertBuilder.putContentLengthMarker();
-            Assert.assertEquals(38, alertBuilder.put("clairvoyance").$());
+            Assert.assertEquals(38, alertBuilder.putAscii("clairvoyance").$());
             Assert.assertEquals("Content-Length:       38\r\nclairvoyance", alertBuilder.toString());
 
             alertBuilder.clear();
             alertBuilder.putContentLengthMarker();
             String message = "$Sîne klâwen durh die wolken sint geslagen,sîn vil manegiu tugent michz leisten hiez.$\r\n\";";
-            Assert.assertEquals(119, alertBuilder.encodeUtf8(message).$());
+            Assert.assertEquals(119, alertBuilder.put(message).$());
             Assert.assertEquals("Content-Length:      119\r\n" + message, alertBuilder.toString());
 
             alertBuilder.clear();
             alertBuilder.putContentLengthMarker();
             message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000ms]\n";
-            Assert.assertEquals(191, alertBuilder.encodeUtf8(message).$());
+            Assert.assertEquals(191, alertBuilder.put(message).$());
             Assert.assertEquals("Content-Length:      191\r\n" + message, alertBuilder.toString());
 
             alertBuilder.clear();
             alertBuilder.putContentLengthMarker();
             Assert.assertEquals("Content-Length:#########\r\n", alertBuilder.toString());
-            int limit = bufferSize - alertBuilder.length();
+            int limit = bufferSize - alertBuilder.size();
             for (int i = 0; i < limit; i++) {
                 alertBuilder.put('Q');
             }
             alertBuilder.putEOL();
             alertBuilder.$();
 
-            Assert.assertEquals(bufferSize, alertBuilder.length());
+            Assert.assertEquals(bufferSize, alertBuilder.size());
             String alertBuilderStr = alertBuilder.toString();
             Assert.assertTrue(alertBuilderStr, alertBuilderStr.startsWith("Content-Length:     1024\r\nQQQQQQQQQQQQQQQQQQQQQQ"));
             Assert.assertTrue(alertBuilderStr, alertBuilderStr
@@ -109,9 +113,9 @@ public class HttpLogRecordSinkTest {
                             "Content-Type: application/json\r\n" +
                             "Content-Length:        0\r\n" +
                             "\r\n",
-                    Chars.stringFromUtf8Bytes(alertBuilder.getAddress(), alertBuilder.getMark())
+                    Utf8s.stringFromUtf8Bytes(alertBuilder.ptr(), alertBuilder.getMark())
             );
-            Assert.assertEquals(150, alertBuilder.length());
+            Assert.assertEquals(150, alertBuilder.size());
             Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
                     "Host: localhost\r\n" +
                     "User-Agent: QuestDB/LogAlert\r\n" +
@@ -144,7 +148,7 @@ public class HttpLogRecordSinkTest {
                                 " \\$\\\"\\",
                         alertBuilder.toString()
                 );
-                Assert.assertEquals(156, alertBuilder.length());
+                Assert.assertEquals(156, alertBuilder.size());
             } finally {
                 if (msgPtr != 0) {
                     Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
@@ -162,7 +166,7 @@ public class HttpLogRecordSinkTest {
             final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
-                logRecord.encodeUtf8(msg);
+                logRecord.put(msg);
                 alertBuilder.put(logRecord).$();
                 Assert.assertEquals(
                         "POST /api/v1/alerts HTTP/1.1\r\n" +
@@ -175,12 +179,12 @@ public class HttpLogRecordSinkTest {
                                 "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!",
                         alertBuilder.toString()
                 );
-                Assert.assertEquals(239, alertBuilder.length());
+                Assert.assertEquals(239, alertBuilder.size());
 
                 String randomMsg = "Yup, this is a random message.";
-                alertBuilder.rewindToMark().encodeUtf8(randomMsg, 5, randomMsg.length());
+                alertBuilder.rewindToMark().put(randomMsg, 5, randomMsg.length());
                 alertBuilder.$();
-                Assert.assertEquals(175, alertBuilder.length());
+                Assert.assertEquals(175, alertBuilder.size());
                 Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
                         "Host: localhost\r\n" +
                         "User-Agent: QuestDB/LogAlert\r\n" +
@@ -219,7 +223,7 @@ public class HttpLogRecordSinkTest {
                                 "test: Tres, Dos, Uno, Zero!!",
                         alertBuilder.toString()
                 );
-                Assert.assertEquals(178, alertBuilder.length());
+                Assert.assertEquals(178, alertBuilder.size());
             } finally {
                 if (msgPtr != 0) {
                     Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
@@ -242,9 +246,9 @@ public class HttpLogRecordSinkTest {
                             "Content-Type: application/json\r\n" +
                             "Content-Length:#########\r\n" +
                             "\r\n",
-                    Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
+                    Utf8s.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
             );
-            Assert.assertEquals(150, alertBuilder.length());
+            Assert.assertEquals(150, alertBuilder.size());
             try {
                 consumer.accept(alertBuilder);
             } finally {

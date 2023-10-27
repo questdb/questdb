@@ -35,7 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.DirectString;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -262,7 +262,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
                     long ts = (rowCount + 1) * increment;
                     int rowIndex = rowCount - 1;
-                    final DirectCharSequence dcs = new DirectCharSequence();
+                    final DirectString dcs = new DirectString();
                     try (
                             SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                             PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)
@@ -373,7 +373,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     rnd.reset();
                     long ts = 0;
                     int rowIndex = 0;
-                    final DirectCharSequence dcs = new DirectCharSequence();
+                    final DirectString dcs = new DirectString();
                     try (
                             SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                             PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)

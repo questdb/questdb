@@ -29,12 +29,12 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -82,7 +82,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 .put(']');
     }
 
-    public static CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
+    public static CairoException castError(String ilpType, int columnWriterIndex, int colType, DirectUtf8Sequence name) {
         return CairoException.critical(0)
                 .put("cast error for line protocol ").put(ilpType)
                 .put(" [columnWriterIndex=").put(columnWriterIndex)
@@ -453,7 +453,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 }
                 case LineTcpParser.ENTITY_TYPE_STRING: {
                     final int colTypeMeta = localDetails.getColumnTypeMeta(columnWriterIndex);
-                    final DirectByteCharSequence entityValue = entity.getValue();
+                    final DirectUtf8Sequence entityValue = entity.getValue();
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.IPv4:
@@ -468,10 +468,10 @@ class LineTcpMeasurementEvent implements Closeable {
                                 offset = buffer.addString(offset, entityValue, parser.hasNonAsciiChars());
                                 break;
                             case ColumnType.CHAR:
-                                if (entityValue.length() == 1 && entityValue.byteAt(0) > -1) {
-                                    offset = buffer.addChar(offset, entityValue.charAt(0));
+                                if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
+                                    offset = buffer.addChar(offset, (char) entityValue.byteAt(0));
                                 } else if (stringToCharCastAllowed) {
-                                    int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());
+                                    int encodedResult = Utf8s.utf8CharDecode(entityValue.lo(), entityValue.hi());
                                     if (Numbers.decodeLowShort(encodedResult) > 0) {
                                         offset = buffer.addChar(offset, (char) Numbers.decodeHighShort(encodedResult));
                                     } else {

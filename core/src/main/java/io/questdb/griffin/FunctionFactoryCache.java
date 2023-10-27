@@ -31,6 +31,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.TestOnly;
 
 public class FunctionFactoryCache {

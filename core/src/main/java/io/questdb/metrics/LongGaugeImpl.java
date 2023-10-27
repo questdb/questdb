@@ -24,8 +24,8 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUtf8CharSink;
+import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -59,7 +59,7 @@ public class LongGaugeImpl implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
         appendType(sink);
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
@@ -72,14 +72,14 @@ public class LongGaugeImpl implements LongGauge {
         counter.add(value);
     }
 
-    private void appendMetricName(CharSink sink) {
-        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+    private void appendMetricName(CharSinkBase<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.put(name);
     }
 
-    private void appendType(CharSink sink) {
-        sink.put(PrometheusFormatUtils.TYPE_PREFIX);
+    private void appendType(CharSinkBase<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
         sink.put(name);
-        sink.put(" gauge\n");
+        sink.putAscii(" gauge\n");
     }
 }

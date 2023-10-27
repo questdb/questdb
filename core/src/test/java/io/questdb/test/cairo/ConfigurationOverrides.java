@@ -95,8 +95,6 @@ public interface ConfigurationOverrides {
 
     long getPartitionO3SplitThreshold();
 
-    int getQueryCacheEventQueueCapacity();
-
     int getRecreateDistressedSequencerAttempts();
 
     int getRepeatMigrationsFromVersion();
@@ -232,8 +230,6 @@ public interface ConfigurationOverrides {
     void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays);
 
     void setPartitionO3SplitThreshold(long value);
-
-    void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity);
 
     void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts);
 

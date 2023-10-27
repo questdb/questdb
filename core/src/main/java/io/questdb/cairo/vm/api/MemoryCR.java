@@ -29,7 +29,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 //contiguous readable 
 public interface MemoryCR extends MemoryC, MemoryR {
@@ -84,7 +84,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 
-    default void getLong256(long offset, CharSink sink) {
+    default void getLong256(long offset, CharSinkBase<?> sink) {
         final long addr = addressOf(offset + Long256.BYTES);
         final long a, b, c, d;
         a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);

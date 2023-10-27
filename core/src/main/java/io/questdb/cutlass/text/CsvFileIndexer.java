@@ -38,8 +38,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -60,9 +61,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
     public static final long INDEX_ENTRY_SIZE = 2 * Long.BYTES;
     public static final CharSequence INDEX_FILE_NAME = "index.m";
     private static final Log LOG = LogFactory.getLog(CsvFileIndexer.class);
-    //A guess at how long could a timestamp string be, including long day, month name, etc.
-    //since we're only interested in timestamp field/col there's no point buffering whole line
-    //we'll copy field part to buffer only if current field is designated timestamp
+    // A guess at how long could a timestamp string be, including long day, month name, etc.
+    // since we're only interested in timestamp field/col there's no point buffering whole line
+    // we'll copy field part to buffer only if current field is designated timestamp
     private static final int MAX_TIMESTAMP_LENGTH = 100;
     private final CairoConfiguration configuration;
     private final int dirMode;
@@ -71,15 +72,15 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private final CharSequence inputRoot;
     private final long maxIndexChunkSize;
     final private ObjList<IndexOutputFile> outputFileDenseList = new ObjList<>();
-    //maps partitionFloors to output file descriptors
+    // maps partitionFloors to output file descriptors
     final private LongObjHashMap<IndexOutputFile> outputFileLookupMap = new LongObjHashMap<>();
-    //work dir path
+    // work dir path
     private final Path path;
-    //timestamp field of current line
-    final private DirectByteCharSequence timestampField;
-    //used for timestamp parsing
+    // timestamp field of current line
+    final private DirectUtf8String timestampField;
+    // used for timestamp parsing
     private final TypeManager typeManager;
-    //used for timestamp parsing
+    // used for timestamp parsing
     private final DirectCharSink utf8Sink;
     private boolean cancelled = false;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
@@ -88,36 +89,36 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private boolean eol;
     private int errorCount = 0;
     private boolean failOnTsError;
-    //input file descriptor (cached between initial boundary scan & indexing phases)
+    // input file descriptor (cached between initial boundary scan & indexing phases)
     private int fd = -1;
     private long fieldHi;
     private int fieldIndex;
-    //these two are pointers either into file read buffer or roll buffer
+    // these two are pointers either into file read buffer or roll buffer
     private long fieldLo;
     private long fieldRollBufCur;
     private long fieldRollBufPtr;
-    //if set to true then ignore first line of input file
+    // if set to true then ignore first line of input file
     private boolean header;
     private CharSequence importRoot;
     private boolean inQuote;
     private int index;
     private CharSequence inputFileName;
-    //fields taken & adjusted  from textLexer
+    // fields taken & adjusted  from textLexer
     private long lastLineStart;
     private long lastQuotePos = -1;
     private long lineCount;
     private long lineNumber;
-    //file offset of current start of buffered block
+    // file offset of current start of buffered block
     private long offset;
     private DateFormat partitionDirFormatMethod;
-    //used to map timestamp to output file
+    // used to map timestamp to output file
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private boolean rollBufferUnusable = false;
     private long sortBufferLength;
     private long sortBufferPtr;
-    //adapter used to parse timestamp column
+    // adapter used to parse timestamp column
     private TimestampAdapter timestampAdapter;
-    //position of timestamp column in csv (0-based)
+    // position of timestamp column in csv (0-based)
     private int timestampIndex;
     private long timestampValue;
     private boolean useFieldRollBuf = false;
@@ -134,7 +135,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
         this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
         this.fieldRollBufCur = fieldRollBufPtr;
-        this.timestampField = new DirectByteCharSequence();
+        this.timestampField = new DirectUtf8String();
         this.failOnTsError = false;
         this.path = new Path();
         this.sortBufferPtr = -1;
@@ -434,7 +435,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private Path getPartitionIndexDir(long partitionKey) {
         path.of(importRoot).slash();
-        partitionDirFormatMethod.format(partitionKey, null, null, path);
+        partitionDirFormatMethod.format(partitionKey, DateFormatUtils.EN_LOCALE, null, path);
         return path;
     }
 

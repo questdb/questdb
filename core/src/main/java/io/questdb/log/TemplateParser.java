@@ -24,12 +24,17 @@
 
 package io.questdb.log;
 
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
@@ -41,7 +46,7 @@ public class TemplateParser implements Sinkable {
     private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
     private final AtomicLong dateValue = new AtomicLong();
     private final CharSequenceIntHashMap envStartIdxs = new CharSequenceIntHashMap();
-    private final StringSink resolveSink = new StringSink();
+    private final Utf8StringSink resolveSink = new Utf8StringSink();
     private final ObjList<TemplateNode> templateNodes = new ObjList<>();
     private CharSequence originalTxt;
     private CharSequenceObjHashMap<CharSequence> props;
@@ -83,7 +88,7 @@ public class TemplateParser implements Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         for (int i = 0, n = templateNodes.size(); i < n; i++) {
             sink.put(templateNodes.getQuick(i));
         }
@@ -114,8 +119,8 @@ public class TemplateParser implements Sinkable {
         final DateFormat dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_DATE, DATE_FORMAT_KEY) {
             @Override
-            public void toSink(CharSink sink) {
-                dateFormat.format(dateValue.get(), TimestampFormatUtils.enLocale, null, sink);
+            public void toSink(@NotNull CharSinkBase<?> sink) {
+                dateFormat.format(dateValue.get(), TimestampFormatUtils.EN_LOCALE, null, sink);
             }
         });
     }
@@ -129,8 +134,8 @@ public class TemplateParser implements Sinkable {
         envStartIdxs.put(envKey, dollarOffset);
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_ENV, envKey) {
             @Override
-            public void toSink(CharSink sink) {
-                sink.encodeUtf8(envVal);
+            public void toSink(@NotNull CharSinkBase<?> sink) {
+                sink.put(envVal);
             }
         });
     }
@@ -138,11 +143,11 @@ public class TemplateParser implements Sinkable {
     private void addStaticTemplateNode(int start, int end, boolean needsUtf8Encoding) {
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_STATIC, null) {
             @Override
-            public void toSink(CharSink sink) {
+            public void toSink(@NotNull CharSinkBase<?> sink) {
                 if (needsUtf8Encoding) {
-                    sink.encodeUtf8(originalTxt, start, end);
-                } else {
                     sink.put(originalTxt, start, end);
+                } else {
+                    sink.putAscii(originalTxt, start, end);
                 }
             }
         });
