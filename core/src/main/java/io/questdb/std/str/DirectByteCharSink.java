@@ -57,6 +57,11 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         return sink.byteAt(index);
     }
 
+    @TestOnly
+    public long capacity() {
+        return sink.capacity();
+    }
+
     @Override
     public void clear() {
         sink.clear();
@@ -65,11 +70,6 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
     @Override
     public void close() {
         sink.close();
-    }
-
-    @TestOnly
-    public long capacity() {
-        return sink.capacity();
     }
 
     @Override
@@ -106,16 +106,6 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         return this;
     }
 
-    public int size() {
-        return sink.size();
-    }
-
-    @NotNull
-    @Override
-    public String toString() {
-        return Chars.stringFromUtf8Bytes(this);
-    }
-
     @Override
     public DirectByteCharSink put(CharSequence cs) {
         // Note that this implementation is not UTF-8 safe: It assumes `cs` is ASCII without checks.
@@ -124,5 +114,21 @@ public class DirectByteCharSink extends AbstractCharSink implements Mutable, Byt
         Chars.asciiStrCpy(cs, charCount, destPtr);
         sink.advance(charCount);
         return this;
+    }
+
+    @Override
+    public DirectByteCharSink putUtf8(long lo, long hi) {
+        sink.put(lo, hi - lo);
+        return this;
+    }
+
+    public int size() {
+        return sink.size();
+    }
+
+    @NotNull
+    @Override
+    public String toString() {
+        return Chars.stringFromUtf8Bytes(this);
     }
 }
