@@ -557,7 +557,17 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.LastLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastUuidGroupByFunctionFactory,
-
+//                  'last_not_null' group by function
+            io.questdb.griffin.engine.functions.groupby.LastNotNullCharGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullDateGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullFloatGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullStrGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullTimestampGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullUuidGroupByFunctionFactory,
 //                  'first' group by function
             io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstFloatGroupByFunctionFactory,
@@ -572,6 +582,19 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.FirstDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstUuidGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory,
+//                  'first_not_null' group by function
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullCharGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullDateGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullFloatGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullStrGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullTimestampGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullUuidGroupByFunctionFactory,
 //                  'max' group
             io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxBooleanGroupByFunctionFactory,
@@ -732,9 +755,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory,
             io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory,
 
-            // first
-            io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory,
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
             io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory,

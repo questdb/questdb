@@ -33,6 +33,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8CharSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -126,7 +127,7 @@ public abstract class WorkerPoolManager implements Scrapable {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(DirectUtf8CharSink sink) {
         long now = Worker.CLOCK_MICROS.getTicks();
         sharedPool.updateWorkerMetrics(now);
         ObjList<CharSequence> poolNames = dedicatedPools.keys();

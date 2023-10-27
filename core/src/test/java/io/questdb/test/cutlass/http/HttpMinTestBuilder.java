@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -46,9 +47,12 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
+    private PrometheusMetricsProcessor.RequestStatePool prometheusRequestStatePool;
     private Scrapable scrapable;
+    private int sendBufferSize;
     private int tcpSndBufSize;
     private TemporaryFolder temp;
+    private int workerCount;
 
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
@@ -56,9 +60,11 @@ public class HttpMinTestBuilder {
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .withTcpSndBufSize(tcpSndBufSize)
+                    .withSendBufferSize(sendBufferSize)
+                    .withWorkerCount(workerCount)
                     .build();
 
-            final WorkerPool workerPool = new TestWorkerPool(1);
+            final WorkerPool workerPool = new TestWorkerPool(httpConfiguration.getWorkerCount());
 
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
 
@@ -66,6 +72,10 @@ public class HttpMinTestBuilder {
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE)
             ) {
+                final PrometheusMetricsProcessor.RequestStatePool requestStatePool = prometheusRequestStatePool != null
+                        ? prometheusRequestStatePool
+                        : new PrometheusMetricsProcessor.RequestStatePool(httpConfiguration.getWorkerCount());
+                httpServer.registerClosable(requestStatePool);
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
@@ -74,9 +84,24 @@ public class HttpMinTestBuilder {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(scrapable, httpConfiguration);
+                        return new PrometheusMetricsProcessor(scrapable, httpConfiguration, requestStatePool);
                     }
                 });
+
+                // This `bind` for the default handler is only here to allow checking what the server behaviour is with
+                // an external web browser that would issue additional requests to `/favicon.ico`.
+                // It mirrors the setup of the min http server.
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/status";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new HealthCheckProcessor(httpConfiguration);
+                    }
+                }, true);
 
                 workerPool.start(LOG);
 
@@ -89,8 +114,18 @@ public class HttpMinTestBuilder {
         });
     }
 
+    public HttpMinTestBuilder withPrometheusPool(PrometheusMetricsProcessor.RequestStatePool pool) {
+        this.prometheusRequestStatePool = pool;
+        return this;
+    }
+
     public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
         this.scrapable = scrapable;
+        return this;
+    }
+
+    public HttpMinTestBuilder withSendBufferSize(int sendBufferSize) {
+        this.sendBufferSize = sendBufferSize;
         return this;
     }
 
@@ -101,6 +136,11 @@ public class HttpMinTestBuilder {
 
     public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
         this.temp = temp;
+        return this;
+    }
+
+    public HttpMinTestBuilder withWorkerCount(int workerCount) {
+        this.workerCount = workerCount;
         return this;
     }
 }
