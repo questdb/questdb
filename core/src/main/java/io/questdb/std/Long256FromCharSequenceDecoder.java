@@ -66,11 +66,9 @@ public abstract class Long256FromCharSequenceDecoder implements Long256Acceptor 
         if (p >= startPos) {
             return Numbers.parseHexLong(hexString, p, lim);
         }
-
         if (p > minPos) {
             return Numbers.parseHexLong(hexString, startPos, lim);
         }
-
         return 0;
     }
 }

@@ -39,11 +39,14 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+
+import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_LIMIT;
+import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_QUERY;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
@@ -634,8 +637,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         // Query text.
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpRequestHeader header = context.getRequestHeader();
-        final DirectByteCharSequence query = header.getUrlParam("query");
-        if (query == null || query.length() == 0) {
+        final DirectUtf8Sequence query = header.getUrlParam(URL_PARAM_QUERY);
+        if (query == null || query.size() == 0) {
             state.info().$("Empty query header received. Sending empty reply.").$();
             sendException(context.getChunkedResponseSocket(), context, 0, "No query text", query, keepAliveHeader, 400);
             return false;
@@ -645,14 +648,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         long skip = 0;
         long stop = Long.MAX_VALUE;
 
-        CharSequence limit = header.getUrlParam("limit");
+        DirectUtf8Sequence limit = header.getUrlParam(URL_PARAM_LIMIT);
         if (limit != null) {
-            int sepPos = Chars.indexOf(limit, ',');
+            int sepPos = Chars.indexOf(limit.asAsciiCharSequence(), ',');
             try {
                 if (sepPos > 0) {
                     skip = Numbers.parseLong(limit, 0, sepPos) - 1;
-                    if (sepPos + 1 < limit.length()) {
-                        stop = Numbers.parseLong(limit, sepPos + 1, limit.length());
+                    if (sepPos + 1 < limit.size()) {
+                        stop = Numbers.parseLong(limit, sepPos + 1, limit.size());
                     }
                 } else {
                     stop = Numbers.parseLong(limit);
@@ -745,6 +748,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             int position,
             CharSequence message,
             CharSequence query,
+            CharSequence keepAliveHeader,
+            int code
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        header(socket, context, keepAliveHeader, code);
+        JsonQueryProcessorState.prepareExceptionJson(socket, position, message, query);
+    }
+
+    static void sendException(
+            HttpChunkedResponseSocket socket,
+            HttpConnectionContext context,
+            int position,
+            CharSequence message,
+            DirectUtf8Sequence query,
             CharSequence keepAliveHeader,
             int code
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {

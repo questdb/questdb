@@ -30,11 +30,11 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -155,7 +155,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
+                if (Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -897,7 +897,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
+                if (Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);

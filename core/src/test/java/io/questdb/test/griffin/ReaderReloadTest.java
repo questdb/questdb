@@ -27,9 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -47,7 +47,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, "new_col.d.1") && failToOpen.get()) {
+                if (Utf8s.endsWithAscii(name, "new_col.d.1") && failToOpen.get()) {
                     return -1;
                 }
                 return super.openRO(name);

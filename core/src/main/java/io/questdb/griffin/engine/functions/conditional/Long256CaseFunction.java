@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 class Long256CaseFunction extends Long256Function implements CaseFunction {
     private final ObjList<Function> args;
@@ -46,7 +46,7 @@ class Long256CaseFunction extends Long256Function implements CaseFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSinkBase<?> sink) {
         picker.pick(rec).getLong256(rec, sink);
     }
 

@@ -182,7 +182,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         of(columnType, columnTop, columnIndex);
 
         if (!isEmpty) {
-            int plen = partitionPath.length();
+            int plen = partitionPath.size();
             try {
                 dFile(partitionPath, columnName, columnTxn);
                 this.fd = TableUtils.openRO(ff, partitionPath.$(), LOG);
@@ -198,7 +198,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         // Create it.
         of(columnType, columnTop, columnIndex);
 
-        int plen = partitionPath.length();
+        int plen = partitionPath.size();
         try {
             dFile(partitionPath, columnName, columnTxn);
             this.fd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);

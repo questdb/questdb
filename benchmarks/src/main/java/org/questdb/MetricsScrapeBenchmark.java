@@ -28,10 +28,10 @@ import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
-import io.questdb.std.Sinkable;
 import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8CharSink;
+import io.questdb.std.str.Sinkable;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -48,7 +48,7 @@ public class MetricsScrapeBenchmark {
     private static final MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
     private static final Counter counter = metricsRegistry.newCounter("counter");
     private static final LongGauge gauge = metricsRegistry.newLongGauge("gauge");
-    private static final DirectUtf8CharSink sink = new NullUtf8CharSink();
+    private static final NullCharSink sink = new NullCharSink();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -83,46 +83,21 @@ public class MetricsScrapeBenchmark {
         metricsRegistry.scrapeIntoPrometheus(sink);
     }
 
-    private static class NullUtf8CharSink implements DirectUtf8CharSink {
+    private static class NullCharSink implements DirectUtf8CharSink {
 
         @Override
         public NativeByteSink borrowDirectByteSink() {
             return new NativeByteSink() {
                 @Override
-                public long ptr() {
-                    return 0;
-                }
-
-                @Override
                 public void close() {
 
                 }
+
+                @Override
+                public long ptr() {
+                    return 0;
+                }
             };
-        }
-
-        @Override
-        public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
-            return 0;
-        }
-
-        @Override
-        public CharSink encodeUtf8(CharSequence cs) {
-            return this;
-        }
-
-        @Override
-        public CharSink encodeUtf8(CharSequence cs, int lo, int hi) {
-            return this;
-        }
-
-        @Override
-        public CharSink encodeUtf8AndQuote(CharSequence cs) {
-            return this;
-        }
-
-        @Override
-        public char[] getDoubleDigitsBuffer() {
-            return new char[0];
         }
 
         @Override
@@ -161,11 +136,6 @@ public class MetricsScrapeBenchmark {
         }
 
         @Override
-        public CharSink put(Throwable e) {
-            return this;
-        }
-
-        @Override
         public CharSink put(Sinkable sinkable) {
             return this;
         }
@@ -192,11 +162,6 @@ public class MetricsScrapeBenchmark {
 
         @Override
         public CharSink putQuoted(CharSequence cs) {
-            return this;
-        }
-
-        @Override
-        public CharSink putUtf8(char c) {
             return this;
         }
     }

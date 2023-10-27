@@ -32,9 +32,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -1244,7 +1242,7 @@ public class WalWriterTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
+                    if (Utf8s.endsWithAscii(name, WAL_INDEX_FILE_NAME)) {
                         // Set errno to path does not exist
                         this.openRO(Path.getThreadLocal2("does-not-exist").$());
                         return -1;
@@ -1451,7 +1449,7 @@ public class WalWriterTest extends AbstractCairoTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
+                if (Utf8s.endsWithAscii(name, "0" + Files.SEPARATOR + "c.d")) {
                     return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
@@ -2971,7 +2969,7 @@ public class WalWriterTest extends AbstractCairoTest {
             @Override
             public int openRO(LPSZ path) {
                 int fd = super.openRO(path);
-                if (Chars.endsWith(path, EVENT_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(path, EVENT_FILE_NAME)) {
                     this.fd = fd;
                 }
                 return fd;
@@ -3127,7 +3125,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     private void assertWalFileExist(Path path, TableToken tableName, String walName, int segment, String fileName) {
-        final int pathLen = path.length();
+        final int pathLen = path.size();
         try {
             path = constructPath(path, tableName, walName, segment, fileName);
             if (!Files.exists(path)) {

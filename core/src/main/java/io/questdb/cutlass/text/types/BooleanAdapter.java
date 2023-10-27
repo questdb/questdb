@@ -27,7 +27,7 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class BooleanAdapter extends AbstractTypeAdapter {
 
@@ -42,12 +42,12 @@ public final class BooleanAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         return SqlKeywords.isTrueKeyword(text) || SqlKeywords.isFalseKeyword(text);
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
         row.putBool(column, SqlKeywords.isTrueKeyword(value));
     }
 }

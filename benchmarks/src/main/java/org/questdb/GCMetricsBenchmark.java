@@ -25,7 +25,7 @@
 package org.questdb;
 
 import io.questdb.metrics.GCMetrics;
-import io.questdb.std.str.DirectByteCharSink;
+import io.questdb.std.str.Utf8StringSink;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.profile.GCProfiler;
 import org.openjdk.jmh.runner.Runner;
@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit;
 public class GCMetricsBenchmark {
 
     GCMetrics metrics = new GCMetrics();
-    DirectByteCharSink sink = new DirectByteCharSink(1024 * 1024);
+    Utf8StringSink sink = new Utf8StringSink(1024 * 1024);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

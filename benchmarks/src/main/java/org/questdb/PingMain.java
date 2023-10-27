@@ -27,12 +27,12 @@ package org.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8s;
 
 public class PingMain {
     public static final String PING = "PING";
@@ -61,12 +61,12 @@ public class PingMain {
                     .I$();
         } else {
             long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
-            DirectByteCharSequence flyweight = new DirectByteCharSequence();
+            DirectUtf8String flyweight = new DirectUtf8String();
 
             long durationUs = durationSec * Timestamps.SECOND_MICROS;
             long startUs = Os.currentTimeMicros();
             while (Os.currentTimeMicros() - durationUs < startUs) {
-                Chars.asciiStrCpy(PING, buf);
+                Utf8s.strCpyAscii(PING, buf);
                 int n = Net.send(fd, buf, PING.length());
                 if (n < 0) {
                     LOG.error().$("connection lost").$();

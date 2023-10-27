@@ -29,7 +29,7 @@ import io.questdb.metrics.CounterImpl;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.LongGaugeImpl;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.FlyweightDirectCharSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -118,28 +118,31 @@ public class AssociativeCacheTest {
     public void testImmutableKeys() {
         final AssociativeCache<String> cache = new AssociativeCache<>(8, 8);
         long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
-        final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+        final FlyweightDirectCharSink dcs = new FlyweightDirectCharSink();
 
         try {
-            Unsafe.getUnsafe().putByte(mem, (byte) 'A');
-            Unsafe.getUnsafe().putByte(mem + 1, (byte) 'B');
+            Unsafe.getUnsafe().putChar(mem, 'A');
+            Unsafe.getUnsafe().putChar(mem + 2, 'B');
 
-            cache.put(dbcs.of(mem, mem + 2), "hello1");
+            dcs.of(mem, mem + 4);
+            dcs.clear(4);
 
-            Unsafe.getUnsafe().putByte(mem, (byte) 'C');
-            Unsafe.getUnsafe().putByte(mem + 1, (byte) 'D');
+            cache.put(dcs, "hello1");
 
-            cache.put(dbcs, "hello2");
+            Unsafe.getUnsafe().putChar(mem, 'C');
+            Unsafe.getUnsafe().putChar(mem + 2, 'D');
 
-            Unsafe.getUnsafe().putByte(mem, (byte) 'A');
-            Unsafe.getUnsafe().putByte(mem + 1, (byte) 'B');
+            cache.put(dcs, "hello2");
 
-            Assert.assertEquals("hello1", cache.peek(dbcs));
+            Unsafe.getUnsafe().putChar(mem, 'A');
+            Unsafe.getUnsafe().putChar(mem + 2, 'B');
 
-            Unsafe.getUnsafe().putByte(mem, (byte) 'C');
-            Unsafe.getUnsafe().putByte(mem + 1, (byte) 'D');
+            Assert.assertEquals("hello1", cache.peek(dcs));
 
-            Assert.assertEquals("hello2", cache.peek(dbcs));
+            Unsafe.getUnsafe().putChar(mem, 'C');
+            Unsafe.getUnsafe().putChar(mem + 2, 'D');
+
+            Assert.assertEquals("hello2", cache.peek(dcs));
         } finally {
             Unsafe.free(mem, 1024, MemoryTag.NATIVE_DEFAULT);
         }

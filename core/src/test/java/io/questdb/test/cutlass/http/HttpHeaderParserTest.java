@@ -30,7 +30,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -41,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 
 public class HttpHeaderParserTest {
 
-    private static final ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
+    private static final ObjectPool<DirectUtf8String> pool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final static String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
             "Host: localhost:9000\r\n" +
             "Connection: keep-alive\r\n" +
@@ -258,7 +259,7 @@ public class HttpHeaderParserTest {
             long p = TestUtils.toMemory(request);
             try {
                 hp.parse(p, p + request.length(), true, false);
-                Assert.assertNull(hp.getUrlParam("accept"));
+                Assert.assertNull(hp.getUrlParam(new Utf8String("accept")));
             } finally {
                 Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
@@ -407,8 +408,8 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            TestUtils.assertEquals("'a'", hp.getUrlParam("x"));
-            TestUtils.assertEquals("b", hp.getUrlParam("y"));
+            TestUtils.assertEquals("'a'", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b", hp.getUrlParam(new Utf8String("y")));
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -420,10 +421,10 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            TestUtils.assertEquals("a", hp.getUrlParam("x"));
-            TestUtils.assertEquals("b c&", hp.getUrlParam("y"));
-            TestUtils.assertEquals("ab ba", hp.getUrlParam("z"));
-            TestUtils.assertEquals("2", hp.getUrlParam("w"));
+            TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b c&", hp.getUrlParam(new Utf8String("y")));
+            TestUtils.assertEquals("ab ba", hp.getUrlParam(new Utf8String("z")));
+            TestUtils.assertEquals("2", hp.getUrlParam(new Utf8String("w")));
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -435,9 +436,9 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            TestUtils.assertEquals("a", hp.getUrlParam("x"));
-            TestUtils.assertEquals("b c", hp.getUrlParam("y"));
-            TestUtils.assertEquals("123", hp.getUrlParam("z"));
+            TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b c", hp.getUrlParam(new Utf8String("y")));
+            TestUtils.assertEquals("123", hp.getUrlParam(new Utf8String("z")));
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -449,8 +450,8 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            TestUtils.assertEquals("a", hp.getUrlParam("x"));
-            TestUtils.assertEquals("b c", hp.getUrlParam("y"));
+            TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b c", hp.getUrlParam(new Utf8String("y")));
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -462,8 +463,8 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            TestUtils.assertEquals("a", hp.getUrlParam("x"));
-            TestUtils.assertEquals("b", hp.getUrlParam("y"));
+            TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b", hp.getUrlParam(new Utf8String("y")));
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -475,8 +476,8 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            TestUtils.assertEquals("a", hp.getUrlParam("x"));
-            TestUtils.assertEquals("b", hp.getUrlParam("y"));
+            TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b", hp.getUrlParam(new Utf8String("y")));
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -488,9 +489,9 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            TestUtils.assertEquals("a", hp.getUrlParam("x"));
-            TestUtils.assertEquals("b", hp.getUrlParam("y"));
-            Assert.assertNull(hp.getUrlParam("z"));
+            TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b", hp.getUrlParam(new Utf8String("y")));
+            Assert.assertNull(hp.getUrlParam(new Utf8String("z")));
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -502,8 +503,8 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            TestUtils.assertEquals("a", hp.getUrlParam("x"));
-            TestUtils.assertEquals("b", hp.getUrlParam("y"));
+            TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b", hp.getUrlParam(new Utf8String("y")));
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -528,19 +529,19 @@ public class HttpHeaderParserTest {
         TestUtils.assertEquals("/status", hp.getUrl());
         TestUtils.assertEquals("GET /status?x=1&a=&b&c&d=x HTTP/1.1", hp.getMethodLine());
         Assert.assertEquals(9, hp.size());
-        TestUtils.assertEquals("localhost:9000", hp.getHeader("Host"));
-        TestUtils.assertEquals("keep-alive", hp.getHeader("Connection"));
-        TestUtils.assertEquals("max-age=0", hp.getHeader("Cache-Control"));
-        TestUtils.assertEquals("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", hp.getHeader("Accept"));
-        TestUtils.assertEquals("Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36", hp.getHeader("User-Agent"));
-        TestUtils.assertEquals("multipart/form-data; boundary=----WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getHeader("Content-Type"));
-        TestUtils.assertContains(hp.getBoundary(), "----WebKitFormBoundaryQ3pdBTBXxEFUWDML");
-        TestUtils.assertEquals("gzip,deflate,sdch", hp.getHeader("Accept-Encoding"));
-        TestUtils.assertEquals("en-US,en;q=0.8", hp.getHeader("Accept-Language"));
-        TestUtils.assertEquals("textwrapon=false; textautoformat=false; wysiwyg=textarea", hp.getHeader("Cookie"));
-        TestUtils.assertEquals("1", hp.getUrlParam("x"));
-        TestUtils.assertEquals("&b", hp.getUrlParam("a"));
-        Assert.assertNull(hp.getUrlParam("c"));
-        Assert.assertNull(hp.getHeader("merge_copy_var_column"));
+        TestUtils.assertEquals("localhost:9000", hp.getHeader(new Utf8String("Host")));
+        TestUtils.assertEquals("keep-alive", hp.getHeader(new Utf8String("Connection")));
+        TestUtils.assertEquals("max-age=0", hp.getHeader(new Utf8String("Cache-Control")));
+        TestUtils.assertEquals("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", hp.getHeader(new Utf8String("Accept")));
+        TestUtils.assertEquals("Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36", hp.getHeader(new Utf8String("User-Agent")));
+        TestUtils.assertEquals("multipart/form-data; boundary=----WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getHeader(new Utf8String("Content-Type")));
+        TestUtils.assertContains(hp.getBoundary().asAsciiCharSequence(), "----WebKitFormBoundaryQ3pdBTBXxEFUWDML");
+        TestUtils.assertEquals("gzip,deflate,sdch", hp.getHeader(new Utf8String("Accept-Encoding")));
+        TestUtils.assertEquals("en-US,en;q=0.8", hp.getHeader(new Utf8String("Accept-Language")));
+        TestUtils.assertEquals("textwrapon=false; textautoformat=false; wysiwyg=textarea", hp.getHeader(new Utf8String("Cookie")));
+        TestUtils.assertEquals("1", hp.getUrlParam(new Utf8String("x")));
+        TestUtils.assertEquals("&b", hp.getUrlParam(new Utf8String("a")));
+        Assert.assertNull(hp.getUrlParam(new Utf8String("c")));
+        Assert.assertNull(hp.getHeader(new Utf8String("merge_copy_var_column")));
     }
 }

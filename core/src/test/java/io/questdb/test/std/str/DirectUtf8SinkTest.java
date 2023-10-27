@@ -28,8 +28,9 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
-import io.questdb.std.str.ByteSequence;
-import io.questdb.std.str.DirectByteCharSink;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -37,17 +38,27 @@ import org.junit.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Supplier;
 
-public class DirectByteCharSinkTest {
+public class DirectUtf8SinkTest {
+
+    @Test
+    public void testAsAsciiCharSequence() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(4)) {
+            final String str = "foobar";
+            sink.putAscii(str);
+            TestUtils.assertEquals(str, sink.asAsciiCharSequence());
+        }
+    }
+
     @Test
     public void testBorrowNativeByteSink() {
-        try (DirectByteCharSink sink = new DirectByteCharSink(16)) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
             Assert.assertEquals(32, sink.capacity());
             sink.put((byte) 'a');
             sink.put((byte) 'b');
             sink.put((byte) 'c');
-            Assert.assertEquals(3, sink.length());
+            Assert.assertEquals(3, sink.size());
             Assert.assertEquals((byte) 'a', sink.byteAt(0));
             Assert.assertEquals((byte) 'b', sink.byteAt(1));
             Assert.assertEquals((byte) 'c', sink.byteAt(2));
@@ -58,7 +69,7 @@ public class DirectByteCharSinkTest {
                 final long implPtr = Unsafe.getUnsafe().getLong(impl);
                 Unsafe.getUnsafe().putByte(implPtr, (byte) 'd');
                 Unsafe.getUnsafe().putLong(impl, implPtr + 1);
-                Assert.assertEquals(4, sink.length());
+                Assert.assertEquals(4, sink.size());
                 Assert.assertEquals(32, sink.capacity());
                 final long newImplPtr = DirectByteSink.implBook(impl, 400);
                 Assert.assertEquals(newImplPtr, Unsafe.getUnsafe().getLong(impl));
@@ -68,7 +79,7 @@ public class DirectByteCharSinkTest {
                 Assert.assertEquals(512, implHi - implLo);
             }
 
-            Assert.assertEquals(4, sink.length());
+            Assert.assertEquals(4, sink.size());
             Assert.assertEquals((byte) 'a', sink.byteAt(0));
             Assert.assertEquals((byte) 'b', sink.byteAt(1));
             Assert.assertEquals((byte) 'c', sink.byteAt(2));
@@ -82,14 +93,14 @@ public class DirectByteCharSinkTest {
         final long mallocCount0 = Unsafe.getMallocCount();
         final long reallocCount0 = Unsafe.getReallocCount();
         final long freeCount0 = Unsafe.getFreeCount();
-        final long memUsed0 = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+        final long memUsed0 = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
         final Supplier<Long> getMallocCount = () -> Unsafe.getMallocCount() - mallocCount0;
         final Supplier<Long> getReallocCount = () -> Unsafe.getReallocCount() - reallocCount0;
         final Supplier<Long> getFreeCount = () -> Unsafe.getFreeCount() - freeCount0;
-        final Supplier<Long> getMemUsed = () -> Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_CHAR_SINK) - memUsed0;
+        final Supplier<Long> getMemUsed = () -> Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK) - memUsed0;
 
-        try (DirectByteCharSink sink = new DirectByteCharSink(0)) {
-            Assert.assertEquals(0, sink.length());
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(0)) {
+            Assert.assertEquals(0, sink.size());
             Assert.assertEquals(32, sink.capacity());
             final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
@@ -99,7 +110,7 @@ public class DirectByteCharSinkTest {
             Assert.assertEquals(getMemUsed.get().longValue(), 32);
 
             sink.put((byte) 'a');
-            Assert.assertEquals(1, sink.length());
+            Assert.assertEquals(1, sink.size());
             Assert.assertEquals(32, sink.capacity());
             Assert.assertEquals(ptr, sink.ptr());
             Assert.assertEquals(getMallocCount.get().longValue(), 1);
@@ -108,7 +119,7 @@ public class DirectByteCharSinkTest {
             Assert.assertEquals(getMemUsed.get().longValue(), 32);
 
             sink.clear();
-            Assert.assertEquals(0, sink.length());
+            Assert.assertEquals(0, sink.size());
             Assert.assertEquals(32, sink.capacity());
             Assert.assertEquals(ptr, sink.ptr());
             Assert.assertEquals(getMallocCount.get().longValue(), 1);
@@ -116,20 +127,11 @@ public class DirectByteCharSinkTest {
             Assert.assertEquals(getFreeCount.get().longValue(), 0);
             Assert.assertEquals(getMemUsed.get().longValue(), 32);
 
-            final ByteSequence bs = new ByteSequence() {
-                @Override
-                public byte byteAt(int index) {
-                    return (byte) 'a';
-                }
+            Utf8StringSink onHeapSink = new Utf8StringSink();
+            onHeapSink.repeat("a", 40);
 
-                @Override
-                public int length() {
-                    return 40;
-                }
-            };
-
-            sink.put(bs);
-            Assert.assertEquals(40, sink.length());
+            sink.put(onHeapSink);
+            Assert.assertEquals(40, sink.size());
             Assert.assertEquals(64, sink.capacity());
             Assert.assertEquals(getMallocCount.get().longValue(), 1);
             Assert.assertEquals(getReallocCount.get().longValue(), 1);
@@ -141,6 +143,17 @@ public class DirectByteCharSinkTest {
         Assert.assertEquals(getReallocCount.get().longValue(), 1);
         Assert.assertEquals(getFreeCount.get().longValue(), 1);
         Assert.assertEquals(getMemUsed.get().longValue(), 0);
+    }
+
+    @Test
+    public void testPutUtf8Sequence() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(1)) {
+            final String str = "こんにちは世界";
+            final Utf8String utf8Str = new Utf8String(str);
+            sink.put(utf8Str);
+            byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+            TestUtils.assertEquals(expectedBytes, sink);
+        }
     }
 
     @Test
@@ -177,9 +190,9 @@ public class DirectByteCharSinkTest {
                 "~\n";
 
         final int initialCapacity = 4;
-        try (DirectByteCharSink sink = new DirectByteCharSink(initialCapacity)) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(initialCapacity)) {
             for (int i = 0; i < 30; i++) {
-                sink.put((byte) ('a' + i)).put((byte) '\n');
+                sink.putAscii((char) ('a' + i)).putAscii('\n');
             }
             TestUtils.assertEquals(expected, sink.toString());
             sink.clear();
@@ -188,15 +201,15 @@ public class DirectByteCharSinkTest {
             }
             TestUtils.assertEquals(expected, sink.toString());
 
-            Assert.assertTrue(sink.length() > 0);
-            Assert.assertTrue(sink.capacity() >= sink.length());
+            Assert.assertTrue(sink.size() > 0);
+            Assert.assertTrue(sink.capacity() >= sink.size());
         }
     }
 
     @Test
     public void testUtf8Encoding() {
         final int initialCapacity = 4;
-        try (DirectByteCharSink sink = new DirectByteCharSink(initialCapacity)) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(initialCapacity)) {
             assertUtf8Encoding(sink, "Hello world");
             assertUtf8Encoding(sink, "Привет мир"); // Russian
             assertUtf8Encoding(sink, "你好世界"); // Chinese
@@ -210,12 +223,22 @@ public class DirectByteCharSinkTest {
         }
     }
 
-    private static void assertUtf8Encoding(DirectByteCharSink sink, String s) {
+    @Test
+    public void testUtf8Sequence() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(4)) {
+            final String str = "Здравей свят";
+            sink.put(str);
+            byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+            TestUtils.assertEquals(expectedBytes, sink);
+        }
+    }
+
+    private static void assertUtf8Encoding(DirectUtf8Sink sink, String s) {
         sink.clear();
-        sink.encodeUtf8(s);
+        sink.put(s);
 
         long ptr = sink.ptr();
-        int len = sink.length();
+        int len = sink.size();
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
             bytes[i] = Unsafe.getUnsafe().getByte(ptr + i);

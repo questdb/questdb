@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 import java.util.Comparator;
@@ -191,7 +192,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 tsColName = meta.getColumnName(meta.getTimestampIndex());
             }
             path.of(cairoConfig.getRoot()).concat(tableToken).$();
-            rootLen = path.length();
+            rootLen = path.size();
             scanDetachedAndAttachablePartitions();
             limit = tableReader.getTxFile().getPartitionCount() +
                     attachablePartitions.size() +
@@ -323,7 +324,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     do {
                         partitionName.clear();
                         long name = ff.findName(pFind);
-                        Chars.utf8ToUtf16Z(name, partitionName);
+                        Utf8s.utf8ToUtf16Z(name, partitionName);
                         int type = ff.findType(pFind);
                         if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(partitionName, TableUtils.ATTACHABLE_DIR_MARKER)) {
                             attachablePartitions.add(Chars.toString(partitionName));

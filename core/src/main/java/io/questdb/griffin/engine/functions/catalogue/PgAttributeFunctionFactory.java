@@ -128,7 +128,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
-            this.plimit = this.path.length();
+            this.plimit = path.size();
             this.metaMem = metaMem;
         }
 

@@ -52,7 +52,6 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
-import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class WalWriter implements TableWriterAPI {
     public static final int NEW_COL_RECORD_SIZE = 6;
@@ -85,7 +84,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final int timestampIndex;
-    private final ObjList<ByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
+    private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
     private final int walId;
     private final WalInitializer walInitializer;
@@ -128,7 +127,7 @@ public class WalWriter implements TableWriterAPI {
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
         this.path = new Path().of(configuration.getRoot()).concat(tableToken).concat(walName);
-        this.rootLen = path.length();
+        this.rootLen = path.size();
         this.metrics = metrics;
         this.open = true;
         this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
@@ -656,7 +655,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private int acquireSegmentLock() {
-        final int segmentPathLen = path.length();
+        final int segmentPathLen = path.size();
         try {
             lockName(path);
             final int segmentLockFd = TableUtils.lock(ff, path);
@@ -858,7 +857,7 @@ public class WalWriter implements TableWriterAPI {
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
-        utf8SymbolMaps.extendAndSet(columnWriterIndex, new ByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
     private void configureSymbolMapWriter(
@@ -876,7 +875,7 @@ public class WalWriter implements TableWriterAPI {
         FilesFacade ff = configuration.getFilesFacade();
         Path tempPath = Path.PATH.get();
         tempPath.of(configuration.getRoot()).concat(tableToken);
-        int tempPathTripLen = tempPath.length();
+        int tempPathTripLen = tempPath.size();
 
         path.trimTo(rootLen);
         TableUtils.offsetFileName(tempPath, columnName, columnNameTxn);
@@ -947,7 +946,7 @@ public class WalWriter implements TableWriterAPI {
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
-        utf8SymbolMaps.extendAndSet(columnWriterIndex, new ByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, symbolMapReader.containsNullValue());
@@ -1037,7 +1036,7 @@ public class WalWriter implements TableWriterAPI {
     private int createSegmentDir(int segmentId) {
         path.trimTo(rootLen);
         path.slash().put(segmentId);
-        final int segmentPathLen = path.length();
+        final int segmentPathLen = path.size();
         segmentLockFd = acquireSegmentLock();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
@@ -1136,7 +1135,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void mkWalDir() {
-        final int walDirLength = path.length();
+        final int walDirLength = path.size();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
         }
@@ -1285,7 +1284,7 @@ public class WalWriter implements TableWriterAPI {
         final Path tempPath = Path.PATH.get().of(path);
 
         if (ColumnType.isVariableLength(columnType)) {
-            final int trimTo = path.length();
+            final int trimTo = path.size();
             iFile(path, columnName);
             iFile(tempPath, newName);
             if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
@@ -1318,7 +1317,7 @@ public class WalWriter implements TableWriterAPI {
                 symbolMap.clear();
             }
 
-            final ByteCharSequenceIntHashMap dbcsSymbolMap = utf8SymbolMaps.getQuick(i);
+            final Utf8StringIntHashMap dbcsSymbolMap = utf8SymbolMaps.getQuick(i);
             if (dbcsSymbolMap != null) {
                 dbcsSymbolMap.clear();
             }
@@ -1335,7 +1334,7 @@ public class WalWriter implements TableWriterAPI {
     private void rollLastWalEventRecord(int newSegmentId, long uncommittedRows) {
         events.rollback();
         path.trimTo(rootLen).slash().put(newSegmentId);
-        events.openEventFile(path, path.length());
+        events.openEventFile(path, path.size());
         lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
         events.sync();
     }
@@ -1652,8 +1651,8 @@ public class WalWriter implements TableWriterAPI {
                         // we should switch metadata to this new segment
                         path.trimTo(rootLen).slash().put(segmentId);
                         // this will close old _meta file and create the new one
-                        metadata.switchTo(path, path.length());
-                        openColumnFiles(columnName, columnIndex, path.length());
+                        metadata.switchTo(path, path.size());
+                        openColumnFiles(columnName, columnIndex, path.size());
                     }
                     // if we did not have to roll uncommitted rows to a new segment
                     // it will add the column file and switch metadata file on next row write
@@ -1722,7 +1721,7 @@ public class WalWriter implements TableWriterAPI {
                             // we should switch metadata to this new segment
                             path.trimTo(rootLen).slash().put(segmentId);
                             // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.length());
+                            metadata.switchTo(path, path.size());
                         }
                         // if we did not have to roll uncommitted rows to a new segment
                         // it will switch metadata file on next row write
@@ -1772,7 +1771,7 @@ public class WalWriter implements TableWriterAPI {
                             // we should switch metadata to this new segment
                             path.trimTo(rootLen).slash().put(segmentId);
                             // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.length());
+                            metadata.switchTo(path, path.size());
                             renameColumnFiles(columnType, columnName, newColumnName);
                         }
                         // if we did not have to roll uncommitted rows to a new segment
@@ -1925,6 +1924,12 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString) {
+            getPrimaryColumn(columnIndex).putLong256Utf8(hexString);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
         public void putShort(int columnIndex, short value) {
             getPrimaryColumn(columnIndex).putShort(value);
             setRowValueNotNull(columnIndex);
@@ -1949,8 +1954,8 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8AsUtf16(value, hasNonAsciiChars));
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value, hasNonAsciiChars));
             setRowValueNotNull(columnIndex);
         }
 
@@ -1975,12 +1980,13 @@ public class WalWriter implements TableWriterAPI {
             putInt(columnIndex, key);
         }
 
-        public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-            // this method will write column name to the buffer if it has to be utf8 decoded
+        @Override
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+            // this method will write column name to the buffer if it has to be UTF-8 decoded
             // otherwise it will write nothing.
             final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
             if (symbolMapReader != null) {
-                ByteCharSequenceIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
+                Utf8StringIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
                 int index = utf8Map.keyIndex(value);
                 if (index < 0) {
                     getPrimaryColumn(columnIndex).putInt(utf8Map.valueAt(index));
@@ -1989,7 +1995,7 @@ public class WalWriter implements TableWriterAPI {
                     // slow path, symbol is not in utf8 cache
                     utf8Map.putAt(
                             index,
-                            ByteCharSequence.newInstance(value),
+                            Utf8String.newInstance(value),
                             putSymUtf8Slow(columnIndex, value, hasNonAsciiChars, symbolMapReader)
                     );
                 }
@@ -2009,6 +2015,12 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void putUuid(int columnIndex, CharSequence uuidStr) {
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
+        }
+
+        @Override
+        public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
@@ -2051,19 +2063,19 @@ public class WalWriter implements TableWriterAPI {
 
         private int putSymUtf8Slow(
                 int columnIndex,
-                DirectByteCharSequence utf8Value,
+                DirectUtf8Sequence utf8Value,
                 boolean hasNonAsciiChars,
                 SymbolMapReader symbolMapReader
         ) {
             return putSym0(
                     columnIndex,
-                    utf8ToUtf16(utf8Value, tempSink, hasNonAsciiChars),
+                    Utf8s.utf8ToUtf16(utf8Value, tempSink, hasNonAsciiChars),
                     symbolMapReader
             );
         }
 
         private void setTimestamp(long value) {
-            //avoid lookups by having a designated field with primaryColumn
+            // avoid lookups by having a designated field with primaryColumn
             getPrimaryColumn(timestampIndex).putLong128(value, segmentRowCount);
             setRowValueNotNull(timestampIndex);
             this.timestamp = value;

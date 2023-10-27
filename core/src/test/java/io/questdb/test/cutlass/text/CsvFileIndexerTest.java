@@ -37,6 +37,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -121,7 +122,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, partition)) {
+                if (Utf8s.endsWithAscii(path, partition)) {
                     return true;
                 }
                 return super.exists(path);
@@ -138,7 +139,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, partition)) {
+                if (Utf8s.endsWithAscii(path, partition)) {
                     return false;
                 }
                 return super.exists(path);
@@ -146,7 +147,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
 
             @Override
             public int mkdir(Path path, int mode) {
-                if (Chars.endsWith(path, partition)) {
+                if (Utf8s.endsWithAscii(path, partition)) {
                     return -1;
                 }
                 return super.mkdir(path, mode);

@@ -27,9 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -101,7 +101,7 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
     private Path assertConvertFileExists(String tableName) {
         final TableToken token = engine.verifyTableName(tableName);
         final Path path = Path.PATH.get().of(configuration.getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
-        Assert.assertTrue(Chars.toString(path), Files.exists(path.$()));
+        Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
         return path;
     }
 

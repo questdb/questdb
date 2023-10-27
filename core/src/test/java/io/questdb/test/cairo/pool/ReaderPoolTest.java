@@ -33,6 +33,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -521,7 +522,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             @Override
             public int openRO(LPSZ name) {
                 count--;
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && locked.get() == 1) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && locked.get() == 1) {
                     return -1;
                 }
                 return super.openRO(name);

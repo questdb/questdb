@@ -26,7 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class BadTimestampAdapter extends TimestampAdapter {
 
@@ -36,17 +36,17 @@ public final class BadTimestampAdapter extends TimestampAdapter {
     }
 
     @Override
-    public long getTimestamp(DirectByteCharSequence value) {
+    public long getTimestamp(DirectUtf8Sequence value) {
         return Numbers.LONG_NaN;
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
         row.putTimestamp(column, Numbers.LONG_NaN);
     }
 }

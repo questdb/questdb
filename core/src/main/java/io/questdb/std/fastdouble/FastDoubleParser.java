@@ -36,7 +36,6 @@ public final class FastDoubleParser {
      * Don't let anyone instantiate this class.
      */
     private FastDoubleParser() {
-
     }
 
     /**
@@ -102,8 +101,8 @@ public final class FastDoubleParser {
      *
      * @param str            the string to be parsed, a memory pointer to array with characters
      *                       in ISO-8859-1, ASCII or UTF-8 encoding
-     * @param rejectOverflow reject parsed values that overflow double type
      * @param len            length of the string
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed double value
      * @throws NumericException if the string can not be parsed
      */

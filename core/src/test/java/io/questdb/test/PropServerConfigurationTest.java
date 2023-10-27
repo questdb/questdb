@@ -39,6 +39,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -278,7 +279,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSnapshotRecoveryEnabled());
 
         // assert mime types
-        TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
+        TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get(new Utf8String("json")));
 
         Assert.assertEquals(500_000, configuration.getCairoConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getO3MinLag());
@@ -334,7 +335,6 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
 
-        Assert.assertEquals(4, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataAppendPageSize());
         Assert.assertEquals(524288, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
@@ -1136,7 +1136,6 @@ public class PropServerConfigurationTest {
 
             Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
-            Assert.assertEquals(32, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
             Assert.assertEquals(1048576, configuration.getCairoConfiguration().getDataAppendPageSize());
             Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());

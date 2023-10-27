@@ -187,7 +187,7 @@ public class FunctionFactoryDescriptor {
 
     public static String replaceSignatureName(String name, String signature) throws SqlException {
         int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        StringSink signatureBuilder = Misc.getThreadLocalSink();
         signatureBuilder.put(name);
         signatureBuilder.put(signature, openBraceIndex, signature.length());
         return signatureBuilder.toString();
@@ -195,7 +195,7 @@ public class FunctionFactoryDescriptor {
 
     public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
         int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        StringSink signatureBuilder = Misc.getThreadLocalSink();
         signatureBuilder.put(name);
         signatureBuilder.put('(');
         for (int i = signature.length() - 2; i > openBraceIndex; i--) {

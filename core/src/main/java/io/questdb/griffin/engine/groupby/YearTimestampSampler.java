@@ -25,7 +25,8 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampSampler implements TimestampSampler {
 
@@ -82,8 +83,8 @@ public class YearTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("YearTsSampler");
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("YearTsSampler");
     }
 
     private long addYears(long timestamp, int bucket) {

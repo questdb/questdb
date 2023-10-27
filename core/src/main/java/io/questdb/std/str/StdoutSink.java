@@ -27,10 +27,11 @@ package io.questdb.std.str;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public final class StdoutSink extends AbstractCharSink implements Closeable {
+public final class StdoutSink implements Utf8Sink, Closeable {
 
     public static final StdoutSink INSTANCE = new StdoutSink();
     private final int bufferCapacity = 1024;
@@ -41,10 +42,9 @@ public final class StdoutSink extends AbstractCharSink implements Closeable {
 
     @Override
     public void close() {
-        free();
+        Unsafe.free(buffer, bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     }
 
-    @Override
     public void flush() {
         int len = (int) (ptr - buffer);
         if (len > 0) {
@@ -54,25 +54,21 @@ public final class StdoutSink extends AbstractCharSink implements Closeable {
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
-        if (cs != null) {
-            for (int i = 0, len = cs.length(); i < len; i++) {
-                put(cs.charAt(i));
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            for (int i = 0, size = us.size(); i < size; i++) {
+                put(us.byteAt(i));
             }
         }
         return this;
     }
 
     @Override
-    public CharSink put(char c) {
+    public Utf8Sink put(byte b) {
         if (ptr == limit) {
             flush();
         }
-        Unsafe.getUnsafe().putByte(ptr++, (byte) c);
+        Unsafe.getUnsafe().putByte(ptr++, b);
         return this;
-    }
-
-    private void free() {
-        Unsafe.free(buffer, bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     }
 }

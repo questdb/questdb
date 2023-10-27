@@ -235,7 +235,7 @@ public class TypeManagerTest extends AbstractTest {
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                DateFormatUtils.enLocale
+                DateFormatUtils.EN_LOCALE
         );
 
         inputFormatConfiguration.parseConfiguration(getClass(), jsonLexer, root, fileResource);

@@ -40,9 +40,9 @@ public class PageFrameReduceTask implements Closeable {
 
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
+    private final StringSink errorMsg = new StringSink();
     private final long pageFrameQueueCapacity;
     private final DirectLongList rows;
-    private StringSink errorMsg = new StringSink();
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;

@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.std.Sinkable;
+import io.questdb.std.str.Sinkable;
 
 public interface TimestampSampler extends Sinkable {
 

@@ -26,12 +26,14 @@ package io.questdb.cairo;
 
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
@@ -91,6 +93,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return duplicateColumn(columnName, null);
     }
 
+    @SuppressWarnings("unused")
     public static CairoException entityIsDisabled(CharSequence entityName) {
         return nonCritical().setEntityDisabled(true).put("entity is disabled [name=").put(entityName).put(']');
     }
@@ -200,8 +203,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
-    public CairoException put(CharSequence cs) {
+    public CairoException put(@Nullable CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public CairoException put(@Nullable Utf8Sequence us) {
+        message.put(us);
         return this;
     }
 
@@ -241,8 +249,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[').put(errno).put("]: ").put(message);
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('[').put(errno).putAscii("]: ").put(message);
     }
 
     public CairoException ts(long timestamp) {

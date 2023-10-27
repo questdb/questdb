@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -180,7 +182,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         sink.put(list);
     }
 
