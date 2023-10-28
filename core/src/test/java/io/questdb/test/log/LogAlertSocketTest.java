@@ -30,6 +30,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -559,6 +560,11 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord $(@Nullable Utf8Sequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
             throw new UnsupportedOperationException();
         }
 

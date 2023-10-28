@@ -29,6 +29,7 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -856,6 +857,11 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord $(@Nullable Utf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
             return this;
         }
 
