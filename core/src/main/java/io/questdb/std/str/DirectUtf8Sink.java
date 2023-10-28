@@ -38,7 +38,7 @@ import java.io.Closeable;
 /**
  * UTF-8 sink backed by native memory.
  */
-public class DirectUtf8Sink implements MutableUtf8Sink, DirectUtf8Sequence, BorrowableAsNativeByteSink, Closeable {
+public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, DirectUtf8Sequence, Closeable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final DirectByteSink sink;
 

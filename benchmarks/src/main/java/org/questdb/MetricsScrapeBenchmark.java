@@ -29,9 +29,7 @@ import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.std.bytes.NativeByteSink;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUtf8CharSink;
-import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.*;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -83,7 +81,7 @@ public class MetricsScrapeBenchmark {
         metricsRegistry.scrapeIntoPrometheus(sink);
     }
 
-    private static class NullCharSink implements DirectUtf8CharSink {
+    private static class NullCharSink implements BorrowableUtf8Sink {
 
         @Override
         public NativeByteSink borrowDirectByteSink() {
@@ -101,67 +99,17 @@ public class MetricsScrapeBenchmark {
         }
 
         @Override
-        public CharSink put(char c) {
+        public Utf8Sink put(long lo, long hi) {
             return this;
         }
 
         @Override
-        public CharSink put(int value) {
+        public Utf8Sink put(Utf8Sequence us) {
             return this;
         }
 
         @Override
-        public CharSink put(long value) {
-            return this;
-        }
-
-        @Override
-        public CharSink put(float value, int scale) {
-            return this;
-        }
-
-        @Override
-        public CharSink put(double value) {
-            return this;
-        }
-
-        @Override
-        public CharSink put(double value, int scale) {
-            return this;
-        }
-
-        @Override
-        public CharSink put(boolean value) {
-            return this;
-        }
-
-        @Override
-        public CharSink put(Sinkable sinkable) {
-            return this;
-        }
-
-        @Override
-        public CharSink put(char[] chars, int start, int len) {
-            return this;
-        }
-
-        @Override
-        public CharSink put(CharSequence cs) {
-            return this;
-        }
-
-        @Override
-        public CharSink putISODate(long value) {
-            return this;
-        }
-
-        @Override
-        public CharSink putISODateMillis(long value) {
-            return this;
-        }
-
-        @Override
-        public CharSink putQuoted(CharSequence cs) {
+        public Utf8Sink put(byte b) {
             return this;
         }
     }
