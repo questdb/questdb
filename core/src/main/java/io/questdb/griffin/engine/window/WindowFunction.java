@@ -22,16 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.analytic;
+package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.std.IntList;
 
-public interface AnalyticFunction extends Function {
+public interface WindowFunction extends Function {
     int ONE_PASS = 1;
     int TWO_PASS = 2;
     int ZERO_PASS = 0;
@@ -41,7 +41,7 @@ public interface AnalyticFunction extends Function {
 
     /**
      * @return number of additional passes over base data set required to calculate this function.
-     * {@link  #ZERO_PASS} means analytic function can be calculated on the fly and doesn't require additional passes .
+     * {@link  #ZERO_PASS} means window function can be calculated on the fly and doesn't require additional passes .
      */
     default int getPassCount() {
         return ONE_PASS;
@@ -49,21 +49,21 @@ public interface AnalyticFunction extends Function {
 
     void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order);
 
-    void pass1(Record record, long recordOffset, AnalyticSPI spi);
+    void pass1(Record record, long recordOffset, WindowSPI spi);
 
-    default void pass2(Record record, long recordOffset, AnalyticSPI spi) {
+    default void pass2(Record record, long recordOffset, WindowSPI spi) {
     }
 
     default void preparePass2() {
     }
 
     /**
-     * Releases native memory and resets internal state to default/initial. Called on [Cached]Analytic cursor close.
+     * Releases native memory and resets internal state to default/initial. Called on [Cached]Window cursor close.
      **/
     void reset();
 
     /*
-          Set index of record chain column used to store analytic function result.
+          Set index of record chain column used to store window function result.
          */
     void setColumnIndex(int columnIndex);
 }

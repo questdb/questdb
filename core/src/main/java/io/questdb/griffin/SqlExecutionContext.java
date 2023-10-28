@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -42,13 +42,13 @@ import java.io.Closeable;
 
 public interface SqlExecutionContext extends Closeable {
 
-    void clearAnalyticContext();
+    void clearWindowContext();
 
     @Override
     default void close() {
     }
 
-    void configureAnalyticContext(
+    void configureWindowContext(
             @Nullable VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes keyTypes,
@@ -72,9 +72,6 @@ public interface SqlExecutionContext extends Closeable {
     default boolean containsSecret() {
         return false;
     }
-
-
-    AnalyticContext getAnalyticContext();
 
     default Rnd getAsyncRandom() {
         return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
@@ -148,6 +145,8 @@ public interface SqlExecutionContext extends Closeable {
     default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
+
+    WindowContext getWindowContext();
 
     int getWorkerCount();
 

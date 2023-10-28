@@ -351,7 +351,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel analyticModel,
+            QueryModel windowModel,
             QueryModel groupByModel,
             QueryModel outerModel,
             QueryModel distinctModel
@@ -370,7 +370,7 @@ public class SqlOptimiser implements Mutable {
         // pull literals only into translating model
         emitLiterals(qc.getAst(), translatingModel, null, validatingModel, false);
         groupByModel.addBottomUpColumn(innerColumn);
-        analyticModel.addBottomUpColumn(innerColumn);
+        windowModel.addBottomUpColumn(innerColumn);
         outerModel.addBottomUpColumn(innerColumn);
         distinctModel.addBottomUpColumn(innerColumn);
     }
@@ -1010,7 +1010,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel analyticModel,
+            QueryModel windowModel,
             QueryModel groupByModel
     ) throws SqlException {
         // add duplicate column names only to group-by model
@@ -1041,7 +1041,7 @@ public class SqlOptimiser implements Mutable {
             final QueryColumn translatedColumn = nextColumn(alias);
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
-            analyticModel.addBottomUpColumn(translatedColumn);
+            windowModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
             return translatedColumn;
         }
@@ -1072,7 +1072,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // order hash is used to determine redundant order when parsing analytic function definition
+    // order hash is used to determine redundant order when parsing window function definition
     private void createOrderHash(QueryModel model) {
         LowerCaseCharSequenceIntHashMap hash = model.getOrderHash();
         hash.clear();
@@ -1142,7 +1142,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel analyticModel,
+            QueryModel windowModel,
             QueryModel groupByModel,
             QueryModel outerModel,
             QueryModel distinctModel
@@ -1165,10 +1165,10 @@ public class SqlOptimiser implements Mutable {
             innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
 
-            // analytic model is used together with inner model
-            final CharSequence analyticAlias = createColumnAlias(innerAlias, analyticModel);
-            final QueryColumn analyticColumn = nextColumn(analyticAlias, innerAlias);
-            analyticModel.addBottomUpColumn(analyticColumn);
+            // window model is used together with inner model
+            final CharSequence windowAlias = createColumnAlias(innerAlias, windowModel);
+            final QueryColumn windowColumn = nextColumn(windowAlias, innerAlias);
+            windowModel.addBottomUpColumn(windowColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
@@ -1197,7 +1197,7 @@ public class SqlOptimiser implements Mutable {
 
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
-            analyticModel.addBottomUpColumn(translatedColumn);
+            windowModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
@@ -1212,7 +1212,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel analyticModel
+            QueryModel windowModel
     ) throws SqlException {
         // add duplicate column names only to group-by model
         // taking into account that column is pre-aliased, e.g.
@@ -1227,10 +1227,10 @@ public class SqlOptimiser implements Mutable {
             final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
             innerModel.addBottomUpColumn(translatedColumn);
 
-            // analytic model is used together with inner model
-            final CharSequence analyticAlias = createColumnAlias(innerAlias, analyticModel);
-            final QueryColumn analyticColumn = nextColumn(analyticAlias, innerAlias);
-            analyticModel.addBottomUpColumn(analyticColumn);
+            // window model is used together with inner model
+            final CharSequence windowAlias = createColumnAlias(innerAlias, windowModel);
+            final QueryColumn windowColumn = nextColumn(windowAlias, innerAlias);
+            windowModel.addBottomUpColumn(windowColumn);
         } else {
             final CharSequence alias = createColumnAlias(columnName, translatingModel);
             addColumnToTranslatingModel(
@@ -1246,7 +1246,7 @@ public class SqlOptimiser implements Mutable {
 
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
-            analyticModel.addBottomUpColumn(translatedColumn);
+            windowModel.addBottomUpColumn(translatedColumn);
         }
     }
 
@@ -1256,7 +1256,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel baseModel,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel analyticModel,
+            QueryModel windowModel,
             QueryModel groupByModel,
             QueryModel outerModel,
             QueryModel distinctModel
@@ -1276,7 +1276,7 @@ public class SqlOptimiser implements Mutable {
                     qc.getAst().position,
                     translatingModel,
                     innerModel,
-                    analyticModel,
+                    windowModel,
                     groupByModel,
                     outerModel,
                     distinctModel
@@ -1290,7 +1290,7 @@ public class SqlOptimiser implements Mutable {
                         qc.getAst().position,
                         translatingModel,
                         innerModel,
-                        analyticModel,
+                        windowModel,
                         groupByModel,
                         outerModel,
                         distinctModel
@@ -1305,7 +1305,7 @@ public class SqlOptimiser implements Mutable {
             int wildcardPosition,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel analyticModel,
+            QueryModel windowModel,
             QueryModel groupByModel,
             QueryModel outerModel,
             QueryModel distinctModel
@@ -1316,7 +1316,7 @@ public class SqlOptimiser implements Mutable {
                 wildcardPosition,
                 translatingModel,
                 innerModel,
-                analyticModel,
+                windowModel,
                 groupByModel,
                 outerModel,
                 distinctModel
@@ -1329,7 +1329,7 @@ public class SqlOptimiser implements Mutable {
             int wildcardPosition,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel analyticModel,
+            QueryModel windowModel,
             QueryModel groupByModel,
             QueryModel outerModel,
             QueryModel distinctModel
@@ -1357,7 +1357,7 @@ public class SqlOptimiser implements Mutable {
                         null, // do not validate
                         translatingModel,
                         innerModel,
-                        analyticModel,
+                        windowModel,
                         groupByModel,
                         outerModel,
                         distinctModel
@@ -1434,9 +1434,9 @@ public class SqlOptimiser implements Mutable {
             QueryModel translatingModel,
             @Nullable QueryModel innerModel,
             QueryModel validatingModel,
-            boolean analyticCall
+            boolean windowCall
     ) throws SqlException {
-        if (analyticCall) {
+        if (windowCall) {
             assert innerModel != null;
             ExpressionNode n = doReplaceLiteral0(node, translatingModel, null, validatingModel);
             LowerCaseCharSequenceObjHashMap<CharSequence> map = innerModel.getColumnNameToAliasMap();
@@ -1580,7 +1580,7 @@ public class SqlOptimiser implements Mutable {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
             if (qc.isWindowColumn()) {
-                final AnalyticColumn ac = (AnalyticColumn) qc;
+                final WindowColumn ac = (WindowColumn) qc;
                 emitLiteralsTopDown(ac.getPartitionBy(), target);
                 emitLiteralsTopDown(ac.getOrderBy(), target);
             }
@@ -1651,7 +1651,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel translatingModel,
             QueryModel innerModel,
             QueryModel validatingModel,
-            boolean analyticCall
+            boolean windowCall
     ) throws SqlException {
         sqlNodeStack.clear();
 
@@ -1662,7 +1662,7 @@ public class SqlOptimiser implements Mutable {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel, analyticCall);
+                        ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel, windowCall);
                         if (node.rhs == n) {
                             sqlNodeStack.push(node.rhs);
                         } else {
@@ -1670,7 +1670,7 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
 
-                    ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel, analyticCall);
+                    ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel, windowCall);
                     if (n == node.lhs) {
                         node = node.lhs;
                     } else {
@@ -1680,7 +1680,7 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, analyticCall);
+                        ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, windowCall);
                         if (e == n) {
                             sqlNodeStack.push(e);
                         } else {
@@ -1689,7 +1689,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     ExpressionNode e = node.args.getQuick(0);
-                    ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, analyticCall);
+                    ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, windowCall);
                     if (e == n) {
                         node = e;
                     } else {
@@ -3249,11 +3249,11 @@ public class SqlOptimiser implements Mutable {
             QueryModel translatingModel,
             @Nullable QueryModel innerModel,
             QueryModel validatingModel,
-            boolean analyticCall
+            boolean windowCall
     ) throws SqlException {
         if (node != null && node.type == LITERAL) {
             try {
-                return doReplaceLiteral(node, translatingModel, innerModel, validatingModel, analyticCall);
+                return doReplaceLiteral(node, translatingModel, innerModel, validatingModel, windowCall);
             } catch (SqlException e) {
                 if (functionParser.findNoArgFunction(node)) {
                     node.type = FUNCTION;
@@ -3546,7 +3546,7 @@ public class SqlOptimiser implements Mutable {
      * <p>
      * Because order by clause logically executes after "select" it must be able to
      * reference results of arithmetic expression, aggregation function results, arithmetic with
-     * aggregation results and analytic functions. Somewhat contradictory to this order by must
+     * aggregation results and window functions. Somewhat contradictory to this order by must
      * also be able to reference columns of table or sub-query that are not even in select clause.
      *
      * @param model inbound model
@@ -3788,7 +3788,7 @@ public class SqlOptimiser implements Mutable {
         QueryModel baseOuter = null;
         QueryModel baseDistinct = null;
         // while order by is initially kept in the base model (most inner one)
-        // columns used in order by could be stored in one of many models : inner model, group by model, analytical or outer model
+        // columns used in order by could be stored in one of many models : inner model, group by model, window or outer model
         // here we've to descend and keep track of all of those
         while (base.getBottomUpColumns().size() > 0) {
             // Check if the model contains the full list of selected columns and, thus, can be used as the parent.
@@ -3935,8 +3935,8 @@ public class SqlOptimiser implements Mutable {
         outerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
         final QueryModel innerVirtualModel = queryModelPool.next();
         innerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
-        final QueryModel analyticModel = queryModelPool.next();
-        analyticModel.setSelectModelType(QueryModel.SELECT_MODEL_ANALYTIC);
+        final QueryModel windowModel = queryModelPool.next();
+        windowModel.setSelectModelType(QueryModel.SELECT_MODEL_WINDOW);
         final QueryModel translatingModel = queryModelPool.next();
         translatingModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
         // this is dangling model, which isn't chained with any other
@@ -3944,7 +3944,7 @@ public class SqlOptimiser implements Mutable {
         final QueryModel cursorModel = queryModelPool.next();
 
         boolean useInnerModel = false;
-        boolean useAnalyticModel = false;
+        boolean useWindowModel = false;
         boolean useGroupByModel = false;
         boolean useOuterModel = false;
         final boolean useDistinctModel = model.isDistinct();
@@ -3971,19 +3971,19 @@ public class SqlOptimiser implements Mutable {
 
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
-            final boolean analytic = qc.isWindowColumn();
+            final boolean window = qc.isWindowColumn();
 
-            // fail-fast if this is an arithmetic expression where we expect analytic function
-            if (analytic && qc.getAst().type != ExpressionNode.FUNCTION) {
-                throw SqlException.$(qc.getAst().position, "Analytic function expected");
+            // fail-fast if this is an arithmetic expression where we expect window function
+            if (window && qc.getAst().type != ExpressionNode.FUNCTION) {
+                throw SqlException.$(qc.getAst().position, "Window function expected");
             }
 
             if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
                 useInnerModel = true;
             } else if (qc.getAst().type != LITERAL) {
                 if (qc.getAst().type == ExpressionNode.FUNCTION) {
-                    if (analytic) {
-                        useAnalyticModel = true;
+                    if (window) {
+                        useWindowModel = true;
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         useGroupByModel = true;
@@ -4091,7 +4091,7 @@ public class SqlOptimiser implements Mutable {
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
-                            analyticModel,
+                            windowModel,
                             groupByModel
                     );
 
@@ -4137,7 +4137,7 @@ public class SqlOptimiser implements Mutable {
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
-            final boolean analytic = qc.isWindowColumn();
+            final boolean window = qc.isWindowColumn();
 
             if (qc.getAst().type == LITERAL) {
                 if (Chars.endsWith(qc.getAst().token, '*')) {
@@ -4150,7 +4150,7 @@ public class SqlOptimiser implements Mutable {
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
-                            analyticModel,
+                            windowModel,
                             groupByModel,
                             outerVirtualModel,
                             distinctModel
@@ -4192,7 +4192,7 @@ public class SqlOptimiser implements Mutable {
                                 baseModel,
                                 translatingModel,
                                 innerVirtualModel,
-                                analyticModel,
+                                windowModel,
                                 groupByModel,
                                 outerVirtualModel,
                                 useDistinctModel ? distinctModel : null
@@ -4211,7 +4211,7 @@ public class SqlOptimiser implements Mutable {
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
-                            analyticModel,
+                            windowModel,
                             groupByModel,
                             outerVirtualModel,
                             distinctModel
@@ -4222,9 +4222,9 @@ public class SqlOptimiser implements Mutable {
                 // select sum(x) ...
                 // we can add it to group-by model right away
                 if (qc.getAst().type == ExpressionNode.FUNCTION) {
-                    if (analytic) {
-                        analyticModel.addBottomUpColumn(qc);
-                        // ensure literals referenced by analytic column are present in nested models
+                    if (window) {
+                        windowModel.addBottomUpColumn(qc);
+                        // ensure literals referenced by window column are present in nested models
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, true);
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
@@ -4338,7 +4338,7 @@ public class SqlOptimiser implements Mutable {
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
-                            analyticModel,
+                            windowModel,
                             groupByModel,
                             outerVirtualModel,
                             distinctModel
@@ -4351,37 +4351,37 @@ public class SqlOptimiser implements Mutable {
             useOuterModel = true;
         }
 
-        // fail if we have both analytic and group-by models
-        if (useAnalyticModel && useGroupByModel) {
-            throw SqlException.$(0, "Analytic function is not allowed in context of aggregation. Use sub-query.");
+        // fail if we have both window and group-by models
+        if (useWindowModel && useGroupByModel) {
+            throw SqlException.$(0, "Window function is not allowed in context of aggregation. Use sub-query.");
         }
 
         boolean forceTranslatingModel = false;
-        if (useAnalyticModel) {
-            // We need one more pass for analytic model to emit potentially missing columns.
+        if (useWindowModel) {
+            // We need one more pass for window model to emit potentially missing columns.
             // For example, 'SELECT row_number() over (partition by col_c order by col_c), col_a, col_b FROM tab'
             // needs col_c to be emitted.
             for (int i = 0, k = columns.size(); i < k; i++) {
                 QueryColumn qc = columns.getQuick(i);
-                final boolean analytic = qc.isWindowColumn();
+                final boolean window = qc.isWindowColumn();
 
-                if (analytic & qc.getAst().type == ExpressionNode.FUNCTION) {
-                    // Analytic model can be after either translation model directly
+                if (window & qc.getAst().type == ExpressionNode.FUNCTION) {
+                    // Window model can be after either translation model directly
                     // or after inner virtual model, which can be sandwiched between
-                    // translation model and analytic model.
-                    // To make sure columns, referenced by the analytic model
+                    // translation model and window model.
+                    // To make sure columns, referenced by the window model
                     // are rendered correctly we will emit them into a dedicated
-                    // translation model for the analytic model.
+                    // translation model for the window model.
                     // When we're able to determine which combination of models precedes the
-                    // analytic model, we can copy columns from analytic_translation model to
+                    // window model, we can copy columns from window_translation model to
                     // either only to translation model or both translation model and the
                     // inner virtual models.
-                    final AnalyticColumn ac = (AnalyticColumn) qc;
+                    final WindowColumn ac = (WindowColumn) qc;
                     int innerColumnsPre = innerVirtualModel.getBottomUpColumns().size();
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
                     int innerColumnsPost = innerVirtualModel.getBottomUpColumns().size();
-                    // analytic model might require columns it doesn't explicitly contain (e.g. used for order by or partition by  in over() clause  )
+                    // window model might require columns it doesn't explicitly contain (e.g. used for order by or partition by  in over() clause  )
                     // skipping translating model will trigger 'invalid column' exceptions
                     forceTranslatingModel |= innerColumnsPre != innerColumnsPost;
                 }
@@ -4402,7 +4402,7 @@ public class SqlOptimiser implements Mutable {
 
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useAnalyticModel) && !forceTranslatingModel;
+        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
         if (translationIsRedundant) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
@@ -4426,7 +4426,7 @@ public class SqlOptimiser implements Mutable {
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
-                            analyticModel
+                            windowModel
                     );
                 } else {
                     // columns were renamed,
@@ -4441,7 +4441,7 @@ public class SqlOptimiser implements Mutable {
                                     baseModel,
                                     translatingModel,
                                     innerVirtualModel,
-                                    analyticModel
+                                    windowModel
                             );
                         }
                     }
@@ -4482,12 +4482,12 @@ public class SqlOptimiser implements Mutable {
             limitSource = innerVirtualModel;
         }
 
-        if (useAnalyticModel) {
-            analyticModel.setNestedModel(root);
-            analyticModel.moveLimitFrom(limitSource);
-            analyticModel.moveJoinAliasFrom(limitSource);
-            root = analyticModel;
-            limitSource = analyticModel;
+        if (useWindowModel) {
+            windowModel.setNestedModel(root);
+            windowModel.moveLimitFrom(limitSource);
+            windowModel.moveJoinAliasFrom(limitSource);
+            root = windowModel;
+            limitSource = windowModel;
         } else if (useGroupByModel) {
             groupByModel.setNestedModel(root);
             groupByModel.moveLimitFrom(limitSource);
@@ -4735,21 +4735,21 @@ public class SqlOptimiser implements Mutable {
             throw SqlException.$(0, "SQL model is too complex to evaluate");
         }
 
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_ANALYTIC) {
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW) {
             final ObjList<QueryColumn> queryColumns = model.getColumns();
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 QueryColumn qc = queryColumns.getQuick(i);
                 if (qc.isWindowColumn()) {
-                    final AnalyticColumn ac = (AnalyticColumn) qc;
+                    final WindowColumn ac = (WindowColumn) qc;
                     // preceding and following accept non-negative values only
                     long rowsLo = evalNonNegativeLongConstantOrDie(ac.getRowsLoExpr(), sqlExecutionContext, Long.MAX_VALUE);
                     long rowsHi = evalNonNegativeLongConstantOrDie(ac.getRowsHiExpr(), sqlExecutionContext, Long.MAX_VALUE);
 
                     switch (ac.getRowsLoKind()) {
-                        case AnalyticColumn.PRECEDING:
+                        case WindowColumn.PRECEDING:
                             rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
                             break;
-                        case AnalyticColumn.FOLLOWING:
+                        case WindowColumn.FOLLOWING:
                             //rowsLo = rowsLo;
                             break;
                         default:
@@ -4759,10 +4759,10 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     switch (ac.getRowsHiKind()) {
-                        case AnalyticColumn.PRECEDING:
+                        case WindowColumn.PRECEDING:
                             rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
                             break;
-                        case AnalyticColumn.FOLLOWING:
+                        case WindowColumn.FOLLOWING:
                             //rowsHi = rowsHi;
                             break;
                         default:
@@ -5081,7 +5081,7 @@ public class SqlOptimiser implements Mutable {
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_NONE);
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_DISTINCT);
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_VIRTUAL);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_ANALYTIC);
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_WINDOW);
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_GROUP_BY);
     }
 

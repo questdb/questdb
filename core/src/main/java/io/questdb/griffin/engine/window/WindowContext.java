@@ -22,13 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.analytic;
+package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
 
-public interface AnalyticContext {
+public interface WindowContext {
     boolean baseSupportsRandomAccess();
 
     int getExclusionKind();

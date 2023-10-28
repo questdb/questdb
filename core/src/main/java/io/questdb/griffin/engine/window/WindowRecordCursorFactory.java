@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.analytic;
+package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -39,20 +39,19 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /*
- * Factory implements select with analytic functions that support streaming, that is:
+ * Factory implements select with window functions that support streaming, that is:
  * - they don't specify order by or order by is the same as underlying query
  * - all functions and their framing clause do support stream-ed processing (single pass)
  */
-public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final ObjList<AnalyticFunction> analyticFunctions;
-    private final int analyticFunctionsCount;
+public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-
-    private final AnalyticRecordCursor cursor;
+    private final WindowRecordCursor cursor;
     private final ObjList<Function> functions;
+    private final ObjList<WindowFunction> windowFunctions;
+    private final int windowFunctionsCount;
     private boolean closed = false;
 
-    public AnalyticRecordCursorFactory(
+    public WindowRecordCursorFactory(
             RecordCursorFactory base,
             GenericRecordMetadata metadata,
             ObjList<Function> functions
@@ -61,18 +60,18 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.functions = functions;
 
-        analyticFunctions = new ObjList<AnalyticFunction>();
+        windowFunctions = new ObjList<WindowFunction>();
         for (int i = 0, n = functions.size(); i < n; i++) {
             Function func = functions.getQuick(i);
-            if (func instanceof AnalyticFunction) {
-                analyticFunctions.add((AnalyticFunction) func);
+            if (func instanceof WindowFunction) {
+                windowFunctions.add((WindowFunction) func);
             }
         }
-        analyticFunctionsCount = analyticFunctions.size();
+        windowFunctionsCount = windowFunctions.size();
 
-        //random access is not supported because analytic function value depends on the window/frame context and can't be computed from single row alone
+        //random access is not supported because window function value depends on the window/frame context and can't be computed from single row alone
         //e.g. even though we might be able to skip to a rowId, we'd still need to compute values for all the rows in between
-        this.cursor = new AnalyticRecordCursor(functions, false);
+        this.cursor = new WindowRecordCursor(functions, false);
     }
 
     @Override
@@ -99,8 +98,8 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Analytic");
-        sink.optAttr("functions", analyticFunctions, true);
+        sink.type("Window");
+        sink.optAttr("functions", windowFunctions, true);
         sink.child(base);
     }
 
@@ -110,8 +109,8 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private void resetFunctions() {
-        for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
-            analyticFunctions.getQuick(i).reset();
+        for (int i = 0, n = windowFunctions.size(); i < n; i++) {
+            windowFunctions.getQuick(i).reset();
         }
     }
 
@@ -122,10 +121,10 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
         }
         Misc.free(base);
         Misc.free(cursor);
-        //analytic functions are closed on cursor close above
+        //window functions are closed on cursor close above
         for (int i = 0, n = functions.size(); i < n; i++) {
             Function function = functions.getQuick(i);
-            if (!(function instanceof AnalyticFunction)) {
+            if (!(function instanceof WindowFunction)) {
                 function.close();
             }
         }
@@ -133,12 +132,12 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
         closed = true;
     }
 
-    class AnalyticRecordCursor extends VirtualFunctionDirectSymbolRecordCursor {
+    class WindowRecordCursor extends VirtualFunctionDirectSymbolRecordCursor {
 
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
 
-        public AnalyticRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
+        public WindowRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
             super(functions, supportsRandomAccess);
             this.isOpen = true;
         }
@@ -157,8 +156,8 @@ public class AnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
             circuitBreaker.statefulThrowExceptionIfTripped();
             boolean hasNext = super.hasNext();
             if (hasNext) {
-                for (int i = 0; i < analyticFunctionsCount; i++) {
-                    analyticFunctions.getQuick(i).computeNext(baseCursor.getRecord());
+                for (int i = 0; i < windowFunctionsCount; i++) {
+                    windowFunctions.getQuick(i).computeNext(baseCursor.getRecord());
                 }
             }
             return hasNext;

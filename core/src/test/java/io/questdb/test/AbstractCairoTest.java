@@ -1197,14 +1197,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setSampleByIndexSearchPageSize(sampleByIndexSearchPageSize);
     }
 
-    protected static void configOverrideSqlAnalyticStoreMaxPages(int analyticStoreMaxPages) {
-        node1.getConfigurationOverrides().setSqlAnalyticStoreMaxPages(analyticStoreMaxPages);
-    }
-
-    protected static void configOverrideSqlAnalyticStorePageSize(int analyticStorePageSize) {
-        node1.getConfigurationOverrides().setSqlAnalyticStorePageSize(analyticStorePageSize);
-    }
-
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
         node1.getConfigurationOverrides().setSqlJoinMetadataMaxResizes(sqlJoinMetadataMaxResizes);
@@ -1213,6 +1205,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
+    }
+
+    protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {
+        node1.getConfigurationOverrides().setSqlWindowStoreMaxPages(windowStoreMaxPages);
+    }
+
+    protected static void configOverrideSqlWindowStorePageSize(int windowStorePageSize) {
+        node1.getConfigurationOverrides().setSqlWindowStorePageSize(windowStorePageSize);
     }
 
     protected static void configOverrideWalApplyTableTimeQuota(long walApplyTableTimeQuota) {

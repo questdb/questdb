@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.analytic;
+package io.questdb.test.griffin.engine.window;
 
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.SqlException;
@@ -32,128 +32,7 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class AnalyticFunctionTest extends AbstractCairoTest {
-
-    @Test
-    public void testAnalyticContextCleanup() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table trades as " +
-                    "(" +
-                    "select" +
-                    " rnd_int(1,2,3) price," +
-                    " rnd_symbol('AA','BB','CC') symbol," +
-                    " timestamp_sequence(0, 100000000000) ts" +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by day", sqlExecutionContext);
-
-            final String query = "select symbol, price, row_number() over (partition by symbol order by price) from trades";
-            final String expected = "symbol\tprice\trow_number\n" +
-                    "BB\t1\t1\n" +
-                    "CC\t2\t2\n" +
-                    "AA\t2\t1\n" +
-                    "CC\t1\t1\n" +
-                    "BB\t2\t2\n";
-            assertSql(expected, query);
-
-            // AnalyticContext should be properly clean up when we try to execute the next query.
-
-            try {
-                ddl("select row_number() from trades", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(7, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "analytic function called in non-analytic context, make sure to add OVER clause");
-            }
-        });
-    }
-
-    @Test
-    public void testAnalyticFunctionDoesSortIfOrderByIsNotCompatibleWithBaseQuery() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row) from tab",
-                    "CachedAnalytic\n" +
-                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc",
-                    "CachedAnalytic\n" +
-                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
-                            "    DataFrame\n" +
-                            "        Row backward scan\n" +
-                            "        Frame backward scan on: tab\n");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym in ( 'A', 'B') ",
-                    "CachedAnalytic\n" +
-                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
-                            "    FilterOnValues symbolOrder: desc\n" +
-                            "        Cursor-order scan\n" +
-                            "            Index forward scan on: sym deferred: true\n" +
-                            "              filter: sym='A'\n" +
-                            "            Index forward scan on: sym deferred: true\n" +
-                            "              filter: sym='B'\n" +
-                            "        Frame forward scan on: tab\n");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'",
-                    "CachedAnalytic\n" +
-                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: sym deferred: true\n" +
-                            "          filter: sym='A'\n" +
-                            "        Frame forward scan on: tab\n");
-        });
-    }
-
-    @Test
-    public void testAnalyticFunctionDoesntSortIfOrderByIsCompatibleWithBaseQuery() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
-                    "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc",
-                    "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc",
-                    "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
-                            "    DataFrame\n" +
-                            "        Row backward scan\n" +
-                            "        Frame backward scan on: tab\n");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym = 'A'",
-                    "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: sym deferred: true\n" +
-                            "          filter: sym='A'\n" +
-                            "        Frame forward scan on: tab\n");
-
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row) " +
-                            "from tab where sym in ( 'A', 'B') order by ts asc",
-                    "Analytic\n" +
-                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
-                            "    FilterOnValues\n" +
-                            "        Table-order scan\n" +
-                            "            Index forward scan on: sym deferred: true\n" +
-                            "              filter: sym='A'\n" +
-                            "            Index forward scan on: sym deferred: true\n" +
-                            "              filter: sym='B'\n" +
-                            "        Frame forward scan on: tab\n");
-        });
-    }
+public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testAverageOverGroups() throws Exception {
@@ -222,7 +101,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
     @Test
     public void testAverageOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            //default buffer size holds 65k entries in total, 32 per partition, see CairoConfiguration.getSqlAnalyticInitialRangeBufferSize()
+            //default buffer size holds 65k entries in total, 32 per partition, see CairoConfiguration.getSqlWindowInitialRangeBufferSize()
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             // trigger per-partition buffers growth and free list usage
@@ -992,7 +871,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
 
     @Ignore
     @Test
-    public void testAvgFailsInNonAnalyticContext() throws Exception {
+    public void testAvgFailsInNonWindowContext() throws Exception {
         assertException(
                 "select avg(price), * from trades",
                 "create table trades as " +
@@ -1004,7 +883,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 7,
-                "analytic function called in non-analytic context, make sure to add OVER clause"
+                "window function called in non-window context, make sure to add OVER clause"
         );
     }
 
@@ -1088,7 +967,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                             "from tab " +
                             "order by ts asc",
                     "SelectedRecord\n" +
-                            "    CachedAnalytic\n" +
+                            "    CachedWindow\n" +
                             "      orderedFunctions: [[j] => [rank() over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
                             "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
                             "        DataFrame\n" +
@@ -1127,7 +1006,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRankFailsInNonAnalyticContext() throws Exception {
+    public void testRankFailsInNonWindowContext() throws Exception {
         assertException(
                 "select rank(), * from trades",
                 "create table trades as " +
@@ -1139,7 +1018,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 7,
-                "analytic function called in non-analytic context, make sure to add OVER clause"
+                "window function called in non-window context, make sure to add OVER clause"
         );
     }
 
@@ -1452,7 +1331,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRowNumberFailsInNonAnalyticContext() throws Exception {
+    public void testRowNumberFailsInNonWindowContext() throws Exception {
         assertException(
                 "select row_number(), * from trades",
                 "create table trades as " +
@@ -1464,7 +1343,7 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 7,
-                "analytic function called in non-analytic context, make sure to add OVER clause"
+                "window function called in non-window context, make sure to add OVER clause"
         );
     }
 
@@ -1771,8 +1650,8 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowBufferExceedsLimit() throws Exception {
         configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        configOverrideSqlAnalyticStorePageSize(4096);
-        configOverrideSqlAnalyticStoreMaxPages(10);
+        configOverrideSqlWindowStorePageSize(4096);
+        configOverrideSqlWindowStoreMaxPages(10);
 
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
@@ -1781,6 +1660,127 @@ public class AnalyticFunctionTest extends AbstractCairoTest {
             //TODO: improve error message and position
             assertException("select avg(j) over (partition by i rows between 100001 preceding and current row) from tab",
                     0, "Maximum number of pages (10) breached in VirtualMemory");
+        });
+    }
+
+    @Test
+    public void testWindowContextCleanup() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table trades as " +
+                    "(" +
+                    "select" +
+                    " rnd_int(1,2,3) price," +
+                    " rnd_symbol('AA','BB','CC') symbol," +
+                    " timestamp_sequence(0, 100000000000) ts" +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by day", sqlExecutionContext);
+
+            final String query = "select symbol, price, row_number() over (partition by symbol order by price) from trades";
+            final String expected = "symbol\tprice\trow_number\n" +
+                    "BB\t1\t1\n" +
+                    "CC\t2\t2\n" +
+                    "AA\t2\t1\n" +
+                    "CC\t1\t1\n" +
+                    "BB\t2\t2\n";
+            assertSql(expected, query);
+
+            // WindowContext should be properly clean up when we try to execute the next query.
+
+            try {
+                ddl("select row_number() from trades", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(7, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "window function called in non-window context, make sure to add OVER clause");
+            }
+        });
+    }
+
+    @Test
+    public void testWindowFunctionDoesSortIfOrderByIsNotCompatibleWithBaseQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row) from tab",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym in ( 'A', 'B') ",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
+                            "    FilterOnValues symbolOrder: desc\n" +
+                            "        Cursor-order scan\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='A'\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='B'\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: sym deferred: true\n" +
+                            "          filter: sym='A'\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testWindowFunctionDoesntSortIfOrderByIsCompatibleWithBaseQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
+                    "Window\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc",
+                    "Window\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc",
+                    "Window\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym = 'A'",
+                    "Window\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: sym deferred: true\n" +
+                            "          filter: sym='A'\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row) " +
+                            "from tab where sym in ( 'A', 'B') order by ts asc",
+                    "Window\n" +
+                            "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "    FilterOnValues\n" +
+                            "        Table-order scan\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='A'\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='B'\n" +
+                            "        Frame forward scan on: tab\n");
         });
     }
 }

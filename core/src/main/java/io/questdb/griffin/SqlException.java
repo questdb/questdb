@@ -68,8 +68,8 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return exception;
     }
 
-    public static SqlException emptyAnalyticContext(int position) {
-        return SqlException.$(position, "analytic function called in non-analytic context, make sure to add OVER clause");
+    public static SqlException emptyWindowContext(int position) {
+        return SqlException.$(position, "window function called in non-window context, make sure to add OVER clause");
     }
 
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {

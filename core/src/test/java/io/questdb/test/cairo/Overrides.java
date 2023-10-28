@@ -83,11 +83,11 @@ public class Overrides implements ConfigurationOverrides {
     private String snapshotInstanceId = null;
     private Boolean snapshotRecoveryEnabled = null;
     private long spinLockTimeout = -1;
-    private int sqlAnalyticStoreMaxPages;
-    private int sqlAnalyticStorePageSize;
     private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
+    private int sqlWindowStoreMaxPages;
+    private int sqlWindowStorePageSize;
     private int tableRegistryCompactionThreshold;
     private long walApplyTableTimeQuota = -1;
     private int walMaxLagTxnCount = -1;
@@ -300,14 +300,6 @@ public class Overrides implements ConfigurationOverrides {
         return spinLockTimeout;
     }
 
-    public int getSqlAnalyticStoreMaxPages() {
-        return sqlAnalyticStoreMaxPages;
-    }
-
-    public int getSqlAnalyticStorePageSize() {
-        return sqlAnalyticStorePageSize;
-    }
-
     @Override
     public int getSqlCopyBufferSize() {
         return sqlCopyBufferSize;
@@ -321,6 +313,14 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getSqlJoinMetadataPageSize() {
         return sqlJoinMetadataPageSize;
+    }
+
+    public int getSqlWindowStoreMaxPages() {
+        return sqlWindowStoreMaxPages;
+    }
+
+    public int getSqlWindowStorePageSize() {
+        return sqlWindowStorePageSize;
     }
 
     @Override
@@ -699,16 +699,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setSqlAnalyticStoreMaxPages(int analyticStoreMaxPages) {
-        this.sqlAnalyticStoreMaxPages = analyticStoreMaxPages;
-    }
-
-    @Override
-    public void setSqlAnalyticStorePageSize(int analyticStorePageSize) {
-        this.sqlAnalyticStorePageSize = analyticStorePageSize;
-    }
-
-    @Override
     public void setSqlCopyBufferSize(int sqlCopyBufferSize) {
         this.sqlCopyBufferSize = sqlCopyBufferSize;
     }
@@ -721,6 +711,16 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         this.sqlJoinMetadataPageSize = sqlJoinMetadataPageSize;
+    }
+
+    @Override
+    public void setSqlWindowStoreMaxPages(int windowStoreMaxPages) {
+        this.sqlWindowStoreMaxPages = windowStoreMaxPages;
+    }
+
+    @Override
+    public void setSqlWindowStorePageSize(int windowStorePageSize) {
+        this.sqlWindowStorePageSize = windowStorePageSize;
     }
 
     @Override

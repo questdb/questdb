@@ -30,7 +30,7 @@ import org.junit.Test;
 public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testCachedAnalyticQueryOrderedByColumnNotOnSelectList() throws Exception {
+    public void testCachedWindowQueryOrderedByColumnNotOnSelectList() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y (a int, b int)");
             insert("insert into y select x/4, x from long_sequence(10)");
@@ -44,7 +44,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Sort light\n" +
                             "      keys: [b1]\n" +
-                            "        CachedAnalytic\n" +
+                            "        CachedWindow\n" +
                             "          orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]\n" +
                             "            SelectedRecord\n" +
                             "                DataFrame\n" +

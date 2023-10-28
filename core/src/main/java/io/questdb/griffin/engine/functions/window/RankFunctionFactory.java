@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.analytic;
+package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
@@ -36,10 +36,10 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
-import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -67,26 +67,26 @@ public class RankFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
-        if (analyticContext.isEmpty()) {
-            throw SqlException.emptyAnalyticContext(position);
+        final WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        if (windowContext.isEmpty()) {
+            throw SqlException.emptyWindowContext(position);
         }
 
-        if (analyticContext.getPartitionByRecord() != null) {
+        if (windowContext.getPartitionByRecord() != null) {
             ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
             arrayColumnTypes.add(ColumnType.LONG); // max index
             arrayColumnTypes.add(ColumnType.LONG); // current index
             arrayColumnTypes.add(ColumnType.LONG); // offset
-            Map map = MapFactory.createMap(configuration, analyticContext.getPartitionByKeyTypes(), arrayColumnTypes);
-            return new RankFunction(map, analyticContext.getPartitionByRecord(), analyticContext.getPartitionBySink());
+            Map map = MapFactory.createMap(configuration, windowContext.getPartitionByKeyTypes(), arrayColumnTypes);
+            return new RankFunction(map, windowContext.getPartitionByRecord(), windowContext.getPartitionBySink());
         }
-        if (analyticContext.isOrdered()) {
+        if (windowContext.isOrdered()) {
             return new OrderRankFunction();
         }
         return new SequenceRankFunction();
     }
 
-    private static class OrderRankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+    private static class OrderRankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
 
         private int columnIndex;
         private long currentIndex = 0;
@@ -117,7 +117,7 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return recordComparator == null ? AnalyticFunction.ZERO_PASS : AnalyticFunction.ONE_PASS;
+            return recordComparator == null ? WindowFunction.ZERO_PASS : WindowFunction.ONE_PASS;
         }
 
         @Override
@@ -126,7 +126,7 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (recordComparator == null) {
                 // order dismiss
                 Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
@@ -175,7 +175,7 @@ public class RankFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+    private static class RankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
 
         private final static int VAL_CURRENT_INDEX = 1;
         private final static int VAL_MAX_INDEX = 0;
@@ -229,7 +229,7 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return recordComparator == null ? AnalyticFunction.ZERO_PASS : AnalyticFunction.ONE_PASS;
+            return recordComparator == null ? WindowFunction.ZERO_PASS : WindowFunction.ONE_PASS;
         }
 
         @Override
@@ -238,7 +238,7 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             partitionByRecord.of(record);
 
             MapKey mapKey = map.withKey();
@@ -305,7 +305,7 @@ public class RankFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SequenceRankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+    private static class SequenceRankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
 
         private int columnIndex;
 
@@ -333,7 +333,7 @@ public class RankFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
         }

@@ -235,16 +235,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getSqlAnalyticStoreMaxPages() {
-        return overrides.getSqlAnalyticStoreMaxPages() > 0 ? overrides.getSqlAnalyticStoreMaxPages() : super.getSqlAnalyticStoreMaxPages();
-    }
-
-    @Override
-    public int getSqlAnalyticStorePageSize() {
-        return overrides.getSqlAnalyticStorePageSize() > 0 ? overrides.getSqlAnalyticStorePageSize() : super.getSqlAnalyticStorePageSize();
-    }
-
-    @Override
     public int getSqlCopyBufferSize() {
         return overrides.getSqlCopyBufferSize();
     }
@@ -282,6 +272,16 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getSqlPageFrameMaxRows() {
         return overrides.getPageFrameMaxRows() < 0 ? super.getSqlPageFrameMaxRows() : overrides.getPageFrameMaxRows();
+    }
+
+    @Override
+    public int getSqlWindowStoreMaxPages() {
+        return overrides.getSqlWindowStoreMaxPages() > 0 ? overrides.getSqlWindowStoreMaxPages() : super.getSqlWindowStoreMaxPages();
+    }
+
+    @Override
+    public int getSqlWindowStorePageSize() {
+        return overrides.getSqlWindowStorePageSize() > 0 ? overrides.getSqlWindowStorePageSize() : super.getSqlWindowStorePageSize();
     }
 
     @Override

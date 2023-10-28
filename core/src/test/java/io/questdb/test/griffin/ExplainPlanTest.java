@@ -51,7 +51,7 @@ import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
-import io.questdb.griffin.model.AnalyticColumn;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -275,123 +275,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAnalytic0() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t",
-                "CachedAnalytic\n" +
-                        "  orderedFunctions: [[l] => [row_number()]]\n" +
-                        "  unorderedFunctions: [row_number() over (partition by [l])]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
-    public void testAnalytic1() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t",
-                "CachedAnalytic\n" +
-                        "  orderedFunctions: [[ts] => [row_number() over (partition by [l])]]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [str,ts,l,10]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
-    public void testAnalytic2() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t",
-                "CachedAnalytic\n" +
-                        "  orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [str,ts,l1,ts::long+l1]\n" +
-                        "        SelectedRecord\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
-    public void testAnalytic3() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-
-            assertPlan("select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab",
-                    "CachedAnalytic\n" +
-                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)]]\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
-
-            assertPlan("select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
-                    "Analytic\n" +
-                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
-
-            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
-                            "avg(j) over (partition by i order by j, i desc rows unbounded preceding) " +
-                            "from tab order by ts desc",
-                    "SelectedRecord\n" +
-                            "    CachedAnalytic\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
-                            "        DataFrame\n" +
-                            "            Row backward scan\n" +
-                            "            Frame backward scan on: tab\n");
-
-            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
-                            "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding)," +
-                            "        rank() over (partition by j, i) " +
-                            "from tab order by ts desc",
-                    "SelectedRecord\n" +
-                            "    CachedAnalytic\n" +
-                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
-                            "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
-                            "        DataFrame\n" +
-                            "            Row backward scan\n" +
-                            "            Frame backward scan on: tab\n");
-        });
-    }
-
-    @Test
-    public void testAnalyticRecordCursorFactoryWithLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x as ( " +
-                    "  select " +
-                    "    cast(x as int) i, " +
-                    "    rnd_symbol('a','b','c') sym, " +
-                    "    timestamp_sequence(0, 100000000) ts " +
-                    "   from long_sequence(100)" +
-                    ") timestamp(ts) partition by hour");
-
-            String sql = "select i, row_number() over (partition by sym), avg(i) over (partition by i rows unbounded preceding) from x limit 3";
-            assertPlan(
-                    sql,
-                    "Limit lo: 3\n" +
-                            "    Analytic\n" +
-                            "      functions: [row_number() over (partition by [sym]),avg(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n"
-            );
-
-            assertSql("i\trow_number\tavg\n" +
-                    "1\t1\t1.0\n" +
-                    "2\t2\t2.0\n" +
-                    "3\t1\t3.0\n", sql);
-        });
-    }
-
-    @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -602,7 +485,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedAnalyticRecordCursorFactoryWithLimit() throws Exception {
+    public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as ( " +
                     "  select " +
@@ -616,7 +499,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     sql,
                     "Limit lo: 3\n" +
-                            "    CachedAnalytic\n" +
+                            "    CachedWindow\n" +
                             "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over ()]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2079,14 +1962,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         //TODO: test with partition by, order by and various frame modes
                         if (factory.isWindow()) {
-                            sqlExecutionContext.configureAnalyticContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, AnalyticColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, AnalyticColumn.EXCLUDE_NO_OTHERS, 0, -1);
+                            sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
                         }
                         Function function = null;
                         try {
                             function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
                             function.toPlan(planSink);
                         } finally {
-                            sqlExecutionContext.clearAnalyticContext();
+                            sqlExecutionContext.clearWindowContext();
                         }
 
                         goodArgsFound = true;
@@ -8184,6 +8067,123 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
+    }
+
+    @Test
+    public void testWindow0() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[l] => [row_number()]]\n" +
+                        "  unorderedFunctions: [row_number() over (partition by [l])]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow1() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[ts] => [row_number() over (partition by [l])]]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [str,ts,l,10]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow2() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [str,ts,l1,ts::long+l1]\n" +
+                        "        SelectedRecord\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertPlan("select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
+                    "Window\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
+                            "avg(j) over (partition by i order by j, i desc rows unbounded preceding) " +
+                            "from tab order by ts desc",
+                    "SelectedRecord\n" +
+                            "    CachedWindow\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n");
+
+            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
+                            "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding)," +
+                            "        rank() over (partition by j, i) " +
+                            "from tab order by ts desc",
+                    "SelectedRecord\n" +
+                            "    CachedWindow\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
+                            "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testWindowRecordCursorFactoryWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as ( " +
+                    "  select " +
+                    "    cast(x as int) i, " +
+                    "    rnd_symbol('a','b','c') sym, " +
+                    "    timestamp_sequence(0, 100000000) ts " +
+                    "   from long_sequence(100)" +
+                    ") timestamp(ts) partition by hour");
+
+            String sql = "select i, row_number() over (partition by sym), avg(i) over (partition by i rows unbounded preceding) from x limit 3";
+            assertPlan(
+                    sql,
+                    "Limit lo: 3\n" +
+                            "    Window\n" +
+                            "      functions: [row_number() over (partition by [sym]),avg(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+
+            assertSql("i\trow_number\tavg\n" +
+                    "1\t1\t1.0\n" +
+                    "2\t2\t2.0\n" +
+                    "3\t1\t3.0\n", sql);
+        });
     }
 
     @Test

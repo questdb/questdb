@@ -74,12 +74,12 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.geohash;
     exports io.questdb.griffin.engine.functions.bin;
     exports io.questdb.griffin.engine.functions.lock;
-    exports io.questdb.griffin.engine.functions.analytic;
+    exports io.questdb.griffin.engine.functions.window;
     exports io.questdb.griffin.engine.functions.table;
     exports io.questdb.griffin.engine.groupby;
     exports io.questdb.griffin.engine.groupby.vect;
     exports io.questdb.griffin.engine.orderby;
-    exports io.questdb.griffin.engine.analytic;
+    exports io.questdb.griffin.engine.window;
     exports io.questdb.griffin.engine.table;
     exports io.questdb.jit;
     exports io.questdb.std;
@@ -785,10 +785,10 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory,
             io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory,
 
-            // analytic functions
-            io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
-            io.questdb.griffin.engine.functions.analytic.RankFunctionFactory,
-            io.questdb.griffin.engine.functions.analytic.AvgDoubleWindowFunctionFactory,
+            // window functions
+            io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory,
+            io.questdb.griffin.engine.functions.window.RankFunctionFactory,
+            io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,

@@ -30,9 +30,9 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
-import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -42,13 +42,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
-    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final int sharedWorkerCount;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
+    private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
     private BindVariableService bindVariableService;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -86,12 +86,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void clearAnalyticContext() {
-        analyticContext.clear();
+    public void clearWindowContext() {
+        windowContext.clear();
     }
 
     @Override
-    public void configureAnalyticContext(
+    public void configureWindowContext(
             @Nullable VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes partitionByKeyTypes,
@@ -108,7 +108,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             int exclusionKindPos,
             int timestampIndex
     ) {
-        analyticContext.of(
+        windowContext.of(
                 partitionByRecord,
                 partitionBySink,
                 partitionByKeyTypes,
@@ -134,11 +134,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void containsSecret(boolean containsSecret) {
         this.containsSecret = containsSecret;
-    }
-
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return analyticContext;
     }
 
     @Override
@@ -199,6 +194,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getSharedWorkerCount() {
         return sharedWorkerCount;
+    }
+
+    @Override
+    public WindowContext getWindowContext() {
+        return windowContext;
     }
 
     @Override

@@ -22,18 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.analytic;
+package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.model.AnalyticColumn;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-public class AnalyticContextImpl implements AnalyticContext, Mutable {
+public class WindowContextImpl implements WindowContext, Mutable {
     private boolean baseSupportsRandomAccess;
     private boolean empty = true;
     private int exclusionKind;
@@ -68,10 +68,10 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
         this.orderByDirection = RecordCursorFactory.SCAN_DIRECTION_OTHER;
         this.orderByPos = 0;
         this.baseSupportsRandomAccess = false;
-        this.framingMode = AnalyticColumn.FRAMING_ROWS;
+        this.framingMode = WindowColumn.FRAMING_ROWS;
         this.rowsLo = Long.MIN_VALUE;
         this.rowsHi = Long.MAX_VALUE;
-        this.exclusionKind = AnalyticColumn.EXCLUDE_NO_OTHERS;
+        this.exclusionKind = WindowColumn.EXCLUDE_NO_OTHERS;
         this.rowsLoKindPos = 0;
         this.rowsHiKindPos = 0;
         this.exclusionKindPos = 0;
@@ -137,7 +137,7 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
     public boolean isDefaultFrame() {
         // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
         // anything other than that is custom
-        return framingMode == AnalyticColumn.FRAMING_RANGE
+        return framingMode == WindowColumn.FRAMING_RANGE
                 && rowsLo == Long.MIN_VALUE
                 && (rowsHi == 0 || rowsHi == Long.MAX_VALUE);
     }

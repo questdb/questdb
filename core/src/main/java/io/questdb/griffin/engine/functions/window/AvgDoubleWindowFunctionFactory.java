@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.analytic;
+package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
@@ -34,11 +34,11 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
-import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
-import io.questdb.griffin.model.AnalyticColumn;
+import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.*;
 
 public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
@@ -66,35 +66,35 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
-        if (analyticContext.isEmpty()) {
-            throw SqlException.emptyAnalyticContext(position);
+        final WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        if (windowContext.isEmpty()) {
+            throw SqlException.emptyWindowContext(position);
         }
 
-        long rowsLo = analyticContext.getRowsLo();
-        long rowsHi = analyticContext.getRowsHi();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
 
-        if (!analyticContext.isDefaultFrame()) {
+        if (!windowContext.isDefaultFrame()) {
             if (rowsLo > 0) {
-                throw SqlException.$(analyticContext.getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+                throw SqlException.$(windowContext.getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
             }
             if (rowsHi > 0) {
                 if (rowsHi != Long.MAX_VALUE) {
-                    throw SqlException.$(analyticContext.getRowsHiKindPos(), "frame end supports _number_ PRECEDING and CURRENT ROW only");
+                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports _number_ PRECEDING and CURRENT ROW only");
                 } else if (rowsLo != Long.MIN_VALUE) {
-                    throw SqlException.$(analyticContext.getRowsHiKindPos(), "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
+                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
                 }
             }
         }
 
-        int exclusionKind = analyticContext.getExclusionKind();
-        int exclusionKindPos = analyticContext.getExclusionKindPos();
-        if (exclusionKind != AnalyticColumn.EXCLUDE_NO_OTHERS
-                && exclusionKind != AnalyticColumn.EXCLUDE_CURRENT_ROW) {
+        int exclusionKind = windowContext.getExclusionKind();
+        int exclusionKindPos = windowContext.getExclusionKindPos();
+        if (exclusionKind != WindowColumn.EXCLUDE_NO_OTHERS
+                && exclusionKind != WindowColumn.EXCLUDE_CURRENT_ROW) {
             throw SqlException.$(exclusionKindPos, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
         }
 
-        if (exclusionKind == AnalyticColumn.EXCLUDE_CURRENT_ROW) {
+        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW) {
             // assumes frame doesn't use 'following'
             if (rowsHi == Long.MAX_VALUE) {
                 throw SqlException.$(exclusionKindPos, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
@@ -108,15 +108,15 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             }
         }
 
-        int framingMode = analyticContext.getFramingMode();
-        RecordSink partitionBySink = analyticContext.getPartitionBySink();
-        ColumnTypes partitionByKeyTypes = analyticContext.getPartitionByKeyTypes();
-        VirtualRecord partitionByRecord = analyticContext.getPartitionByRecord();
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
 
         if (partitionByRecord != null) {
-            if (framingMode == AnalyticColumn.FRAMING_RANGE) {
+            if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
-                if (analyticContext.isDefaultFrame() && (!analyticContext.isOrdered() || analyticContext.getRowsHi() == Long.MAX_VALUE)) {
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createMap(
                             configuration,
                             partitionByKeyTypes,
@@ -146,11 +146,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    if (analyticContext.isOrdered() && !analyticContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(analyticContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
 
-                    int timestampIndex = analyticContext.getTimestampIndex();
+                    int timestampIndex = windowContext.getTimestampIndex();
 
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.DOUBLE);// current frame sum
@@ -167,8 +167,8 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             columnTypes
                     );
 
-                    final int initialBufferSize = configuration.getSqlAnalyticInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlAnalyticStorePageSize(), configuration.getSqlAnalyticStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
+                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
 
                     // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new AvgOverPartitionRangeFrameFunction(
@@ -183,9 +183,9 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             timestampIndex
                     );
                 }
-            } else if (framingMode == AnalyticColumn.FRAMING_GROUPS) {
+            } else if (framingMode == WindowColumn.FRAMING_GROUPS) {
                 throw SqlException.$(position, "function not implemented for given window paramters");
-            } else if (framingMode == AnalyticColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createMap(
@@ -232,8 +232,8 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             columnTypes
                     );
 
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlAnalyticStorePageSize(),
-                            configuration.getSqlAnalyticStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
 
                     // moving average over preceding N rows
                     return new AvgOverPartitionRowsFrameFunction(
@@ -248,9 +248,9 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 }
             }
         } else { // no partition key
-            if (framingMode == AnalyticColumn.FRAMING_RANGE) {
+            if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
-                if (!analyticContext.isOrdered() && analyticContext.isDefaultFrame()) {
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new AvgOverWholeResultSetFunction(args.get(0));
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
@@ -258,11 +258,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     return new AvgOverUnboundedRowsFrameFunction(args.get(0));
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    if (analyticContext.isOrdered() && !analyticContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(analyticContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
 
-                    int timestampIndex = analyticContext.getTimestampIndex();
+                    int timestampIndex = windowContext.getTimestampIndex();
 
                     // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new AvgOverRangeFrameFunction(
@@ -275,11 +275,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 }
 
 
-            } else if (framingMode == AnalyticColumn.FRAMING_GROUPS) {
+            } else if (framingMode == WindowColumn.FRAMING_GROUPS) {
 
                 throw SqlException.$(position, "function not implemented for given window paramters");
 
-            } else if (framingMode == AnalyticColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new AvgOverUnboundedRowsFrameFunction(args.get(0));
@@ -291,8 +291,8 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     return new AvgOverWholeResultSetFunction(args.get(0));
                 } //between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlAnalyticStorePageSize(),
-                            configuration.getSqlAnalyticStoreMaxPages(),
+                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER);
 
                     return new AvgOverRowsFrameFunction(
@@ -333,7 +333,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
@@ -349,11 +349,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return AnalyticFunction.TWO_PASS;
+            return WindowFunction.TWO_PASS;
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
                 partitionByRecord.of(record);
@@ -377,7 +377,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass2(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -614,11 +614,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return AnalyticFunction.ZERO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
         }
 
@@ -780,11 +780,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return AnalyticFunction.ZERO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
@@ -861,10 +861,10 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             maxDiff = frameLoBounded ? Math.abs(rangeLo) : Math.abs(rangeHi);
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
-            initialCapacity = configuration.getSqlAnalyticStorePageSize() / RECORD_SIZE;
+            initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
 
             capacity = initialCapacity;
-            memory = Vm.getARWInstance(configuration.getSqlAnalyticStorePageSize(), configuration.getSqlAnalyticStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            memory = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
@@ -957,11 +957,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return AnalyticFunction.ZERO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
         }
 
@@ -1090,11 +1090,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return AnalyticFunction.ZERO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
@@ -1205,11 +1205,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return AnalyticFunction.ZERO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
@@ -1254,11 +1254,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return AnalyticFunction.ZERO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
 
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
@@ -1301,11 +1301,11 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public int getPassCount() {
-            return AnalyticFunction.TWO_PASS;
+            return WindowFunction.TWO_PASS;
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
                 sum += d;
@@ -1314,7 +1314,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass2(Record record, long recordOffset, AnalyticSPI spi) {
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
 
@@ -1341,7 +1341,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static abstract class BaseAvgFunction extends DoubleFunction implements AnalyticFunction, ScalarFunction {
+    private static abstract class BaseAvgFunction extends DoubleFunction implements WindowFunction, ScalarFunction {
         protected final Function arg;
         protected int columnIndex;
 

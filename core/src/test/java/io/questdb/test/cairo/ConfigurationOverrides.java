@@ -113,15 +113,15 @@ public interface ConfigurationOverrides {
 
     long getSpinLockTimeout();
 
-    int getSqlAnalyticStoreMaxPages();
-
-    int getSqlAnalyticStorePageSize();
-
     int getSqlCopyBufferSize();
 
     int getSqlJoinMetadataMaxResizes();
 
     int getSqlJoinMetadataPageSize();
+
+    int getSqlWindowStoreMaxPages();
+
+    int getSqlWindowStorePageSize();
 
     int getTableRegistryCompactionThreshold();
 
@@ -255,15 +255,15 @@ public interface ConfigurationOverrides {
 
     void setSpinLockTimeout(long spinLockTimeout);
 
-    void setSqlAnalyticStoreMaxPages(int analyticStoreMaxPages);
-
-    void setSqlAnalyticStorePageSize(int analyticStorePageSize);
-
     void setSqlCopyBufferSize(int sqlCopyBufferSize);
 
     void setSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes);
 
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
+
+    void setSqlWindowStoreMaxPages(int windowStoreMaxPages);
+
+    void setSqlWindowStorePageSize(int windowStorePageSize);
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 

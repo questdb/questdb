@@ -34,10 +34,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
@@ -879,12 +879,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     private static abstract class DelegatingSqlExecutionContext implements SqlExecutionContext {
         @Override
-        public void clearAnalyticContext() {
-            sqlExecutionContext.clearAnalyticContext();
+        public void clearWindowContext() {
+            sqlExecutionContext.clearWindowContext();
         }
 
         @Override
-        public void configureAnalyticContext(
+        public void configureWindowContext(
                 @Nullable VirtualRecord partitionByRecord,
                 @Nullable RecordSink partitionBySink,
                 @Nullable ColumnTypes keyTypes,
@@ -901,7 +901,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 int exclusionKindPos,
                 int timestampIndex
         ) {
-            sqlExecutionContext.configureAnalyticContext(
+            sqlExecutionContext.configureWindowContext(
                     partitionByRecord,
                     partitionBySink,
                     keyTypes,
@@ -917,11 +917,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     exclusionKind,
                     exclusionKindPos,
                     timestampIndex);
-        }
-
-        @Override
-        public AnalyticContext getAnalyticContext() {
-            return sqlExecutionContext.getAnalyticContext();
         }
 
         @Override
@@ -977,6 +972,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public @NotNull SecurityContext getSecurityContext() {
             return sqlExecutionContext.getSecurityContext();
+        }
+
+        @Override
+        public WindowContext getWindowContext() {
+            return sqlExecutionContext.getWindowContext();
         }
 
         @Override
