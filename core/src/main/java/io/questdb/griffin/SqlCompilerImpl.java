@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -2500,6 +2499,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             // show search_path
             // show datestyle
             // show time zone
+            // show server_version
             RecordCursorFactory factory = null;
             if (isTablesKeyword(tok)) {
                 factory = new TableListRecordCursorFactory();
@@ -2519,7 +2519,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 factory = new ShowSearchPathCursorFactory();
             } else if (isDateStyleKeyword(tok)) {
                 factory = new ShowDateStyleCursorFactory();
-            } else if (SqlKeywords.isTimeKeyword(tok)) {
+            } else if (isServerVersionKeyword(tok)) {
+                factory = new ShowServerVersionCursorFactory();
+            } else if (isTimeKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     factory = new ShowTimeZoneFactory();

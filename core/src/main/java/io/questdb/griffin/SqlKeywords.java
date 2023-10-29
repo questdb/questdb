@@ -2197,6 +2197,25 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'h';
     }
 
+    public static boolean isServerVersionKeyword(CharSequence tok) {
+        int i = 0;
+        return (tok.length() == 14)
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'v'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++)) == '_'
+                && (tok.charAt(i++) | 32) == 'v'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i) | 32) == 'n';
+    }
+
     static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
         final boolean quoted = Chars.isQuoted(keyword);
         if (!quoted && SqlKeywords.isKeyword(keyword)) {
