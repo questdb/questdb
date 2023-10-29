@@ -9,7 +9,6 @@
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
 import io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram;
-import io.questdb.std.histogram.org.HdrHistogram.ConcurrentHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import org.junit.Assert;
 import org.junit.runner.RunWith;
@@ -32,8 +31,7 @@ public class HistogramShiftTest {
     enum HistogramType {Histogram, Concurrent, Atomic}
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {{HistogramType.Histogram, Histogram.class},
-                {HistogramType.Concurrent, ConcurrentHistogram.class}});
+        return Arrays.asList(new Object[][] {{HistogramType.Histogram, Histogram.class}});
     }
 
     private final HistogramType type;

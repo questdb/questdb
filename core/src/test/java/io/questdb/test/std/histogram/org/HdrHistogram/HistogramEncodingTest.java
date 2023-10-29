@@ -72,13 +72,11 @@ public class HistogramEncodingTest {
 
         Histogram histogram = new Histogram(highestTrackableValue, 3);
         AtomicHistogram atomicHistogram = new AtomicHistogram(highestTrackableValue, 3);
-        ConcurrentHistogram concurrentHistogram = new ConcurrentHistogram(highestTrackableValue, 3);
         DoubleHistogram doubleHistogram = new DoubleHistogram(highestTrackableValue * 1000, 3);
 
         for (int i = 0; i < 10000; i++) {
             histogram.recordValue(3000 * i);
             atomicHistogram.recordValue(4000 * i);
-            concurrentHistogram.recordValue(4000 * i);
             doubleHistogram.recordValue(5000 * i);
             doubleHistogram.recordValue(0.001); // Makes some internal shifts happen.
         }
@@ -114,21 +112,6 @@ public class HistogramEncodingTest {
         AtomicHistogram atomicHistogram3 = AtomicHistogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
         Assert.assertEquals(atomicHistogram, atomicHistogram3);
 
-        System.out.println("Testing encoding of a ConcurrentHistogram:");
-        targetBuffer = allocator.allocate(concurrentHistogram.getNeededByteBufferCapacity());
-        concurrentHistogram.encodeIntoByteBuffer(targetBuffer);
-        targetBuffer.rewind();
-
-        ConcurrentHistogram concurrentHistogram2 = ConcurrentHistogram.decodeFromByteBuffer(targetBuffer, 0);
-        Assert.assertEquals(concurrentHistogram, concurrentHistogram2);
-
-        targetCompressedBuffer = allocator.allocate(concurrentHistogram.getNeededByteBufferCapacity());
-        concurrentHistogram.encodeIntoCompressedByteBuffer(targetCompressedBuffer);
-        targetCompressedBuffer.rewind();
-
-        ConcurrentHistogram concurrentHistogram3 = ConcurrentHistogram.decodeFromCompressedByteBuffer(targetCompressedBuffer, 0);
-        Assert.assertEquals(concurrentHistogram, concurrentHistogram3);
-
         System.out.println("Testing encoding of a DoubleHistogram:");
         targetBuffer = allocator.allocate(doubleHistogram.getNeededByteBufferCapacity());
         doubleHistogram.encodeIntoByteBuffer(targetBuffer);
@@ -151,7 +134,6 @@ public class HistogramEncodingTest {
         @Parameterized.Parameters(name = "{0}")
         public static Collection<Object[]> data() {
             return Arrays.asList(new Object[][] {{HistogramType.Histogram, Histogram.class},
-                    {HistogramType.Concurrent, ConcurrentHistogram.class},
                     {HistogramType.Atomic, AtomicHistogram.class}});
         }
 

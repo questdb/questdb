@@ -825,6 +825,10 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
         return integerValuesHistogram.getTotalCount();
     }
 
+    public boolean empty() {
+        return this.getTotalCount() == 0;
+    }
+
     /**
      * get the current lowest (non zero) trackable value the automatically determined range
      * (keep in mind that this can change because it is auto ranging)

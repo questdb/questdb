@@ -8,7 +8,6 @@
 
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
-import io.questdb.std.histogram.org.HdrHistogram.ConcurrentHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import org.junit.Assert;
@@ -412,25 +411,6 @@ public class DoubleHistogramTest {
 
         histogram.copyInto(targetHistogram);
         assertEqual(histogram, targetHistogram);
-
-
-        DoubleHistogram withConcurrentHistogram = new DoubleHistogram(trackableValueRangeSize, numberOfSignificantValueDigits,
-                ConcurrentHistogram.class);
-        DoubleHistogram targetWithConcurrentHistogram = new DoubleHistogram(trackableValueRangeSize, numberOfSignificantValueDigits,
-                ConcurrentHistogram.class);
-        withConcurrentHistogram.recordValue(testValueLevel);
-        withConcurrentHistogram.recordValue(testValueLevel * 10);
-        withConcurrentHistogram.recordValueWithExpectedInterval(withConcurrentHistogram.getCurrentHighestTrackableValue() - 1,
-                withConcurrentHistogram.getCurrentHighestTrackableValue() / 1000);
-
-        System.out.println("Testing copyInto for DoubleHistogram backed by ConcurrentHistogram:");
-        withConcurrentHistogram.copyInto(targetWithConcurrentHistogram);
-        assertEqual(withConcurrentHistogram, targetWithConcurrentHistogram);
-
-        withConcurrentHistogram.recordValue(testValueLevel * 20);
-
-        withConcurrentHistogram.copyInto(targetWithConcurrentHistogram);
-        assertEqual(withConcurrentHistogram, targetWithConcurrentHistogram);
     }
 
     private int findContainingBinaryOrderOfMagnitude(long longNumber) {
@@ -459,6 +439,6 @@ public class DoubleHistogramTest {
     public void testResizeInternals() {
         // Verify resize behvaior for various underlying internal integer histogram implementations:
         genericResizeTest(HistogramTestUtils.constructDoubleHistogram(DoubleHistogram.class, 2));
-        genericResizeTest(HistogramTestUtils.constructDoubleHistogram(DoubleHistogram.class,2, ConcurrentHistogram.class));
+        genericResizeTest(HistogramTestUtils.constructDoubleHistogram(DoubleHistogram.class,2, Histogram.class));
     }
 }

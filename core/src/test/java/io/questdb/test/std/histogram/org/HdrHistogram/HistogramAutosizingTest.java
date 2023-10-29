@@ -10,7 +10,6 @@ package io.questdb.test.std.histogram.org.HdrHistogram;
 
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
-import io.questdb.std.histogram.org.HdrHistogram.ConcurrentHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram;
 import org.junit.Assert;
 import org.junit.runner.RunWith;
@@ -30,7 +29,7 @@ public class HistogramAutosizingTest {
 
     @Parameterized.Parameters(name = "{0}")
     public static Object[] data() {
-        return new Object[] {Histogram.class, ConcurrentHistogram.class};
+        return new Object[] {Histogram.class};
     }
 
     @Parameter(0)

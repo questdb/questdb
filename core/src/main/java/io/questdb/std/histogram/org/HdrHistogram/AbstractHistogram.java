@@ -193,8 +193,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         if ((bucketCount == otherHistogram.bucketCount) &&
                 (subBucketCount == otherHistogram.subBucketCount) &&
                 (unitMagnitude == otherHistogram.unitMagnitude) &&
-                (getNormalizingIndexOffset() == otherHistogram.getNormalizingIndexOffset()) &&
-                !(otherHistogram instanceof ConcurrentHistogram)) {
+                (getNormalizingIndexOffset() == otherHistogram.getNormalizingIndexOffset())) {
             // Counts arrays are of the same length and meaning, so we can just iterate and add directly:
             long observedOtherTotalCount = 0;
             for (int i = 0; i < otherHistogram.countsArrayLength; i++) {
