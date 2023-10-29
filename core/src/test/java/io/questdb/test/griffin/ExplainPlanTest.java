@@ -1659,7 +1659,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
         );
     }
-    
+
     @Test
     public void testFiltersOnIndexedSymbolColumns() throws SqlException {
         ddl("CREATE TABLE reference_prices (\n" +
@@ -4011,6 +4011,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLikeFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (s1 string, s2 string, s3 string, s4 string, s5 string, s6 string);");
+
+            assertPlan(
+                    "select * from tab " +
+                            "where s1 like '%a'  and s2 ilike '%a' " +
+                            "  and s3 like 'a%'  and s4 ilike 'a%' " +
+                            "  and s5 like '%a%' and s6 ilike '%a%';",
+                    "Async Filter workers: 1\n" +
+                            "  filter: (((((s1 like %a and s2 ilike %a) and s3 like a%) and s4 ilike a%) and s5 like %a%) and s6 ilike %a%)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
             );
         });
     }

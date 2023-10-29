@@ -110,30 +110,33 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                         if (len == 1) {
                             return BooleanConstant.TRUE; // LIKE '%' case
                         } else if (likeSeq.charAt(0) == '%') {
-                            // LIKE '%abc' case
-                            return new ConstEndsWithStrFunction(
-                                    value,
-                                    likeSeq.subSequence(1, len).toString(),
-                                    isCaseInsensitive()
-                            );
+                            // LIKE/ILIKE '%abc' case
+                            final String patternStr = likeSeq.subSequence(1, len).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIEndsWithStrFunction(value, patternStr);
+                            } else {
+                                return new ConstEndsWithStrFunction(value, patternStr);
+                            }
                         } else if (likeSeq.charAt(len - 1) == '%') {
-                            // LIKE 'abc%' case
-                            return new ConstStartsWithStrFunction(
-                                    value,
-                                    likeSeq.subSequence(0, len - 1).toString(),
-                                    isCaseInsensitive()
-                            );
+                            // LIKE/ILIKE 'abc%' case
+                            final String patternStr = likeSeq.subSequence(0, len - 1).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIStartsWithStrFunction(value, patternStr);
+                            } else {
+                                return new ConstStartsWithStrFunction(value, patternStr);
+                            }
                         }
                     } else if (anyCount == 2) {
                         if (len == 2) {
                             return BooleanConstant.TRUE; // LIKE '%%' case
                         } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
-                            // LIKE '%abc%' case
-                            return new ConstContainsStrFunction(
-                                    value,
-                                    likeSeq.subSequence(1, len - 1).toString(),
-                                    isCaseInsensitive()
-                            );
+                            // LIKE/ILIKE '%abc%' case
+                            final String patternStr = likeSeq.subSequence(1, len - 1).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIContainsStrFunction(value, patternStr);
+                            } else {
+                                return new ConstContainsStrFunction(value, patternStr);
+                            }
                         }
                     }
                 }
@@ -239,14 +242,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     }
 
     private static class ConstContainsStrFunction extends BooleanFunction implements UnaryFunction {
-        private final boolean caseInsensitive;
         private final String pattern;
         private final Function value;
 
-        public ConstContainsStrFunction(Function value, String pattern, boolean caseInsensitive) {
+        public ConstContainsStrFunction(Function value, String pattern) {
             this.value = value;
             this.pattern = pattern;
-            this.caseInsensitive = caseInsensitive;
         }
 
         @Override
@@ -260,9 +261,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             if (cs == null) {
                 return false;
             }
-            if (caseInsensitive) {
-                return Chars.containsIgnoreCase(cs, pattern);
-            }
             return Chars.contains(cs, pattern);
         }
 
@@ -274,11 +272,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
-            if (caseInsensitive) {
-                sink.val(" ILIKE ");
-            } else {
-                sink.val(" LIKE ");
-            }
+            sink.val(" like ");
             sink.val('%');
             sink.val(pattern);
             sink.val('%');
@@ -286,14 +280,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     }
 
     private static class ConstEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
-        private final boolean caseInsensitive;
         private final String pattern;
         private final Function value;
 
-        public ConstEndsWithStrFunction(Function value, String pattern, boolean caseInsensitive) {
+        public ConstEndsWithStrFunction(Function value, String pattern) {
             this.value = value;
             this.pattern = pattern;
-            this.caseInsensitive = caseInsensitive;
         }
 
         @Override
@@ -304,9 +296,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public boolean getBool(Record rec) {
             CharSequence cs = getArg().getStr(rec);
-            if (caseInsensitive) {
-                return Chars.endsWithIgnoreCase(cs, pattern);
-            }
             return Chars.endsWith(cs, pattern);
         }
 
@@ -318,13 +307,115 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
-            if (caseInsensitive) {
-                sink.val(" ILIKE ");
-            } else {
-                sink.val(" LIKE ");
-            }
+            sink.val(" like ");
             sink.val('%');
             sink.val(pattern);
+        }
+    }
+
+    private static class ConstIContainsStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstIContainsStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            if (cs == null) {
+                return false;
+            }
+            return Chars.containsIgnoreCase(cs, pattern);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val('%');
+            sink.val(pattern);
+            sink.val('%');
+        }
+    }
+
+    private static class ConstIEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstIEndsWithStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return Chars.endsWithIgnoreCase(cs, pattern);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val('%');
+            sink.val(pattern);
+        }
+    }
+
+    private static class ConstIStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstIStartsWithStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return Chars.startsWithIgnoreCase(cs, pattern);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val(pattern);
+            sink.val('%');
         }
     }
 
@@ -366,14 +457,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     }
 
     private static class ConstStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
-        private final boolean caseInsensitive;
         private final String pattern;
         private final Function value;
 
-        public ConstStartsWithStrFunction(Function value, String pattern, boolean caseInsensitive) {
+        public ConstStartsWithStrFunction(Function value, String pattern) {
             this.value = value;
             this.pattern = pattern;
-            this.caseInsensitive = caseInsensitive;
         }
 
         @Override
@@ -384,9 +473,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public boolean getBool(Record rec) {
             CharSequence cs = getArg().getStr(rec);
-            if (caseInsensitive) {
-                return Chars.startsWithIgnoreCase(cs, pattern);
-            }
             return Chars.startsWith(cs, pattern);
         }
 
@@ -398,11 +484,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
-            if (caseInsensitive) {
-                sink.val(" ILIKE ");
-            } else {
-                sink.val(" LIKE ");
-            }
+            sink.val(" like ");
             sink.val(pattern);
             sink.val('%');
         }
