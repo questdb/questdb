@@ -28,57 +28,54 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.Numbers;
+import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 
-public class PercentileGroupByFunction extends LongFunction implements GroupByFunction, TernaryFunction {
+public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+    // specifies the precision for the recorded values (between 0 and 5).
+    // trade-off between memory usage and accuracy.
+    private final int numberOfSignificantValueDigits = 3;
     private final Function left;
-    private final Function center;
     private final Function right;
-    private Histogram histogram;
+    private DoubleHistogram histogram;
 
-    public PercentileGroupByFunction(Function left, Function center, Function right) {
+    public ApproxPercentileDoubleGroupByFunction(Function left, Function right) {
         this.left = left;
-        this.center = center;
         this.right = right;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        this.histogram = new Histogram(right.getInt(record));
+        this.histogram = new DoubleHistogram(this.numberOfSignificantValueDigits);
 
-        final long value = left.getLong(record);
-        histogram.recordSingleValue(value);
+        final double value = right.getDouble(record);
+        histogram.recordValue(value);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final long value = left.getLong(record);
-        histogram.recordSingleValue(value);
+        final double value = right.getDouble(record);
+        histogram.recordValue(value);
     }
 
     @Override
     public Function getLeft() { return left; }
 
     @Override
-    public Function getCenter() { return center; }
-
-    @Override
     public Function getRight() { return right; }
 
     @Override
-    public long getLong(Record rec) {
+    public double getDouble(Record rec) {
         if(histogram.empty()) {
             return Numbers.LONG_NaN;
         }
-        return histogram.getValueAtPercentile(center.getDouble(rec));
+        return histogram.getValueAtPercentile(left.getDouble(rec) * 100);
     }
 
     @Override
-    public String getName() { return "histogram"; }
+    public String getName() { return "approx_percentile"; }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {}

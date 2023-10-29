@@ -31,11 +31,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class PercentileAtValueGroupByFunctionFactory implements FunctionFactory {
-
+public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "percentileAtValue(LLI)";
+        return "approx_percentile(DD)";
     }
 
     @Override
@@ -45,6 +44,6 @@ public class PercentileAtValueGroupByFunctionFactory implements FunctionFactory 
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new PercentileAtValueGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2));
+        return new ApproxPercentileDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }
