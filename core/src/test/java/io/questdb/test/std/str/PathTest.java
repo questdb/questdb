@@ -27,10 +27,7 @@ package io.questdb.test.std.str;
 import io.questdb.cairo.TableToken;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -278,6 +275,24 @@ public class PathTest {
         try (Path p0 = new Path(4).putAscii("foobar").$()) {
             path.of("baz").prefix(p0, p0.size()).$();
             TestUtils.assertEquals("foobarbaz", path.toString());
+        }
+    }
+
+    @Test
+    public void testPutDirectUtf8Sequence() {
+        try (Path p0 = new Path(16); DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
+            Assert.assertEquals(16, p0.capacity());
+            final String payload1 = "Moo: 🐄";
+            sink.put(payload1);
+            p0.put(sink);
+            Assert.assertEquals(p0.capacity(), 16);
+            Assert.assertEquals(payload1, p0.toString());
+            final String payload2 = ", mooooooooooooooooooooo: 🐮!";
+            sink.clear();
+            sink.put(payload2);
+            p0.put(sink);
+            Assert.assertEquals(255, path.capacity());
+            Assert.assertEquals(payload1 + payload2, p0.toString());
         }
     }
 
