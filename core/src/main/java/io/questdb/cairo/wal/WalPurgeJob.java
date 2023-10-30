@@ -196,9 +196,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         ff.rmdir(symLinkTarget, false);
                     }
                     TableUtils.lockName(pathToDelete);
+
+                    // Sometimes on Windows sequencer files can be open at this point,
+                    // wait for them to be closed before fully removing the token from name registry
+                    // and marking table as fully deleted.
                     if (fullyDeleted) {
-                        // Sometimes on Windows seq files can be open, wait for the to be closed before fully removing
-                        // the token
                         engine.removeTableToken(tableToken);
                     }
                 } else {
