@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.window;
 
-import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -99,6 +98,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAverageOverNonPartitionedRowsWithLargeFrameRandomData() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            insert("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
+            insert("insert into tab select (100000+x)::timestamp, rnd_long(1,10000,10), rnd_long(1,100000,10) from long_sequence(1000000)");
+
+            String expected = "ts\tavg\n" +
+                    "1970-01-01T00:00:01.100000Z\t49980.066958378644\n";
+
+            // cross-check with moving average re-write using aggregate functions
+            assertSql(expected,
+                    " select max(ts) as ts, avg(j) as avg from " +
+                            "( select ts, i, j, row_number() over (order by ts desc) as rn from tab order by ts desc) " +
+                            "where rn between 1 and 80001 ");
+
+            assertSql(expected,
+                    "select * from (" +
+                            "select * from (select ts, avg(j) over (order by ts rows between 80000 preceding and current row) from tab) limit -1) ");
+        });
+    }
+
+    @Test
     public void testAverageOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             //default buffer size holds 65k entries in total, 32 per partition, see CairoConfiguration.getSqlWindowInitialRangeBufferSize()
@@ -124,6 +146,52 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertSql(expected,
                     "select * from (select * from (select ts, i, j, avg(j) over (partition by i order by ts range between 80000 preceding and current row) from tab) limit -4) order by i");
+        });
+    }
+
+    @Test
+    public void testAverageOverPartitionedRangeWithLargeFrameRandomData() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab select (100000+x)::timestamp, rnd_long(1,20,10), rnd_long(1,1000,5) from long_sequence(1000000)");
+
+            String expected = "ts\ti\tavg\n" +
+                    "1970-01-01T00:00:01.099967Z\tNaN\t495.40261282660333\n" +
+                    "1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\n" +
+                    "1970-01-01T00:00:01.099973Z\t2\t506.5011448196909\n" +
+                    "1970-01-01T00:00:01.099908Z\t3\t505.95267958950967\n" +
+                    "1970-01-01T00:00:01.099977Z\t4\t501.16155593412833\n" +
+                    "1970-01-01T00:00:01.099994Z\t5\t494.87667161961366\n" +
+                    "1970-01-01T00:00:01.099991Z\t6\t500.67453098351336\n" +
+                    "1970-01-01T00:00:01.099998Z\t7\t497.7231450719823\n" +
+                    "1970-01-01T00:00:01.099997Z\t8\t498.6340425531915\n" +
+                    "1970-01-01T00:00:01.099992Z\t9\t499.1758750361585\n" +
+                    "1970-01-01T00:00:01.099989Z\t10\t500.3242937853107\n" +
+                    "1970-01-01T00:00:01.099976Z\t11\t501.4019192774485\n" +
+                    "1970-01-01T00:00:01.099984Z\t12\t489.8953058321479\n" +
+                    "1970-01-01T00:00:01.099952Z\t13\t500.65723270440253\n" +
+                    "1970-01-01T00:00:01.099996Z\t14\t506.8769141866513\n" +
+                    "1970-01-01T00:00:01.100000Z\t15\t497.0794058840331\n" +
+                    "1970-01-01T00:00:01.099979Z\t16\t499.3338209479228\n" +
+                    "1970-01-01T00:00:01.099951Z\t17\t492.7804469273743\n" +
+                    "1970-01-01T00:00:01.099999Z\t18\t501.4806333050608\n" +
+                    "1970-01-01T00:00:01.099957Z\t19\t501.01901034386356\n" +
+                    "1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\n";
+
+            // cross-check with moving average re-write using aggregate functions
+            assertSql(expected,
+                    " select max(data.ts) as ts, data.i as i, avg(data.j) as avg from " +
+                            "( select i, max(ts) as max from tab group by i) cnt " +
+                            "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "group by data.i " +
+                            "order by data.i ");
+
+            assertSql(expected,
+                    "select last(ts) as ts, i, last(avg) as avg from " +
+                            "(select * from (select ts, i, avg(j) over (partition by i order by ts range between 80000 preceding and current row) avg " +
+                            "from tab ) " +
+                            "limit -100 )" +
+                            "order by i");
         });
     }
 
@@ -1649,18 +1717,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowBufferExceedsLimit() throws Exception {
-        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
         configOverrideSqlWindowStorePageSize(4096);
         configOverrideSqlWindowStoreMaxPages(10);
 
-        assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab select x::timestamp, 1, x from long_sequence(100000)");
+        try {
+            assertMemoryLeak(() -> {
+                ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+                insert("insert into tab select x::timestamp, 1, x from long_sequence(100000)");
 
-            //TODO: improve error message and position
-            assertException("select avg(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                    0, "Maximum number of pages (10) breached in VirtualMemory");
-        });
+                //TODO: improve error message and position
+                assertException("select avg(j) over (partition by i rows between 100001 preceding and current row) from tab",
+                        0, "Maximum number of pages (10) breached in VirtualMemory");
+            });
+        } finally {
+            //disable
+            configOverrideSqlWindowStorePageSize(0);
+            configOverrideSqlWindowStoreMaxPages(0);
+        }
     }
 
     @Test
