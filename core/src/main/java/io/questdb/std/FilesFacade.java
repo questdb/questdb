@@ -144,9 +144,7 @@ public interface FilesFacade {
 
     int rename(LPSZ from, LPSZ to);
 
-    default boolean rmdir(Path name) {
-        return rmdir(name, false);
-    }
+    boolean rmdir(Path name);  // Implementation-specific laziness.
 
     boolean rmdir(Path name, boolean lazy);
 
