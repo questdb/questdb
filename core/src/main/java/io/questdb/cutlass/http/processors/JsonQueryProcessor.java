@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
+import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -61,6 +62,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final Metrics metrics;
     private final NanosecondClock nanosecondClock;
     private final Path path = new Path();
+    private final QueryLogger queryLogger;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
     @TestOnly
@@ -92,6 +94,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) {
         this.configuration = configuration;
         this.engine = engine;
+        queryLogger = engine.getConfiguration().getQueryLogger();
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
@@ -166,8 +169,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
             final RecordCursorFactory factory = context.getSelectCache().poll(state.getQuery());
             if (factory != null) {
-                // queries with sensitive info aren't cached
-                state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
+                // queries with sensitive info are not cached, doLog = true
+                queryLogger.logExecQuery(LOG, true, context.getFd(), state.getQuery(), context.getSecurityContext());
                 try {
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
                     executeCachedSelect(
