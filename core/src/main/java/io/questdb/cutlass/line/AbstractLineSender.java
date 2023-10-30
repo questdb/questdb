@@ -28,7 +28,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.*;
-import io.questdb.std.bytes.Bytes;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
@@ -225,20 +224,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
 
     @Override
     public AbstractLineSender put(long lo, long hi) {
-        validateNotClosed();
-        final long size = hi - lo;
-        if (ptr + size < this.hi) {
-            Vect.memcpy(ptr, lo, hi - lo);
-        } else {
-            send00();
-            if (ptr + (hi - lo) < this.hi) {
-                Vect.memcpy(ptr, lo, hi - lo);
-            } else {
-                throw new LineSenderException("value too long. increase buffer size.");
-            }
-        }
-        ptr += size;
-        return this;
+        throw new UnsupportedOperationException();
     }
 
     @Override
