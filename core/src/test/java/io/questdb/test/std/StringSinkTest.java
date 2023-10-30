@@ -97,4 +97,12 @@ public class StringSinkTest {
         ss.putAsPrintable("\nasd+-~f\r\0 д");
         TestUtils.assertEquals("\\u000aasd+-~f\\u000d\\u0000 д", ss.toString());
     }
+
+    @Test
+    public void testTrimTo() {
+        StringSink ss = new StringSink();
+        ss.put("1234567890");
+        ss.trimTo(5);
+        TestUtils.assertEquals("12345", ss);
+    }
 }
