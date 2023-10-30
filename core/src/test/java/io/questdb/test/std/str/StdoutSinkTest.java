@@ -29,7 +29,9 @@ import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.junit.Test;
 
-/** Output of these tests need to be observed manually in console output. */
+/**
+ * Output of these tests need to be observed manually in console output.
+ */
 public class StdoutSinkTest {
     @Test
     public void testBasics() {

@@ -29,7 +29,6 @@ import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -40,6 +39,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MetricsTest {
+
+    @Test
+    public void testGetMetricsRegistry() {
+        final NullMetricsRegistry registry = new NullMetricsRegistry();
+        final Metrics metrics = new Metrics(true, registry);
+        Assert.assertNotNull(metrics.getRegistry());
+        Assert.assertSame(registry, metrics.getRegistry());
+    }
 
     @Test
     public void testLabelNames() {
