@@ -58,6 +58,4 @@ public interface ServerConfiguration {
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
     }
-
-    default boolean isILPEnabled() { return true; }
 }
