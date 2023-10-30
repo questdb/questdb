@@ -8135,7 +8135,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
                             "avg(j) over (partition by i order by j, i desc rows unbounded preceding) " +
-                            "from tab order by ts desc",
+                            "from tab " +
+                            "order by ts desc",
                     "SelectedRecord\n" +
                             "    CachedWindow\n" +
                             "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
@@ -8154,6 +8155,383 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        DataFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testWindowModelOrderByIsNotIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select sum(avg) from (\n" +
+                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts desc\n" +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg) from (\n" +
+                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg) sm from (\n" +
+                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts asc\n" +
+                            ") order by sm ",
+                    "Sort\n" +
+                            "  keys: [sm]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(avg)]\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+        });
+    }
+
+    @Test
+    public void testWindowOrderByUnderAnalyticModelIsPreserved() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select sum(avg) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts desc" +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by 1 desc",
+                    "Sort\n" +
+                            "  keys: [sum desc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(avg)]\n" +
+                            "        CachedWindow\n" +
+                            "          orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+        });
+    }
+    
+    //TODO: remove artificial limit models used to force ordering on window models (and avoid unnecessary sorts)
+    @Test
+    public void testWindowParentModelOrderPushdownIsBlockedWhenWindowModelSpecifiesOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts desc " +
+                            ") order by ts asc",
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts asc " +
+                            ") order by ts desc",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts asc " +
+                            ") order by hostname",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts asc ",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts desc ",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            "order by ts desc " +
+                            ") order by ts asc ",
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            "order by ts asc " +
+                            ") order by ts desc ",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc ) " +
+                            "order by ts asc " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+
+        });
+    }
+
+    @Test
+    public void testWindowParentModelOrderPushdownIsDoneWhenNestedModelsSpecifyNoneOrMatchingOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            String expectedForwardPlan = "Window\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by hostname) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            String expectedForwardLimitPlan = "Sort\n" +
+                    "  keys: [ts]\n" +
+                    "    Limit lo: 9223372036854775807L\n" +
+                    "        Window\n" +
+                    "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts asc  " +
+                            ") order by ts asc",
+                    expectedForwardLimitPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            "order by ts asc  " +
+                            ") order by ts asc",
+                    expectedForwardLimitPlan);
+
+            String expectedBackwardPlan = "Window\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "    DataFrame\n" +
+                    "        Row backward scan\n" +
+                    "        Frame backward scan on: cpu_ts\n";
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by hostname) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            String expectedBackwardLimitPlan = "Sort\n" +
+                    "  keys: [ts desc]\n" +
+                    "    Limit lo: 9223372036854775807L\n" +
+                    "        Window\n" +
+                    "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "            DataFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts desc  " +
+                            ") order by ts desc",
+                    expectedBackwardLimitPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            "order by ts desc  " +
+                            ") order by ts desc",
+                    expectedBackwardLimitPlan);
         });
     }
 

@@ -1079,7 +1079,6 @@ public class SqlOptimiser implements Mutable {
 
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
         final int n = orderBy.size();
-        final QueryModel nestedModel = model.getNestedModel();
 
         if (n > 0) {
             final IntList orderByDirection = model.getOrderByDirection();
@@ -1093,6 +1092,7 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        final QueryModel nestedModel = model.getNestedModel();
         if (nestedModel != null) {
             createOrderHash(nestedModel);
         }
@@ -1914,7 +1914,7 @@ public class SqlOptimiser implements Mutable {
 
     private IntList getOrderByAdviceDirection(QueryModel model, int orderByMnemonic) {
         IntList orderByDirection = model.getOrderByDirection();
-        if (orderByDirection.size() == 0
+        if (model.getOrderBy().size() == 0
                 && orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
             return model.getOrderByDirectionAdvice();
         }
@@ -2746,6 +2746,11 @@ public class SqlOptimiser implements Mutable {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
         }
 
+        // keep order by on model with window functions to speed up query (especially when it matches window order by)
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW && model.getOrderBy().size() > 0) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+        }
+
         // determine if ordering is required
         switch (topLevelOrderByMnemonic) {
             case OrderByMnemonic.ORDER_BY_UNKNOWN:
@@ -2788,6 +2793,32 @@ public class SqlOptimiser implements Mutable {
 
         final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
         final IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
+
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW
+                && model.getOrderBy().size() > 0
+                && model.getOrderByAdvice().size() > 0
+                && model.getLimitLo() == null) {
+
+            boolean orderChanges = false;
+            if (orderByAdvice.size() != model.getOrderByAdvice().size()) {
+                orderChanges = true;
+            } else {
+                for (int i = 0, max = orderByAdvice.size(); i < max; i++) {
+                    if (!orderByAdvice.getQuick(i).equals(model.getOrderBy().getQuick(i)) ||
+                            orderByDirectionAdvice.getQuick(i) != model.getOrderByDirection().getQuick(i)) {
+                        orderChanges = true;
+                    }
+                }
+            }
+
+            if (orderChanges) {
+                // Set artificial limit to trigger LimitRCF use, so that parent models don't use the followedOrderByAdvice flag and skip necessary sort
+                // Currently the only way to delinate order by advice is through use of factory that returns false for followedOrderByAdvice().
+                // TODO: factories should provide order metadata to enable better sort-skipping
+                model.setLimit(expressionNodePool.next().of(CONSTANT, "" + Long.MAX_VALUE, Integer.MIN_VALUE, 0), null);
+            }
+        }
+
         final ObjList<QueryModel> jm = model.getJoinModels();
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
