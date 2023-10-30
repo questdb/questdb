@@ -477,12 +477,15 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
         }
 
+        /**
+         * Variant of `put(long lo, long hi)` that writes up to the available space in the buffer.
+         * If there isn't enough space to write the whole length, the written length is returned.
+         */
         @Override
         public int writeBytes(long srcAddr, int len) {
             assert len > 0;
             len = (int) Math.min(len, buffer.getWriteNAvailable());
-            Vect.memcpy(buffer.getWriteAddress(len), srcAddr, len);
-            buffer.onWrite(len);
+            put(srcAddr, srcAddr + len);
             return len;
         }
     }
