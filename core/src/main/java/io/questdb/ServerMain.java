@@ -317,7 +317,7 @@ public class ServerMain implements Closeable {
                 metrics
         ));
 
-        if (!isReadOnly) {
+        if (!isReadOnly && config.isIlpEnabled()) {
             // ilp/tcp
             freeOnExit.register(Services.createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
