@@ -665,29 +665,6 @@ public class FuzzRunner {
         }
     }
 
-    protected String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
-        String[] symbols = new String[totalSymbols];
-        int symbolIndex = 0;
-
-        try (TableReader reader = getReader(baseSymbolTableName)) {
-            TableReaderMetadata metadata = reader.getMetadata();
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
-                int columnType = metadata.getColumnType(i);
-                if (ColumnType.isSymbol(columnType)) {
-                    SymbolMapReader symbolReader = reader.getSymbolMapReader(i);
-                    for (int sym = 0; symbolIndex < totalSymbols && sym < symbolReader.getSymbolCount() - 1; sym++) {
-                        symbols[symbolIndex++] = Chars.toString(symbolReader.valueOf(sym));
-                    }
-                }
-            }
-        }
-
-        for (; symbolIndex < totalSymbols; symbolIndex++) {
-            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
-        }
-        return symbols;
-    }
-
     protected void assertStringColDensity(String tableNameWal) {
         try (TableReader reader = getReader(tableNameWal)) {
             TableReaderMetadata metadata = reader.getMetadata();
@@ -710,6 +687,29 @@ public class FuzzRunner {
                 }
             }
         }
+    }
+
+    protected String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
+        String[] symbols = new String[totalSymbols];
+        int symbolIndex = 0;
+
+        try (TableReader reader = getReader(baseSymbolTableName)) {
+            TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                int columnType = metadata.getColumnType(i);
+                if (ColumnType.isSymbol(columnType)) {
+                    SymbolMapReader symbolReader = reader.getSymbolMapReader(i);
+                    for (int sym = 0; symbolIndex < totalSymbols && sym < symbolReader.getSymbolCount() - 1; sym++) {
+                        symbols[symbolIndex++] = Chars.toString(symbolReader.valueOf(sym));
+                    }
+                }
+            }
+        }
+
+        for (; symbolIndex < totalSymbols; symbolIndex++) {
+            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
+        }
+        return symbols;
     }
 
     protected void runFuzz(String tableName, Rnd rnd) throws Exception {

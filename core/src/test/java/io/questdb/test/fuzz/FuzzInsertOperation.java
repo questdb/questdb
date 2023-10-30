@@ -28,10 +28,10 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.test.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.test.cairo.TestRecord;
 
 public class FuzzInsertOperation implements FuzzTransactionOperation {
     public final static int[] SUPPORTED_COLUMN_TYPES = new int[]{

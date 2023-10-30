@@ -36,15 +36,15 @@ public interface Authenticator extends QuietCloseable {
     int OK = -1;
     int QUEUE_FULL = 2;
 
-    default int denyAccess() throws AuthenticatorException  {
-        throw new UnsupportedOperationException();
-    }
-
     default void clear() {
     }
 
     @Override
     default void close() {
+    }
+
+    default int denyAccess() throws AuthenticatorException {
+        throw new UnsupportedOperationException();
     }
 
     CharSequence getPrincipal();

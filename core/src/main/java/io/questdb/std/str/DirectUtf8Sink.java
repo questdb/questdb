@@ -26,7 +26,6 @@ package io.questdb.std.str;
 
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
@@ -106,6 +105,12 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     @Override
+    public DirectUtf8Sink put(long lo, long hi) {
+        sink.put(lo, hi);
+        return this;
+    }
+
+    @Override
     public DirectUtf8Sink putAscii(char c) {
         MutableUtf8Sink.super.putAscii(c);
         return this;
@@ -125,11 +130,5 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     @Override
     public @NotNull String toString() {
         return Utf8s.stringFromUtf8Bytes(sink.lo(), sink.hi());
-    }
-
-    @Override
-    public DirectUtf8Sink put(long lo, long hi) {
-        sink.put(lo, hi);
-        return this;
     }
 }

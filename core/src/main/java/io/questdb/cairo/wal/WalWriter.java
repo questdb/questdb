@@ -86,8 +86,8 @@ public class WalWriter implements TableWriterAPI {
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
-    private final int walId;
     private final WalDirectoryPolicy walDirectoryPolicy;
+    private final int walId;
     private final String walName;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;

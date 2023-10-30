@@ -26,7 +26,9 @@ package io.questdb.std.str;
 
 import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 
-/** A growable Utf8 buffer that can be written as a utf-8 sink and borrowed for writing in native code. */
+/**
+ * A growable Utf8 buffer that can be written as a utf-8 sink and borrowed for writing in native code.
+ */
 public interface BorrowableUtf8Sink extends Utf8Sink, BorrowableAsNativeByteSink {
 
 }

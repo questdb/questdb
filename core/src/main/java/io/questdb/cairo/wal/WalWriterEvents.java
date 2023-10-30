@@ -69,6 +69,13 @@ class WalWriterEvents implements Closeable {
         indexFd = -1;
     }
 
+    /**
+     * Size in bytes consumed by the events file, including any symbols.
+     */
+    public long size() {
+        return eventMem.getAppendOffset();
+    }
+
     private void appendIndex(long value) {
         Unsafe.getUnsafe().putLong(longBuffer, value);
         ff.append(indexFd, longBuffer, Long.BYTES);
@@ -227,11 +234,6 @@ class WalWriterEvents implements Closeable {
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         return txn++;
-    }
-
-    /** Size in bytes consumed by the events file, including any symbols. */
-    public long size() {
-        return eventMem.getAppendOffset();
     }
 
     int appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {

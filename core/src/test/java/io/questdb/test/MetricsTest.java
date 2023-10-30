@@ -161,9 +161,11 @@ public class MetricsTest {
         }
 
         @Override
-        public CounterWithTwoLabels newCounter(CharSequence name,
-                                               CharSequence labelName0, CharSequence[] labelValues0,
-                                               CharSequence labelName1, CharSequence[] labelValues1) {
+        public CounterWithTwoLabels newCounter(
+                CharSequence name,
+                CharSequence labelName0, CharSequence[] labelValues0,
+                CharSequence labelName1, CharSequence[] labelValues1
+        ) {
             addMetricName(name);
             addLabelNames(name, Arrays.asList(labelName0, labelName1));
             return delegate.newCounter(name, labelName0, labelValues0, labelName1, labelValues1);

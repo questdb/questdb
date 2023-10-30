@@ -3172,13 +3172,13 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean truncateFilesOnClose() {
-                    return true;
+                public void rollbackDirectory(Path path) {
+                    // do nothing
                 }
 
                 @Override
-                public void rollbackDirectory(Path path) {
-                    // do nothing
+                public boolean truncateFilesOnClose() {
+                    return true;
                 }
             });
 

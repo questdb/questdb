@@ -85,6 +85,34 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testDirectUtf8Sequence() throws Exception {
+        final File x = temp.newFile();
+        final String orig = "Здравей свят";
+        final GcUtf8String src = new GcUtf8String(orig);
+
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            final Log logger = factory.create("x");
+            logger.xerror().$(src).$();
+
+            System.err.println(x.getAbsolutePath());
+
+            Os.sleep(100);
+            final String expected = orig + "\r\n";
+            final String actual = new String(java.nio.file.Files.readAllBytes(x.toPath()), StandardCharsets.UTF_8);
+            Assert.assertEquals(expected, actual);
+        }
+    }
+
+    @Test
     public void testFlushJobsAndClose() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
 
@@ -167,34 +195,6 @@ public class LogFactoryTest {
 
             Assert.assertEquals(0, x.length());
             Assert.assertEquals(576, y.length());
-        }
-    }
-
-    @Test
-    public void testDirectUtf8Sequence() throws Exception {
-        final File x = temp.newFile();
-        final String orig = "Здравей свят";
-        final GcUtf8String src = new GcUtf8String(orig);
-
-        try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
-                LogFileWriter w = new LogFileWriter(ring, seq, level);
-                w.setLocation(x.getAbsolutePath());
-                return w;
-            }));
-
-            factory.bind();
-            factory.startThread();
-
-            final Log logger = factory.create("x");
-            logger.xerror().$(src).$();
-
-            System.err.println(x.getAbsolutePath());
-
-            Os.sleep(100);
-            final String expected = orig + "\r\n";
-            final String actual = new String(java.nio.file.Files.readAllBytes(x.toPath()), StandardCharsets.UTF_8);
-            Assert.assertEquals(expected, actual);
         }
     }
 

@@ -166,16 +166,6 @@ public class FuzzTransactionGenerator {
         return transactionList;
     }
 
-    private static void generateTableDropCreate(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, RecordMetadata meta) {
-        FuzzTransaction transaction = new FuzzTransaction();
-        transaction.waitBarrierVersion = waitBarrierVersion;
-        transaction.structureVersion = metadataVersion;
-        transaction.waitAllDone = true;
-        transaction.reopenTable = true;
-        transaction.operationList.add(new FuzzDropCreateTableOperation());
-        transactionList.add(transaction);
-    }
-
     private static void copyColumnsExcept(RecordMetadata from, FuzzTestColumnMeta to, int columnIndex) {
         for (int i = 0, n = from.getColumnCount(); i < n; i++) {
             int columnType = from.getColumnType(i);
@@ -244,6 +234,16 @@ public class FuzzTransactionGenerator {
 
         // nothing to drop, only timestamp column left
         return null;
+    }
+
+    private static void generateTableDropCreate(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, RecordMetadata meta) {
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transaction.reopenTable = true;
+        transaction.operationList.add(new FuzzDropCreateTableOperation());
+        transactionList.add(transaction);
     }
 
     private static void generateTruncateTable(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {

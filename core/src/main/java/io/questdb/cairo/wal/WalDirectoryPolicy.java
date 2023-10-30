@@ -29,9 +29,9 @@ import io.questdb.std.str.Path;
 public interface WalDirectoryPolicy {
     void initDirectory(Path dirPath);
 
-    void rollbackDirectory(Path path);
-
     boolean isInUse(Path path);
+
+    void rollbackDirectory(Path path);
 
     boolean truncateFilesOnClose();
 }

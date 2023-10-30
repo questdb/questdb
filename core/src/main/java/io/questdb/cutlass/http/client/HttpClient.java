@@ -29,7 +29,10 @@ import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.IOOperation;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.Socket;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
@@ -60,13 +63,6 @@ public abstract class HttpClient implements QuietCloseable {
         this.responseHeaders = new ResponseHeaders(bufLo, bufferSize, defaultTimeout, 4096, csPool);
     }
 
-    private void ensureCapacity(long capacity) {
-        final long requiredSize = ptr - bufLo + capacity;
-        if (requiredSize > bufferSize) {
-            throw BufferOverflowException.INSTANCE;
-        }
-    }
-
     @Override
     public void close() {
         disconnect();
@@ -92,6 +88,13 @@ public abstract class HttpClient implements QuietCloseable {
             throw new HttpClientException("peer disconnect [errno=").errno(nf.errno()).put(']');
         }
         return byteCount;
+    }
+
+    private void ensureCapacity(long capacity) {
+        final long requiredSize = ptr - bufLo + capacity;
+        if (requiredSize > bufferSize) {
+            throw BufferOverflowException.INSTANCE;
+        }
     }
 
     private int recvOrDie(long addr, int timeout) {

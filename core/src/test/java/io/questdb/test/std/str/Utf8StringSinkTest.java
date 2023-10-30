@@ -55,6 +55,17 @@ public class Utf8StringSinkTest {
     }
 
     @Test
+    public void testDirectUtf8Sequence() {
+        final String str = "Здравей свят";
+        final GcUtf8String src = new GcUtf8String(str);
+        final Utf8StringSink sink = new Utf8StringSink(4);
+        sink.put(src);
+        final byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+        TestUtils.assertEquals(expectedBytes, sink);
+        TestUtils.assertEquals(src, sink);
+    }
+
+    @Test
     public void testPutUtf8Sequence() {
         Utf8StringSink sink = new Utf8StringSink(1);
         final String str = "こんにちは世界";
@@ -139,17 +150,6 @@ public class Utf8StringSinkTest {
         sink.put(str);
         byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
         TestUtils.assertEquals(expectedBytes, sink);
-    }
-
-    @Test
-    public void testDirectUtf8Sequence() {
-        final String str = "Здравей свят";
-        final GcUtf8String src = new GcUtf8String(str);
-        final Utf8StringSink sink = new Utf8StringSink(4);
-        sink.put(src);
-        final byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
-        TestUtils.assertEquals(expectedBytes, sink);
-        TestUtils.assertEquals(src, sink);
     }
 
     private static void assertUtf8Encoding(Utf8StringSink sink, String s) {

@@ -99,13 +99,6 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
     }
 
     @Override
-    public int denyAccess() throws AuthenticatorException {
-        prepareWrongUsernamePasswordResponse("Access denied");
-        state = State.WRITE_AND_AUTH_FAILURE;
-        return handleIO();
-    }
-
-    @Override
     public void clear() {
         circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
@@ -119,6 +112,13 @@ public final class CleartextPasswordPgWireAuthenticator implements Authenticator
         if (matcherOwned) {
             matcher = Misc.freeIfCloseable(matcher);
         }
+    }
+
+    @Override
+    public int denyAccess() throws AuthenticatorException {
+        prepareWrongUsernamePasswordResponse("Access denied");
+        state = State.WRITE_AND_AUTH_FAILURE;
+        return handleIO();
     }
 
     public CharSequence getPrincipal() {

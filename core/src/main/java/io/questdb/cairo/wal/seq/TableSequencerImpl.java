@@ -57,8 +57,8 @@ public class TableSequencerImpl implements TableSequencer {
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final SeqTxnTracker seqTxnTracker;
     private final TableTransactionLog tableTransactionLog;
-    private final IDGenerator walIdGenerator;
     private final WalDirectoryPolicy walDirectoryPolicy;
+    private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
     private boolean distressed;
     private TableToken tableToken;

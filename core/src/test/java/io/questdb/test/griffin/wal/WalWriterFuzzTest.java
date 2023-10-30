@@ -25,14 +25,17 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.std.Rnd;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
 
-import static io.questdb.test.griffin.wal.FuzzRunner.*;
+import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 // These test is designed to produce unstable runs, e.g. random generator is created
 // using current execution time.

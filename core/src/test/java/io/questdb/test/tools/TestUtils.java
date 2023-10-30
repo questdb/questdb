@@ -126,7 +126,7 @@ public final class TestUtils {
         if (Chars.contains(actual, expected)) {
             return;
         }
-        Assert.fail((message != null ? message + ": '" : "'") + actual.toString() + "' does not contain: " + expected);
+        Assert.fail((message != null ? message + ": '" : "'") + actual + "' does not contain: " + expected);
     }
 
     public static void assertContains(CharSequence actual, CharSequence expected) {
