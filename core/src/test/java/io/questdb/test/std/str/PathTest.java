@@ -156,6 +156,22 @@ public class PathTest {
     }
 
     @Test
+    public void testHugeAppend() {
+        final long threeGiB = 3L * 1024 * 1024 * 1024;
+        final long src = Unsafe.calloc(threeGiB, MemoryTag.NATIVE_DEFAULT);
+        try {
+            try (Path p0 = new Path()) {
+                p0.put(src, src + threeGiB);
+                Assert.fail("Expected exception");
+            }
+        } catch (IllegalArgumentException iae) {
+            TestUtils.assertContains(iae.getMessage(), "size exceeds 2GiB limit");
+        } finally {
+            Unsafe.free(src, threeGiB, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testLpszConcat() {
         try (Path p1 = new Path()) {
             p1.of("abc").concat("123").$();
@@ -206,8 +222,10 @@ public class PathTest {
         }
 
         try (Path p = new Path()) {
-            TestUtils.assertEquals("9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999" + System.getProperty("file.separator") + "xyz",
-                    p.of(b).concat("xyz").$());
+            TestUtils.assertEquals(
+                    "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999" + System.getProperty("file.separator") + "xyz",
+                    p.of(b).concat("xyz").$()
+            );
         }
     }
 
