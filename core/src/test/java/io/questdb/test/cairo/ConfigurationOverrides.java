@@ -107,6 +107,8 @@ public interface ConfigurationOverrides {
 
     int getSampleByIndexSearchPageSize();
 
+    boolean getSimulateCrashEnabled();
+
     String getSnapshotInstanceId();
 
     Boolean getSnapshotRecoveryEnabled();
@@ -190,6 +192,8 @@ public interface ConfigurationOverrides {
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 
     void setFactoryProvider(FactoryProvider factoryProvider);
+
+    void setSimulateCrashEnabled(boolean enabled);
 
     void setFilesFacade(FilesFacade ff);
 

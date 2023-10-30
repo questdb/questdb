@@ -80,6 +80,7 @@ public class Overrides implements ConfigurationOverrides {
     private int rndFunctionMemoryPageSize = -1;
     private RostiAllocFacade rostiAllocFacade = null;
     private int sampleByIndexSearchPageSize;
+    private boolean simulateCrashEnabled;
     private String snapshotInstanceId = null;
     private Boolean snapshotRecoveryEnabled = null;
     private long spinLockTimeout = -1;
@@ -285,6 +286,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public boolean getSimulateCrashEnabled() {
+        return simulateCrashEnabled;
+    }
+
+    @Override
     public String getSnapshotInstanceId() {
         return snapshotInstanceId;
     }
@@ -457,6 +463,7 @@ public class Overrides implements ConfigurationOverrides {
         walMaxLagTxnCount = -1;
         repeatMigrationsFromVersion = -1;
         factoryProvider = null;
+        simulateCrashEnabled = false;
     }
 
     @Override
@@ -537,6 +544,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setFactoryProvider(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
+    }
+
+    @Override
+    public void setSimulateCrashEnabled(boolean enabled) {
+        this.simulateCrashEnabled = enabled;
     }
 
     @Override

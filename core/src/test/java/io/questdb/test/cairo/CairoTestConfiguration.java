@@ -200,6 +200,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public boolean getSimulateCrashEnabled() {
+        return overrides.getSimulateCrashEnabled();
+    }
+
+    @Override
     public int getRepeatMigrationsFromVersion() {
         return overrides.getRepeatMigrationsFromVersion();
     }

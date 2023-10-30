@@ -54,6 +54,14 @@ public class ServerMainTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             Map<String, String> env = new HashMap<>(System.getenv());
             env.put("QDB_LINE_TCP_NET_BIND_TO", "0.0.0.0:9023");
+
+            // Helps to test some exotic init options to increase test coverage.
+            env.put("QDB_CAIRO_SQL_COPY_ROOT", dbPath.toString());
+            env.put("QDB_TELEMETRY", dbPath.toString());
+            env.put("QDB_TELEMETRY_DISABLE_COMPLETELY", "false");
+            env.put("QDB_TELEMETRY_ENABLED", "true");
+
+            // Global enable / disable ILP switch
             AtomicBoolean ilpEnabled = new AtomicBoolean(false);
 
             Bootstrap bootstrap = new Bootstrap(
