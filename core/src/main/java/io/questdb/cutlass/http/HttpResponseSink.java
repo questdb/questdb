@@ -333,9 +333,10 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(long lo, long hi) {
-            final long size = hi - lo;
+            final int size = Bytes.checkedLoHiSize(lo, hi, 0);
             final long dest = getWriteAddress(size);
-            Vect.memcpy(dest, lo, (int) size);
+            Vect.memcpy(dest, lo, size);
+            onWrite(size);
             return this;
         }
 
