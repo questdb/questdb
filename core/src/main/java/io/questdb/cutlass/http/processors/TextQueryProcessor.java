@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
+import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -65,6 +66,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final CairoEngine engine;
     private final int floatScale;
     private final Metrics metrics;
+    private final QueryLogger queryLogger;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
     @TestOnly
@@ -90,6 +92,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
+        queryLogger = engine.getConfiguration().getQueryLogger();
     }
 
     @Override
@@ -122,15 +125,15 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     } else if (isExpRequest) {
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
-                    info(state).$("execute-new [q=`").utf8(state.query)
-                            .$("`, skip: ").$(state.skip)
+                    queryLogger.logQuery(LOG, context.getFd(), state.query, context.getSecurityContext(), "execute-new")
+                            .$(", skip: ").$(state.skip)
                             .$(", stop: ").$(state.stop)
                             .I$();
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
                 }
             } else {
-                info(state).$("execute-cached [q=`").utf8(state.query)
-                        .$("`, skip: ").$(state.skip)
+                queryLogger.logQuery(LOG, context.getFd(), state.query, context.getSecurityContext(), "execute-cached")
+                        .$(", skip: ").$(state.skip)
                         .$(", stop: ").$(state.stop)
                         .I$();
                 sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);

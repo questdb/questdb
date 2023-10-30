@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.BuildInformation;
-import io.questdb.FactoryProvider;
-import io.questdb.TelemetryConfiguration;
-import io.questdb.VolumeDefinitions;
+import io.questdb.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -268,6 +265,10 @@ public interface CairoConfiguration {
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
+
+    default QueryLogger getQueryLogger() {
+        return DefaultQueryLogger.INSTANCE;
+    }
 
     @NotNull
     default Rnd getRandom() {
