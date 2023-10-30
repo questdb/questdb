@@ -26,12 +26,24 @@ package io.questdb.cairo.wal;
 
 import io.questdb.std.str.Path;
 
-public interface WalInitializer {
-    void initDirectory(Path dirPath);
+public class DefaultWalDirectoryPolicy implements WalDirectoryPolicy {
+    public static final DefaultWalDirectoryPolicy INSTANCE = new DefaultWalDirectoryPolicy();
 
-    void rollbackDirectory(Path path);
+    @Override
+    public void initDirectory(Path dirPath) {
+    }
 
-    boolean isInUse(Path path);
+    @Override
+    public boolean isInUse(Path path) {
+        return false;
+    }
 
-    boolean isTruncateFilesOnClose();
+    @Override
+    public void rollbackDirectory(Path path) {
+    }
+
+    @Override
+    public boolean truncateFilesOnClose() {
+        return true;
+    }
 }

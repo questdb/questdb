@@ -3033,11 +3033,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public Utf8Sink put(long lo, long hi) {
-            final long size = hi - lo;
-            ensureCapacity(size);
-            Vect.memcpy(sendBufferPtr, lo, size);
-            sendBufferPtr += size;
-            return this;
+            // Once this is actually needed, the impl would look something like:
+            // final long size = hi - lo;
+            // ensureCapacity(size);
+            // Vect.memcpy(sendBufferPtr, lo, size);
+            // sendBufferPtr += size;
+            // return this;
+            throw new UnsupportedOperationException();
         }
 
         @Override

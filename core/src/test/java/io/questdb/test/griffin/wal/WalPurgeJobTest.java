@@ -27,7 +27,7 @@ package io.questdb.test.griffin.wal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.wal.DefaultWalInitializer;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -60,8 +60,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        engine.setWalInitializer(
-                new DefaultWalInitializer() {
+        engine.setWalDirectoryPolicy(
+                new DefaultWalDirectoryPolicy() {
                     @Override
                     public boolean isInUse(Path path) {
                         int size = path.size();
@@ -1182,19 +1182,19 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
-        public void deleteSegmentDirectory(int walId, int segmentId, int lockId) {
+        public void deleteSegmentDirectory(int walId, int segmentId, int lockFd) {
             events.add(new DeletionEvent(walId, segmentId));
         }
 
         @Override
-        public void deleteWalDirectory(int walId, int lockId) {
+        public void deleteWalDirectory(int walId, int lockFd) {
             events.add(new DeletionEvent(walId));
         }
 
         @Override
-        public void unlock(int lockId) {
-            if (lockId > -1) {
-                closedFds.add(lockId);
+        public void unlock(int lockFd) {
+            if (lockFd > -1) {
+                closedFds.add(lockFd);
             }
         }
     }

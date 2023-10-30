@@ -25,7 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.wal.WalInitializer;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
@@ -58,7 +58,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final SeqTxnTracker seqTxnTracker;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
-    private final WalInitializer walInitializer;
+    private final WalDirectoryPolicy walDirectoryPolicy;
     private volatile boolean closed = false;
     private boolean distressed;
     private TableToken tableToken;
@@ -69,7 +69,7 @@ public class TableSequencerImpl implements TableSequencer {
         this.seqTxnTracker = txnTracker;
 
         final CairoConfiguration configuration = engine.getConfiguration();
-        this.walInitializer = engine.getWalInitializer();
+        this.walDirectoryPolicy = engine.getWalDirectoryPolicy();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
@@ -372,7 +372,7 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw e;
         }
-        walInitializer.initDirectory(path);
+        walDirectoryPolicy.initDirectory(path);
         path.trimTo(rootLen);
     }
 

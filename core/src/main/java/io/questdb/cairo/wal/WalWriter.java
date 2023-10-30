@@ -87,7 +87,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
     private final int walId;
-    private final WalInitializer walInitializer;
+    private final WalDirectoryPolicy walDirectoryPolicy;
     private final String walName;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -112,7 +112,7 @@ public class WalWriter implements TableWriterAPI {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalInitializer walInitializer,
+            WalDirectoryPolicy walDirectoryPolicy,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
@@ -121,7 +121,7 @@ public class WalWriter implements TableWriterAPI {
         this.ddlListener = ddlListener;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
-        this.walInitializer = walInitializer;
+        this.walDirectoryPolicy = walDirectoryPolicy;
         this.tableToken = tableToken;
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
@@ -245,7 +245,7 @@ public class WalWriter implements TableWriterAPI {
                     rollback();
                 }
             } finally {
-                doClose(walInitializer.isTruncateFilesOnClose());
+                doClose(walDirectoryPolicy.truncateFilesOnClose());
             }
         }
     }
@@ -1067,7 +1067,7 @@ public class WalWriter implements TableWriterAPI {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
-        walInitializer.initDirectory(path);
+        walDirectoryPolicy.initDirectory(path);
         path.trimTo(segmentPathLen);
         return segmentPathLen;
     }
@@ -1134,7 +1134,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private boolean isTruncateFilesOnClose() {
-        return this.walInitializer.isTruncateFilesOnClose();
+        return this.walDirectoryPolicy.truncateFilesOnClose();
     }
 
     private void lockWal() {
@@ -1276,7 +1276,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(']').$();
             } else {
                 path.trimTo(rootLen).slash().put(segmentId);
-                walInitializer.rollbackDirectory(path);
+                walDirectoryPolicy.rollbackDirectory(path);
                 path.trimTo(rootLen);
             }
         } else {

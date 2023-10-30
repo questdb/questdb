@@ -87,7 +87,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
-    private @NotNull WalInitializer walInitializer = DefaultWalInitializer.INSTANCE;
+    private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
@@ -677,8 +677,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
     }
 
-    public @NotNull WalInitializer getWalInitializer() {
-        return walInitializer;
+    public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
+        return walDirectoryPolicy;
     }
 
     public @NotNull WalListener getWalListener() {
@@ -1032,8 +1032,8 @@ public class CairoEngine implements Closeable, WriterSource {
     public void setUp() {
     }
 
-    public void setWalInitializer(@NotNull WalInitializer walInitializer) {
-        this.walInitializer = walInitializer;
+    public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
+        this.walDirectoryPolicy = walDirectoryPolicy;
     }
 
     public void setWalListener(@NotNull WalListener walListener) {

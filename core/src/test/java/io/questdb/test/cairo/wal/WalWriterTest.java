@@ -3154,7 +3154,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             assertTableExistence(true, tableToken);
 
-            engine.setWalInitializer(new WalInitializer() {
+            engine.setWalDirectoryPolicy(new WalDirectoryPolicy() {
                 @Override
                 public void initDirectory(Path dirPath) {
                     final File segmentDirFile = new File(dirPath.toString());
@@ -3172,7 +3172,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean isTruncateFilesOnClose() {
+                public boolean truncateFilesOnClose() {
                     return true;
                 }
 
