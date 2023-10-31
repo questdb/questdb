@@ -399,8 +399,10 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    // handles avg() over (partition by x order by ts range between y and z)
-    // removable cumulative aggregation with timestamp & value stored in resizable ring buffers
+    // Handles avg() over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
+    // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
+    // between upper bound and current row's value.
     static class AvgOverPartitionRangeFrameFunction extends BasePartitionedAvgFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
@@ -524,20 +526,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             break;
                         }
                     }
-                } else {//find all value that entered the frame, add to sum and remove from buffer
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
-                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += val;
-                            frameSize++;
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
                 }
                 firstIdx = newFirstIdx;
 
@@ -588,7 +576,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
                 // find new top border of range frame and add new elements
                 if (frameLoBounded) {
-                    for (long i = frameSize, n = size; i < n; i++) {
+                    for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         long diff = Math.abs(ts - timestamp);
@@ -854,7 +842,9 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    // handles avg() over ([order by ts] range between x preceding and [ x preceding | current row ] ); no partition by key
+    // Handles avg() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
+    // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
+    // between upper bound and current row's value .
     static class AvgOverRangeFrameFunction extends BaseAvgFunction implements Reopenable {
         private final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameLoBounded;
@@ -916,20 +906,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         sum -= val;
                         frameSize--;
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
-                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum += val;
-                        frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
