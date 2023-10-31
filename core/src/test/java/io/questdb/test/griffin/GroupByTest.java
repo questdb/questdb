@@ -848,6 +848,21 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByNonPartitioned() throws Exception {
+        assertQuery(
+                "k\tsum\n" +
+                        "TJWC\t0.2845577791213847\n" +
+                        "HYRX\t0.8423410920883345\n" +
+                        "NRXG\t0.3491070363730514\n",
+                "SELECT k, sum(val) FROM tab LIMIT 3;",
+                "CREATE TABLE tab AS (SELECT rnd_str(4, 4, 0) k, rnd_double() val FROM long_sequence(100000));",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testGroupByOrderByExpression() throws Exception {
         assertQuery(
                 "ref0\n" +

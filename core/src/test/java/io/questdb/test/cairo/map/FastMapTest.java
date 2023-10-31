@@ -41,7 +41,250 @@ import org.junit.Test;
 public class FastMapTest extends AbstractCairoTest {
 
     @Test
-    public void testAllTypes() {
+    public void testAllTypesFixedSizeKey() {
+        Rnd rnd = new Rnd();
+
+        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        keyTypes.add(ColumnType.BYTE);
+        keyTypes.add(ColumnType.SHORT);
+        keyTypes.add(ColumnType.CHAR);
+        keyTypes.add(ColumnType.INT);
+        keyTypes.add(ColumnType.LONG);
+        keyTypes.add(ColumnType.FLOAT);
+        keyTypes.add(ColumnType.DOUBLE);
+        keyTypes.add(ColumnType.BOOLEAN);
+        keyTypes.add(ColumnType.DATE);
+        keyTypes.add(ColumnType.TIMESTAMP);
+        keyTypes.add(ColumnType.getGeoHashTypeWithBits(13));
+        keyTypes.add(ColumnType.LONG256);
+
+        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+        valueTypes.add(ColumnType.BYTE);
+        valueTypes.add(ColumnType.SHORT);
+        valueTypes.add(ColumnType.CHAR);
+        valueTypes.add(ColumnType.INT);
+        valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.FLOAT);
+        valueTypes.add(ColumnType.DOUBLE);
+        valueTypes.add(ColumnType.BOOLEAN);
+        valueTypes.add(ColumnType.DATE);
+        valueTypes.add(ColumnType.TIMESTAMP);
+        valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
+        valueTypes.add(ColumnType.LONG256);
+
+        try (FastMap map = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
+            final int N = 100000;
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putByte(rnd.nextByte());
+                key.putShort(rnd.nextShort());
+                key.putChar(rnd.nextChar());
+                key.putInt(rnd.nextInt());
+                key.putLong(rnd.nextLong());
+                key.putFloat(rnd.nextFloat());
+                key.putDouble(rnd.nextDouble());
+                key.putBool(rnd.nextBoolean());
+                key.putDate(rnd.nextLong());
+                key.putTimestamp(rnd.nextLong());
+                key.putShort(rnd.nextShort());
+                Long256Impl long256 = new Long256Impl();
+                long256.setAll(
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong()
+                );
+                key.putLong256(long256);
+
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+
+                value.putByte(0, rnd.nextByte());
+                value.putShort(1, rnd.nextShort());
+                value.putChar(2, rnd.nextChar());
+                value.putInt(3, rnd.nextInt());
+                value.putLong(4, rnd.nextLong());
+                value.putFloat(5, rnd.nextFloat());
+                value.putDouble(6, rnd.nextDouble());
+                value.putBool(7, rnd.nextBoolean());
+                value.putDate(8, rnd.nextLong());
+                value.putTimestamp(9, rnd.nextLong());
+                value.putInt(10, rnd.nextInt());
+                value.putLong256(11, long256);
+            }
+
+            rnd.reset();
+
+            // assert that all values are good
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putByte(rnd.nextByte());
+                key.putShort(rnd.nextShort());
+                key.putChar(rnd.nextChar());
+                key.putInt(rnd.nextInt());
+                key.putLong(rnd.nextLong());
+                key.putFloat(rnd.nextFloat());
+                key.putDouble(rnd.nextDouble());
+                key.putBool(rnd.nextBoolean());
+                key.putDate(rnd.nextLong());
+                key.putTimestamp(rnd.nextLong());
+                key.putShort(rnd.nextShort());
+                Long256Impl long256 = new Long256Impl();
+                long256.setAll(
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong()
+                );
+                key.putLong256(long256);
+
+                MapValue value = key.createValue();
+                Assert.assertFalse(value.isNew());
+
+                Assert.assertEquals(rnd.nextByte(), value.getByte(0));
+                Assert.assertEquals(rnd.nextShort(), value.getShort(1));
+                Assert.assertEquals(rnd.nextChar(), value.getChar(2));
+                Assert.assertEquals(rnd.nextInt(), value.getInt(3));
+                Assert.assertEquals(rnd.nextLong(), value.getLong(4));
+                Assert.assertEquals(rnd.nextFloat(), value.getFloat(5), 0.000000001f);
+                Assert.assertEquals(rnd.nextDouble(), value.getDouble(6), 0.000000001d);
+                Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
+                Assert.assertEquals(rnd.nextLong(), value.getDate(8));
+                Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
+                Assert.assertEquals(rnd.nextInt(), value.getInt(10));
+                Assert.assertEquals(long256, value.getLong256A(11));
+            }
+
+            // RecordCursor is covered in testAllTypesVarSizeKey
+        }
+    }
+
+    @Test
+    public void testAllTypesReverseColumnAccess() {
+        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        keyTypes.add(ColumnType.BYTE);
+        keyTypes.add(ColumnType.SHORT);
+        keyTypes.add(ColumnType.CHAR);
+        keyTypes.add(ColumnType.INT);
+        keyTypes.add(ColumnType.LONG);
+        keyTypes.add(ColumnType.FLOAT);
+        keyTypes.add(ColumnType.DOUBLE);
+        keyTypes.add(ColumnType.STRING);
+        keyTypes.add(ColumnType.STRING);
+        keyTypes.add(ColumnType.BINARY);
+        keyTypes.add(ColumnType.BOOLEAN);
+        keyTypes.add(ColumnType.DATE);
+        keyTypes.add(ColumnType.TIMESTAMP);
+        keyTypes.add(ColumnType.getGeoHashTypeWithBits(13));
+        keyTypes.add(ColumnType.LONG256);
+
+        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+        valueTypes.add(ColumnType.BYTE);
+        valueTypes.add(ColumnType.SHORT);
+        valueTypes.add(ColumnType.CHAR);
+        valueTypes.add(ColumnType.INT);
+        valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.FLOAT);
+        valueTypes.add(ColumnType.DOUBLE);
+        valueTypes.add(ColumnType.BOOLEAN);
+        valueTypes.add(ColumnType.DATE);
+        valueTypes.add(ColumnType.TIMESTAMP);
+        valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
+        valueTypes.add(ColumnType.LONG256);
+
+        final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+        final Long256Impl long256 = new Long256Impl();
+
+        try (FastMap map = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+            MapKey key = map.withKey();
+            key.putByte((byte) 1);
+            key.putShort((short) 2);
+            key.putChar('3');
+            key.putInt(4);
+            key.putLong(5);
+            key.putFloat(6.0f);
+            key.putDouble(7.0);
+            key.putStr("888", 0, 1);
+            key.putStrLowerCase("99", 0, 1);
+            key.putBin(binarySequence.of(new byte[]{10}));
+            key.putBool(true);
+            key.putDate(12);
+            key.putTimestamp(13);
+            key.putShort((short) 14);
+            long256.setAll(15, 15, 15, 15);
+            key.putLong256(long256);
+
+            MapValue value = key.createValue();
+            Assert.assertTrue(value.isNew());
+
+            // use addXYZ() method to initialize values where possible
+            value.putByte(0, (byte) 0);
+            value.addByte(0, (byte) 1);
+            value.putShort(1, (short) 0);
+            value.addShort(1, (short) 2);
+            value.putChar(2, '3');
+            value.putInt(3, 0);
+            value.addInt(3, 4);
+            value.putLong(4, 0);
+            value.addLong(4, 5);
+            value.putFloat(5, 0);
+            value.addFloat(5, 6);
+            value.putDouble(6, 0);
+            value.addDouble(6, 7);
+            value.putBool(7, true);
+            value.putDate(8, 9);
+            value.putTimestamp(9, 10);
+            value.putInt(10, 11);
+            value.putLong256(11, Long256Impl.ZERO_LONG256);
+            long256.setAll(12, 12, 12, 12);
+            value.addLong256(11, long256);
+
+            // assert that all values are good
+
+            key = map.withKey();
+            key.putByte((byte) 1);
+            key.putShort((short) 2);
+            key.putChar('3');
+            key.putInt(4);
+            key.putLong(5);
+            key.putFloat(6.0f);
+            key.putDouble(7.0);
+            key.putStrLowerCase("8");
+            key.putStr("9");
+            key.putBin(binarySequence.of(new byte[]{10}));
+            key.putBool(true);
+            key.putDate(12);
+            key.putTimestamp(13);
+            key.putShort((short) 14);
+            long256.setAll(15, 15, 15, 15);
+            key.putLong256(long256);
+
+            value = key.createValue();
+            Assert.assertFalse(value.isNew());
+
+            // access the value columns in reverse order
+            long256.setAll(12, 12, 12, 12);
+            Assert.assertEquals(long256, value.getLong256A(11));
+            Assert.assertEquals(11, value.getInt(10));
+            Assert.assertEquals(10, value.getTimestamp(9));
+            Assert.assertEquals(9, value.getDate(8));
+            Assert.assertTrue(value.getBool(7));
+            Assert.assertEquals(7, value.getDouble(6), 0.000000001d);
+            Assert.assertEquals(6, value.getFloat(5), 0.000000001f);
+            Assert.assertEquals(5, value.getLong(4));
+            Assert.assertEquals(4, value.getInt(3));
+            Assert.assertEquals('3', value.getChar(2));
+            Assert.assertEquals(2, value.getShort(1));
+            Assert.assertEquals(1, value.getByte(0));
+
+            try (RecordCursor cursor = map.getCursor()) {
+                assertCursorAllTypesReverseOrder(cursor);
+            }
+        }
+    }
+
+    @Test
+    public void testAllTypesVarSizeKey() {
         Rnd rnd = new Rnd();
 
         ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -185,249 +428,6 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAllTypesFixedSizeKey() {
-        Rnd rnd = new Rnd();
-
-        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-        keyTypes.add(ColumnType.BYTE);
-        keyTypes.add(ColumnType.SHORT);
-        keyTypes.add(ColumnType.CHAR);
-        keyTypes.add(ColumnType.INT);
-        keyTypes.add(ColumnType.LONG);
-        keyTypes.add(ColumnType.FLOAT);
-        keyTypes.add(ColumnType.DOUBLE);
-        keyTypes.add(ColumnType.BOOLEAN);
-        keyTypes.add(ColumnType.DATE);
-        keyTypes.add(ColumnType.TIMESTAMP);
-        keyTypes.add(ColumnType.getGeoHashTypeWithBits(13));
-        keyTypes.add(ColumnType.LONG256);
-
-        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-        valueTypes.add(ColumnType.BYTE);
-        valueTypes.add(ColumnType.SHORT);
-        valueTypes.add(ColumnType.CHAR);
-        valueTypes.add(ColumnType.INT);
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.FLOAT);
-        valueTypes.add(ColumnType.DOUBLE);
-        valueTypes.add(ColumnType.BOOLEAN);
-        valueTypes.add(ColumnType.DATE);
-        valueTypes.add(ColumnType.TIMESTAMP);
-        valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
-        valueTypes.add(ColumnType.LONG256);
-
-        try (FastMap map = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
-            final int N = 100000;
-            for (int i = 0; i < N; i++) {
-                MapKey key = map.withKey();
-                key.putByte(rnd.nextByte());
-                key.putShort(rnd.nextShort());
-                key.putChar(rnd.nextChar());
-                key.putInt(rnd.nextInt());
-                key.putLong(rnd.nextLong());
-                key.putFloat(rnd.nextFloat());
-                key.putDouble(rnd.nextDouble());
-                key.putBool(rnd.nextBoolean());
-                key.putDate(rnd.nextLong());
-                key.putTimestamp(rnd.nextLong());
-                key.putShort(rnd.nextShort());
-                Long256Impl long256 = new Long256Impl();
-                long256.setAll(
-                        rnd.nextLong(),
-                        rnd.nextLong(),
-                        rnd.nextLong(),
-                        rnd.nextLong()
-                );
-                key.putLong256(long256);
-
-                MapValue value = key.createValue();
-                Assert.assertTrue(value.isNew());
-
-                value.putByte(0, rnd.nextByte());
-                value.putShort(1, rnd.nextShort());
-                value.putChar(2, rnd.nextChar());
-                value.putInt(3, rnd.nextInt());
-                value.putLong(4, rnd.nextLong());
-                value.putFloat(5, rnd.nextFloat());
-                value.putDouble(6, rnd.nextDouble());
-                value.putBool(7, rnd.nextBoolean());
-                value.putDate(8, rnd.nextLong());
-                value.putTimestamp(9, rnd.nextLong());
-                value.putInt(10, rnd.nextInt());
-                value.putLong256(11, long256);
-            }
-
-            rnd.reset();
-
-            // assert that all values are good
-            for (int i = 0; i < N; i++) {
-                MapKey key = map.withKey();
-                key.putByte(rnd.nextByte());
-                key.putShort(rnd.nextShort());
-                key.putChar(rnd.nextChar());
-                key.putInt(rnd.nextInt());
-                key.putLong(rnd.nextLong());
-                key.putFloat(rnd.nextFloat());
-                key.putDouble(rnd.nextDouble());
-                key.putBool(rnd.nextBoolean());
-                key.putDate(rnd.nextLong());
-                key.putTimestamp(rnd.nextLong());
-                key.putShort(rnd.nextShort());
-                Long256Impl long256 = new Long256Impl();
-                long256.setAll(
-                        rnd.nextLong(),
-                        rnd.nextLong(),
-                        rnd.nextLong(),
-                        rnd.nextLong()
-                );
-                key.putLong256(long256);
-
-                MapValue value = key.createValue();
-                Assert.assertFalse(value.isNew());
-
-                Assert.assertEquals(rnd.nextByte(), value.getByte(0));
-                Assert.assertEquals(rnd.nextShort(), value.getShort(1));
-                Assert.assertEquals(rnd.nextChar(), value.getChar(2));
-                Assert.assertEquals(rnd.nextInt(), value.getInt(3));
-                Assert.assertEquals(rnd.nextLong(), value.getLong(4));
-                Assert.assertEquals(rnd.nextFloat(), value.getFloat(5), 0.000000001f);
-                Assert.assertEquals(rnd.nextDouble(), value.getDouble(6), 0.000000001d);
-                Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
-                Assert.assertEquals(rnd.nextLong(), value.getDate(8));
-                Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
-                Assert.assertEquals(rnd.nextInt(), value.getInt(10));
-                Assert.assertEquals(long256, value.getLong256A(11));
-            }
-
-            // RecordCursor is covered in testAllTypes
-        }
-    }
-
-    @Test
-    public void testAllTypesReverseColumnAccess() {
-        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-        keyTypes.add(ColumnType.BYTE);
-        keyTypes.add(ColumnType.SHORT);
-        keyTypes.add(ColumnType.CHAR);
-        keyTypes.add(ColumnType.INT);
-        keyTypes.add(ColumnType.LONG);
-        keyTypes.add(ColumnType.FLOAT);
-        keyTypes.add(ColumnType.DOUBLE);
-        keyTypes.add(ColumnType.STRING);
-        keyTypes.add(ColumnType.STRING);
-        keyTypes.add(ColumnType.BINARY);
-        keyTypes.add(ColumnType.BOOLEAN);
-        keyTypes.add(ColumnType.DATE);
-        keyTypes.add(ColumnType.TIMESTAMP);
-        keyTypes.add(ColumnType.getGeoHashTypeWithBits(13));
-        keyTypes.add(ColumnType.LONG256);
-
-        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-        valueTypes.add(ColumnType.BYTE);
-        valueTypes.add(ColumnType.SHORT);
-        valueTypes.add(ColumnType.CHAR);
-        valueTypes.add(ColumnType.INT);
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.FLOAT);
-        valueTypes.add(ColumnType.DOUBLE);
-        valueTypes.add(ColumnType.BOOLEAN);
-        valueTypes.add(ColumnType.DATE);
-        valueTypes.add(ColumnType.TIMESTAMP);
-        valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
-        valueTypes.add(ColumnType.LONG256);
-
-        final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-        final Long256Impl long256 = new Long256Impl();
-
-        try (FastMap map = new FastMap(1024, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
-            MapKey key = map.withKey();
-            key.putByte((byte) 1);
-            key.putShort((short) 2);
-            key.putChar('3');
-            key.putInt(4);
-            key.putLong(5);
-            key.putFloat(6.0f);
-            key.putDouble(7.0);
-            key.putStr("888", 0, 1);
-            key.putStrLowerCase("99", 0, 1);
-            key.putBin(binarySequence.of(new byte[]{10}));
-            key.putBool(true);
-            key.putDate(12);
-            key.putTimestamp(13);
-            key.putShort((short) 14);
-            long256.setAll(15, 15, 15, 15);
-            key.putLong256(long256);
-
-            MapValue value = key.createValue();
-            Assert.assertTrue(value.isNew());
-
-            // use addXYZ() method to initialize values where possible
-            value.putByte(0, (byte) 0);
-            value.addByte(0, (byte) 1);
-            value.putShort(1, (short) 0);
-            value.addShort(1, (short) 2);
-            value.putChar(2, '3');
-            value.putInt(3, 0);
-            value.addInt(3, 4);
-            value.putLong(4, 0);
-            value.addLong(4, 5);
-            value.putFloat(5, 0);
-            value.addFloat(5, 6);
-            value.putDouble(6, 0);
-            value.addDouble(6, 7);
-            value.putBool(7, true);
-            value.putDate(8, 9);
-            value.putTimestamp(9, 10);
-            value.putInt(10, 11);
-            value.putLong256(11, Long256Impl.ZERO_LONG256);
-            long256.setAll(12, 12, 12, 12);
-            value.addLong256(11, long256);
-
-            // assert that all values are good
-
-            key = map.withKey();
-            key.putByte((byte) 1);
-            key.putShort((short) 2);
-            key.putChar('3');
-            key.putInt(4);
-            key.putLong(5);
-            key.putFloat(6.0f);
-            key.putDouble(7.0);
-            key.putStrLowerCase("8");
-            key.putStr("9");
-            key.putBin(binarySequence.of(new byte[]{10}));
-            key.putBool(true);
-            key.putDate(12);
-            key.putTimestamp(13);
-            key.putShort((short) 14);
-            long256.setAll(15, 15, 15, 15);
-            key.putLong256(long256);
-
-            value = key.createValue();
-            Assert.assertFalse(value.isNew());
-
-            // access the value columns in reverse order
-            long256.setAll(12, 12, 12, 12);
-            Assert.assertEquals(long256, value.getLong256A(11));
-            Assert.assertEquals(11, value.getInt(10));
-            Assert.assertEquals(10, value.getTimestamp(9));
-            Assert.assertEquals(9, value.getDate(8));
-            Assert.assertTrue(value.getBool(7));
-            Assert.assertEquals(7, value.getDouble(6), 0.000000001d);
-            Assert.assertEquals(6, value.getFloat(5), 0.000000001f);
-            Assert.assertEquals(5, value.getLong(4));
-            Assert.assertEquals(4, value.getInt(3));
-            Assert.assertEquals('3', value.getChar(2));
-            Assert.assertEquals(2, value.getShort(1));
-            Assert.assertEquals(1, value.getByte(0));
-
-            try (RecordCursor cursor = map.getCursor()) {
-                assertCursorAllTypesReverseOrder(cursor);
-            }
-        }
-    }
-
-    @Test
     public void testAppendExisting() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -437,7 +437,9 @@ public class FastMapTest extends AbstractCairoTest {
                             Numbers.SIZE_1MB,
                             new SingleColumnType(ColumnType.STRING),
                             new SingleColumnType(ColumnType.LONG),
-                            N / 2, 0.5f, 1
+                            N / 2,
+                            0.5f,
+                            1
                     )
             ) {
                 ObjList<String> keys = new ObjList<>();
@@ -457,6 +459,7 @@ public class FastMapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     CharSequence s = keys.getQuick(i);
                     key.putStr(s);
+
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
                     Assert.assertEquals(i + 1, value.getLong(0));
@@ -490,11 +493,42 @@ public class FastMapTest extends AbstractCairoTest {
                     Assert.assertTrue(value.isNew());
                     value.putInt(0, i);
                 }
+
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(i);
+
+                    MapValue value = key.createValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(i, value.getInt(0));
+                }
+
                 Assert.assertEquals(N, map.size());
 
                 map.clear();
 
                 Assert.assertEquals(0, map.size());
+
+                // Fill the map once again and verify contents.
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(N + i);
+
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putInt(0, N + i);
+                }
+
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(N + i);
+
+                    MapValue value = key.createValue();
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(N + i, value.getInt(0));
+                }
+
+                Assert.assertEquals(N, map.size());
             }
         });
     }
@@ -522,13 +556,13 @@ public class FastMapTest extends AbstractCairoTest {
 
             final long keyCapacityBefore = map.getKeyCapacity();
             final long memUsedBefore = Unsafe.getMemUsed();
-            final long areaSizeBefore = map.getAreaSize();
+            final long areaSizeBefore = map.getHeapSize();
 
             map.restoreInitialCapacity();
 
             Assert.assertTrue(keyCapacityBefore > map.getKeyCapacity());
             Assert.assertTrue(memUsedBefore > Unsafe.getMemUsed());
-            Assert.assertTrue(areaSizeBefore > map.getAreaSize());
+            Assert.assertTrue(areaSizeBefore > map.getHeapSize());
         }
     }
 
@@ -649,6 +683,104 @@ public class FastMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testHeapBoundariesFixedSizeKey() {
+        // Here, the entry size is 16 bytes, so that we fill the heap up to the boundary exactly before growing it.
+        Rnd rnd = new Rnd();
+        int expectedEntrySize = 16;
+
+        try (
+                FastMap map = new FastMap(
+                        32,
+                        new SingleColumnType(ColumnType.LONG),
+                        new SingleColumnType(ColumnType.LONG),
+                        16,
+                        0.8,
+                        1024
+                )
+        ) {
+            final int N = 100;
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putLong(rnd.nextLong());
+
+                long usedHeap = map.getUsedHeapSize();
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                Assert.assertEquals(expectedEntrySize, (int) (map.getUsedHeapSize() - usedHeap));
+
+                value.putLong(0, rnd.nextLong());
+            }
+
+            rnd.reset();
+
+            // assert that all values are good
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putLong(rnd.nextLong());
+
+                MapValue value = key.createValue();
+                Assert.assertFalse(value.isNew());
+
+                Assert.assertEquals(rnd.nextLong(), value.getLong(0));
+            }
+
+            Assert.assertEquals(N, map.size());
+        }
+    }
+
+    @Test
+    public void testHeapBoundariesVarSizeKey() {
+        // Here, the entry size is 32 bytes, so that we fill the heap up to the boundary exactly before growing it.
+        Rnd rnd = new Rnd();
+        int expectedEntrySize = 32;
+
+        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+        valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.LONG);
+
+        try (
+                FastMap map = new FastMap(
+                        32,
+                        new SingleColumnType(ColumnType.STRING),
+                        valueTypes,
+                        16,
+                        0.8,
+                        1024
+                )
+        ) {
+            final int N = 100;
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putStr(rnd.nextString(4));
+
+                long usedHeap = map.getUsedHeapSize();
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                Assert.assertEquals(expectedEntrySize, (int) (map.getUsedHeapSize() - usedHeap));
+
+                value.putLong(0, rnd.nextLong());
+                value.putLong(1, rnd.nextLong());
+            }
+
+            rnd.reset();
+
+            // assert that all values are good
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putStr(rnd.nextString(4));
+
+                MapValue value = key.createValue();
+                Assert.assertFalse(value.isNew());
+
+                Assert.assertEquals(rnd.nextLong(), value.getLong(0));
+                Assert.assertEquals(rnd.nextLong(), value.getLong(1));
+            }
+
+            Assert.assertEquals(N, map.size());
+        }
     }
 
     @Test
@@ -847,7 +979,9 @@ public class FastMapTest extends AbstractCairoTest {
                                         .add(ColumnType.TIMESTAMP)
                                         .add(ColumnType.BOOLEAN)
                                         .add(ColumnType.UUID),
-                                N, 0.9f, 1
+                                N,
+                                0.9f,
+                                1
                         )
                 ) {
 
@@ -879,7 +1013,6 @@ public class FastMapTest extends AbstractCairoTest {
             final int N = 10000;
             final Rnd rnd = new Rnd();
             try (FastMap map = new FastMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)) {
-
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putInt(rnd.nextInt());
@@ -892,22 +1025,22 @@ public class FastMapTest extends AbstractCairoTest {
                 rnd.reset();
                 LongList list = new LongList();
                 try (RecordCursor cursor = map.getCursor()) {
-                    final MapRecord record = (MapRecord) cursor.getRecord();
+                    final MapRecord recordA = (MapRecord) cursor.getRecord();
                     while (cursor.hasNext()) {
-                        list.add(record.getRowId());
-                        Assert.assertEquals(rnd.nextInt(), record.getInt(1));
-                        MapValue value = record.getValue();
+                        list.add(recordA.getRowId());
+                        Assert.assertEquals(rnd.nextInt(), recordA.getInt(1));
+                        MapValue value = recordA.getValue();
                         value.putInt(0, value.getInt(0) * 2);
                     }
 
-                    MapRecord rec = (MapRecord) cursor.getRecordB();
-                    Assert.assertNotSame(rec, record);
+                    final MapRecord recordB = (MapRecord) cursor.getRecordB();
+                    Assert.assertNotSame(recordB, recordA);
 
                     rnd.reset();
                     for (int i = 0, n = list.size(); i < n; i++) {
-                        cursor.recordAt(rec, list.getQuick(i));
-                        Assert.assertEquals((i + 1) * 2, rec.getInt(0));
-                        Assert.assertEquals(rnd.nextInt(), rec.getInt(1));
+                        cursor.recordAt(recordB, list.getQuick(i));
+                        Assert.assertEquals((i + 1) * 2, recordB.getInt(0));
+                        Assert.assertEquals(rnd.nextInt(), recordB.getInt(1));
                     }
                 }
             }
@@ -955,7 +1088,6 @@ public class FastMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
                     // this random will be populating values
@@ -995,7 +1127,6 @@ public class FastMapTest extends AbstractCairoTest {
     @Test
     public void testValueRandomWrite() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             final int N = 10000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
@@ -1027,7 +1158,6 @@ public class FastMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, false);
 
                     // this random will be populating values

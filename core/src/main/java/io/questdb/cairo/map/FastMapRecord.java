@@ -49,31 +49,32 @@ final class FastMapRecord implements MapRecord {
     private final DirectString[] csB;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
-    private final int keyOffset;
+    private final int keySize;
     private final ColumnTypes keyTypes;
-    private final int split;
+    private final int splitIndex;
     private final FastMapValue value;
     private final int[] valueOffsets;
     private long keyAddress;
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
     private long limit;
+    private long startAddress; // key-value pair start address
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
     private long valueAddress;
 
     FastMapRecord(
+            int keySize,
             int[] valueOffsets,
-            int keyOffset,
             FastMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
+        this.keySize = keySize;
         this.valueOffsets = valueOffsets;
-        this.keyOffset = keyOffset;
         this.value = value;
         this.value.linkRecord(this); // provides feature to position this record at location of map value
-        this.split = valueOffsets != null ? valueOffsets.length : 0;
+        this.splitIndex = valueOffsets != null ? valueOffsets.length : 0;
 
         int nColumns;
         int keyIndexOffset;
@@ -145,20 +146,20 @@ final class FastMapRecord implements MapRecord {
     }
 
     private FastMapRecord(
+            int keySize,
             int[] valueOffsets,
             ColumnTypes keyTypes,
-            int split,
-            int keyOffset,
+            int splitIndex,
             DirectString[] csA,
             DirectString[] csB,
             DirectBinarySequence[] bs,
             Long256Impl[] keyLong256A,
             Long256Impl[] keyLong256B
     ) {
+        this.keySize = keySize;
         this.valueOffsets = valueOffsets;
         this.keyTypes = keyTypes;
-        this.split = split;
-        this.keyOffset = keyOffset;
+        this.splitIndex = splitIndex;
         this.value = new FastMapValue(valueOffsets);
         this.csA = csA;
         this.csB = csB;
@@ -175,7 +176,7 @@ final class FastMapRecord implements MapRecord {
             return null;
         }
         DirectBinarySequence bs = this.bs[columnIndex];
-        bs.of(address + 4, len);
+        bs.of(address + Integer.BYTES, len);
         return bs;
     }
 
@@ -276,7 +277,9 @@ final class FastMapRecord implements MapRecord {
 
     @Override
     public long getRowId() {
-        return valueAddress;
+        // Important invariant: we assume that the FastMap doesn't grow after the first getRowId() call.
+        // Otherwise, row ids returned by this method may no longer point at a valid memory address.
+        return startAddress;
     }
 
     @Override
@@ -293,10 +296,10 @@ final class FastMapRecord implements MapRecord {
     public void getStr(int columnIndex, CharSink sink) {
         long address = addressOfColumn(columnIndex);
         int len = Unsafe.getUnsafe().getInt(address);
-        address += 4;
+        address += Integer.BYTES;
         for (int i = 0; i < len; i++) {
             sink.put(Unsafe.getUnsafe().getChar(address));
-            address += 2;
+            address += Character.BYTES;
         }
     }
 
@@ -322,7 +325,7 @@ final class FastMapRecord implements MapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(valueAddress, limit, false);
+        return value.of(startAddress, valueAddress, limit, false);
     }
 
     @Override
@@ -332,15 +335,15 @@ final class FastMapRecord implements MapRecord {
     }
 
     private long addressOfColumn(int index) {
-        if (index < split) {
+        // Column indexes start with value fields followed by key fields.
+        // The key-value pair layout is [key len, key data, value data].
+        if (index < splitIndex) {
             return valueAddress + valueOffsets[index];
         }
-
-        if (index == split) {
+        if (index == splitIndex) {
             return keyAddress;
         }
-
-        return addressOfKeyColumn(index - split);
+        return addressOfKeyColumn(index - splitIndex);
     }
 
     private long addressOfKeyColumn(int index) {
@@ -391,7 +394,7 @@ final class FastMapRecord implements MapRecord {
     private CharSequence getStr0(int index, DirectString cs) {
         long address = addressOfColumn(index);
         int len = Unsafe.getUnsafe().getInt(address);
-        return len == TableUtils.NULL_LEN ? null : cs.of(address + 4, address + 4 + len * 2L);
+        return len == TableUtils.NULL_LEN ? null : cs.of(address + Integer.BYTES, address + Integer.BYTES + len * 2L);
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -447,12 +450,19 @@ final class FastMapRecord implements MapRecord {
             long256A = null;
             long256B = null;
         }
-        return new FastMapRecord(valueOffsets, keyTypes, split, keyOffset, csA, csB, bs, long256A, long256B);
+        return new FastMapRecord(keySize, valueOffsets, keyTypes, splitIndex, csA, csB, bs, long256A, long256B);
     }
 
     void of(long address, long limit) {
-        this.valueAddress = address;
+        int keyOffset = 0;
+        int keySize = this.keySize;
+        if (keySize == -1) {
+            keyOffset = Integer.BYTES;
+            keySize = Unsafe.getUnsafe().getInt(address);
+        }
+        this.startAddress = address;
         this.keyAddress = address + keyOffset;
+        this.valueAddress = address + keyOffset + keySize;
         this.limit = limit;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;
