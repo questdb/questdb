@@ -39,7 +39,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
-            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups unbounded preceding) from tab", 17, "function not implemented for given window paramters");
+            assertException("select ts, i, j, avg(i) over (partition by i order by ts groups unbounded preceding) from tab",
+                    17, "function not implemented for given window parameters");
         });
     }
 
@@ -615,7 +616,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     54, "RANGE is supported only for queries ordered by designated timestamp");
 
             //table with designated timestamp
-            ddl("create table tab (ts timestamp, i long, j long, otherTs timestamp) timestamp(ts)");
+            ddl("create table tab (ts timestamp, i long, j long, otherTs timestamp) timestamp(ts) partition by month");
+
+            assertException("select ts, i, j, avg(i) over (partition by i order by j desc range between unbounded preceding and 10 microsecond preceding) " +
+                            "from tab order by ts desc",
+                    54, "RANGE is supported only for queries ordered by designated timestamp");
 
             assertException("select ts, i, j, avg(i) over (partition by i order by j range 10 microsecond preceding) from tab",
                     54, "RANGE is supported only for queries ordered by designated timestamp");

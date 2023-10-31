@@ -109,6 +109,10 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
 
         int framingMode = windowContext.getFramingMode();
+        if (framingMode == WindowColumn.FRAMING_GROUPS) {
+            throw SqlException.$(position, "function not implemented for given window parameters");
+        }
+
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
@@ -183,8 +187,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             timestampIndex
                     );
                 }
-            } else if (framingMode == WindowColumn.FRAMING_GROUPS) {
-                throw SqlException.$(position, "function not implemented for given window paramters");
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
@@ -274,11 +276,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     );
                 }
 
-
-            } else if (framingMode == WindowColumn.FRAMING_GROUPS) {
-
-                throw SqlException.$(position, "function not implemented for given window paramters");
-
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
@@ -305,7 +302,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             }
         }
 
-        throw SqlException.$(position, "function not implemented for given window paramters");
+        throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
@@ -341,7 +338,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
     // handles avg() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
-    private static class AvgOverPartitionFunction extends BasePartitionedAvgFunction {
+    static class AvgOverPartitionFunction extends BasePartitionedAvgFunction {
 
         public AvgOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -405,7 +402,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
     // handles avg() over (partition by x order by ts range between y and z)
     // removable cumulative aggregation with timestamp & value stored in resizable ring buffers
-    private static class AvgOverPartitionRangeFrameFunction extends BasePartitionedAvgFunction {
+    static class AvgOverPartitionRangeFrameFunction extends BasePartitionedAvgFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameIncludesCurrentValue;
@@ -668,7 +665,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
     // handles avg() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    private static class AvgOverPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
+    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
@@ -831,7 +828,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class AvgOverRangeFrameFunction extends BaseAvgFunction implements Reopenable {
+    static class AvgOverRangeFrameFunction extends BaseAvgFunction implements Reopenable {
         private final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameLoBounded;
         private final long initialCapacity;
@@ -1020,8 +1017,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles avg() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    //TODO: don't store nulls in frame and skip initialization to NaNs
-    private static class AvgOverRowsFrameFunction extends BaseAvgFunction implements Reopenable {
+    static class AvgOverRowsFrameFunction extends BaseAvgFunction implements Reopenable {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -1160,7 +1156,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     // - avg(a) over (partition by x order by ts groups between unbounded preceding and current row)
     // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    private static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
+    static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedAvgFunction {
 
         private double avg;
 
@@ -1226,7 +1222,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // Handles avg() over (rows between unbounded preceding and current row); there's no partititon by.
-    private static class AvgOverUnboundedRowsFrameFunction extends BaseAvgFunction {
+    static class AvgOverUnboundedRowsFrameFunction extends BaseAvgFunction {
 
         private double avg;
         private long count = 0;
@@ -1290,7 +1286,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // avg() over () - empty clause, no partition by no order by, no frame == default frame
-    private static class AvgOverWholeResultSetFunction extends BaseAvgFunction {
+    static class AvgOverWholeResultSetFunction extends BaseAvgFunction {
         private double avg;
         private long count;
         private double sum;

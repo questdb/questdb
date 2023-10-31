@@ -3492,19 +3492,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     for (int j = 0; j < osz; j++) {
                         ExpressionNode node = ac.getOrderBy().getQuick(j);
                         int direction = ac.getOrderByDirection().getQuick(j);
-                        if (orderHash.get(node.token) != direction) {
+                        if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
+                                orderHash.get(node.token) != direction) {
                             dismissOrder = false;
                             break;
                         }
                     }
                 }
-                if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
+                if (!dismissOrder
+                        && osz == 1
+                        && timestampIdx != -1
+                        && orderHash.size() < 2) {
                     ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                     int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
                     if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
-                            (orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                            (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)) {
+                            ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                                    (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
                         dismissOrder = true;
                     }
                 }
@@ -3718,7 +3722,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     for (int j = 0; j < osz; j++) {
                         ExpressionNode node = ac.getOrderBy().getQuick(j);
                         int direction = ac.getOrderByDirection().getQuick(j);
-                        if (orderHash.get(node.token) != direction) {
+                        if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
+                                orderHash.get(node.token) != direction) {
                             dismissOrder = false;
                             break;
                         }
@@ -3729,8 +3734,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
                     if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
-                            (orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                            (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)) {
+                            ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                                    (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
                         dismissOrder = true;
                     }
                 }
