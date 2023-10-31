@@ -319,7 +319,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         public ConstIContainsStrFunction(Function value, String pattern) {
             this.value = value;
-            this.pattern = pattern;
+            this.pattern = pattern.toLowerCase();
         }
 
         @Override
@@ -333,7 +333,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             if (cs == null) {
                 return false;
             }
-            return Chars.containsIgnoreCase(cs, pattern);
+            return Chars.containsLowerCase(cs, pattern);
         }
 
         @Override
@@ -357,7 +357,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         public ConstIEndsWithStrFunction(Function value, String pattern) {
             this.value = value;
-            this.pattern = pattern;
+            this.pattern = pattern.toLowerCase();
         }
 
         @Override
@@ -368,7 +368,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public boolean getBool(Record rec) {
             CharSequence cs = getArg().getStr(rec);
-            return Chars.endsWithIgnoreCase(cs, pattern);
+            return Chars.endsWithLowerCase(cs, pattern);
         }
 
         @Override
@@ -391,7 +391,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         public ConstIStartsWithStrFunction(Function value, String pattern) {
             this.value = value;
-            this.pattern = pattern;
+            this.pattern = pattern.toLowerCase();
         }
 
         @Override
@@ -402,7 +402,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public boolean getBool(Record rec) {
             CharSequence cs = getArg().getStr(rec);
-            return Chars.startsWithIgnoreCase(cs, pattern);
+            return Chars.startsWithLowerCase(cs, pattern);
         }
 
         @Override

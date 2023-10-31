@@ -153,8 +153,9 @@ public final class Chars {
         return indexOf(sequence, 0, sequence.length(), term) != -1;
     }
 
-    public static boolean containsIgnoreCase(@NotNull CharSequence sequence, @NotNull CharSequence term) {
-        return indexOfIgnoreCase(sequence, 0, sequence.length(), term) != -1;
+    // Term has to be lower-case.
+    public static boolean containsLowerCase(@NotNull CharSequence sequence, @NotNull CharSequence termLC) {
+        return indexOfLowerCase(sequence, 0, sequence.length(), termLC) != -1;
     }
 
     public static void copyStrChars(CharSequence value, int pos, int len, long address) {
@@ -190,18 +191,19 @@ public final class Chars {
         return csl != 0 && c == cs.charAt(csl - 1);
     }
 
-    public static boolean endsWithIgnoreCase(@Nullable CharSequence cs, @Nullable CharSequence ends) {
-        if (ends == null || cs == null) {
+    // Pattern has to be in lower-case.
+    public static boolean endsWithLowerCase(@Nullable CharSequence cs, @Nullable CharSequence endsLC) {
+        if (endsLC == null || cs == null) {
             return false;
         }
 
-        int l = ends.length();
+        int l = endsLC.length();
         if (l == 0) {
             return true;
         }
 
         int csl = cs.length();
-        return !(csl == 0 || csl < l) && equalsIgnoreCase(ends, cs, csl - l, csl);
+        return !(csl == 0 || csl < l) && equalsLowerCase(endsLC, cs, csl - l, csl);
     }
 
     public static boolean equals(@NotNull CharSequence l, @NotNull CharSequence r) {
@@ -261,24 +263,6 @@ public final class Chars {
         return l.length() == 1 && l.charAt(0) == r;
     }
 
-    public static boolean equalsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int rLo, int rHi) {
-        if (l == r) {
-            return true;
-        }
-
-        int ll;
-        if ((ll = l.length()) != rHi - rLo) {
-            return false;
-        }
-
-        for (int i = 0; i < ll; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i + rLo))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /**
      * Case-insensitive comparison of two char sequences.
      *
@@ -301,6 +285,25 @@ public final class Chars {
 
     public static boolean equalsIgnoreCaseNc(@NotNull CharSequence l, @Nullable CharSequence r) {
         return r != null && equalsIgnoreCase(l, r);
+    }
+
+    // Left side has to be lower-case.
+    public static boolean equalsLowerCase(@NotNull CharSequence lLC, @NotNull CharSequence r, int rLo, int rHi) {
+        if (lLC == r) {
+            return true;
+        }
+
+        int ll;
+        if ((ll = lLC.length()) != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (lLC.charAt(i) != Character.toLowerCase(r.charAt(i + rLo))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static boolean equalsLowerCase(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
@@ -525,12 +528,9 @@ public final class Chars {
         return -1;
     }
 
-    public static int indexOfIgnoreCase(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {
-        return indexOfIgnoreCase(sequence, sequenceLo, sequenceHi, term, 1);
-    }
-
-    public static int indexOfIgnoreCase(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term, int occurrence) {
-        int m = term.length();
+    // Term has to be lower-case.
+    public static int indexOfLowerCase(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence termLC, int occurrence) {
+        int m = termLC.length();
         if (m == 0) {
             return -1;
         }
@@ -547,11 +547,11 @@ public final class Chars {
                     if (sequenceHi - i < m) {
                         return -1;
                     }
-                    if (Character.toLowerCase(sequence.charAt(i)) == Character.toLowerCase(term.charAt(0))) {
+                    if (Character.toLowerCase(sequence.charAt(i)) == termLC.charAt(0)) {
                         foundIndex = i;
                     }
                 } else { // first character matched, try to match the rest of the term
-                    if (Character.toLowerCase(sequence.charAt(i)) != Character.toLowerCase(term.charAt(i - foundIndex))) {
+                    if (Character.toLowerCase(sequence.charAt(i)) != termLC.charAt(i - foundIndex)) {
                         // start again from after where the first character was found
                         i = foundIndex;
                         foundIndex = -1;
@@ -573,11 +573,11 @@ public final class Chars {
                     if (i - sequenceLo + 1 < m) {
                         return -1;
                     }
-                    if (Character.toLowerCase(sequence.charAt(i)) == Character.toLowerCase(term.charAt(m - 1))) {
+                    if (Character.toLowerCase(sequence.charAt(i)) == termLC.charAt(m - 1)) {
                         foundIndex = i;
                     }
                 } else { // last character matched, try to match the rest of the term
-                    if (Character.toLowerCase(sequence.charAt(i)) != Character.toLowerCase(term.charAt(m - 1 + i - foundIndex))) {
+                    if (Character.toLowerCase(sequence.charAt(i)) != termLC.charAt(m - 1 + i - foundIndex)) {
                         // start again from after where the first character was found
                         i = foundIndex;
                         foundIndex = -1;
@@ -596,6 +596,11 @@ public final class Chars {
         }
 
         return -1;
+    }
+
+    // Term has to be lower-case.
+    public static int indexOfLowerCase(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence termLC) {
+        return indexOfLowerCase(sequence, sequenceLo, sequenceHi, termLC, 1);
     }
 
     public static boolean isBlank(CharSequence s) {
@@ -832,17 +837,18 @@ public final class Chars {
         return _this.length() > 0 && _this.charAt(0) == c;
     }
 
-    public static boolean startsWithIgnoreCase(@Nullable CharSequence cs, @Nullable CharSequence starts) {
-        if (cs == null || starts == null) {
+    // Pattern has to be lower-case.
+    public static boolean startsWithLowerCase(@Nullable CharSequence cs, @Nullable CharSequence startsLC) {
+        if (cs == null || startsLC == null) {
             return false;
         }
 
-        int l = starts.length();
+        int l = startsLC.length();
         if (l == 0) {
             return true;
         }
 
-        return cs.length() >= l && equalsCharsIgnoreCase(cs, starts, l);
+        return cs.length() >= l && equalsCharsLowerCase(startsLC, cs, l);
     }
 
     public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
@@ -1133,7 +1139,7 @@ public final class Chars {
         return index;
     }
 
-    private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
+    private static boolean equalsChars(@NotNull CharSequence l, @NotNull CharSequence r, int len) {
         for (int i = 0; i < len; i++) {
             if (l.charAt(i) != r.charAt(i)) {
                 return false;
@@ -1142,9 +1148,19 @@ public final class Chars {
         return true;
     }
 
-    private static boolean equalsCharsIgnoreCase(CharSequence l, CharSequence r, int len) {
+    private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence rLC, int len) {
         for (int i = 0; i < len; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(rLC.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Left side has to be lower-case.
+    private static boolean equalsCharsLowerCase(@NotNull CharSequence lLC, @NotNull CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (lLC.charAt(i) != Character.toLowerCase(r.charAt(i))) {
                 return false;
             }
         }
