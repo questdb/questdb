@@ -115,7 +115,7 @@ public class TestCases {
         // LimitedSizeSortedLightRecordCursorFactory
         addTestCase("select * from x order by i limit 3");
 
-        // CachedAnalyticRecordCursorFactory
+        // CachedWindowRecordCursorFactory
         addTestCase("select i, row_number() over (partition by sym) from x");
         addTestCase("select i, row_number() over (partition by sym order by ts) from x");
 

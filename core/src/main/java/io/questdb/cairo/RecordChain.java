@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.*;
@@ -36,7 +36,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI, Reopenable {
+public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, WindowSPI, Reopenable {
 
     private final long[] columnOffsets;
     private final long fixOffset;

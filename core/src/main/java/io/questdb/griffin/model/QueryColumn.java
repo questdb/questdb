@@ -83,6 +83,10 @@ public class QueryColumn implements Mutable, Sinkable {
         return includeIntoWildcard;
     }
 
+    public boolean isWindowColumn() {
+        return false;
+    }
+
     public QueryColumn of(CharSequence alias, ExpressionNode ast) {
         return of(alias, ast, true);
     }

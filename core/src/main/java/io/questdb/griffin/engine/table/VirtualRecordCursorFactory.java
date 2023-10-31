@@ -62,6 +62,16 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean followedLimitAdvice() {
+        return baseFactory.followedLimitAdvice();
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return baseFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return baseFactory;
     }

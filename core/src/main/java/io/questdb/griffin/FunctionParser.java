@@ -546,6 +546,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int candidateSigArgCount = 0;
         int candidateSigArgTypeSum = -1;
         int bestMatch = MATCH_NO_MATCH;
+        boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
 
         undefinedVariables.clear();
 
@@ -714,6 +715,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     continue;
                 }
 
+                if (factory.isWindow()) {
+                    // prefer window functions in window context, otherwise non-window functions
+                    sigArgTypeSum += isWindowContext ? -1 : 1;
+                }
+
                 if (match == MATCH_EXACT_MATCH || match >= bestMatch) {
                     // exact match may be?
                     // special case - if signature enforces constant vararg we
@@ -734,7 +740,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         candidateDescriptor = descriptor;
                         candidateSigArgCount = sigArgCount;
                         candidateSigVarArgConst = sigVarArgConst;
-                        break;
+                        if (isWindowContext == factory.isWindow()) {
+                            break;
+                        }
                     }
                 }
             }
