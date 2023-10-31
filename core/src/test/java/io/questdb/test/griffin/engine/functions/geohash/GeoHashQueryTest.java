@@ -90,7 +90,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
     @Test
     public void testAlterTableAddGeoHashBitsColumn() throws Exception {
         assertMemoryLeak(() -> {
-            for (int l = ColumnType.GEO_HASH_MAX_BITS_LENGTH; l > 0; l--) {
+            for (int l = ColumnType.GEOLONG_MAX_BITS; l > 0; l--) {
                 String tableName = "pos" + l;
                 ddl(String.format("create table %s(x long)", tableName));
                 ddl(String.format("alter table %s add hash geohash(%sb)", tableName, l));

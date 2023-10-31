@@ -44,15 +44,8 @@ public class CastLongToDateFunctionFactory implements FunctionFactory {
     }
 
     public static class CastLongToDateFunction extends AbstractCastToDateFunction {
-        private final Function arg;
-
         public CastLongToDateFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

@@ -45,15 +45,8 @@ public class CastCharToDateFunctionFactory implements FunctionFactory {
     }
 
     public static class CastCharToDateFunction extends AbstractCastToDateFunction {
-        private final Function arg;
-
         public CastCharToDateFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

@@ -60,7 +60,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
 
         final Function bitsArg = args.get(2);
         int bits = bitsArg.getInt(null);
-        if (bits < 1 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+        if (bits < 1 || bits > ColumnType.GEOLONG_MAX_BITS) {
             throw SqlException.$(argPositions.getQuick(2), "precision must be in [1..60] range");
         }
 
