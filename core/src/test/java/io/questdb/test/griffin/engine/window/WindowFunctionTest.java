@@ -232,6 +232,62 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testAverageOverRange() throws Exception {
         assertMemoryLeak(() -> {
+            ddl("create table tab_big (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab_big select (x*1000000)::timestamp, x/4, x%5 from long_sequence(10)");
+
+            // tests when frame doesn't end on current row and time gaps between values are bigger than hi bound
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t1\tNaN\n" +
+                            "1970-01-01T00:00:02.000000Z\t0\t2\t1.0\n" +
+                            "1970-01-01T00:00:03.000000Z\t0\t3\t1.5\n" +
+                            "1970-01-01T00:00:04.000000Z\t1\t4\tNaN\n" +
+                            "1970-01-01T00:00:05.000000Z\t1\t0\t4.0\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\n" +
+                            "1970-01-01T00:00:07.000000Z\t1\t2\t1.6666666666666667\n" +
+                            "1970-01-01T00:00:08.000000Z\t2\t3\tNaN\n" +
+                            "1970-01-01T00:00:09.000000Z\t2\t4\t3.0\n" +
+                            "1970-01-01T00:00:10.000000Z\t2\t0\t3.5\n",
+                    "select ts, i, j, avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) from tab_big");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:10.000000Z\t2\t0\tNaN\n" +
+                            "1970-01-01T00:00:09.000000Z\t2\t4\t0.0\n" +
+                            "1970-01-01T00:00:08.000000Z\t2\t3\t2.0\n" +
+                            "1970-01-01T00:00:07.000000Z\t1\t2\tNaN\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\n" +
+                            "1970-01-01T00:00:05.000000Z\t1\t0\t1.5\n" +
+                            "1970-01-01T00:00:04.000000Z\t1\t4\t1.0\n" +
+                            "1970-01-01T00:00:03.000000Z\t0\t3\tNaN\n" +
+                            "1970-01-01T00:00:02.000000Z\t0\t2\t3.0\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t1\t2.5\n",
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) from tab_big order by ts desc");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t1\tNaN\n" +
+                            "1970-01-01T00:00:02.000000Z\t0\t2\t1.0\n" +
+                            "1970-01-01T00:00:03.000000Z\t0\t3\t1.5\n" +
+                            "1970-01-01T00:00:04.000000Z\t1\t4\t2.0\n" +
+                            "1970-01-01T00:00:05.000000Z\t1\t0\t2.5\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.0\n" +
+                            "1970-01-01T00:00:07.000000Z\t1\t2\t1.8333333333333333\n" +
+                            "1970-01-01T00:00:08.000000Z\t2\t3\t1.8571428571428572\n" +
+                            "1970-01-01T00:00:09.000000Z\t2\t4\t2.0\n" +
+                            "1970-01-01T00:00:10.000000Z\t2\t0\t2.2222222222222223\n",
+                    "select ts, i, j, avg(j) over (order by ts range between unbounded preceding and 1 preceding) from tab_big");
+
+            assertSql("ts\ti\tj\tavg\n" +
+                            "1970-01-01T00:00:10.000000Z\t2\t0\tNaN\n" +
+                            "1970-01-01T00:00:09.000000Z\t2\t4\t0.0\n" +
+                            "1970-01-01T00:00:08.000000Z\t2\t3\t2.0\n" +
+                            "1970-01-01T00:00:07.000000Z\t1\t2\t2.3333333333333335\n" +
+                            "1970-01-01T00:00:06.000000Z\t1\t1\t2.25\n" +
+                            "1970-01-01T00:00:05.000000Z\t1\t0\t2.0\n" +
+                            "1970-01-01T00:00:04.000000Z\t1\t4\t1.6666666666666667\n" +
+                            "1970-01-01T00:00:03.000000Z\t0\t3\t2.0\n" +
+                            "1970-01-01T00:00:02.000000Z\t0\t2\t2.125\n" +
+                            "1970-01-01T00:00:01.000000Z\t0\t1\t2.111111111111111\n",
+                    "select ts, i, j, avg(j) over (order by ts desc range between unbounded preceding and 1 preceding) from tab_big order by ts desc");
+
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 

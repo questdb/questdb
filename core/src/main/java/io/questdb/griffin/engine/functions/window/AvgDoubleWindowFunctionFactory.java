@@ -163,7 +163,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     columnTypes.add(ColumnType.LONG);   // native buffer size
                     columnTypes.add(ColumnType.LONG);   // native buffer capacity
                     columnTypes.add(ColumnType.LONG);   // index of first buffered element
-                    columnTypes.add(ColumnType.LONG);  // number of (non-null) values in current unbounded frame
 
                     Map map = MapFactory.createMap(
                             configuration,
@@ -453,7 +452,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             // 3 - size of ring buffer (number of elements stored in it; not all of them need to belong to frame)
             // 4 - capacity of ring buffer
             // 5 - index of first (the oldest) valid buffer element
-            // 6 - current number of non-null rows in frame (used when lower frame boundary is 'unbounded preceding' )
             // actual frame data - [timestamp, value] pairs - is stored in mem at [ offset + first_idx*16, offset + last_idx*16]
             // note: we ignore nulls to reduce memory usage
 
@@ -468,7 +466,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             long size;
             long capacity;
             long firstIdx;
-            long unboundedFrameSize;
 
             long timestamp = record.getTimestamp(timestampIndex);
             double d = arg.getDouble(record);
@@ -479,27 +476,28 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 firstIdx = 0;
 
                 if (Numbers.isFinite(d)) {
-                    memory.putLong(startOffset, timestamp);
-                    memory.putDouble(startOffset + Long.BYTES, d);
-                    size = 1;
+                    if (frameLoBounded || !frameIncludesCurrentValue) {
+                        memory.putLong(startOffset, timestamp);
+                        memory.putDouble(startOffset + Long.BYTES, d);
+                        size = 1;
+                    } else {
+                        size = 0;
+                    }
 
                     if (frameIncludesCurrentValue) {
                         sum = d;
                         avg = d;
                         frameSize = 1;
-                        unboundedFrameSize = 1;
                     } else {
                         sum = 0.0;
                         avg = Double.NaN;
                         frameSize = 0;
-                        unboundedFrameSize = 0;
                     }
                 } else {
                     size = 0;
                     sum = 0.0;
                     avg = Double.NaN;
                     frameSize = 0;
-                    unboundedFrameSize = 0;
                 }
             } else {
                 sum = mapValue.getDouble(0);
@@ -508,23 +506,37 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 size = mapValue.getInt(3);
                 capacity = mapValue.getInt(4);
                 firstIdx = mapValue.getInt(5);
-                unboundedFrameSize = mapValue.getInt(6);
 
                 long newFirstIdx = firstIdx;
-                // find new bottom border of range frame and remove unneeded elements
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
-                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        if (frameLoBounded) {
+
+                if (frameLoBounded) {
+                    // find new bottom border of range frame and remove unneeded elements
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) > maxDiff) {
+                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             sum -= val;
+                            frameSize--;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
                         }
-                        frameSize--;
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
+                    }
+                } else {//find all value that entered the frame, add to sum and remove from buffer
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            sum += val;
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
                     }
                 }
                 firstIdx = newFirstIdx;
@@ -575,24 +587,39 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                 }
 
                 // find new top border of range frame and add new elements
-                for (long i = frameSize, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                if (frameLoBounded) {
+                    for (long i = frameSize, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        long diff = Math.abs(ts - timestamp);
 
-                    if (diff <= maxDiff && diff >= minDiff) {
-                        double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum += value;
-                        frameSize++;
-                        unboundedFrameSize++;
-                    } else {
-                        break;
+                        if (diff <= maxDiff && diff >= minDiff) {
+                            double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            sum += value;
+                            frameSize++;
+                        } else {
+                            break;
+                        }
                     }
+                } else {
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            sum += val;
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    firstIdx = newFirstIdx;
                 }
 
-                avg = frameLoBounded ?
-                        (frameSize != 0 ? sum / frameSize : Double.NaN) :
-                        (unboundedFrameSize != 0 ? sum / unboundedFrameSize : Double.NaN);
+                avg = (frameSize != 0 ? sum / frameSize : Double.NaN);
             }
 
             mapValue.putDouble(0, sum);
@@ -601,7 +628,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             mapValue.putLong(3, size);
             mapValue.putLong(4, capacity);
             mapValue.putLong(5, firstIdx);
-            mapValue.putLong(6, unboundedFrameSize);
         }
 
         @Override
@@ -828,6 +854,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
+    // handles avg() over ([order by ts] range between x preceding and [ x preceding | current row ] ); no partition by key
     static class AvgOverRangeFrameFunction extends BaseAvgFunction implements Reopenable {
         private final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameLoBounded;
@@ -846,7 +873,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         private long size;
         private long startOffset;
         private double sum;
-        private long unboundedFrameSize;
 
         public AvgOverRangeFrameFunction(long rangeLo,
                                          long rangeHi,
@@ -865,7 +891,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
-            unboundedFrameSize = 0;
             sum = 0.0;
         }
 
@@ -881,20 +906,35 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             double d = arg.getDouble(record);
 
             long newFirstIdx = firstIdx;
-            // find new bottom border of range frame and remove unneeded elements
-            for (long i = 0, n = size; i < n; i++) {
-                long idx = (firstIdx + i) % capacity;
-                long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) > maxDiff) {
-                    double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                    if (frameLoBounded) {
+
+            if (frameLoBounded) {
+                // find new bottom border of range frame and remove unneeded elements
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) > maxDiff) {
+                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         sum -= val;
+                        frameSize--;
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
                     }
-                    frameSize--;
-                    newFirstIdx = (idx + 1) % capacity;
-                    size--;
-                } else {
-                    break;
+                }
+            } else {
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) >= minDiff) {
+                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        sum += val;
+                        frameSize++;
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
                 }
             }
             firstIdx = newFirstIdx;
@@ -927,24 +967,38 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             }
 
             // find new top border of range frame and add new elements
-            for (long i = frameSize, n = size; i < n; i++) {
-                long idx = (firstIdx + i) % capacity;
-                long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                long diff = Math.abs(ts - timestamp);
+            if (frameLoBounded) {
+                for (long i = frameSize, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    long diff = Math.abs(ts - timestamp);
 
-                if (diff <= maxDiff && diff >= minDiff) {
-                    double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                    sum += value;
-                    frameSize++;
-                    unboundedFrameSize++;
-                } else {
-                    break;
+                    if (diff <= maxDiff && diff >= minDiff) {
+                        double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        sum += value;
+                        frameSize++;
+                    } else {
+                        break;
+                    }
                 }
+            } else {
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) >= minDiff) {
+                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        sum += val;
+                        frameSize++;
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+                firstIdx = newFirstIdx;
             }
 
-            avg = frameLoBounded ?
-                    (frameSize != 0 ? sum / frameSize : Double.NaN) :
-                    (unboundedFrameSize != 0 ? sum / unboundedFrameSize : Double.NaN);
+            avg = frameSize != 0 ? sum / frameSize : Double.NaN;
         }
 
         @Override
@@ -969,7 +1023,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
-            unboundedFrameSize = 0;
             size = 0;
             sum = 0.0;
         }
@@ -1009,7 +1062,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
-            unboundedFrameSize = 0;
             size = 0;
             sum = 0.0;
         }

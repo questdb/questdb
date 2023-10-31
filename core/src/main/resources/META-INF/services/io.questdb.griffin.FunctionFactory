@@ -773,7 +773,7 @@ io.questdb.griffin.engine.functions.str.TrimFunctionFactory
 io.questdb.griffin.engine.functions.str.LTrimFunctionFactory
 io.questdb.griffin.engine.functions.str.RTrimFunctionFactory
 
-# analytic functions
+# window functions
 io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
 io.questdb.griffin.engine.functions.window.RankFunctionFactory
 io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory

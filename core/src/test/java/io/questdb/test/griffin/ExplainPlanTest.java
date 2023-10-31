@@ -8206,7 +8206,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowOrderByUnderAnalyticModelIsPreserved() throws Exception {
+    public void testWindowOrderByUnderWindowModelIsPreserved() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
@@ -8240,7 +8240,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Frame forward scan on: cpu_ts\n");
         });
     }
-    
+
     //TODO: remove artificial limit models used to force ordering on window models (and avoid unnecessary sorts)
     @Test
     public void testWindowParentModelOrderPushdownIsBlockedWhenWindowModelSpecifiesOrderBy() throws Exception {
