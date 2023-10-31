@@ -24,13 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class SimulateCrashFunctionTest extends AbstractCairoTest {
 
     @Test
-    public void testSimple() throws Exception {
+    public void testCrashDisabled() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "simulate_crash\n" +
                         "false\n", "select simulate_crash('0')"
@@ -38,7 +41,61 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> assertSql(
                 "simulate_crash\n" +
+                        "false\n", "select simulate_crash('D')"
+        ));
+
+        assertMemoryLeak(() -> assertSql(
+                "simulate_crash\n" +
+                        "false\n", "select simulate_crash('C')"
+        ));
+
+        assertMemoryLeak(() -> assertSql(
+                "simulate_crash\n" +
                         "false\n", "select simulate_crash('M')"
         ));
+    }
+
+    @Test
+    public void testCrashEnabled() throws Exception {
+        node1.getConfigurationOverrides().setSimulateCrashEnabled(true);
+
+        // select simulate_crash('0'), This is total crash, don't simulate it
+
+        assertMemoryLeak(() -> {
+                    //noinspection CatchMayIgnoreException
+                    try {
+                        assertSql(
+                                "simulate_crash\n" +
+                                        "false\n", "select simulate_crash('C')");
+                        Assert.fail();
+                    } catch (CairoError e) {
+                    }
+                }
+        );
+
+        // This is total crash, don't use it
+        assertMemoryLeak(() -> {
+                    //noinspection CatchMayIgnoreException
+                    try {
+                        assertSql(
+                                "simulate_crash\n" +
+                                        "false\n", "select simulate_crash('M')");
+                        Assert.fail();
+                    } catch (OutOfMemoryError e) {
+                    }
+                }
+        );
+
+        assertMemoryLeak(() -> {
+                    //noinspection CatchMayIgnoreException
+                    try {
+                        assertSql(
+                                "simulate_crash\n" +
+                                        "false\n", "select simulate_crash('D')");
+                        Assert.fail();
+                    } catch (CairoException e) {
+                    }
+                }
+        );
     }
 }

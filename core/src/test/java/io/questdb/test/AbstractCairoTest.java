@@ -1228,6 +1228,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
     }
 
+    protected static void configOverrideWalSegmentRolloverSize(long walSegmentRolloverSize) {
+        node1.getConfigurationOverrides().setWalSegmentRolloverSize(walSegmentRolloverSize);
+    }
+
     protected static void configOverrideWriterMixedIOEnabled(boolean enableMixedIO) {
         node1.getConfigurationOverrides().setWriterMixedIOEnabled(enableMixedIO);
     }

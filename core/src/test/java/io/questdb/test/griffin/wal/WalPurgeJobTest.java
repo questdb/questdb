@@ -27,6 +27,7 @@ package io.questdb.test.griffin.wal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -41,6 +42,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -54,6 +56,24 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
 public class WalPurgeJobTest extends AbstractCairoTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        engine.setWalDirectoryPolicy(
+                new DefaultWalDirectoryPolicy() {
+                    @Override
+                    public boolean isInUse(Path path) {
+                        int size = path.size();
+                        try {
+                            return ff.exists(path.concat(".pending").concat("test.pending").$());
+                        } finally {
+                            path.trimTo(size);
+                        }
+                    }
+                }
+        );
+    }
 
     @Test
     public void testClosedButUnappliedSegment() throws Exception {
@@ -299,18 +319,18 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 Assert.assertEquals(0, counter.get());
                 currentMicros += interval / 2 + 1;
                 walPurgeJob.run(0);
-                Assert.assertEquals(2, counter.get());
+                Assert.assertEquals(1, counter.get());
                 currentMicros += interval / 2 + 1;
                 walPurgeJob.run(0);
                 walPurgeJob.run(0);
                 walPurgeJob.run(0);
-                Assert.assertEquals(2, counter.get());
+                Assert.assertEquals(1, counter.get());
                 currentMicros += interval;
                 walPurgeJob.run(0);
-                Assert.assertEquals(4, counter.get());
+                Assert.assertEquals(2, counter.get());
                 currentMicros += 10 * interval;
                 walPurgeJob.run(0);
-                Assert.assertEquals(6, counter.get());
+                Assert.assertEquals(3, counter.get());
             }
         });
     }
@@ -327,36 +347,36 @@ public class WalPurgeJobTest extends AbstractCairoTest {
               (1,1),(2,0),(3,0),(4,0)]
          */
         TestDeleter deleter = new TestDeleter();
-        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", 42, true, false);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, false, false);
-        logic.trackDiscoveredSegment(1, 2, false, false);
-        logic.trackDiscoveredSegment(1, 3, false, false);
-        logic.trackDiscoveredSegment(1, 4, false, false);
-        logic.trackDiscoveredSegment(1, 5, false, false);
-        logic.trackDiscoveredSegment(1, 6, false, true);
-        logic.trackDiscoveredSegment(1, 7, false, false);
-        logic.trackDiscoveredWal(1, false, true);
-        logic.trackDiscoveredSegment(2, 0, false, false);
-        logic.trackDiscoveredSegment(2, 1, false, false);
-        logic.trackDiscoveredSegment(2, 2, false, false);
-        logic.trackDiscoveredSegment(2, 3, false, false);
-        logic.trackDiscoveredSegment(2, 4, false, true);
-        logic.trackDiscoveredWal(2, false, true);
-        logic.trackDiscoveredSegment(3, 0, false, false);
-        logic.trackDiscoveredSegment(3, 1, false, false);
-        logic.trackDiscoveredSegment(3, 2, false, false);
-        logic.trackDiscoveredSegment(3, 3, false, true);
-        logic.trackDiscoveredWal(3, false, true);
-        logic.trackDiscoveredSegment(4, 0, false, false);
-        logic.trackDiscoveredSegment(4, 1, false, false);
-        logic.trackDiscoveredSegment(4, 2, false, false);
-        logic.trackDiscoveredSegment(4, 3, false, false);
-        logic.trackDiscoveredSegment(4, 4, false, false);
-        logic.trackDiscoveredSegment(4, 5, false, false);
-        logic.trackDiscoveredSegment(4, 6, false, true);
-        logic.trackDiscoveredWal(4, false, true);
+        logic.trackDiscoveredSegment(1, 1, 1);
+        logic.trackDiscoveredSegment(1, 2, 2);
+        logic.trackDiscoveredSegment(1, 3, 3);
+        logic.trackDiscoveredSegment(1, 4, 4);
+        logic.trackDiscoveredSegment(1, 5, 5);
+        logic.trackDiscoveredSegment(1, 6, -1);
+        logic.trackDiscoveredSegment(1, 7, 6);
+        logic.trackDiscoveredWal(1, -1);
+        logic.trackDiscoveredSegment(2, 0, 7);
+        logic.trackDiscoveredSegment(2, 1, 8);
+        logic.trackDiscoveredSegment(2, 2, 9);
+        logic.trackDiscoveredSegment(2, 3, 10);
+        logic.trackDiscoveredSegment(2, 4, -1);
+        logic.trackDiscoveredWal(2, -1);
+        logic.trackDiscoveredSegment(3, 0, 11);
+        logic.trackDiscoveredSegment(3, 1, 12);
+        logic.trackDiscoveredSegment(3, 2, 13);
+        logic.trackDiscoveredSegment(3, 3, -1);
+        logic.trackDiscoveredWal(3, -1);
+        logic.trackDiscoveredSegment(4, 0, 14);
+        logic.trackDiscoveredSegment(4, 1, 15);
+        logic.trackDiscoveredSegment(4, 2, 16);
+        logic.trackDiscoveredSegment(4, 3, 17);
+        logic.trackDiscoveredSegment(4, 4, 18);
+        logic.trackDiscoveredSegment(4, 5, 19);
+        logic.trackDiscoveredSegment(4, 6, -1);
+        logic.trackDiscoveredWal(4, -1);
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.trackNextToApplySegment(3, 0);
@@ -378,15 +398,15 @@ public class WalPurgeJobTest extends AbstractCairoTest {
               (1,1),(2,0)]
          */
         TestDeleter deleter = new TestDeleter();
-        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter);
+        WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", 42, true, false);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, false, false);
-        logic.trackDiscoveredSegment(1, 2, false, true);
-        logic.trackDiscoveredSegment(1, 3, false, false);
-        logic.trackDiscoveredWal(1, false, true);
-        logic.trackDiscoveredSegment(2, 0, false, true);
-        logic.trackDiscoveredWal(2, false, true);
+        logic.trackDiscoveredSegment(1, 1, 1);
+        logic.trackDiscoveredSegment(1, 2, -1);
+        logic.trackDiscoveredSegment(1, 3, 2);
+        logic.trackDiscoveredWal(1, -1);
+        logic.trackDiscoveredSegment(2, 0, -1);
+        logic.trackDiscoveredWal(2, -1);
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.run();
@@ -463,7 +483,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // We write a marker file to prevent the second segment "wal1/1" from being reaped.
             final File pendingDirPath = new File(segment1DirPath, WalUtils.WAL_PENDING_FS_MARKER);
             Assert.assertTrue(pendingDirPath.mkdirs());
-            final File pendingFilePath = new File(pendingDirPath, "task.pending");
+            final File pendingFilePath = new File(pendingDirPath, "test.pending");
             Assert.assertTrue(pendingFilePath.createNewFile());
 
             // Create a third segment.
@@ -522,7 +542,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // We write a marker file to prevent the segment "wal1/0" from being reaped.
             final File pendingDirPath = new File(segment0DirPath, WalUtils.WAL_PENDING_FS_MARKER);
             Assert.assertTrue(pendingDirPath.mkdirs());
-            final File pendingFilePath = new File(pendingDirPath, "task.pending");
+            final File pendingFilePath = new File(pendingDirPath, "test.pending");
             Assert.assertTrue(pendingFilePath.createNewFile());
 
             // Drop the table and apply all outstanding operations.
@@ -561,11 +581,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean remove(LPSZ name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 if (!allowRemove.get()) {
                     return false;
                 } else {
-                    return super.remove(name);
+                    return super.rmdir(name, lazy);
                 }
             }
         };
@@ -581,16 +601,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             drainWalQueue();
 
+            allowRemove.set(true);
             engine.releaseInactive();
-
 
             allowRemove.set(false);
             runWalPurgeJob(ff);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalExistence(true, tableName, 1);
 
             allowRemove.set(true);
             runWalPurgeJob(ff);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalExistence(false, tableName, 1);
         });
     }
 
@@ -615,7 +635,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 if (Utf8s.endsWithAscii(path, Files.SEPARATOR + WalUtils.WAL_NAME_BASE + "1") && !canDelete.get()) {
                     return false;
                 } else {
-                    return super.rmdir(path);
+                    return super.rmdir(path, lazy);
                 }
             }
         };
@@ -1158,16 +1178,24 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
+        public final IntList closedFds = new IntList();
         public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
-        public void deleteSegmentDirectory(int walId, int segmentId) {
+        public void deleteSegmentDirectory(int walId, int segmentId, int lockFd) {
             events.add(new DeletionEvent(walId, segmentId));
         }
 
         @Override
-        public void deleteWalDirectory(int walId) {
+        public void deleteWalDirectory(int walId, int lockFd) {
             events.add(new DeletionEvent(walId));
+        }
+
+        @Override
+        public void unlock(int lockFd) {
+            if (lockFd > -1) {
+                closedFds.add(lockFd);
+            }
         }
     }
 }

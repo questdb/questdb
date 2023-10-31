@@ -837,6 +837,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalPurgeWaitBeforeDelete() {
+        return delegate.getWalPurgeWaitBeforeDelete();
+    }
+
+    @Override
     public int getWalRecreateDistressedSequencerAttempts() {
         return delegate.getWalRecreateDistressedSequencerAttempts();
     }
@@ -844,6 +849,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return delegate.getWalSegmentRolloverRowCount();
+    }
+
+    @Override
+    public long getWalSegmentRolloverSize() {
+        return delegate.getWalSegmentRolloverSize();
     }
 
     @Override

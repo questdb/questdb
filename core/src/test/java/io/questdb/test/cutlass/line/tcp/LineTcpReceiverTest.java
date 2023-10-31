@@ -1564,7 +1564,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path path) {
+                public boolean rmdir(Path path, boolean lazy) {
                     return false;
                 }
             };

@@ -28,6 +28,7 @@ import io.questdb.std.ObjList;
 
 public class FuzzTransaction {
     public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
+    public boolean reopenTable;
     public boolean rollback;
     public int structureVersion;
     public boolean waitAllDone;

@@ -204,8 +204,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(int fd, long offset, byte truncateMode) {
-        close(true, truncateMode);
+    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+        close(truncate, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);
     }

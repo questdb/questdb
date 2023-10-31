@@ -27,6 +27,7 @@ package io.questdb.std.str;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -297,6 +298,15 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     public Path put(@NotNull CharSequence cs, int lo, int hi) {
         checkExtend(hi - lo + 1);
         Utf8Sink.super.put(cs, lo, hi);
+        return this;
+    }
+
+    @Override
+    public Path put(long lo, long hi) {
+        final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
+        checkExtend(size);
+        Vect.memcpy(tailPtr, lo, size);
+        tailPtr += size;
         return this;
     }
 

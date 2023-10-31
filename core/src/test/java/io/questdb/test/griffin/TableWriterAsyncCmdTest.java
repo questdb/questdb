@@ -198,11 +198,11 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path name) {
+                public boolean rmdir(Path name, boolean lazy) {
                     if (Utf8s.containsAscii(name, "2020-01-01")) {
                         throw CairoException.critical(11).put("could not remove [path=").put(name).put(']');
                     }
-                    return super.rmdir(name);
+                    return super.rmdir(name, lazy);
                 }
             };
             ddl("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
