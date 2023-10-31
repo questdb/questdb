@@ -212,7 +212,7 @@ public class FastMap implements Map, Reopenable {
 
         record = new FastMapRecord(keySize, valueOffsets, value, keyTypes, valueTypes);
 
-        assert keySize + valueSize < heapLimit - heapStart : "page size is too small to fit a single key";
+        assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
         cursor = new FastMapCursor(record, this);
         key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
     }
@@ -517,9 +517,9 @@ public class FastMap implements Map, Reopenable {
             }
         }
 
-        protected void checkSize(int size) {
-            if (appendAddress + size + valueSize > heapLimit) {
-                resize(size);
+        protected void checkSize(int requiredKeySize) {
+            if (appendAddress + requiredKeySize + valueSize > heapLimit) {
+                resize(requiredKeySize);
             }
         }
 
@@ -535,7 +535,7 @@ public class FastMap implements Map, Reopenable {
 
         public FixedSizeKey init() {
             super.init();
-            checkSize(keySize + valueSize);
+            checkSize(keySize);
             return this;
         }
 

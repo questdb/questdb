@@ -204,14 +204,14 @@ final class FastMapValue implements MapValue {
     @Override
     public void putByte(int index, byte value) {
         final long p = address0(index);
-        assert p + Byte.BYTES < limit;
+        assert p + Byte.BYTES <= limit;
         Unsafe.getUnsafe().putByte(p, value);
     }
 
     @Override
     public void putChar(int index, char value) {
         final long p = address0(index);
-        assert p + Character.BYTES < limit;
+        assert p + Character.BYTES <= limit;
         Unsafe.getUnsafe().putChar(p, value);
     }
 
@@ -223,28 +223,28 @@ final class FastMapValue implements MapValue {
     @Override
     public void putDouble(int index, double value) {
         final long p = address0(index);
-        assert p + Double.BYTES < limit;
+        assert p + Double.BYTES <= limit;
         Unsafe.getUnsafe().putDouble(p, value);
     }
 
     @Override
     public void putFloat(int index, float value) {
         final long p = address0(index);
-        assert p + Float.BYTES < limit;
+        assert p + Float.BYTES <= limit;
         Unsafe.getUnsafe().putFloat(p, value);
     }
 
     @Override
     public void putInt(int index, int value) {
         final long p = address0(index);
-        assert p + Integer.BYTES < limit;
+        assert p + Integer.BYTES <= limit;
         Unsafe.getUnsafe().putInt(p, value);
     }
 
     @Override
     public void putLong(int index, long value) {
         final long p = address0(index);
-        assert p + Long.BYTES < limit;
+        assert p + Long.BYTES <= limit;
         Unsafe.getUnsafe().putLong(p, value);
     }
 
@@ -258,7 +258,7 @@ final class FastMapValue implements MapValue {
     @Override
     public void putLong256(int index, Long256 value) {
         final long p = address0(index);
-        assert p + Long256.BYTES < limit;
+        assert p + Long256.BYTES <= limit;
         Unsafe.getUnsafe().putLong(p, value.getLong0());
         Unsafe.getUnsafe().putLong(p + Long.BYTES, value.getLong1());
         Unsafe.getUnsafe().putLong(p + 2 * Long.BYTES, value.getLong2());
