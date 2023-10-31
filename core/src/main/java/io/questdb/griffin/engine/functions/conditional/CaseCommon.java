@@ -368,7 +368,7 @@ public class CaseCommon {
     }
 
     static {
-        constructors.set(0, ColumnType.MAX, null);
+        constructors.set(0, ColumnType.NULL, null);
         constructors.extendAndSet(ColumnType.STRING, (position1, picker1, args1) -> new StrCaseFunction(picker1, args1));
         constructors.extendAndSet(ColumnType.INT, IntCaseFunction::new);
         constructors.extendAndSet(ColumnType.LONG, (position2, picker2, args2) -> new LongCaseFunction(picker2, args2));

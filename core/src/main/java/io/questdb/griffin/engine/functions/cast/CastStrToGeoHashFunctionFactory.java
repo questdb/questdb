@@ -40,13 +40,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-import static io.questdb.cairo.ColumnType.GEO_HASH_MAX_BITS_LENGTH;
+import static io.questdb.cairo.ColumnType.GEOLONG_MAX_BITS;
 
 public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     public static Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
         if (value.isConstant()) {
             final int bits = ColumnType.getGeoHashBits(geoType);
-            assert bits > 0 && bits < GEO_HASH_MAX_BITS_LENGTH + 1;
+            assert bits > 0 && bits < GEOLONG_MAX_BITS + 1;
             return Constants.getGeoHashConstantWithType(
                     getGeoHashImpl(value.getStr(null), argPosition, bits),
                     geoType
@@ -104,7 +104,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
             this.arg = arg;
             this.position = position;
             this.bitsPrecision = ColumnType.getGeoHashBits(geoType);
-            assert this.bitsPrecision > 0 && this.bitsPrecision < GEO_HASH_MAX_BITS_LENGTH + 1;
+            assert this.bitsPrecision > 0 && this.bitsPrecision < GEOLONG_MAX_BITS + 1;
         }
 
         @Override

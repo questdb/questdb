@@ -240,7 +240,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            Assert.assertEquals("[0] Invalid date", e.getMessage());
+            Assert.assertEquals("[0] Invalid date [str='2014-0x-01T12:30:00.000Z']", e.getMessage());
         }
     }
 
@@ -250,7 +250,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp > '2014-0x-01T12:30:00.000Z'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date", e.getMessage());
+            Assert.assertEquals("[12] Invalid date [str='2014-0x-01T12:30:00.000Z']", e.getMessage());
         }
     }
 
@@ -281,7 +281,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            Assert.assertEquals("[0] Invalid date", e.getMessage());
+            Assert.assertEquals("[0] Invalid date [str='1663676011000000']", e.getMessage());
         }
     }
 
@@ -291,7 +291,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp < '1663676011000000'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date", e.getMessage());
+            Assert.assertEquals("[12] Invalid date [str='1663676011000000']", e.getMessage());
         }
     }
 

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -32,25 +32,30 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CastBooleanToDateFunctionFactory implements FunctionFactory {
+public class EqDateFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Tm)";
+        return "=(MM)";
+    }
+
+    @Override
+    public boolean isBoolean() {
+        return true;
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new EqDateFunctionFactory.EqDateFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends AbstractCastToDateFunction {
-        public Func(Function arg) {
-            super(arg);
+    private static class EqDateFunction extends AbstractEqBinaryFunction {
+        public EqDateFunction(Function left, Function right) {
+            super(left, right);
         }
 
         @Override
-        public long getDate(Record rec) {
-            return arg.getDate(rec);
+        public boolean getBool(Record rec) {
+            return negated != (left.getDate(rec) == right.getDate(rec));
         }
     }
 }
