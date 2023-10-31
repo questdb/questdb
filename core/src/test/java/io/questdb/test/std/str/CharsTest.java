@@ -386,15 +386,15 @@ public class CharsTest {
         for (String s : positive) {
             Assert.assertTrue(Chars.startsWithLowerCase("abc", s));
             Assert.assertTrue(Chars.startsWithLowerCase("ABC", s));
-            Assert.assertTrue(Chars.startsWithLowerCase("abc", s.toUpperCase()));
-            Assert.assertTrue(Chars.startsWithLowerCase("ABC", s.toUpperCase()));
         }
 
+        Assert.assertTrue(Chars.startsWithLowerCase("abcd", ""));
         Assert.assertFalse(Chars.startsWithLowerCase("", "abcd"));
         Assert.assertFalse(Chars.startsWithLowerCase("abc", "abcd"));
-        Assert.assertFalse(Chars.startsWithLowerCase("abc", "ABCD"));
         Assert.assertFalse(Chars.startsWithLowerCase("ABC", "abcd"));
-        Assert.assertFalse(Chars.startsWithLowerCase("ABC", "ABCD"));
+        // The pattern has to be lower-case.
+        Assert.assertFalse(Chars.startsWithLowerCase("abc", "ABC"));
+        Assert.assertFalse(Chars.startsWithLowerCase("ABC", "ABC"));
     }
 
     private static void base64DecodeByteSink(Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectUtf8Sink> decoderUnderTest) {

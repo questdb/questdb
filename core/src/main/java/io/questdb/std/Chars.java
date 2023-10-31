@@ -1148,9 +1148,9 @@ public final class Chars {
         return true;
     }
 
-    private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence rLC, int len) {
+    private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len) {
         for (int i = 0; i < len; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(rLC.charAt(i))) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
                 return false;
             }
         }
