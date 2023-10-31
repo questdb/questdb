@@ -883,10 +883,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             assertException(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
                 if (errorPos > -1) {
                     Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
                 }
-                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
             } else {
                 throw e;
             }
@@ -1205,6 +1205,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
+    }
+
+    protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {
+        node1.getConfigurationOverrides().setSqlWindowStoreMaxPages(windowStoreMaxPages);
+    }
+
+    protected static void configOverrideSqlWindowStorePageSize(int windowStorePageSize) {
+        node1.getConfigurationOverrides().setSqlWindowStorePageSize(windowStorePageSize);
     }
 
     protected static void configOverrideWalApplyTableTimeQuota(long walApplyTableTimeQuota) {

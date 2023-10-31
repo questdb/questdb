@@ -60,6 +60,8 @@ public interface PlanSink {
     @TestOnly
     StringSink getSink();
 
+    boolean getUseBaseMetadata();
+
     PlanSink meta(CharSequence name);
 
     void of(RecordCursorFactory factory, SqlExecutionContext executionContext);
@@ -79,6 +81,8 @@ public interface PlanSink {
     PlanSink putColumnName(int columnIdx);
 
     PlanSink type(CharSequence type);
+
+    void useBaseMetadata(boolean b);
 
     PlanSink val(ObjList<?> list);
 

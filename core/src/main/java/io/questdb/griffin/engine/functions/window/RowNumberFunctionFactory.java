@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.analytic;
+package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
@@ -35,10 +35,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
-import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -67,89 +67,34 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
-        if (analyticContext.isEmpty()) {
-            throw SqlException.$(position, "analytic function called in non-analytic context, make sure to add OVER clause");
+        final WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        if (windowContext.isEmpty()) {
+            throw SqlException.emptyWindowContext(position);
         }
 
-        if (analyticContext.getPartitionByRecord() != null) {
+        if (windowContext.getPartitionByRecord() != null) {
             Map map = MapFactory.createMap(
                     configuration,
-                    analyticContext.getPartitionByKeyTypes(),
+                    windowContext.getPartitionByKeyTypes(),
                     LONG_COLUMN_TYPE
             );
             return new RowNumberFunction(
                     map,
-                    analyticContext.getPartitionByRecord(),
-                    analyticContext.getPartitionBySink()
+                    windowContext.getPartitionByRecord(),
+                    windowContext.getPartitionBySink()
             );
         }
-        if (analyticContext.isOrdered()) {
-            return new OrderRowNumberFunction();
-        }
+
         return new SequenceRowNumberFunction();
     }
 
-    private static class OrderRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
-        private int columnIndex;
-        private long next = 1;
-
-        public OrderRowNumberFunction() {
-        }
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next++);
-        }
-
-        @Override
-        public void pass2(Record record) {
-        }
-
-        @Override
-        public void preparePass2(RecordCursor cursor) {
-        }
-
-        @Override
-        public void reopen() {
-            reset();
-        }
-
-        @Override
-        public void reset() {
-            next = 1;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
-        }
-    }
-
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+    private static class RowNumberFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
         private int columnIndex;
+
+        private long rowNumber;
 
         public RowNumberFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
             this.map = map;
@@ -164,17 +109,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+        public void computeNext(Record record) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -185,20 +120,33 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             } else {
                 x = value.getLong(0);
             }
-            value.putLong(0, x + 1);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), x + 1);
+            rowNumber = x + 1;
+            value.putLong(0, rowNumber);
         }
 
         @Override
-        public void pass2(Record record) {
+        public long getLong(Record rec) {
+            return rowNumber;
         }
 
         @Override
-        public void preparePass2(RecordCursor cursor) {
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rowNumber);
         }
 
         @Override
         public void reopen() {
+            rowNumber = 0;
             map.reopen();
         }
 
@@ -215,17 +163,36 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            rowNumber = 0;
+            map.clear();
         }
     }
 
-    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
         private int columnIndex;
-        private long next = 1;
+        private long rowNumber = 0;
+
+        @Override
+        public void computeNext(Record record) {
+            ++rowNumber;
+        }
 
         @Override
         public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
+            return rowNumber;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
         }
 
         @Override
@@ -238,16 +205,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next++);
-        }
-
-        @Override
-        public void pass2(Record record) {
-        }
-
-        @Override
-        public void preparePass2(RecordCursor cursor) {
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), ++rowNumber);
         }
 
         @Override
@@ -272,7 +231,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            next = 1;
+            rowNumber = 0;
         }
     }
 }

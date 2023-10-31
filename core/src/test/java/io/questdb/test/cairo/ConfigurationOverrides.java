@@ -121,6 +121,10 @@ public interface ConfigurationOverrides {
 
     int getSqlJoinMetadataPageSize();
 
+    int getSqlWindowStoreMaxPages();
+
+    int getSqlWindowStorePageSize();
+
     int getTableRegistryCompactionThreshold();
 
     MicrosecondClock getTestMicrosClock();
@@ -262,6 +266,10 @@ public interface ConfigurationOverrides {
     void setSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes);
 
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
+
+    void setSqlWindowStoreMaxPages(int windowStoreMaxPages);
+
+    void setSqlWindowStorePageSize(int windowStorePageSize);
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 
