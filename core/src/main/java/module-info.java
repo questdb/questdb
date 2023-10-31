@@ -730,6 +730,8 @@ open module io.questdb {
 //                  avg()
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory,
+//                  vwap()
+            io.questdb.griffin.engine.functions.groupby.VwapDoubleGroupByFunctionFactory,
 //                 stddev()
             io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory,
 //                 stddev_samp()
