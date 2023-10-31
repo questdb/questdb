@@ -22,45 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.eq.EqDateFunctionFactory;
 import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public class CastSymbolToDateFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Km)";
+public class EqDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testEquals() throws SqlException, NumericException {
+        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
+        long t2 = DateFormatUtils.parseDate("2020-12-31T23:59:59.001Z");
+        callBySignature("=(MM)", t1, t1).andAssert(true);
+        callBySignature("=(MM)", t1, t2).andAssert(false);
+    }
+
+    @Test
+    public void testNotEquals() throws SqlException, NumericException {
+        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
+        long t2 = DateFormatUtils.parseDate("2020-12-31T23:59:59.001Z");
+        callBySignature("<>(MM)", t1, t1).andAssert(false);
+        callBySignature("<>(MM)", t1, t2).andAssert(true);
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
-    }
-
-    public static class Func extends AbstractCastToDateFunction {
-
-        public Func(Function arg) {
-            super(arg);
-        }
-
-
-        @Override
-        public long getDate(Record rec) {
-            final CharSequence value = arg.getSymbol(rec);
-            try {
-                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseUTCDate(value);
-            } catch (NumericException e) {
-                return Numbers.LONG_NaN;
-            }
-        }
+    protected FunctionFactory getFunctionFactory() {
+        return new EqDateFunctionFactory();
     }
 }

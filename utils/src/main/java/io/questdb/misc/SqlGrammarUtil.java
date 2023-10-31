@@ -71,7 +71,7 @@ public class SqlGrammarUtil {
         names.clear();
         final Set<String> skipSet = new HashSet<>();
         Collections.addAll(skipSet, "unknown", "regclass", "regprocedure", "VARARG", "text[]", "CURSOR", "RECORD", "PARAMETER");
-        for (int type = 1; type < ColumnType.MAX; type++) {
+        for (int type = 1; type < ColumnType.NULL; type++) {
             String name = ColumnType.nameOf(type);
             if (!skipSet.contains(name)) {
                 names.add(name.toLowerCase());

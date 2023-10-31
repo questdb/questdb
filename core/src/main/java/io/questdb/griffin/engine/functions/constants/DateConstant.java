@@ -37,7 +37,7 @@ public class DateConstant extends DateFunction implements ConstantFunction {
         this.value = value;
     }
 
-    public static DateConstant getInstance(long value) {
+    public static DateConstant newInstance(long value) {
         return value != Numbers.LONG_NaN ? new DateConstant(value) : NULL;
     }
 

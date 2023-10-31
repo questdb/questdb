@@ -47,6 +47,8 @@ public class DateFormatUtils {
     public static final DateFormat UTC_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     private static final DateFormat HTTP_FORMAT;
+    private static final int DATE_FORMATS_SIZE;
+    private static final DateFormat[] DATE_FORMATS;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
@@ -272,6 +274,31 @@ public class DateFormatUtils {
         return UTC_FORMAT.parse(value, 0, value.length(), EN_LOCALE);
     }
 
+    /**
+     * Parse date and return number of <b>milliseconds</b> since epoch.
+     * <p>
+     * The method tries to parse date using a number of formats which are supported by QuestDB
+     * when inserting String into DATE column.
+     *
+     * @param value date string
+     * @return number of milliseconds since epoch
+     * @throws NumericException if date cannot be parsed
+     */
+    public static long parseDate(CharSequence value) throws NumericException {
+        if (value == null) {
+            return Numbers.LONG_NaN;
+        }
+
+        final int hi = value.length();
+        for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
+            try {
+                return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.EN_LOCALE);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Numbers.parseLong(value, 0, hi);
+    }
+
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {
         long l = Numbers.parseIntSafely(in, pos, hi);
         int len = Numbers.decodeHighInt(l);
@@ -309,5 +336,15 @@ public class DateFormatUtils {
         PG_DATE_Z_FORMAT = compiler.compile("y-MM-dd z");
         PG_DATE_MILLI_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.Sz");
         PG_DATE_MILLI_TIME_Z_PRINT_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSz");
+
+        final DateFormat pgDateTimeFormat = compiler.compile("y-MM-dd HH:mm:ssz");
+        DATE_FORMATS = new DateFormat[]{
+                pgDateTimeFormat,
+                PG_DATE_FORMAT,
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                UTC_FORMAT
+        };
+        DATE_FORMATS_SIZE = DATE_FORMATS.length;
     }
 }

@@ -22,35 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
 
-public class CastBooleanToDateFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Tm)";
+public abstract class AbstractUnaryDateFunction extends DateFunction implements UnaryFunction {
+    protected final Function arg;
+
+    public AbstractUnaryDateFunction(Function arg) {
+        this.arg = arg;
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
-    }
-
-    private static class Func extends AbstractCastToDateFunction {
-        public Func(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long getDate(Record rec) {
-            return arg.getDate(rec);
-        }
+    public Function getArg() {
+        return arg;
     }
 }
