@@ -556,13 +556,13 @@ public class FastMapTest extends AbstractCairoTest {
 
             final long keyCapacityBefore = map.getKeyCapacity();
             final long memUsedBefore = Unsafe.getMemUsed();
-            final long areaSizeBefore = map.getAreaSize();
+            final long areaSizeBefore = map.getHeapSize();
 
             map.restoreInitialCapacity();
 
             Assert.assertTrue(keyCapacityBefore > map.getKeyCapacity());
             Assert.assertTrue(memUsedBefore > Unsafe.getMemUsed());
-            Assert.assertTrue(areaSizeBefore > map.getAreaSize());
+            Assert.assertTrue(areaSizeBefore > map.getHeapSize());
         }
     }
 
@@ -689,6 +689,7 @@ public class FastMapTest extends AbstractCairoTest {
     public void testHeapBoundariesFixedSizeKey() {
         // Here, the entry size is 16 bytes, so that we fill the heap up to the boundary exactly before growing it.
         Rnd rnd = new Rnd();
+        int expectedEntrySize = 16;
 
         try (
                 FastMap map = new FastMap(
@@ -705,8 +706,10 @@ public class FastMapTest extends AbstractCairoTest {
                 MapKey key = map.withKey();
                 key.putLong(rnd.nextLong());
 
+                long usedHeap = map.getUsedHeapSize();
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
+                Assert.assertEquals(expectedEntrySize, (int) (map.getUsedHeapSize() - usedHeap));
 
                 value.putLong(0, rnd.nextLong());
             }
@@ -732,6 +735,7 @@ public class FastMapTest extends AbstractCairoTest {
     public void testHeapBoundariesVarSizeKey() {
         // Here, the entry size is 32 bytes, so that we fill the heap up to the boundary exactly before growing it.
         Rnd rnd = new Rnd();
+        int expectedEntrySize = 32;
 
         ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         valueTypes.add(ColumnType.LONG);
@@ -752,8 +756,10 @@ public class FastMapTest extends AbstractCairoTest {
                 MapKey key = map.withKey();
                 key.putStr(rnd.nextString(4));
 
+                long usedHeap = map.getUsedHeapSize();
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
+                Assert.assertEquals(expectedEntrySize, (int) (map.getUsedHeapSize() - usedHeap));
 
                 value.putLong(0, rnd.nextLong());
                 value.putLong(1, rnd.nextLong());

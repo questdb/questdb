@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * FastMap is a general purpose off-heap hash table used to store intermediate data of join,
@@ -241,13 +242,13 @@ public class FastMap implements Map, Reopenable {
         return kPos;
     }
 
-    public long getAreaSize() {
-        return heapLimit - heapStart;
-    }
-
     @Override
     public RecordCursor getCursor() {
         return cursor.init(heapStart, heapLimit, size);
+    }
+
+    public long getHeapSize() {
+        return heapLimit - heapStart;
     }
 
     public int getKeyCapacity() {
@@ -257,6 +258,11 @@ public class FastMap implements Map, Reopenable {
     @Override
     public MapRecord getRecord() {
         return record;
+    }
+
+    @TestOnly
+    public long getUsedHeapSize() {
+        return kPos - heapStart;
     }
 
     public int getValueColumnCount() {
