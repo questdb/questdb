@@ -22,48 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.model;
+package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 
-public final class AnalyticColumn extends QueryColumn {
-    public final static ObjectFactory<AnalyticColumn> FACTORY = AnalyticColumn::new;
-    private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
-    private final IntList orderByDirection = new IntList(2);
-    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
-
-    private AnalyticColumn() {
-    }
-
-    public void addOrderBy(ExpressionNode node, int direction) {
-        orderBy.add(node);
-        orderByDirection.add(direction);
+public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "vwap(DD)";
     }
 
     @Override
-    public void clear() {
-        super.clear();
-        partitionBy.clear();
-        orderBy.clear();
-        orderByDirection.clear();
-    }
-
-    public ObjList<ExpressionNode> getOrderBy() {
-        return orderBy;
-    }
-
-    public IntList getOrderByDirection() {
-        return orderByDirection;
-    }
-
-    public ObjList<ExpressionNode> getPartitionBy() {
-        return partitionBy;
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public AnalyticColumn of(CharSequence alias, ExpressionNode ast) {
-        return (AnalyticColumn) super.of(alias, ast);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new VwapDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }
