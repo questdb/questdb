@@ -611,6 +611,9 @@ io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilingDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilingFloatFunctionFactory
 
+# ExpFunctionFactory
+io.questdb.griffin.engine.functions.math.ExpDoubleFunctionFactory
+
 # FloorFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory
