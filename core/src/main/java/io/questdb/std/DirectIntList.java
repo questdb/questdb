@@ -141,7 +141,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     @Override
     public String toString() {
-        CharSink sb = Misc.getThreadLocalBuilder();
+        CharSink sb = Misc.getThreadLocalSink();
         sb.put('[');
         final int maxElementsToPrint = 1000; // Do not try to print too much, it can hang IntelliJ debugger.
         for (int i = 0, n = (int) Math.min(maxElementsToPrint, size()); i < n; i++) {

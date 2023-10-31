@@ -44,7 +44,7 @@ final class Mig608 {
 
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
-        final int plen = path.length();
+        final int plen = path.size();
 
         path.concat(META_FILE_NAME).$();
         if (!ff.exists(path)) {

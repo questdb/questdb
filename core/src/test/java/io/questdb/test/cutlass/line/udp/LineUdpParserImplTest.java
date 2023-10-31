@@ -33,6 +33,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -370,7 +371,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.endsWith(path, Chars.toString(dirName) + Files.SEPARATOR)) {
+                if (Utf8s.endsWithAscii(path, Chars.toString(dirName) + Files.SEPARATOR)) {
                     called = true;
                     return -1;
                 }

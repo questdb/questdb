@@ -37,7 +37,6 @@ public class CharSequenceIntHashMapTest {
 
     @Test
     public void testAll() {
-
         Rnd rnd = new Rnd();
         // populate map
         CharSequenceIntHashMap map = new CharSequenceIntHashMap();

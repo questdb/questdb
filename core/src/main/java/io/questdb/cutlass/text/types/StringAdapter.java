@@ -26,16 +26,17 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cutlass.text.TextUtil;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 public class StringAdapter extends AbstractTypeAdapter {
 
-    private final DirectCharSink utf8Sink;
+    private final DirectCharSink utf16Sink;
 
-    public StringAdapter(DirectCharSink utf8Sink) {
-        this.utf8Sink = utf8Sink;
+    public StringAdapter(DirectCharSink utf16Sink) {
+        this.utf16Sink = utf16Sink;
     }
 
     @Override
@@ -44,20 +45,22 @@ public class StringAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         // anything can be string, we do not to call this method to assert this
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        write(row, column, value, utf8Sink);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        write(row, column, value, utf16Sink);
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8ToUtf16EscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
-        row.putStr(column, utf8Sink);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectCharSink utf16Sink) throws Exception {
+        utf16Sink.clear();
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
+            throw Utf8Exception.INSTANCE;
+        }
+        row.putStr(column, utf16Sink);
     }
 }

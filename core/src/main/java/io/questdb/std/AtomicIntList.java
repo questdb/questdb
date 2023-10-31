@@ -114,7 +114,7 @@ public class AtomicIntList {
 
     @Override
     public String toString() {
-        CharSink b = Misc.getThreadLocalBuilder();
+        CharSink b = Misc.getThreadLocalSink();
         int[] data = this.data;
         int pos = this.pos;
         b.put('[');

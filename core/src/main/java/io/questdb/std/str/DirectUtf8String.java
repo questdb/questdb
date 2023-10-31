@@ -25,53 +25,69 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Mutable;
-import io.questdb.std.Unsafe;
+import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.NotNull;
 
-public class DirectCharSequence extends AbstractCharSequence implements Mutable {
+/**
+ * An immutable flyweight for a UTF-8 string stored in native memory.
+ */
+public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
+    public static final Factory FACTORY = new Factory();
+    private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private long hi;
-    private int len;
     private long lo;
 
     @Override
-    public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(lo + ((long) index * 2L));
+    public @NotNull CharSequence asAsciiCharSequence() {
+        return asciiCharSequence.of(this);
     }
 
     @Override
     public void clear() {
-        hi = lo = 0;
+        this.lo = this.hi = 0;
     }
 
-    @Override
-    public int hashCode() {
-        if (lo == hi) {
-            return 0;
-        }
-
-        int h = 0;
-        for (long p = lo; p < hi; p += 2) {
-            h = 31 * h + Unsafe.getUnsafe().getChar(p);
-        }
-        return h;
+    public DirectUtf8Sequence decHi() {
+        this.hi--;
+        return this;
     }
 
-    @Override
-    public int length() {
-        return len;
-    }
-
-    public DirectCharSequence of(long lo, long hi) {
+    public DirectUtf8String of(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
-        this.len = (int) ((hi - lo) / 2);
         return this;
     }
 
     @Override
-    protected CharSequence _subSequence(int start, int end) {
-        DirectCharSequence seq = new DirectCharSequence();
-        seq.lo = this.lo + start;
-        seq.hi = this.lo + end;
-        return seq;
+    public long ptr() {
+        return lo;
+    }
+
+    public void shl(long delta) {
+        this.lo -= delta;
+        this.hi -= delta;
+    }
+
+    @Override
+    public int size() {
+        return (int) (hi - lo);
+    }
+
+    public void squeeze() {
+        this.lo++;
+        this.hi--;
+    }
+
+    @NotNull
+    @Override
+    public String toString() {
+        return Utf8s.stringFromUtf8Bytes(lo, hi);
+    }
+
+    public static final class Factory implements ObjectFactory<DirectUtf8String> {
+        @Override
+        public DirectUtf8String newInstance() {
+            return new DirectUtf8String();
+        }
     }
 }

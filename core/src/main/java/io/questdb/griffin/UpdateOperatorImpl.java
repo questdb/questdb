@@ -625,7 +625,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         try {
             path.trimTo(rootLen);
             TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
-            int pathTrimToLen = path.length();
+            int pathTrimToLen = path.size();
             for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
                 int columnIndex = updateColumnIndexes.get(i);
                 CharSequence name = metadata.getColumnName(columnIndex);
@@ -701,7 +701,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             TableRecordMetadata tableMetadata,
             TableWriter tableWriter
     ) {
-        int pathTrimToLen = path.length();
+        int pathTrimToLen = path.size();
         indexBuilder.of(path.trimTo(rootLen));
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);

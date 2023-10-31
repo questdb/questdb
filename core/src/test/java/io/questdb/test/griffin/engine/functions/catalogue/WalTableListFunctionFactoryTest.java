@@ -26,12 +26,12 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -68,7 +68,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return Files.openRW(name, opts);

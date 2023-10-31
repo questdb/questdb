@@ -250,12 +250,13 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
         int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > 0);
 
-        try (MemoryMARW memoryW = Vm.getMARWInstance()) {
-            memoryW.of(ff, fd, testName.getMethodName(), 16, 0);
-
+        try (
+                MemoryMARW memoryW = Vm.getMARWInstance();
+                Path fileName = new Path().of(testName.getMethodName()).$()
+        ) {
+            memoryW.of(ff, fd, fileName, 16, 0);
             if (writeData) {
                 memoryW.jumpTo(0);
-
 
                 for (long i = 0; i < appendCount; i++) {
                     memoryW.putLong(i * 8L);

@@ -41,6 +41,7 @@ import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -455,7 +456,7 @@ public class SqlUtil {
             final int hi = value.length();
             for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
                 try {
-                    return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.enLocale);
+                    return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.EN_LOCALE);
                 } catch (NumericException ignore) {
                 }
             }
@@ -575,7 +576,7 @@ public class SqlUtil {
             for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
                 try {
                     //
-                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, enLocale) * 1000L;
+                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
                 } catch (NumericException ignore) {
                 }
             }
@@ -587,6 +588,18 @@ public class SqlUtil {
 
     public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
         if (str == null || str.length() == 0) {
+            uuid.ofNull();
+            return;
+        }
+        try {
+            uuid.of(str);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
+        }
+    }
+
+    public static void implicitCastStrAsUuid(DirectUtf8Sequence str, Uuid uuid) {
+        if (str == null || str.size() == 0) {
             uuid.ofNull();
             return;
         }

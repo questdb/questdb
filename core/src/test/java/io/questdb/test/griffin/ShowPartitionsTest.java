@@ -29,12 +29,10 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -76,7 +74,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
 
     public static String replaceSizeToMatchOS(
             String expected,
-            CharSequence root,
+            Utf8Sequence root,
             String tableName,
             CairoEngine engine
     ) {
@@ -246,7 +244,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     Path path = new Path().of(configuration.getRoot()).concat(tableToken).concat("2023-0");
                     Path link = new Path().of(configuration.getRoot()).concat(tableToken).concat("2023-0")
             ) {
-                int len = path.length();
+                int len = path.size();
                 for (int i = 2; i < 5; i++) {
                     path.trimTo(len).put(i).put(TableUtils.DETACHED_DIR_MARKER).$();
                     link.trimTo(len).put(i).put(TableUtils.ATTACHABLE_DIR_MARKER).$();
@@ -507,21 +505,21 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     private static ObjObjHashMap<String, Long> findPartitionSizes(
-            CharSequence root,
+            Utf8Sequence root,
             String tableName,
             CairoEngine engine
     ) {
         ObjObjHashMap<String, Long> sizes = new ObjObjHashMap<>();
         TableToken tableToken = engine.verifyTableName(tableName);
         try (Path path = new Path().of(root).concat(tableToken).$()) {
-            int len = path.length();
+            int len = path.size();
             long pFind = Files.findFirst(path);
             try {
                 do {
                     long namePtr = Files.findName(pFind);
                     if (Files.notDots(namePtr)) {
                         sink.clear();
-                        Chars.utf8ToUtf16Z(namePtr, sink);
+                        Utf8s.utf8ToUtf16Z(namePtr, sink);
                         path.trimTo(len).concat(sink).$();
                         int n = sink.length();
                         int limit = n;
@@ -612,7 +610,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     private String replaceSizeToMatchOS(String expected, String tableName) {
-        return replaceSizeToMatchOS(expected, configuration.getRoot(), tableName, engine);
+        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine);
     }
 
     private String testTableName(String tableName) {

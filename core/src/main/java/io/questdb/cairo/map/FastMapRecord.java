@@ -31,7 +31,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,8 +45,8 @@ import org.jetbrains.annotations.Nullable;
  */
 final class FastMapRecord implements MapRecord {
     private final DirectBinarySequence[] bs;
-    private final DirectCharSequence[] csA;
-    private final DirectCharSequence[] csB;
+    private final DirectString[] csA;
+    private final DirectString[] csB;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
     private final int keySize;
@@ -85,8 +86,8 @@ final class FastMapRecord implements MapRecord {
             nColumns = keyTypes.getColumnCount();
         }
 
-        DirectCharSequence[] csA = null;
-        DirectCharSequence[] csB = null;
+        DirectString[] csA = null;
+        DirectString[] csB = null;
         DirectBinarySequence[] bs = null;
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
@@ -98,11 +99,11 @@ final class FastMapRecord implements MapRecord {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.STRING:
                     if (csA == null) {
-                        csA = new DirectCharSequence[nColumns];
-                        csB = new DirectCharSequence[nColumns];
+                        csA = new DirectString[nColumns];
+                        csB = new DirectString[nColumns];
                     }
-                    csA[i + keyIndexOffset] = new DirectCharSequence();
-                    csB[i + keyIndexOffset] = new DirectCharSequence();
+                    csA[i + keyIndexOffset] = new DirectString();
+                    csB[i + keyIndexOffset] = new DirectString();
                     break;
                 case ColumnType.BINARY:
                     if (bs == null) {
@@ -149,8 +150,8 @@ final class FastMapRecord implements MapRecord {
             int[] valueOffsets,
             ColumnTypes keyTypes,
             int splitIndex,
-            DirectCharSequence[] csA,
-            DirectCharSequence[] csB,
+            DirectString[] csA,
+            DirectString[] csB,
             DirectBinarySequence[] bs,
             Long256Impl[] keyLong256A,
             Long256Impl[] keyLong256B
@@ -255,7 +256,7 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public void getLong256(int columnIndex, CharSink sink) {
+    public void getLong256(int columnIndex, CharSinkBase<?> sink) {
         long address = addressOfColumn(columnIndex);
         final long a = Unsafe.getUnsafe().getLong(address);
         final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
@@ -390,7 +391,7 @@ final class FastMapRecord implements MapRecord {
         return long256;
     }
 
-    private CharSequence getStr0(int index, DirectCharSequence cs) {
+    private CharSequence getStr0(int index, DirectString cs) {
         long address = addressOfColumn(index);
         int len = Unsafe.getUnsafe().getInt(address);
         return len == TableUtils.NULL_LEN ? null : cs.of(address + Integer.BYTES, address + Integer.BYTES + len * 2L);
@@ -399,8 +400,8 @@ final class FastMapRecord implements MapRecord {
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
     protected MapRecord clone() {
-        final DirectCharSequence[] csA;
-        final DirectCharSequence[] csB;
+        final DirectString[] csA;
+        final DirectString[] csB;
         final DirectBinarySequence[] bs;
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
@@ -408,12 +409,13 @@ final class FastMapRecord implements MapRecord {
         // csA and csB are pegged, checking one for null should be enough
         if (this.csA != null) {
             int n = this.csA.length;
-            csA = new DirectCharSequence[n];
-            csB = new DirectCharSequence[n];
+            csA = new DirectString[n];
+            csB = new DirectString[n];
+
             for (int i = 0; i < n; i++) {
                 if (this.csA[i] != null) {
-                    csA[i] = new DirectCharSequence();
-                    csB[i] = new DirectCharSequence();
+                    csA[i] = new DirectString();
+                    csB[i] = new DirectString();
                 }
             }
         } else {

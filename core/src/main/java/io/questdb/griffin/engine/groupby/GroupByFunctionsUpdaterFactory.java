@@ -71,7 +71,7 @@ public class GroupByFunctionsUpdaterFactory {
         int firstFieldIndex = 0;
         for (int i = 0; i < functionSize; i++) {
             // if you change pool calls then you will likely need to change the FIELD_POOL_OFFSET constant
-            int fieldNameIndex = asm.poolUtf8().put("f").put(i).$();
+            int fieldNameIndex = asm.poolUtf8().putAscii("f").put(i).$();
             int nameAndType = asm.poolNameAndType(fieldNameIndex, typeIndex);
             int fieldIndex = asm.poolField(thisClassIndex, nameAndType);
             if (i == 0) {

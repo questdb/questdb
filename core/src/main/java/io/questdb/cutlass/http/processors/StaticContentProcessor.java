@@ -30,12 +30,15 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.*;
-import io.questdb.std.str.FileNameExtractorCharSequence;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.PrefixedPath;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.str.*;
 
 import java.io.Closeable;
+
+import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
@@ -71,15 +74,15 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpRequestHeader headers = context.getRequestHeader();
-        CharSequence url = headers.getUrl();
+        DirectUtf8Sequence url = headers.getUrl();
         logInfoWithFd(context).$("incoming [url=").$(url).$(']').$();
-        if (Chars.contains(url, "..")) {
+        if (Utf8s.containsAscii(url, "..")) {
             logInfoWithFd(context).$("URL abuse: ").$(url).$();
             sendStatusWithDefaultMessage(context, 404);
         } else {
             PrefixedPath path = prefixedPath.rewind();
 
-            if (Chars.equals(url, '/')) {
+            if (url.size() == 1 && url.byteAt(0) == '/') {
                 path.concat(indexFileName);
             } else {
                 path.concat(url);
@@ -88,7 +91,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             path.$();
 
             if (ff.exists(path)) {
-                send(context, path, headers.getUrlParam("attachment") != null);
+                send(context, path, headers.getUrlParam(URL_PARAM_ATTACHMENT) != null);
             } else {
                 logInfoWithFd(context).$("not found [path=").$(path).$(']').$();
                 sendStatusWithDefaultMessage(context, 404);
@@ -132,7 +135,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int n = Chars.lastIndexOf(path, '.');
+        int n = Utf8s.lastIndexOfAscii(path, '.');
         if (n == -1) {
             logInfoWithFd(context).$("missing extension [file=").$(path).$(']').$();
             sendStatusWithDefaultMessage(context, 404);
@@ -140,9 +143,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         }
 
         HttpRequestHeader headers = context.getRequestHeader();
-        CharSequence contentType = mimeTypes.valueAt(mimeTypes.keyIndex(path, n + 1, path.length()));
-        CharSequence val;
-        if ((val = headers.getHeader("Range")) != null) {
+        CharSequence contentType = mimeTypes.valueAt(mimeTypes.keyIndex(path, n + 1, path.size()));
+        DirectUtf8Sequence val;
+        if ((val = headers.getHeader(HEADER_RANGE)) != null) {
             sendRange(context, val, path, contentType, asAttachment);
             return;
         }
@@ -150,10 +153,12 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         int l;
         // attempt not to send file when remote side already has
         // up-to-date version of the same
-        if ((val = headers.getHeader("If-None-Match")) != null
-                && (l = val.length()) > 2
-                && val.charAt(0) == '"'
-                && val.charAt(l - 1) == '"') {
+        if (
+                (val = headers.getHeader(HEADER_IF_NONE_MATCH)) != null
+                        && (l = val.size()) > 2
+                        && val.byteAt(0) == '"'
+                        && val.byteAt(l - 1) == '"'
+        ) {
             try {
                 long that = Numbers.parseLong(val, 1, l - 1);
                 if (that == ff.getLastModified(path)) {
@@ -172,7 +177,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
 
     private void sendRange(
             HttpConnectionContext context,
-            CharSequence range,
+            DirectUtf8Sequence range,
             LPSZ path,
             CharSequence contentType,
             boolean asAttachment
@@ -204,11 +209,11 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 final HttpResponseHeader header = context.getResponseHeader();
                 header.status(httpProtocolVersion, 206, contentType, state.sendMax - lo);
                 if (asAttachment) {
-                    header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put('\"').put(Misc.EOL);
+                    header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorUtf8Sequence.get(path)).put('\"').putEOL();
                 }
-                header.put("Accept-Ranges: bytes").put(Misc.EOL);
-                header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).put(Misc.EOL);
-                header.put("ETag: ").put(ff.getLastModified(path)).put(Misc.EOL);
+                header.put("Accept-Ranges: bytes").putEOL();
+                header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).putEOL();
+                header.put("ETag: ").put(ff.getLastModified(path)).putEOL();
                 if (keepAliveHeader != null) {
                     header.put(keepAliveHeader);
                 }
@@ -222,7 +227,8 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
 
     private void sendVanilla(
             HttpConnectionContext context,
-            LPSZ path, CharSequence contentType,
+            LPSZ path,
+            CharSequence contentType,
             boolean asAttachment
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int fd = ff.openRO(path);
@@ -242,9 +248,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             final HttpResponseHeader header = context.getResponseHeader();
             header.status(httpProtocolVersion, 200, contentType, length);
             if (asAttachment) {
-                header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put("\"").put(Misc.EOL);
+                header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorUtf8Sequence.get(path)).put("\"").putEOL();
             }
-            header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').put(Misc.EOL);
+            header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').putEOL();
             header.setKeepAlive(keepAliveHeader);
             header.send();
             resumeSend(context);

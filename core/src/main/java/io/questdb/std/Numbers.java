@@ -29,8 +29,10 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
 //#else
@@ -73,31 +75,32 @@ public final class Numbers {
     private static final long[] pow10;
     private static final double[] pow10dNeg =
             new double[]{1, 1E-1, 1E-2, 1E-3, 1E-4, 1E-5, 1E-6, 1E-7, 1E-8, 1E-9, 1E-10, 1E-11, 1E-12, 1E-13, 1E-14, 1E-15, 1E-16, 1E-17, 1E-18, 1E-19, 1E-20, 1E-21, 1E-22, 1E-23, 1E-24, 1E-25, 1E-26, 1E-27, 1E-28, 1E-29, 1E-30, 1E-31, 1E-32, 1E-33, 1E-34, 1E-35, 1E-36, 1E-37, 1E-38, 1E-39, 1E-40, 1E-41, 1E-42, 1E-43, 1E-44, 1E-45, 1E-46, 1E-47, 1E-48, 1E-49, 1E-50, 1E-51, 1E-52, 1E-53, 1E-54, 1E-55, 1E-56, 1E-57, 1E-58, 1E-59, 1E-60, 1E-61, 1E-62, 1E-63, 1E-64, 1E-65, 1E-66, 1E-67, 1E-68, 1E-69, 1E-70, 1E-71, 1E-72, 1E-73, 1E-74, 1E-75, 1E-76, 1E-77, 1E-78, 1E-79, 1E-80, 1E-81, 1E-82, 1E-83, 1E-84, 1E-85, 1E-86, 1E-87, 1E-88, 1E-89, 1E-90, 1E-91, 1E-92, 1E-93, 1E-94, 1E-95, 1E-96, 1E-97, 1E-98, 1E-99, 1E-100, 1E-101, 1E-102, 1E-103, 1E-104, 1E-105, 1E-106, 1E-107, 1E-108, 1E-109, 1E-110, 1E-111, 1E-112, 1E-113, 1E-114, 1E-115, 1E-116, 1E-117, 1E-118, 1E-119, 1E-120, 1E-121, 1E-122, 1E-123, 1E-124, 1E-125, 1E-126, 1E-127, 1E-128, 1E-129, 1E-130, 1E-131, 1E-132, 1E-133, 1E-134, 1E-135, 1E-136, 1E-137, 1E-138, 1E-139, 1E-140, 1E-141, 1E-142, 1E-143, 1E-144, 1E-145, 1E-146, 1E-147, 1E-148, 1E-149, 1E-150, 1E-151, 1E-152, 1E-153, 1E-154, 1E-155, 1E-156, 1E-157, 1E-158, 1E-159, 1E-160, 1E-161, 1E-162, 1E-163, 1E-164, 1E-165, 1E-166, 1E-167, 1E-168, 1E-169, 1E-170, 1E-171, 1E-172, 1E-173, 1E-174, 1E-175, 1E-176, 1E-177, 1E-178, 1E-179, 1E-180, 1E-181, 1E-182, 1E-183, 1E-184, 1E-185, 1E-186, 1E-187, 1E-188, 1E-189, 1E-190, 1E-191, 1E-192, 1E-193, 1E-194, 1E-195, 1E-196, 1E-197, 1E-198, 1E-199, 1E-200, 1E-201, 1E-202, 1E-203, 1E-204, 1E-205, 1E-206, 1E-207, 1E-208, 1E-209, 1E-210, 1E-211, 1E-212, 1E-213, 1E-214, 1E-215, 1E-216, 1E-217, 1E-218, 1E-219, 1E-220, 1E-221, 1E-222, 1E-223, 1E-224, 1E-225, 1E-226, 1E-227, 1E-228, 1E-229, 1E-230, 1E-231, 1E-232, 1E-233, 1E-234, 1E-235, 1E-236, 1E-237, 1E-238, 1E-239, 1E-240, 1E-241, 1E-242, 1E-243, 1E-244, 1E-245, 1E-246, 1E-247, 1E-248, 1E-249, 1E-250, 1E-251, 1E-252, 1E-253, 1E-254, 1E-255, 1E-256, 1E-257, 1E-258, 1E-259, 1E-260, 1E-261, 1E-262, 1E-263, 1E-264, 1E-265, 1E-266, 1E-267, 1E-268, 1E-269, 1E-270, 1E-271, 1E-272, 1E-273, 1E-274, 1E-275, 1E-276, 1E-277, 1E-278, 1E-279, 1E-280, 1E-281, 1E-282, 1E-283, 1E-284, 1E-285, 1E-286, 1E-287, 1E-288, 1E-289, 1E-290, 1E-291, 1E-292, 1E-293, 1E-294, 1E-295, 1E-296, 1E-297, 1E-298, 1E-299, 1E-300, 1E-301, 1E-302, 1E-303, 1E-304, 1E-305, 1E-306, 1E-307, 1E-308};
+    private final static ThreadLocal<char[]> tlDoubleDigitsBuffer = new ThreadLocal<>(() -> new char[21]);
 
     private Numbers() {
     }
 
-    public static void append(CharSink sink, final float value, int scale) {
+    public static void append(CharSinkBase<?> sink, final float value, int scale) {
         float f = value;
         if (f == Float.POSITIVE_INFINITY) {
-            sink.put("Infinity");
+            sink.putAscii("Infinity");
             return;
         }
 
         if (f == Float.NEGATIVE_INFINITY) {
-            sink.put("-Infinity");
+            sink.putAscii("-Infinity");
             return;
         }
 
         if (Float.isNaN(f)) {
-            sink.put("NaN");
+            sink.putAscii("NaN");
             return;
         }
 
         // it is very awkward to distinguish between 0.0 and -0.0
         // -0.0 < 0 is false
         if (f < 0 || 1 / f == Float.NEGATIVE_INFINITY) {
-            sink.put('-');
+            sink.putAscii('-');
             f = -f;
         }
         int factor = (int) pow10[scale];
@@ -110,31 +113,31 @@ public final class Numbers {
         }
 
         if (targetScale == 11) {
-            sink.put(Float.toString(f));
+            sink.putAscii(Float.toString(f));
             return;
         }
 
         while (targetScale > 0) {
             if (targetScale-- == scale) {
-                sink.put('.');
+                sink.putAscii('.');
             }
-            sink.put((char) ('0' + scaled / factor % 10));
+            sink.putAscii((char) ('0' + scaled / factor % 10));
             factor /= 10;
         }
     }
 
-    public static void append(CharSink sink, final int value) {
+    public static void append(CharSinkBase<?> sink, final int value) {
         int i = value;
         if (i < 0) {
             if (i == Integer.MIN_VALUE) {
-                sink.put("NaN");
+                sink.putAscii("NaN");
                 return;
             }
-            sink.put('-');
+            sink.putAscii('-');
             i = -i;
         }
         if (i < 10) {
-            sink.put((char) ('0' + i));
+            sink.putAscii((char) ('0' + i));
         } else if (i < 100) {  // two
             appendInt2(sink, i);
         } else if (i < 1000) { // three
@@ -157,28 +160,28 @@ public final class Numbers {
         }
     }
 
-    public static void append(CharSink sink, final long value) {
+    public static void append(CharSinkBase<?> sink, final long value) {
         append(sink, value, true);
     }
 
-    public static void append(CharSink sink, final long value, final boolean checkNaN) {
+    public static void append(CharSinkBase<?> sink, final long value, final boolean checkNaN) {
         long i = value;
         if (i < 0) {
             if (i == Long.MIN_VALUE) {
                 if (checkNaN) {
-                    sink.put("NaN");
+                    sink.putAscii("NaN");
                 } else {
                     // we cannot negate Long.MIN_VALUE, so we have to special case it
-                    sink.put("-9223372036854775808");
+                    sink.putAscii("-9223372036854775808");
                 }
                 return;
             }
-            sink.put('-');
+            sink.putAscii('-');
             i = -i;
         }
 
         if (i < 10) {
-            sink.put((char) ('0' + i));
+            sink.putAscii((char) ('0' + i));
         } else if (i < 100) {  // two
             appendLong2(sink, i);
         } else if (i < 1000) { // three
@@ -218,12 +221,12 @@ public final class Numbers {
         }
     }
 
-    public static void append(CharSink sink, double value) {
+    public static void append(CharSinkBase<?> sink, double value) {
         append(sink, value, MAX_SCALE);
     }
 
-    public static void append(CharSink sink, double value, int scale) {
-        final char[] digits = sink.getDoubleDigitsBuffer();
+    public static void append(CharSinkBase<?> sink, double value, int scale) {
+        final char[] digits = tlDoubleDigitsBuffer.get();
         final long doubleBits = Double.doubleToRawLongBits(value);
         boolean negative = (doubleBits & SIGN_BIT_MASK) != 0L;
         long significantBitCount = doubleBits & SIGNIF_BIT_MASK;
@@ -232,21 +235,21 @@ public final class Numbers {
         if (binExp == 2047) {
             if (significantBitCount == 0L) {
                 if (negative) {
-                    sink.put("-Infinity");
+                    sink.putAscii("-Infinity");
                 } else {
-                    sink.put("Infinity");
+                    sink.putAscii("Infinity");
                 }
             } else {
-                sink.put("NaN");
+                sink.putAscii("NaN");
             }
         } else {
             int fractionBits;
             if (binExp == 0) {
                 if (significantBitCount == 0L) {
                     if (negative) {
-                        sink.put("-0.0");
+                        sink.putAscii("-0.0");
                     } else {
-                        sink.put("0.0");
+                        sink.putAscii("0.0");
                     }
                     return;
                 }
@@ -267,71 +270,71 @@ public final class Numbers {
         }
     }
 
-    public static void appendHex(CharSink sink, final int value) {
+    public static void appendHex(CharSinkBase<?> sink, final int value) {
         int i = value;
         if (i < 0) {
             if (i == Integer.MIN_VALUE) {
-                sink.put("NaN");
+                sink.putAscii("NaN");
                 return;
             }
-            sink.put('-');
+            sink.putAscii('-');
             i = -i;
         }
         int c;
         if (i < 0x10) {
-            sink.put('0');
-            sink.put(hexDigits[i]);
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i]);
         } else if (i < 0x100) {  // two
-            sink.put(hexDigits[i / 0x10]);
-            sink.put(hexDigits[i % 0x10]);
+            sink.putAscii(hexDigits[i / 0x10]);
+            sink.putAscii(hexDigits[i % 0x10]);
         } else if (i < 0x1000) { // three
-            sink.put('0');
-            sink.put(hexDigits[i / 0x100]);
-            sink.put(hexDigits[(c = i % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x100]);
+            sink.putAscii(hexDigits[(c = i % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else if (i < 0x10000) { // four
-            sink.put(hexDigits[i / 0x1000]);
-            sink.put(hexDigits[(c = i % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii(hexDigits[i / 0x1000]);
+            sink.putAscii(hexDigits[(c = i % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else if (i < 0x100000) { // five
-            sink.put('0');
-            sink.put(hexDigits[i / 0x10000]);
-            sink.put(hexDigits[(c = i % 0x10000) / 0x1000]);
-            sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x10000]);
+            sink.putAscii(hexDigits[(c = i % 0x10000) / 0x1000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else if (i < 0x1000000) { // six
-            sink.put(hexDigits[i / 0x100000]);
-            sink.put(hexDigits[(c = i % 0x100000) / 0x10000]);
-            sink.put(hexDigits[(c = c % 0x10000) / 0x1000]);
-            sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii(hexDigits[i / 0x100000]);
+            sink.putAscii(hexDigits[(c = i % 0x100000) / 0x10000]);
+            sink.putAscii(hexDigits[(c = c % 0x10000) / 0x1000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else if (i < 0x10000000) { // seven
-            sink.put('0');
-            sink.put(hexDigits[i / 0x1000000]);
-            sink.put(hexDigits[(c = i % 0x1000000) / 0x100000]);
-            sink.put(hexDigits[(c = c % 0x100000) / 0x10000]);
-            sink.put(hexDigits[(c = c % 0x10000) / 0x1000]);
-            sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x1000000]);
+            sink.putAscii(hexDigits[(c = i % 0x1000000) / 0x100000]);
+            sink.putAscii(hexDigits[(c = c % 0x100000) / 0x10000]);
+            sink.putAscii(hexDigits[(c = c % 0x10000) / 0x1000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else { // eight
-            sink.put(hexDigits[i / 0x10000000]);
-            sink.put(hexDigits[(c = i % 0x10000000) / 0x1000000]);
-            sink.put(hexDigits[(c = c % 0x1000000) / 0x100000]);
-            sink.put(hexDigits[(c = c % 0x100000) / 0x10000]);
-            sink.put(hexDigits[(c = c % 0x10000) / 0x1000]);
-            sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii(hexDigits[i / 0x10000000]);
+            sink.putAscii(hexDigits[(c = i % 0x10000000) / 0x1000000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000000) / 0x100000]);
+            sink.putAscii(hexDigits[(c = c % 0x100000) / 0x10000]);
+            sink.putAscii(hexDigits[(c = c % 0x10000) / 0x1000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         }
     }
 
-    public static void appendHex(CharSink sink, final long value, boolean pad) {
+    public static void appendHex(CharSinkBase<?> sink, final long value, boolean pad) {
         if (value == Integer.MIN_VALUE) {
-            sink.put("NaN");
+            sink.putAscii("NaN");
             return;
         }
         int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value);
@@ -340,13 +343,13 @@ public final class Numbers {
     }
 
     /**
-     * Append a long value to a CharSink in hex format.
+     * Append a long value to a CharSinkBase in hex format.
      *
-     * @param sink the CharSink to append to
-     * @param value the value to append
+     * @param sink       the CharSinkBase to append to
+     * @param value      the value to append
      * @param padToBytes if non-zero, pad the output to the specified number of bytes
      */
-    public static void appendHexPadded(CharSink sink, long value, int padToBytes) {
+    public static void appendHexPadded(CharSinkBase<?> sink, long value, int padToBytes) {
         assert padToBytes >= 0 && padToBytes <= 8;
         // This code might be unclear, so here are some hints:
         // This method uses longHexAppender() and longHexAppender() is always padding to a whole byte. It never prints
@@ -366,8 +369,8 @@ public final class Numbers {
         int bitsToPad = padToBits - (Long.SIZE - leadingZeroBits);
         int bytesToPad = (bitsToPad >> 3);
         for (int i = 0; i < bytesToPad; i++) {
-            sink.put('0');
-            sink.put('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
         }
         if (value == 0) {
             return;
@@ -376,97 +379,97 @@ public final class Numbers {
         longHexAppender[bit].append(sink, value);
     }
 
-    public static void appendHexPadded(CharSink sink, final int value) {
+    public static void appendHexPadded(CharSinkBase<?> sink, final int value) {
         int i = value;
         if (i < 0) {
             if (i == Integer.MIN_VALUE) {
-                sink.put("NaN");
+                sink.putAscii("NaN");
                 return;
             }
-            sink.put('-');
+            sink.putAscii('-');
             i = -i;
         }
         int c;
         if (i < 0x10) {
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put(hexDigits[i]);
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i]);
         } else if (i < 0x100) {  // two
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put(hexDigits[i / 0x10]);
-            sink.put(hexDigits[i % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x10]);
+            sink.putAscii(hexDigits[i % 0x10]);
         } else if (i < 0x1000) { // three
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put(hexDigits[i / 0x100]);
-            sink.put(hexDigits[(c = i % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x100]);
+            sink.putAscii(hexDigits[(c = i % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else if (i < 0x10000) { // four
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put(hexDigits[i / 0x1000]);
-            sink.put(hexDigits[(c = i % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x1000]);
+            sink.putAscii(hexDigits[(c = i % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else if (i < 0x100000) { // five
-            sink.put('0');
-            sink.put('0');
-            sink.put('0');
-            sink.put(hexDigits[i / 0x10000]);
-            sink.put(hexDigits[(c = i % 0x10000) / 0x1000]);
-            sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x10000]);
+            sink.putAscii(hexDigits[(c = i % 0x10000) / 0x1000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else if (i < 0x1000000) { // six
-            sink.put('0');
-            sink.put('0');
-            sink.put(hexDigits[i / 0x100000]);
-            sink.put(hexDigits[(c = i % 0x100000) / 0x10000]);
-            sink.put(hexDigits[(c = c % 0x10000) / 0x1000]);
-            sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x100000]);
+            sink.putAscii(hexDigits[(c = i % 0x100000) / 0x10000]);
+            sink.putAscii(hexDigits[(c = c % 0x10000) / 0x1000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else if (i < 0x10000000) { // seven
-            sink.put('0');
-            sink.put(hexDigits[i / 0x1000000]);
-            sink.put(hexDigits[(c = i % 0x1000000) / 0x100000]);
-            sink.put(hexDigits[(c = c % 0x100000) / 0x10000]);
-            sink.put(hexDigits[(c = c % 0x10000) / 0x1000]);
-            sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii('0');
+            sink.putAscii(hexDigits[i / 0x1000000]);
+            sink.putAscii(hexDigits[(c = i % 0x1000000) / 0x100000]);
+            sink.putAscii(hexDigits[(c = c % 0x100000) / 0x10000]);
+            sink.putAscii(hexDigits[(c = c % 0x10000) / 0x1000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         } else { // eight
-            sink.put(hexDigits[i / 0x10000000]);
-            sink.put(hexDigits[(c = i % 0x10000000) / 0x1000000]);
-            sink.put(hexDigits[(c = c % 0x1000000) / 0x100000]);
-            sink.put(hexDigits[(c = c % 0x100000) / 0x10000]);
-            sink.put(hexDigits[(c = c % 0x10000) / 0x1000]);
-            sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
-            sink.put(hexDigits[(c = c % 0x100) / 0x10]);
-            sink.put(hexDigits[c % 0x10]);
+            sink.putAscii(hexDigits[i / 0x10000000]);
+            sink.putAscii(hexDigits[(c = i % 0x10000000) / 0x1000000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000000) / 0x100000]);
+            sink.putAscii(hexDigits[(c = c % 0x100000) / 0x10000]);
+            sink.putAscii(hexDigits[(c = c % 0x10000) / 0x1000]);
+            sink.putAscii(hexDigits[(c = c % 0x1000) / 0x100]);
+            sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
+            sink.putAscii(hexDigits[c % 0x10]);
         }
     }
 
-    public static void appendLong256(long a, long b, long c, long d, CharSink sink) {
+    public static void appendLong256(long a, long b, long c, long d, CharSinkBase<?> sink) {
         if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
             return;
         }
-        sink.put("0x");
+        sink.putAscii("0x");
         if (d != 0L) {
             appendLong256Four(a, b, c, d, sink);
             return;
@@ -485,15 +488,15 @@ public final class Numbers {
         appendHex(sink, a, false);
     }
 
-    public static void appendUuid(long lo, long hi, CharSink sink) {
+    public static void appendUuid(long lo, long hi, CharSinkBase<?> sink) {
         appendHexPadded(sink, (hi >> 32) & 0xFFFFFFFFL, 4);
-        sink.put('-');
+        sink.putAscii('-');
         appendHexPadded(sink, (hi >> 16) & 0xFFFF, 2);
-        sink.put('-');
+        sink.putAscii('-');
         appendHexPadded(sink, hi & 0xFFFF, 2);
-        sink.put('-');
+        sink.putAscii('-');
         appendHexPadded(sink, lo >> 48 & 0xFFFF, 2);
-        sink.put('-');
+        sink.putAscii('-');
         appendHexPadded(sink, lo & 0xFFFFFFFFFFFFL, 6);
     }
 
@@ -579,7 +582,7 @@ public final class Numbers {
 
         // Values are equal
         // (-0.0, 0.0) or (!NaN, NaN)
-        return Integer.compare(thisBits, anotherBits);                          // (0.0, -0.0) or (NaN, !NaN)
+        return Integer.compare(thisBits, anotherBits); // (0.0, -0.0) or (NaN, !NaN)
     }
 
     public static int decodeHighInt(long val) {
@@ -606,7 +609,7 @@ public final class Numbers {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
-    public static boolean equals(double l, double r){
+    public static boolean equals(double l, double r) {
         return (Double.isNaN(l) && Double.isNaN(r) || Math.abs(l - r) < 0.0000000001 || l == r);
     }
 
@@ -621,65 +624,76 @@ public final class Numbers {
         }
         return false;
     }
-    
-    //returns lo | hi network address in a single long 
+
+    public static boolean extractLong256(Utf8Sequence value, int len, Long256Acceptor acceptor) {
+        if (len > 2 && ((len & 1) == 0) && len < 67 && value.byteAt(0) == '0' && value.byteAt(1) == 'x') {
+            try {
+                Long256FromCharSequenceDecoder.decode(value.asAsciiCharSequence(), 2, len, acceptor);
+                return true;
+            } catch (ImplicitCastException e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // returns lo | hi network address in a single long
     public static long getBroadcastAddress(CharSequence sequence) throws NumericException {
         long subnetAndNetmask = Numbers.getIPv4Subnet(sequence);
         int subnet = (int) (subnetAndNetmask >> 32);
         int netmask = (int) (subnetAndNetmask);
-        //sets all remaining bits to the right of the subnet
+        // sets all remaining bits to the right of the subnet
         int broadcastAddress = subnet | ~(0xffffffff << (32 - getNetmaskLength(netmask)));
-        
+
         return pack(subnet & netmask, broadcastAddress);
     }
-    
-    //returns network mask, e.g. 255.0.0.0 == /8 or Numbers.BAD_NETMASK on error 
+
+    // returns network mask, e.g. 255.0.0.0 == /8 or Numbers.BAD_NETMASK on error
     public static int getIPv4Netmask(CharSequence sequence) {
         int mid = Chars.indexOf(sequence, 0, '/') + 1;
 
-        //if no netmask provided, default to netmask of 255.255.255.255 (0xffffffff)
-        if(mid == 0) {
+        // if no netmask provided, default to netmask of 255.255.255.255 (0xffffffff)
+        if (mid == 0) {
             return 0xffffffff;
         }
 
-        try{
+        try {
             int bits = parseInt0(sequence, mid, sequence.length());
             return toNetMask(bits);
         } catch (NumericException e) {
             return BAD_NETMASK;
         }
     }
-    
+
     // returns net addr + netmask in a single long value 
     // throws NumericException on error 
-    public static long getIPv4Subnet(CharSequence sequence) throws NumericException  {
+    public static long getIPv4Subnet(CharSequence sequence) throws NumericException {
         int netmask = getIPv4Netmask(sequence);
-        if(netmask == BAD_NETMASK) {
+        if (netmask == BAD_NETMASK) {
             throw NumericException.INSTANCE;
         }
 
         int mid = Chars.indexOf(sequence, 0, '/');
-        
-        try{
-            if(mid == -1) {// no netmask
-                return  pack(parseIPv4(sequence), netmask);
+
+        try {
+            if (mid == -1) { // no netmask
+                return pack(parseIPv4(sequence), netmask);
             }
-            
+
             int ipv4 = parseIPv4_0(sequence, 0, mid);
             return pack(ipv4, netmask);
         } catch (NumericException e) {
-            if(mid == -1) {
+            if (mid == -1) {
                 throw NumericException.INSTANCE;
             }
-            
             return pack(parseSubnet0(sequence, 0, mid, getNetmaskLength(netmask)), netmask);
         }
     }
-    
-    public static int getNetmaskLength(int netmask){
+
+    public static int getNetmaskLength(int netmask) {
         return 32 - Integer.numberOfTrailingZeros(netmask);
     }
-    
+
     public static int hexToDecimal(int c) throws NumericException {
         if (c > 127) {
             throw NumericException.INSTANCE;
@@ -690,7 +704,7 @@ public final class Numbers {
         }
         return r;
     }
-    
+
     public static double intToDouble(int value) {
         if (value != Numbers.INT_NaN) {
             return value;
@@ -705,14 +719,14 @@ public final class Numbers {
         return Float.NaN;
     }
 
-    public static void intToIPv4Sink(CharSink sink, int value) {
+    public static void intToIPv4Sink(CharSinkBase<?> sink, int value) {
         // NULL handling should be done outside, null here will be printed as 0.0.0.0
         append(sink, (value >> 24) & 0xff);
-        sink.put('.');
+        sink.putAscii('.');
         append(sink, (value >> 16) & 0xff);
-        sink.put('.');
+        sink.putAscii('.');
         append(sink, (value >> 8) & 0xff);
-        sink.put('.');
+        sink.putAscii('.');
         append(sink, value & 0xff);
     }
 
@@ -759,6 +773,10 @@ public final class Numbers {
         return c < '0' || c > '9';
     }
 
+    public static boolean notDigit(byte b) {
+        return b < '0' || b > '9';
+    }
+
     public static double parseDouble(CharSequence sequence) throws NumericException {
         return FastDoubleParser.parseDouble(sequence, true);
     }
@@ -780,6 +798,10 @@ public final class Numbers {
 
     public static float parseFloat(CharSequence sequence) throws NumericException {
         return FastFloatParser.parseFloat(sequence, true);
+    }
+
+    public static float parseFloat(long str, int len) throws NumericException {
+        return FastFloatParser.parseFloat(str, len, true);
     }
 
     public static int parseHexInt(CharSequence sequence) throws NumericException {
@@ -823,23 +845,29 @@ public final class Numbers {
     }
 
     public static int parseIPv4(CharSequence sequence) throws NumericException {
-        if (sequence == null || Chars.equals("null", sequence)) {
+        if (sequence == null || Chars.equalsIgnoreCase("null", sequence)) {
             return IPv4_NULL;
         }
         return parseIPv4_0(sequence, 0, sequence.length());
     }
 
-    public static int parseIPv4Nl(CharSequence sequence) throws NumericException {
-        // "null" string is not a null ip address if received via ilp
-        // via ilp, null ips are either null, empty strings or "0.0.0.0"
-        if (sequence == null || sequence.length() == 0) {
+    public static int parseIPv4(Utf8Sequence sequence) throws NumericException {
+        if (sequence == null || Utf8s.equalsIgnoreCaseAscii("null", sequence)) {
+            return IPv4_NULL;
+        }
+        return parseIPv4_0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
+    public static int parseIPv4Nl(Utf8Sequence sequence) throws NumericException {
+        // "null" string is not a null ip address if received via ILP,
+        // null ips are either null, empty strings or "0.0.0.0"
+        if (sequence == null || sequence.size() == 0) {
             return IPv4_NULL;
         }
         return Numbers.parseIPv4(sequence);
     }
 
-    public static int parseIPv4Quiet(CharSequence sequence)
-    {
+    public static int parseIPv4Quiet(CharSequence sequence) {
         try {
             if (sequence == null || Chars.equals("null", sequence)) {
                 return IPv4_NULL;
@@ -851,34 +879,34 @@ public final class Numbers {
     }
 
     public static int parseIPv4UDP(CharSequence sequence) throws NumericException {
-        if(sequence == null || sequence.length() == 0) {
+        if (sequence == null || sequence.length() == 0) {
             return IPv4_NULL;
         }
         // discards quote marks around ip address
-        if(sequence.charAt(0) == '"' && sequence.charAt(sequence.length() - 1) == '"') {
+        if (sequence.charAt(0) == '"' && sequence.charAt(sequence.length() - 1) == '"') {
             return parseIPv4_0(sequence, 1, sequence.length() - 1);
         }
         return parseIPv4_0(sequence, 0, sequence.length());
     }
 
     public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
         int hi;
         int lo = p;
         int num;
         int ipv4 = 0;
         int count = 0;
 
-        if(lim == 0) {
-            throw NumericException.INSTANCE;
-        }
-
         final char sign = sequence.charAt(lo);
 
         // removes any leading dots
-        if(notDigit(sign)){
-            if(sign == '.'){
+        if (notDigit(sign)) {
+            if (sign == '.') {
                 lo++;
-                while(sequence.charAt(lo) == '.') {
+                while (sequence.charAt(lo) == '.') {
                     lo++;
                 }
             } else {
@@ -886,44 +914,54 @@ public final class Numbers {
             }
         }
 
-        while((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
+        while ((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
             num = parseInt(sequence, lo, hi);
-
-            if(num > 255) {
+            if (num > 255) {
                 throw NumericException.INSTANCE;
             }
-
             ipv4 = (ipv4 << 8) | num;
             count++;
             lo = hi + 1;
         }
 
-        if(count != 3) {
+        if (count != 3) {
             throw NumericException.INSTANCE;
         }
 
         // removes any trailing dots
-        if((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+        if ((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
             num = parseInt(sequence, lo, hi);
             hi++;
-            while(hi < lim) {
-                if(sequence.charAt(hi) == '.') {
+            while (hi < lim) {
+                if (sequence.charAt(hi) == '.') {
                     hi++;
-                }
-                else {
+                } else {
                     throw NumericException.INSTANCE;
                 }
             }
-        }
-        else {
+        } else {
             num = parseInt(sequence, lo, lim);
         }
 
-        if(num > 255) {
+        if (num > 255) {
             throw NumericException.INSTANCE;
         }
 
         return (ipv4 << 8) | num;
+    }
+
+    public static int parseInt(Utf8Sequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseInt0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
+    public static int parseInt(Utf8Sequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseInt0(sequence.asAsciiCharSequence(), p, lim);
     }
 
     public static int parseInt(CharSequence sequence) throws NumericException {
@@ -1113,6 +1151,20 @@ public final class Numbers {
         return parseLong0(sequence, p, lim);
     }
 
+    public static long parseLong(Utf8Sequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseLong0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
+    public static long parseLong(Utf8Sequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseLong0(sequence.asAsciiCharSequence(), p, lim);
+    }
+
     public static long parseLong000000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
             throw NumericException.INSTANCE;
@@ -1218,14 +1270,14 @@ public final class Numbers {
                             val = r;
                             break EX;
                         case 'M':
-                            r = val * Timestamps.DAY_MICROS*30;
+                            r = val * Timestamps.DAY_MICROS * 30;
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
                             val = r;
                             break EX;
                         case 'y':
-                            r = val * Timestamps.DAY_MICROS*365;
+                            r = val * Timestamps.DAY_MICROS * 365;
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
@@ -1347,12 +1399,12 @@ public final class Numbers {
 
     public static long parseSubnet(CharSequence sequence) throws NumericException {
         int delim = Chars.indexOf(sequence, 0, '/');
-        if(delim == -1) { 
+        if (delim == -1) {
             throw NumericException.INSTANCE;
         }
-        
+
         int netmaskBits = parseInt0(sequence, delim + 1, sequence.length());
-        return pack(parseSubnet0(sequence, 0, delim, netmaskBits), toNetMask(netmaskBits)) ;
+        return pack(parseSubnet0(sequence, 0, delim, netmaskBits), toNetMask(netmaskBits));
     }
 
     // test whether the subnet matches the netmaskLength (according to postgres rules)
@@ -1367,42 +1419,42 @@ public final class Numbers {
         int bits = 32 - netmaskLength;
         int i = 1;
 
-        if(lim == 0) {
+        if (lim == 0) {
             throw NumericException.INSTANCE;
         }
 
         final char sign = sequence.charAt(0);
 
-        if(notDigit(sign)){
+        if (notDigit(sign)) {
             throw NumericException.INSTANCE;
         }
 
-        while((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+        while ((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
             num = parseInt(sequence, lo, hi);
 
-            if(num > 255) {
+            if (num > 255) {
                 throw NumericException.INSTANCE;
             }
             // each byte goes to left-most pos in int - accounts for issues that arise from parsing variable length subnets
-            ipv4 = ipv4 | (num << ((4-i) * 8));
+            ipv4 = ipv4 | (num << ((4 - i) * 8));
             count++;
             i++;
             lo = hi + 1;
         }
 
-        if(count > 3) {
+        if (count > 3) {
             throw NumericException.INSTANCE;
         }
 
         num = parseInt(sequence, lo, lim);
 
-        if(num > 255) {
+        if (num > 255) {
             throw NumericException.INSTANCE;
         }
 
         //if netmaskLength is full byte longer than subnet
-        if(count == 0) {
-            if(netmaskLength >= 16) {
+        if (count == 0) {
+            if (netmaskLength >= 16) {
                 throw NumericException.INSTANCE;
             }
             checker = (checker << bits);
@@ -1410,19 +1462,19 @@ public final class Numbers {
             return num;
         }
         //if netmaskLength is a full byte longer than subnet
-        else if(count == 1 && netmaskLength >= 24) {
+        else if (count == 1 && netmaskLength >= 24) {
             throw NumericException.INSTANCE;
         }
         //if netmaskLength is a full byte longer than subnet
-        else if(count == 2 && netmaskLength >= 32) {
+        else if (count == 2 && netmaskLength >= 32) {
             throw NumericException.INSTANCE;
         }
         //if netmaskLength is a full byte longer than subnet
-        else if(count == 3 && netmaskLength > 32) {
+        else if (count == 3 && netmaskLength > 32) {
             throw NumericException.INSTANCE;
         }
 
-        ipv4 = ipv4 | (num << ((4-i) * 8));
+        ipv4 = ipv4 | (num << ((4 - i) * 8));
         checker = (checker << bits);
         ipv4 = ipv4 & checker;
 
@@ -1562,11 +1614,11 @@ public final class Numbers {
         return sink.toString();
     }
 
-    public static int toNetMask(final int length)throws NumericException{
-        if(length == 0) {
+    public static int toNetMask(final int length) throws NumericException {
+        if (length == 0) {
             return 0;
         }
-        if(length < 0 || length > 32) {
+        if (length < 0 || length > 32) {
             throw NumericException.INSTANCE;
         }
         return (0xffffffff << (32 - length));
@@ -1578,7 +1630,7 @@ public final class Numbers {
             int significantBitCount,
             boolean negative,
             char[] digits,
-            CharSink out,
+            CharSinkBase<?> out,
             int outScale
     ) {
         assert fractionBits > 0L;
@@ -1852,592 +1904,592 @@ public final class Numbers {
             int nDigits,
             boolean isNegative,
             int decExp,
-            CharSink sink,
+            CharSinkBase<?> sink,
             int outScale
     ) {
         assert nDigits <= MAX_SCALE : nDigits;
         if (isNegative) {
-            sink.put('-');
+            sink.putAscii('-');
         }
 
         int exp;
         if (decExp > 0 && decExp < 8) {
             exp = Math.min(nDigits, decExp);
-            sink.put(digits, firstDigitIndex, exp);
+            sink.putAscii(digits, firstDigitIndex, exp);
             if (exp < decExp) {
                 exp = decExp - exp;
-                sink.fill('0', exp);
-                sink.put('.');
-                sink.put('0');
+                sink.fillAscii('0', exp);
+                sink.putAscii('.');
+                sink.putAscii('0');
             } else {
-                sink.put('.');
+                sink.putAscii('.');
                 if (exp < nDigits) {
-                    sink.put(digits, firstDigitIndex + exp, Math.min(nDigits - exp, outScale));
+                    sink.putAscii(digits, firstDigitIndex + exp, Math.min(nDigits - exp, outScale));
                 } else {
-                    sink.put('0');
+                    sink.putAscii('0');
                 }
             }
         } else if (decExp <= 0 && decExp > -3) {
-            sink.put('0').put('.');
+            sink.putAscii('0').putAscii('.');
             if (decExp != 0) {
-                sink.fill('0', -decExp);
+                sink.fillAscii('0', -decExp);
             }
 
-            sink.put(digits, firstDigitIndex, Math.min(nDigits, outScale));
+            sink.putAscii(digits, firstDigitIndex, Math.min(nDigits, outScale));
         } else {
-            sink.put(digits[firstDigitIndex]);
-            sink.put('.');
+            sink.putAscii(digits[firstDigitIndex]);
+            sink.putAscii('.');
             if (nDigits > 1) {
-                sink.put(digits, firstDigitIndex + 1, nDigits - 1);
+                sink.putAscii(digits, firstDigitIndex + 1, nDigits - 1);
             } else {
-                sink.put('0');
+                sink.putAscii('0');
             }
 
-            sink.put('E');
+            sink.putAscii('E');
             if (decExp <= 0) {
-                sink.put('-');
+                sink.putAscii('-');
                 exp = -decExp + 1;
             } else {
                 exp = decExp - 1;
             }
 
             if (exp < 10) {
-                sink.put((char) (exp + '0'));
+                sink.putAscii((char) (exp + '0'));
             } else if (exp < 100) {
-                sink.put((char) (exp / 10 + '0'));
-                sink.put((char) (exp % 10 + '0'));
+                sink.putAscii((char) (exp / 10 + '0'));
+                sink.putAscii((char) (exp % 10 + '0'));
             } else {
-                sink.put((char) (exp / 100 + '0'));
+                sink.putAscii((char) (exp / 100 + '0'));
                 exp %= 100;
-                sink.put((char) (exp / 10 + '0'));
-                sink.put((char) (exp % 10 + '0'));
+                sink.putAscii((char) (exp / 10 + '0'));
+                sink.putAscii((char) (exp % 10 + '0'));
             }
         }
     }
 
-    private static void appendInt10(CharSink sink, int i) {
+    private static void appendInt10(CharSinkBase<?> sink, int i) {
         int c;
-        sink.put((char) ('0' + i / 1000000000));
-        sink.put((char) ('0' + (c = i % 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000000000));
+        sink.putAscii((char) ('0' + (c = i % 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt2(CharSink sink, int i) {
-        sink.put((char) ('0' + i / 10));
-        sink.put((char) ('0' + i % 10));
+    private static void appendInt2(CharSinkBase<?> sink, int i) {
+        sink.putAscii((char) ('0' + i / 10));
+        sink.putAscii((char) ('0' + i % 10));
     }
 
-    private static void appendInt3(CharSink sink, int i) {
+    private static void appendInt3(CharSinkBase<?> sink, int i) {
         int c;
-        sink.put((char) ('0' + i / 100));
-        sink.put((char) ('0' + (c = i % 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100));
+        sink.putAscii((char) ('0' + (c = i % 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt4(CharSink sink, int i) {
+    private static void appendInt4(CharSinkBase<?> sink, int i) {
         int c;
-        sink.put((char) ('0' + i / 1000));
-        sink.put((char) ('0' + (c = i % 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000));
+        sink.putAscii((char) ('0' + (c = i % 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt5(CharSink sink, int i) {
+    private static void appendInt5(CharSinkBase<?> sink, int i) {
         int c;
-        sink.put((char) ('0' + i / 10000));
-        sink.put((char) ('0' + (c = i % 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 10000));
+        sink.putAscii((char) ('0' + (c = i % 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt6(CharSink sink, int i) {
+    private static void appendInt6(CharSinkBase<?> sink, int i) {
         int c;
-        sink.put((char) ('0' + i / 100000));
-        sink.put((char) ('0' + (c = i % 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100000));
+        sink.putAscii((char) ('0' + (c = i % 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt7(CharSink sink, int i) {
+    private static void appendInt7(CharSinkBase<?> sink, int i) {
         int c;
-        sink.put((char) ('0' + i / 1000000));
-        sink.put((char) ('0' + (c = i % 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000000));
+        sink.putAscii((char) ('0' + (c = i % 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt8(CharSink sink, int i) {
+    private static void appendInt8(CharSinkBase<?> sink, int i) {
         int c;
-        sink.put((char) ('0' + i / 10000000));
-        sink.put((char) ('0' + (c = i % 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 10000000));
+        sink.putAscii((char) ('0' + (c = i % 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendInt9(CharSink sink, int i) {
+    private static void appendInt9(CharSinkBase<?> sink, int i) {
         int c;
-        sink.put((char) ('0' + i / 100000000));
-        sink.put((char) ('0' + (c = i % 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100000000));
+        sink.putAscii((char) ('0' + (c = i % 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong10(CharSink sink, long i) {
+    private static void appendLong10(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 1000000000L));
-        sink.put((char) ('0' + (c = i % 1000000000L) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000000000L));
+        sink.putAscii((char) ('0' + (c = i % 1000000000L) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong11(CharSink sink, long i) {
+    private static void appendLong11(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 10000000000L));
-        sink.put((char) ('0' + (c = i % 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 10000000000L));
+        sink.putAscii((char) ('0' + (c = i % 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong12(CharSink sink, long i) {
+    private static void appendLong12(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 100000000000L));
-        sink.put((char) ('0' + (c = i % 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100000000000L));
+        sink.putAscii((char) ('0' + (c = i % 100000000000L) / 10000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong13(CharSink sink, long i) {
+    private static void appendLong13(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 1000000000000L));
-        sink.put((char) ('0' + (c = i % 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000000000000L));
+        sink.putAscii((char) ('0' + (c = i % 1000000000000L) / 100000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong14(CharSink sink, long i) {
+    private static void appendLong14(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 10000000000000L));
-        sink.put((char) ('0' + (c = i % 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 10000000000000L));
+        sink.putAscii((char) ('0' + (c = i % 10000000000000L) / 1000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong15(CharSink sink, long i) {
+    private static void appendLong15(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 100000000000000L));
-        sink.put((char) ('0' + (c = i % 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100000000000000L));
+        sink.putAscii((char) ('0' + (c = i % 100000000000000L) / 10000000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong16(CharSink sink, long i) {
+    private static void appendLong16(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 1000000000000000L));
-        sink.put((char) ('0' + (c = i % 1000000000000000L) / 100000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000000000000000L));
+        sink.putAscii((char) ('0' + (c = i % 1000000000000000L) / 100000000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong17(CharSink sink, long i) {
+    private static void appendLong17(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 10000000000000000L));
-        sink.put((char) ('0' + (c = i % 10000000000000000L) / 1000000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 10000000000000000L));
+        sink.putAscii((char) ('0' + (c = i % 10000000000000000L) / 1000000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong18(CharSink sink, long i) {
+    private static void appendLong18(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 100000000000000000L));
-        sink.put((char) ('0' + (c = i % 100000000000000000L) / 10000000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000000L) / 1000000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100000000000000000L));
+        sink.putAscii((char) ('0' + (c = i % 100000000000000000L) / 10000000000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000000000L) / 1000000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong19(CharSink sink, long i) {
+    private static void appendLong19(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 1000000000000000000L));
-        sink.put((char) ('0' + (c = i % 1000000000000000000L) / 100000000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000000L) / 10000000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000000L) / 1000000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000000000000000000L));
+        sink.putAscii((char) ('0' + (c = i % 1000000000000000000L) / 100000000000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000000000L) / 10000000000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000000000L) / 1000000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.putAscii((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.putAscii((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.putAscii((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.putAscii((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.putAscii((char) ('0' + (c %= 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong2(CharSink sink, long i) {
-        sink.put((char) ('0' + i / 10));
-        sink.put((char) ('0' + i % 10));
+    private static void appendLong2(CharSinkBase<?> sink, long i) {
+        sink.putAscii((char) ('0' + i / 10));
+        sink.putAscii((char) ('0' + i % 10));
     }
 
-    private static void appendLong256Four(long a, long b, long c, long d, CharSink sink) {
+    private static void appendLong256Four(long a, long b, long c, long d, CharSinkBase<?> sink) {
         appendLong256Three(b, c, d, sink);
         appendHex(sink, a, true);
     }
 
-    private static void appendLong256Three(long a, long b, long c, CharSink sink) {
+    private static void appendLong256Three(long a, long b, long c, CharSinkBase<?> sink) {
         appendLong256Two(b, c, sink);
         appendHex(sink, a, true);
     }
 
-    private static void appendLong256Two(long a, long b, CharSink sink) {
+    private static void appendLong256Two(long a, long b, CharSinkBase<?> sink) {
         appendHex(sink, b, false);
         appendHex(sink, a, true);
     }
 
-    private static void appendLong3(CharSink sink, long i) {
+    private static void appendLong3(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 100));
-        sink.put((char) ('0' + (c = i % 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100));
+        sink.putAscii((char) ('0' + (c = i % 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong4(CharSink sink, long i) {
+    private static void appendLong4(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 1000));
-        sink.put((char) ('0' + (c = i % 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000));
+        sink.putAscii((char) ('0' + (c = i % 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong5(CharSink sink, long i) {
+    private static void appendLong5(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 10000));
-        sink.put((char) ('0' + (c = i % 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 10000));
+        sink.putAscii((char) ('0' + (c = i % 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong6(CharSink sink, long i) {
+    private static void appendLong6(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 100000));
-        sink.put((char) ('0' + (c = i % 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100000));
+        sink.putAscii((char) ('0' + (c = i % 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong7(CharSink sink, long i) {
+    private static void appendLong7(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 1000000));
-        sink.put((char) ('0' + (c = i % 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 1000000));
+        sink.putAscii((char) ('0' + (c = i % 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong8(CharSink sink, long i) {
+    private static void appendLong8(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 10000000));
-        sink.put((char) ('0' + (c = i % 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 10000000));
+        sink.putAscii((char) ('0' + (c = i % 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLong9(CharSink sink, long i) {
+    private static void appendLong9(CharSinkBase<?> sink, long i) {
         long c;
-        sink.put((char) ('0' + i / 100000000));
-        sink.put((char) ('0' + (c = i % 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
+        sink.putAscii((char) ('0' + i / 100000000));
+        sink.putAscii((char) ('0' + (c = i % 100000000) / 10000000));
+        sink.putAscii((char) ('0' + (c %= 10000000) / 1000000));
+        sink.putAscii((char) ('0' + (c %= 1000000) / 100000));
+        sink.putAscii((char) ('0' + (c %= 100000) / 10000));
+        sink.putAscii((char) ('0' + (c %= 10000) / 1000));
+        sink.putAscii((char) ('0' + (c %= 1000) / 100));
+        sink.putAscii((char) ('0' + (c %= 100) / 10));
+        sink.putAscii((char) ('0' + (c % 10)));
     }
 
-    private static void appendLongHex12(CharSink sink, long value) {
+    private static void appendLongHex12(CharSinkBase<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 8) & 0xf)]);
         appendLongHex8(sink, value);
     }
 
-    private static void appendLongHex12Pad64(CharSink sink, long value) {
-        sink.put("000000000000");
+    private static void appendLongHex12Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("000000000000");
         appendLongHex12(sink, value);
     }
 
-    private static void appendLongHex16(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 12) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 8) & 0xf)]);
+    private static void appendLongHex16(CharSinkBase<?> sink, long value) {
+        sink.putAscii(hexDigits[(int) ((value >> 12) & 0xf)]);
+        sink.putAscii(hexDigits[(int) ((value >> 8) & 0xf)]);
         appendLongHex8(sink, value);
     }
 
-    private static void appendLongHex16Pad64(CharSink sink, long value) {
-        sink.put("000000000000");
+    private static void appendLongHex16Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("000000000000");
         appendLongHex16(sink, value);
     }
 
-    private static void appendLongHex20(CharSink sink, long value) {
+    private static void appendLongHex20(CharSinkBase<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 16) & 0xf)]);
         appendLongHex16(sink, value);
     }
 
-    private static void appendLongHex20Pad64(CharSink sink, long value) {
-        sink.put("0000000000");
+    private static void appendLongHex20Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("0000000000");
         appendLongHex20(sink, value);
     }
 
-    private static void appendLongHex24(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 20) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 16) & 0xf)]);
+    private static void appendLongHex24(CharSinkBase<?> sink, long value) {
+        sink.putAscii(hexDigits[(int) ((value >> 20) & 0xf)]);
+        sink.putAscii(hexDigits[(int) ((value >> 16) & 0xf)]);
         appendLongHex16(sink, value);
     }
 
-    private static void appendLongHex24Pad64(CharSink sink, long value) {
-        sink.put("0000000000");
+    private static void appendLongHex24Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("0000000000");
         appendLongHex24(sink, value);
     }
 
-    private static void appendLongHex28(CharSink sink, long value) {
+    private static void appendLongHex28(CharSinkBase<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 24) & 0xf)]);
         appendLongHex24(sink, value);
     }
 
-    private static void appendLongHex28Pad64(CharSink sink, long value) {
-        sink.put("00000000");
+    private static void appendLongHex28Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("00000000");
         appendLongHex28(sink, value);
     }
 
-    private static void appendLongHex32(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 28) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 24) & 0xf)]);
+    private static void appendLongHex32(CharSinkBase<?> sink, long value) {
+        sink.putAscii(hexDigits[(int) ((value >> 28) & 0xf)]);
+        sink.putAscii(hexDigits[(int) ((value >> 24) & 0xf)]);
         appendLongHex24(sink, value);
     }
 
-    private static void appendLongHex32Pad64(CharSink sink, long value) {
-        sink.put("00000000");
+    private static void appendLongHex32Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("00000000");
         appendLongHex32(sink, value);
     }
 
-    private static void appendLongHex36(CharSink sink, long value) {
+    private static void appendLongHex36(CharSinkBase<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 32) & 0xf)]);
         appendLongHex32(sink, value);
     }
 
-    private static void appendLongHex36Pad64(CharSink sink, long value) {
-        sink.put("000000");
+    private static void appendLongHex36Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("000000");
         appendLongHex36(sink, value);
     }
 
-    private static void appendLongHex4(CharSink sink, long value) {
+    private static void appendLongHex4(CharSinkBase<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value) & 0xf)]);
     }
 
-    private static void appendLongHex40(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 36) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 32) & 0xf)]);
+    private static void appendLongHex40(CharSinkBase<?> sink, long value) {
+        sink.putAscii(hexDigits[(int) ((value >> 36) & 0xf)]);
+        sink.putAscii(hexDigits[(int) ((value >> 32) & 0xf)]);
         appendLongHex32(sink, value);
     }
 
-    private static void appendLongHex40Pad64(CharSink sink, long value) {
-        sink.put("000000");
+    private static void appendLongHex40Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("000000");
         appendLongHex40(sink, value);
     }
 
-    private static void appendLongHex44(CharSink sink, long value) {
+    private static void appendLongHex44(CharSinkBase<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 40) & 0xf)]);
         appendLongHex40(sink, value);
     }
 
-    private static void appendLongHex44Pad64(CharSink sink, long value) {
-        sink.put("0000");
+    private static void appendLongHex44Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("0000");
         appendLongHex44(sink, value);
     }
 
-    private static void appendLongHex48(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 44) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 40) & 0xf)]);
+    private static void appendLongHex48(CharSinkBase<?> sink, long value) {
+        sink.putAscii(hexDigits[(int) ((value >> 44) & 0xf)]);
+        sink.putAscii(hexDigits[(int) ((value >> 40) & 0xf)]);
         appendLongHex40(sink, value);
     }
 
-    private static void appendLongHex48Pad64(CharSink sink, long value) {
-        sink.put("0000");
+    private static void appendLongHex48Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("0000");
         appendLongHex48(sink, value);
     }
 
-    private static void appendLongHex4Pad64(CharSink sink, long value) {
-        sink.put("00000000000000");
+    private static void appendLongHex4Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("00000000000000");
         appendLongHex4(sink, value);
     }
 
-    private static void appendLongHex52(CharSink sink, long value) {
+    private static void appendLongHex52(CharSinkBase<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 48) & 0xf)]);
         appendLongHex48(sink, value);
     }
 
-    private static void appendLongHex52Pad64(CharSink sink, long value) {
-        sink.put("00");
+    private static void appendLongHex52Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("00");
         appendLongHex52(sink, value);
     }
 
-    private static void appendLongHex56(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 52) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 48) & 0xf)]);
+    private static void appendLongHex56(CharSinkBase<?> sink, long value) {
+        sink.putAscii(hexDigits[(int) ((value >> 52) & 0xf)]);
+        sink.putAscii(hexDigits[(int) ((value >> 48) & 0xf)]);
         appendLongHex48(sink, value);
     }
 
-    private static void appendLongHex56Pad64(CharSink sink, long value) {
-        sink.put("00");
+    private static void appendLongHex56Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("00");
         appendLongHex56(sink, value);
     }
 
-    private static void appendLongHex60(CharSink sink, long value) {
+    private static void appendLongHex60(CharSinkBase<?> sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value >> 56) & 0xf)]);
         appendLongHex56(sink, value);
     }
 
-    private static void appendLongHex64(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 60) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 56) & 0xf)]);
+    private static void appendLongHex64(CharSinkBase<?> sink, long value) {
+        sink.putAscii(hexDigits[(int) ((value >> 60) & 0xf)]);
+        sink.putAscii(hexDigits[(int) ((value >> 56) & 0xf)]);
         appendLongHex56(sink, value);
     }
 
-    private static void appendLongHex8(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 4) & 0xf)]);
-        sink.put(hexDigits[(int) ((value) & 0xf)]);
+    private static void appendLongHex8(CharSinkBase<?> sink, long value) {
+        sink.putAscii(hexDigits[(int) ((value >> 4) & 0xf)]);
+        sink.putAscii(hexDigits[(int) ((value) & 0xf)]);
     }
 
-    private static void appendLongHex8Pad64(CharSink sink, long value) {
-        sink.put("00000000000000");
+    private static void appendLongHex8Pad64(CharSinkBase<?> sink, long value) {
+        sink.putAscii("00000000000000");
         appendLongHex8(sink, value);
     }
 
-    private static void appendLongHexPad(CharSink sink, char hexDigit) {
-        sink.put('0');
-        sink.put(hexDigit);
+    private static void appendLongHexPad(CharSinkBase<?> sink, char hexDigit) {
+        sink.putAscii('0');
+        sink.putAscii(hexDigit);
     }
 
     private static int estimateDecExpDouble(long fractBits, int binExp) {
@@ -2461,8 +2513,8 @@ public final class Numbers {
         return p2 > 1 && p2 < insignificantDigitsNumber.length ? insignificantDigitsNumber[p2] : 0;
     }
 
-    private static long pack(int a, int b){
-        return (((long)a)<<32) | (b & 0xffffffffL);
+    private static long pack(int a, int b) {
+        return (((long) a) << 32) | (b & 0xffffffffL);
     }
 
     private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
@@ -2548,7 +2600,6 @@ public final class Numbers {
     }
 
     private static short parseShort0(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -2694,7 +2745,7 @@ public final class Numbers {
 
     @FunctionalInterface
     private interface LongHexAppender {
-        void append(CharSink sink, long value);
+        void append(CharSinkBase sink, long value);
     }
 
     //#if jdk.version!=8
@@ -2704,7 +2755,6 @@ public final class Numbers {
     }
     //#endif
 
-    // @formatter:on
     static {
         pow10 = new long[20];
         pow10max = 18;

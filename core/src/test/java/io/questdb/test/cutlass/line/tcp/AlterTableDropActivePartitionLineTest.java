@@ -215,7 +215,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                             compiler,
                             context,
                             "SELECT min(timestamp), max(timestamp), count() FROM " + tableName + " WHERE timestamp IN '" + activePartitionName + "'",
-                            Misc.getThreadLocalBuilder(),
+                            Misc.getThreadLocalSink(),
                             "min\tmax\tcount\n" +
                                     "\t\t0\n"
                     );

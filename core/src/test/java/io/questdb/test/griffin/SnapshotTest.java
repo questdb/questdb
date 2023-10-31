@@ -87,7 +87,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
         super.setUp();
         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
-        rootLen = path.length();
+        rootLen = path.size();
         testFilesFacade.errorOnSync = false;
         circuitBreaker.setTimeout(Long.MAX_VALUE);
     }
@@ -633,8 +633,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
 
-            // Release all readers and writers, but keep the snapshot dir around.
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
+            engine.closeNameRegistry();
             snapshotInstanceId = restartedId;
             engine.recoverSnapshot();
             engine.reloadTableNames();
@@ -670,8 +671,9 @@ public class SnapshotTest extends AbstractCairoTest {
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
             assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
 
-            // Release all readers and writers, but keep the snapshot dir around.
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
+            engine.closeNameRegistry();
             snapshotInstanceId = restartedId;
             engine.recoverSnapshot();
             engine.reloadTableNames();
@@ -1041,7 +1043,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
-                int tableNameLen = path.length();
+                int tableNameLen = path.size();
                 FilesFacade ff = configuration.getFilesFacade();
                 try (TableReader tableReader = newTableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
@@ -1131,9 +1133,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
-                int tableNameLen = path.length();
+                int tableNameLen = path.size();
                 copyPath.concat(tableToken);
-                int copyTableNameLen = copyPath.length();
+                int copyTableNameLen = copyPath.size();
 
                 // _meta
                 path.concat(TableUtils.META_FILE_NAME).$();

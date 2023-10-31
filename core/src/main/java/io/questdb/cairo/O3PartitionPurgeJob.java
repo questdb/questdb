@@ -31,8 +31,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
 
 import java.io.Closeable;
@@ -44,7 +46,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
     private final CairoConfiguration configuration;
-    private final StringSink[] fileNameSinks;
+    private final Utf8StringSink[] fileNameSinks;
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final ObjList<DirectLongList> partitionList;
     private final DatabaseSnapshotAgent snapshotAgent;
@@ -55,13 +57,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
         this.snapshotAgent = snapshotAgent;
         this.configuration = messageBus.getConfiguration();
-        this.fileNameSinks = new StringSink[workerCount];
+        this.fileNameSinks = new Utf8StringSink[workerCount];
         this.partitionList = new ObjList<>(workerCount);
         this.txnScoreboards = new ObjList<>(workerCount);
         this.txnReaders = new ObjList<>(workerCount);
 
         for (int i = 0; i < workerCount; i++) {
-            fileNameSinks[i] = new StringSink();
+            fileNameSinks[i] = new Utf8StringSink();
             partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
             txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
             txnReaders.add(new TxReader(configuration.getFilesFacade()));
@@ -77,10 +79,15 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
-    private static void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
-        int index = Chars.lastIndexOf(fileNameSink, '.');
+    private static void parsePartitionDateVersion(
+            Utf8StringSink fileNameSink,
+            DirectLongList partitionList,
+            CharSequence tableName,
+            DateFormat partitionByFormat
+    ) {
+        int index = Utf8s.lastIndexOfAscii(fileNameSink, '.');
 
-        int len = fileNameSink.length();
+        int len = fileNameSink.size();
         if (index < 0) {
             index = len;
         }
@@ -101,16 +108,16 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             }
 
             try {
-                long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
+                long partitionTs = partitionByFormat.parse(fileNameSink.asAsciiCharSequence(), 0, index, DateFormatUtils.EN_LOCALE);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
-                if (!Chars.startsWith(fileNameSink, WalUtils.WAL_NAME_BASE) && !Chars.equals(fileNameSink, WalUtils.SEQ_DIR)) {
-                    LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+                if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)) {
+                    LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").$(fileNameSink).I$();
                 }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
             }
         } catch (NumericException e) {
-            LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+            LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").$(fileNameSink).I$();
         }
     }
 
@@ -144,11 +151,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 // nameTxn can be deleted
                 // -1 here is to compensate +1 added when partition version parsed from folder name
                 // See comments of why +1 added there in parsePartitionDateVersion()
-                LOG.info().$("purging dropped partition directory [path=").utf8(path).I$();
+                LOG.info().$("purging dropped partition directory [path=").$(path).I$();
                 ff.unlinkOrRemove(path, LOG);
                 lastTxn = nameTxn;
             } else {
-                LOG.info().$("cannot purge partition directory, locked for reading [path=").utf8(path).I$();
+                LOG.info().$("cannot purge partition directory, locked for reading [path=").$(path).I$();
                 break;
             }
         }
@@ -229,10 +236,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     // previousNameVersion can be deleted
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
-                    LOG.info().$("purging overwritten partition directory [path=").utf8(path).I$();
+                    LOG.info().$("purging overwritten partition directory [path=").$(path).I$();
                     ff.unlinkOrRemove(path, LOG);
                 } else {
-                    LOG.info().$("cannot purge overwritten partition directory, locked for reading [path=").utf8(path).I$();
+                    LOG.info().$("cannot purge overwritten partition directory, locked for reading [path=").$(path).I$();
                 }
             }
         }
@@ -240,7 +247,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private void discoverPartitions(
             FilesFacade ff,
-            StringSink fileNameSink,
+            Utf8StringSink fileNameSink,
             DirectLongList partitionList,
             CharSequence root,
             TableToken tableToken,
@@ -250,7 +257,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     ) {
         LOG.info().$("processing [table=").utf8(tableToken.getDirName()).I$();
         Path path = Path.getThreadLocal(root).concat(tableToken);
-        int plimit = path.length();
+        int plimit = path.size();
         partitionList.clear();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
         long p = ff.findFirst(path.$());
@@ -277,7 +284,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
         path.of(root).concat(tableToken);
 
-        int tableRootLen = path.length();
+        int tableRootLen = path.size();
         try {
             txnScoreboard.ofRO(path);
             txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);

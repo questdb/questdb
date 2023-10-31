@@ -28,16 +28,16 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
 
 public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse {
     private final static int CRLF_LEN = 2;
     private static final int STATE_CHUNK_DATA = 1;
     private static final int STATE_CHUNK_DATA_END = 2;
     private static final int STATE_CHUNK_SIZE = 0;
-    private final long bufLo;
     private final long bufHi;
-    private final DirectByteCharSequence chunkSize = new DirectByteCharSequence();
+    private final long bufLo;
+    private final DirectUtf8String chunkSize = new DirectUtf8String();
     private final int defaultTimeout;
     long available;
     long consumed = 0;
@@ -77,13 +77,6 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
         return dataAddr;
     }
 
-    private byte getByte(long addr) {
-        assert addr != 0;
-        assert addr >= bufLo;
-        assert addr < bufHi;
-        return Unsafe.getUnsafe().getByte(addr);
-    }
-
     @Override
     public Chunk recv(int timeout) {
         while (true) {
@@ -120,7 +113,7 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
                         // at this stage we consumed the chunk size end (CRLF)
                         chunkSize.of(dataLo, res + 1);
                         try {
-                            size = Numbers.parseHexLong(chunkSize);
+                            size = Numbers.parseHexLong(chunkSize.asAsciiCharSequence());
                             consumed = 0;
                             // consume data buffer ignoring chunk size value and its furniture
                             state = STATE_CHUNK_DATA;
@@ -213,6 +206,13 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
             dataLo = bufLo;
             dataHi = bufLo + len;
         }
+    }
+
+    private byte getByte(long addr) {
+        assert addr != 0;
+        assert addr >= bufLo;
+        assert addr < bufHi;
+        return Unsafe.getUnsafe().getByte(addr);
     }
 
     protected abstract int recvOrDie(long bufLo, long bufHi, int timeout);

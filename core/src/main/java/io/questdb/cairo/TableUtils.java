@@ -44,9 +44,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -354,7 +355,7 @@ public final class TableUtils {
         if (ff.isDirOrSoftLinkDir(path)) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
         }
-        int rootLen = path.length();
+        int rootLen = path.size();
         try {
             if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
@@ -432,7 +433,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.info().$("create table in volume [path=").utf8(path).I$();
+        LOG.info().$("create table in volume [path=").$(path).I$();
         Path normalPath = Path.getThreadLocal2(root).concat(tableDir).$();
         assert normalPath != path;
         if (ff.isDirOrSoftLinkDir(normalPath)) {
@@ -443,14 +444,14 @@ public final class TableUtils {
         if (ff.isDirOrSoftLinkDir(path)) {
             throw CairoException.critical(ff.errno()).put("table directory already exists in volume [path=").put(path).put(']');
         }
-        int rootLen = path.length();
+        int rootLen = path.size();
         try {
             if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
             }
             if (ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
                 if (!ff.rmdir(path.slash$())) {
-                    LOG.error().$("cannot remove table directory in volume [errno=").$(ff.errno()).$(", path=").utf8(path.trimTo(rootLen).$()).I$();
+                    LOG.error().$("cannot remove table directory in volume [errno=").$(ff.errno()).$(", path=").$(path.trimTo(rootLen).$()).I$();
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
@@ -597,6 +598,10 @@ public final class TableUtils {
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
+        return exists(ff, path.of(root).concat(name).$());
+    }
+
+    public static int exists(FilesFacade ff, Path path, CharSequence root, Utf8Sequence name) {
         return exists(ff, path.of(root).concat(name).$());
     }
 
@@ -913,7 +918,7 @@ public final class TableUtils {
         if (Files.VIRTIO_FS_DETECTED) {
             if (!ff.touch(path)) {
                 if (verbose) {
-                    LOG.error().$("cannot touch '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
+                    LOG.error().$("cannot touch '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
                 }
                 return -1;
             }
@@ -922,20 +927,20 @@ public final class TableUtils {
         int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (verbose) {
-                LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
+                LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
             }
             return -1;
         }
         if (ff.lock(fd) != 0) {
             if (verbose) {
-                LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();
+                LOG.error().$("cannot lock '").$(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();
             }
             ff.close(fd);
             return -1;
         }
 
         if (verbose) {
-            LOG.debug().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+            LOG.debug().$("locked '").$(path).$("' [fd=").$(fd).I$();
         }
         return fd;
     }
@@ -1118,7 +1123,7 @@ public final class TableUtils {
     }
 
     public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
-        final int rootLen = path.length();
+        final int rootLen = path.size();
         path.concat(fileName).$();
         try {
             return TableUtils.openRO(ff, path, log);
@@ -1508,7 +1513,7 @@ public final class TableUtils {
      * @param timestamp   A timestamp in the partition
      * @param nameTxn     Partition txn suffix
      */
-    public static void setSinkForPartition(CharSink sink, int partitionBy, long timestamp, long nameTxn) {
+    public static void setSinkForPartition(CharSinkBase<?> sink, int partitionBy, long timestamp, long nameTxn) {
         PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
@@ -1768,7 +1773,7 @@ public final class TableUtils {
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {
         try {
             path.concat(META_SWAP_FILE_NAME).$();
-            int l = path.length();
+            int l = path.size();
             int index = 0;
             do {
                 if (index > 0) {

@@ -46,7 +46,9 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -96,6 +98,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder;
     private final ObjectPool<QueryColumn> queryColumnPool;
+    private final QueryLogger queryLogger;
     private final ObjectPool<QueryModel> queryModelPool;
     private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
@@ -106,7 +109,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence query;
     protected boolean queryContainsSecret;
-    protected long queryLogFd;
+    protected int queryFd;
     protected boolean queryLogged;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -119,6 +122,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
     public SqlCompilerImpl(CairoEngine engine) {
         this.engine = engine;
+        queryLogger = engine.getConfiguration().getQueryLogger();
         this.queryBuilder = new QueryBuilder(this);
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -199,7 +203,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         compiledQuery.clear();
         query = null;
         queryLogged = false;
-        queryLogFd = -1;
+        queryFd = -1;
         queryContainsSecret = false;
         columnNames.clear();
     }
@@ -281,14 +285,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     batchCallback.preCompile(this);
                     clear(); // we don't use normal compile here because we can't reset existing lexer
 
-                    CharSequence currentQuery;
-
+                    final CharSequence currentQuery;
                     try {
                         compileInner(executionContext, query, false);
                     } finally {
                         currentQuery = query.subSequence(position, goToQueryEnd());
                         // try to log query even if exception is thrown
-                        logQuery(currentQuery);
+                        logQuery(currentQuery, executionContext);
                     }
                     // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
                     // some code in postCompile might need full text of current query
@@ -394,7 +397,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             unknownAlterStatement(executionContext, tok);
             return;
         }
-        logQuery();
+        logQuery(executionContext);
         final int tableNamePosition = lexer.getPosition();
         tok = expectToken(lexer, "table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
@@ -1388,19 +1391,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         executionContext.containsSecret(false);
         if (doLog) {
             this.query = query;
-            this.queryLogFd = executionContext.getRequestFd();
+            this.queryFd = executionContext.getRequestFd();
         }
 
         if (executor != null) {
             if (shouldLog(executor)) {
-                logQuery();
+                logQuery(executionContext);
             }
             // an executor can return null as a fallback to execution model
             executor.execute(executionContext);
         }
         // executor is allowed to give up on the execution and fall back to standard behaviour
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
-            logQuery();
+            logQuery(executionContext);
             compileUsingModel(executionContext);
         }
         final short type = compiledQuery.getType();
@@ -1911,6 +1914,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
+    }
+
+    private void doLogQuery(CharSequence currentQuery, SqlExecutionContext executionContext) {
+        queryLogger.logParseQuery(LOG, true, queryFd, currentQuery, executionContext.getSecurityContext());
     }
 
     private void executeWithRetries(
@@ -2819,17 +2826,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         return codeGenerator.generate(selectQueryModel, executionContext);
     }
 
-    protected void logQuery(CharSequence currentQuery) {
+    protected final void logQuery(CharSequence currentQuery, SqlExecutionContext executionContext) {
         if (!queryContainsSecret) {
             queryLogged = true;
-            LOG.info().$("parse [fd=").$(queryLogFd).$(", q=").utf8(currentQuery).I$();
+            doLogQuery(currentQuery, executionContext);
         }
     }
 
-    protected void logQuery() {
+    protected final void logQuery(SqlExecutionContext executionContext) {
         if (!queryLogged && !queryContainsSecret) {
             queryLogged = true;
-            LOG.info().$("parse [fd=").$(queryLogFd).$(", q=").utf8(query).I$();
+            doLogQuery(query, executionContext);
         }
     }
 
@@ -3075,7 +3082,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         private final Path dstPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
         private final StringSink sink = new StringSink();
         private final Path srcPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
-        private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
+        private final Utf8SequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new Utf8SequenceObjHashMap<>();
         private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
         private transient String cachedBackupTmpRoot;
@@ -3111,12 +3118,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                             .put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
                 }
                 auxPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
-                cachedBackupTmpRoot = Chars.toString(auxPath); // absolute path to the TMP folder
+                cachedBackupTmpRoot = Utf8s.toString(auxPath); // absolute path to the TMP folder
             }
 
             String tableName = tableToken.getTableName();
             auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
-            int tableRootLen = auxPath.length();
+            int tableRootLen = auxPath.size();
             try {
                 try (TableReader reader = engine.getReader(tableToken)) { // acquire reader lock
                     if (ff.exists(auxPath)) {
@@ -3178,7 +3185,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                             if (ff.mkdirs(auxPath, configuration.getBackupMkDirMode()) != 0) {
                                 throw CairoException.critical(ff.errno()).put("Cannot create [path=").put(auxPath).put(']');
                             }
-                            int len = auxPath.length();
+                            int len = auxPath.size();
                             // _wal_index.d
                             mem.smallFile(ff, auxPath.concat(WalUtils.WAL_INDEX_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                             mem.putLong(0L);
@@ -3226,7 +3233,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                                     writerMetadata,
                                     entityColumnFilter
                             );
-                            tableBackupRowCopiedCache.put(srcPath.toString(), recordToRowCopier);
+                            tableBackupRowCopiedCache.put(srcPath, recordToRowCopier);
                         }
                         RecordCursor cursor = reader.getCursor();
                         //statement/query timeout value  is most likely too small for backup operation
@@ -3234,11 +3241,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                         backupWriter.commit();
                     }
                 } // release reader lock
-                int renameRootLen = dstPath.length();
+                int renameRootLen = dstPath.size();
                 try {
                     dstPath.trimTo(renameRootLen).concat(tableToken).$();
                     TableUtils.renameOrFail(ff, auxPath.trimTo(tableRootLen).$(), dstPath);
-                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").utf8(dstPath).I$();
+                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").$(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
@@ -3250,7 +3257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                         .$(']').$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
                 if (!ff.rmdir(auxPath)) {
-                    LOG.error().$("could not delete directory [path=").utf8(auxPath).$(", errno=").$(ff.errno()).I$();
+                    LOG.error().$("could not delete directory [path=").$(auxPath).$(", errno=").$(ff.errno()).I$();
                 }
                 throw e;
             }
@@ -3258,7 +3265,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
         private void mkBackupDstDir(CharSequence dir, String errorMessage) {
             dstPath.trimTo(dstPathRoot).concat(dir).slash$();
-            dstCurrDirLen = dstPath.length();
+            dstCurrDirLen = dstPath.size();
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
                 throw CairoException.critical(ff.errno()).put(errorMessage).put(dstPath).put(']');
             }
@@ -3268,7 +3275,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             DateFormat format = configuration.getBackupDirTimestampFormat();
             long epochMicros = configuration.getMicrosecondClock().getTicks();
             dstPath.of(configuration.getBackupRoot()).slash();
-            int plen = dstPath.length();
+            int plen = dstPath.size();
             int n = 0;
             // There is a race here, two threads could try and create the same dstPath,
             // only one will succeed the other will throw a CairoException. It could be serialised
@@ -3285,7 +3292,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 // the winner will succeed the looser thread will get this exception
                 throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
             }
-            dstPathRoot = dstPath.length();
+            dstPathRoot = dstPath.size();
         }
 
         private void sqlBackup(SqlExecutionContext executionContext) throws SqlException {
@@ -3318,15 +3325,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             }
 
             srcPath.of(configuration.getRoot()).$();
-            int srcLen = srcPath.length();
+            int srcLen = srcPath.size();
 
             // backup table registry file (tables.d.<last>)
             // Note: this is unsafe way to back up table name registry,
             //       but since we're going to deprecate BACKUP, that's ok
             int version = TableNameRegistryStore.findLastTablesFileVersion(ff, srcPath, sink);
-            srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
-            dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$(); // reset to 0
-            LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
+            srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version).$();
+            dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0").$(); // reset to 0
+            LOG.info().$("backup copying file [from=").$(srcPath).$(", to=").$(dstPath).I$();
             if (ff.copy(srcPath, dstPath) < 0) {
                 throw CairoException.critical(ff.errno())
                         .put("cannot backup table registry file [from=").put(srcPath)
@@ -3337,7 +3344,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             // backup table index file (_tab_index.d)
             srcPath.trimTo(srcLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             dstPath.trimTo(dstCurrDirLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
+            LOG.info().$("backup copying file [from=").$(srcPath).$(", to=").$(dstPath).I$();
             if (ff.copy(srcPath, dstPath) < 0) {
                 throw CairoException.critical(ff.errno())
                         .put("cannot backup table index file [from=").put(srcPath)

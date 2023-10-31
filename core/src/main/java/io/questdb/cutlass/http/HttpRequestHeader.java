@@ -25,32 +25,33 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
 
 public interface HttpRequestHeader {
-    DirectByteCharSequence getBoundary();
+    DirectUtf8Sequence getBoundary();
 
-    DirectByteCharSequence getCharset();
+    DirectUtf8Sequence getCharset();
 
-    CharSequence getContentDisposition();
+    DirectUtf8Sequence getContentDisposition();
 
-    CharSequence getContentDispositionFilename();
+    DirectUtf8Sequence getContentDispositionFilename();
 
-    CharSequence getContentDispositionName();
+    DirectUtf8Sequence getContentDispositionName();
 
-    CharSequence getContentType();
+    DirectUtf8Sequence getContentType();
 
-    DirectByteCharSequence getHeader(CharSequence name);
+    DirectUtf8Sequence getHeader(Utf8Sequence name);
 
-    ObjList<CharSequence> getHeaderNames();
+    ObjList<? extends Utf8Sequence> getHeaderNames();
 
-    CharSequence getMethod();
+    DirectUtf8Sequence getMethod();
 
-    CharSequence getMethodLine();
+    DirectUtf8Sequence getMethodLine();
 
     long getStatementTimeout();
 
-    CharSequence getUrl();
+    DirectUtf8Sequence getUrl();
 
-    DirectByteCharSequence getUrlParam(CharSequence name);
+    DirectUtf8Sequence getUrlParam(Utf8Sequence name);
 }

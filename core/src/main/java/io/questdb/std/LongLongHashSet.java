@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -48,16 +50,16 @@ import java.util.Arrays;
  */
 public final class LongLongHashSet implements Mutable, Sinkable {
     public static final SinkStrategy LONG_LONG_STRATEGY = (key1, key2, sink) -> {
-        sink.put('[');
+        sink.putAscii('[');
         Numbers.append(sink, key1, false);
-        sink.put(',');
+        sink.putAscii(',');
         Numbers.append(sink, key2, false);
-        sink.put(']');
+        sink.putAscii(']');
     };
     public static final SinkStrategy UUID_STRATEGY = (key1, key2, sink) -> {
-        sink.put('\'');
+        sink.putAscii('\'');
         Numbers.appendUuid(key1, key2, sink);
-        sink.put('\'');
+        sink.putAscii('\'');
     };
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final double loadFactor;
@@ -170,21 +172,21 @@ public final class LongLongHashSet implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[');
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('[');
         boolean pastFirst = false;
         for (int i = 0, n = values.length; i < n; i += 2) {
             long key1 = values[i];
             long key2 = values[i + 1];
             if (key1 != noEntryKeyValue || key2 != noEntryKeyValue) {
                 if (pastFirst) {
-                    sink.put(',');
+                    sink.putAscii(',');
                 }
                 sinkStrategy.put(key1, key2, sink);
                 pastFirst = true;
             }
         }
-        sink.put(']');
+        sink.putAscii(']');
     }
 
     private static long firstValue(long[] val, int slot) {
@@ -236,6 +238,6 @@ public final class LongLongHashSet implements Mutable, Sinkable {
     }
 
     public interface SinkStrategy {
-        void put(long key1, long key2, CharSink sink);
+        void put(long key1, long key2, CharSinkBase<?> sink);
     }
 }

@@ -36,7 +36,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.DirectString;
 import io.questdb.tasks.TableWriterTask;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
@@ -499,8 +499,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private static class DirectCharSequenceList implements CharSequenceList {
         private final LongList offsets = new LongList();
-        private final DirectCharSequence strA = new DirectCharSequence();
-        private final DirectCharSequence strB = new DirectCharSequence();
+        private final DirectString strA = new DirectString();
+        private final DirectString strB = new DirectString();
 
         @Override
         public void clear() {

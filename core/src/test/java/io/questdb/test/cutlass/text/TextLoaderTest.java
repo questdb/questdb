@@ -35,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
@@ -55,6 +56,8 @@ public class TextLoaderTest extends AbstractCairoTest {
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
     private static final String PATH_SEP_REGEX = Os.isWindows() ?
             String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
+    private static final Utf8String TEST_TABLE_NAME = new Utf8String("test");
+    private static final Utf8String TEST_TS_COL_NAME = new Utf8String("ts");
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
@@ -705,7 +708,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testDateFormatNoLocale() throws Exception {
-        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.enLocale;
+        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -2454,7 +2457,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFormatNoLocale() throws Exception {
-        DateLocale locale = DateFormatUtils.enLocale;
+        DateLocale locale = DateFormatUtils.EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -3249,7 +3252,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, atomicity, PartitionBy.NONE, null, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, overwrite, atomicity, PartitionBy.NONE, null, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3257,13 +3260,13 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, atomicity, partitionBy, "ts", null);
+        textLoader.configureDestination(TEST_TABLE_NAME, overwrite, atomicity, partitionBy, TEST_TS_COL_NAME, null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
     private void configureLoaderDefaults2(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, Atomicity.SKIP_COL, PartitionBy.DAY, TEST_TS_COL_NAME, null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
