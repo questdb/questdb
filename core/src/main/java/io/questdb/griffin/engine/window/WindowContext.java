@@ -22,14 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.analytic;
+package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
 
-public interface AnalyticContext {
+public interface WindowContext {
     boolean baseSupportsRandomAccess();
+
+    int getExclusionKind();
+
+    int getExclusionKindPos();
+
+    int getFramingMode();
+
+    int getOrderByPos();
 
     ColumnTypes getPartitionByKeyTypes();
 
@@ -37,7 +45,21 @@ public interface AnalyticContext {
 
     RecordSink getPartitionBySink();
 
+    long getRowsHi();
+
+    int getRowsHiKindPos();
+
+    long getRowsLo();
+
+    int getRowsLoKindPos();
+
+    int getTimestampIndex();
+
+    boolean isDefaultFrame();
+
     boolean isEmpty();
 
     boolean isOrdered();
+
+    boolean isOrderedByDesignatedTimestamp();
 }

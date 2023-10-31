@@ -86,6 +86,10 @@ public abstract class BasePlanSink implements PlanSink {
         return sink;
     }
 
+    public boolean getUseBaseMetadata() {
+        return useBaseMetadata;
+    }
+
     public PlanSink optAttr(CharSequence name, Sinkable value) {
         if (value != null) {
             attr(name).val(value);
@@ -132,6 +136,11 @@ public abstract class BasePlanSink implements PlanSink {
             val(factoryStack.peek().getMetadata().getColumnName(columnIdx));
         }
         return this;
+    }
+
+    @Override
+    public void useBaseMetadata(boolean useBaseMetdata) {
+        this.useBaseMetadata = useBaseMetdata;
     }
 
     public PlanSink val(ObjList<?> list) {

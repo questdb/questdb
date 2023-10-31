@@ -714,6 +714,9 @@ io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory
 
+# vwap()
+io.questdb.griffin.engine.functions.groupby.VwapDoubleGroupByFunctionFactory
+
 # stddev()
 io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory
 
@@ -773,9 +776,10 @@ io.questdb.griffin.engine.functions.str.TrimFunctionFactory
 io.questdb.griffin.engine.functions.str.LTrimFunctionFactory
 io.questdb.griffin.engine.functions.str.RTrimFunctionFactory
 
-# analytic functions
-io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
-io.questdb.griffin.engine.functions.analytic.RankFunctionFactory
+# window functions
+io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
+io.questdb.griffin.engine.functions.window.RankFunctionFactory
+io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
 
 # metadata functions
 io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory

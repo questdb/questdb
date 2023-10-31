@@ -57,8 +57,6 @@ public interface CairoConfiguration {
 
     boolean getAllowTableRegistrySharedWrite();
 
-    int getAnalyticColumnPoolCapacity();
-
     // the '+' is used to prevent overlap with table names
     @NotNull
     default String getArchivedCrashFilePrefix() {
@@ -320,18 +318,6 @@ public interface CairoConfiguration {
 
     long getSpinLockTimeout();
 
-    int getSqlAnalyticRowIdMaxPages();
-
-    int getSqlAnalyticRowIdPageSize();
-
-    int getSqlAnalyticStoreMaxPages();
-
-    int getSqlAnalyticStorePageSize();
-
-    int getSqlAnalyticTreeKeyMaxPages();
-
-    int getSqlAnalyticTreeKeyPageSize();
-
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStoreSequencePoolCapacity();
@@ -426,6 +412,20 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getSqlWindowInitialRangeBufferSize();
+
+    int getSqlWindowRowIdMaxPages();
+
+    int getSqlWindowRowIdPageSize();
+
+    int getSqlWindowStoreMaxPages();
+
+    int getSqlWindowStorePageSize();
+
+    int getSqlWindowTreeKeyMaxPages();
+
+    int getSqlWindowTreeKeyPageSize();
+
     int getStrFunctionMaxBufferLength();
 
     @NotNull
@@ -469,6 +469,8 @@ public interface CairoConfiguration {
     double getWalSquashUncommittedRowsMultiplier();
 
     int getWalTxnNotificationQueueCapacity();
+
+    int getWindowColumnPoolCapacity();
 
     int getWithClauseModelPoolCapacity();
 
