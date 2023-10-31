@@ -61,7 +61,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
     private Rnd random;
-    private long requestFd = -1;
+    private int requestFd = -1;
     private SecurityContext securityContext;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
@@ -182,7 +182,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public long getRequestFd() {
+    public int getRequestFd() {
         return requestFd;
     }
 
@@ -285,7 +285,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return this;
     }
 
-    public void with(long requestFd) {
+    public void with(int requestFd) {
         this.requestFd = requestFd;
     }
 
@@ -305,7 +305,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
-            long requestFd,
+            int requestFd,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.securityContext = securityContext;

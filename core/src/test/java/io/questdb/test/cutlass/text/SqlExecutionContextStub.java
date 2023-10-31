@@ -101,8 +101,8 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public long getRequestFd() {
-        return 0L;
+    public int getRequestFd() {
+        return 0;
     }
 
     @Override
