@@ -81,7 +81,6 @@ public final class TestUtils {
 
     public static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
-    private static final StringSink sink = new StringSink();
 
     private TestUtils() {
     }
@@ -337,13 +336,13 @@ public final class TestUtils {
     }
 
     public static void assertEquals(CharSequence expected, Sinkable actual) {
-        sink.clear();
+        StringSink sink = Misc.getThreadLocalSink();
         actual.toSink(sink);
         assertEquals(null, expected, sink);
     }
 
     public static void assertEquals(CharSequence expected, Utf8Sequence actual) {
-        sink.clear();
+        StringSink sink = Misc.getThreadLocalSink();
         Utf8s.utf8ToUtf16(actual, sink);
         assertEquals(null, expected, sink);
     }
@@ -373,7 +372,7 @@ public final class TestUtils {
     }
 
     public static void assertEquals(Utf8Sequence expected, Utf8Sequence actual) {
-        sink.clear();
+        StringSink sink = Misc.getThreadLocalSink();
         Utf8s.utf8ToUtf16(expected, sink);
         String expectedStr = sink.toString();
         sink.clear();
@@ -1745,7 +1744,7 @@ public final class TestUtils {
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean symbolsAsStrings) {
-        sink.clear();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             printColumn(record, metadata, i, sink, symbolsAsStrings, false);
             if (i < n - 1) {
@@ -1771,7 +1770,7 @@ public final class TestUtils {
     }
 
     static void addRecordToMap(Record record, RecordMetadata metadata, Map<String, Integer> map, boolean symbolsAsStrings) {
-        sink.clear();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             printColumn(record, metadata, i, sink, symbolsAsStrings, true);
         }
