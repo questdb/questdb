@@ -780,6 +780,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             assertSql("x\tsym2\tts\n" +
                     "2\tEF\t2022-02-25T00:00:00.000000Z\n", newTableName);
+            Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(newTableDirectoryName).getWriterTxn());
+            Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(newTableDirectoryName).getSeqTxn());
         });
     }
 
@@ -1014,12 +1016,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean rmdir(Path path) {
+            public boolean rmdir(Path path, boolean lazy) {
                 if (Utf8s.equalsAscii(pretendNotExist.get(), path) && count++ == 0) {
                     super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR).$());
                     return false;
                 }
-                return super.rmdir(path);
+                return super.rmdir(path, lazy);
             }
         };
 

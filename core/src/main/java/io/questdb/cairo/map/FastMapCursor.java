@@ -71,7 +71,8 @@ public final class FastMapCursor implements RecordCursor {
         if (remaining > 0) {
             long address = this.address;
             if (keyValueSize == -1) {
-                this.address = address + Unsafe.getUnsafe().getInt(address);
+                int keySize = Unsafe.getUnsafe().getInt(address);
+                this.address = address + Integer.BYTES + keySize + map.valueSize();
             } else {
                 this.address = address + keyValueSize;
             }

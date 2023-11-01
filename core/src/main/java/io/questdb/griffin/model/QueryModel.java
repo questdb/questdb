@@ -63,13 +63,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final String NO_ROWID_MARKER = "*!*";
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
-    public static final int SELECT_MODEL_ANALYTIC = 3;
     public static final int SELECT_MODEL_CHOOSE = 1;
     public static final int SELECT_MODEL_CURSOR = 6;
     public static final int SELECT_MODEL_DISTINCT = 5;
     public static final int SELECT_MODEL_GROUP_BY = 4;
     public static final int SELECT_MODEL_NONE = 0;
     public static final int SELECT_MODEL_VIRTUAL = 2;
+    public static final int SELECT_MODEL_WINDOW = 3;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_EXCEPT_ALL = 3;
     public static final int SET_OPERATION_INTERSECT = 4;
@@ -1242,6 +1242,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    private static void unitToSink(CharSinkBase<?> sink, long timeUnit) {
+        if (timeUnit == WindowColumn.TIME_UNIT_MICROSECOND) {
+            sink.putAscii(" microsecond");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_MILLISECOND) {
+            sink.putAscii(" millisecond");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_SECOND) {
+            sink.putAscii(" second");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_MINUTE) {
+            sink.putAscii(" minute");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_HOUR) {
+            sink.putAscii(" hour");
+        } else if (timeUnit == WindowColumn.TIME_UNIT_DAY) {
+            sink.putAscii(" day");
+        } else {
+            sink.putAscii(" [unknown unit]");
+        }
+    }
+
     private String getSelectModelTypeText() {
         return modelTypeName.get(selectModelType);
     }
@@ -1256,15 +1274,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             CharSequence alias = column.getAlias();
             ExpressionNode ast = column.getAst();
             ast.toSink(sink);
-            if (column instanceof AnalyticColumn || name == null) {
+            if (column.isWindowColumn() || name == null) {
 
                 if (alias != null) {
                     aliasToSink(alias, sink);
                 }
 
-                // this can only be analytic column
+                // this can only be window column
                 if (name != null) {
-                    AnalyticColumn ac = (AnalyticColumn) column;
+                    WindowColumn ac = (WindowColumn) column;
                     sink.putAscii(" over (");
                     final ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
                     if (partitionBy.size() > 0) {
@@ -1291,6 +1309,104 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             if (ac.getOrderByDirection().getQuick(k) == 1) {
                                 sink.putAscii(" desc");
                             }
+                        }
+                    }
+
+                    if (ac.isNonDefaultFrame()) {
+                        switch (ac.getFramingMode()) {
+                            case WindowColumn.FRAMING_ROWS:
+                                sink.putAscii(" rows");
+                                break;
+                            case WindowColumn.FRAMING_RANGE:
+                                sink.putAscii(" range");
+                                break;
+                            case WindowColumn.FRAMING_GROUPS:
+                                sink.putAscii(" groups");
+                                break;
+                            default:
+                                break;
+                        }
+                        sink.put(" between ");
+                        if (ac.getRowsLoExpr() != null) {
+                            ac.getRowsLoExpr().toSink(sink);
+                            if (ac.getFramingMode() == WindowColumn.FRAMING_RANGE) {
+                                unitToSink(sink, ac.getRowsLoExprTimeUnit());
+                            }
+
+                            switch (ac.getRowsLoKind()) {
+                                case WindowColumn.PRECEDING:
+                                    sink.putAscii(" preceding");
+                                    break;
+                                case WindowColumn.FOLLOWING:
+                                    sink.putAscii(" following");
+                                    break;
+                                default:
+                                    break;
+                            }
+                        } else {
+                            switch (ac.getRowsLoKind()) {
+                                case WindowColumn.PRECEDING:
+                                    sink.putAscii("unbounded preceding");
+                                    break;
+                                case WindowColumn.FOLLOWING:
+                                    sink.putAscii("unbounded following");
+                                    break;
+                                default:
+                                    // CURRENT
+                                    sink.putAscii("current row");
+                                    break;
+                            }
+                        }
+                        sink.putAscii(" and ");
+
+                        if (ac.getRowsHiExpr() != null) {
+                            ac.getRowsHiExpr().toSink(sink);
+                            if (ac.getFramingMode() == WindowColumn.FRAMING_RANGE) {
+                                unitToSink(sink, ac.getRowsHiExprTimeUnit());
+                            }
+
+                            switch (ac.getRowsHiKind()) {
+                                case WindowColumn.PRECEDING:
+                                    sink.putAscii(" preceding");
+                                    break;
+                                case WindowColumn.FOLLOWING:
+                                    sink.putAscii(" following");
+                                    break;
+                                default:
+                                    assert false;
+                                    break;
+                            }
+                        } else {
+                            switch (ac.getRowsHiKind()) {
+                                case WindowColumn.PRECEDING:
+                                    sink.putAscii("unbounded preceding");
+                                    break;
+                                case WindowColumn.FOLLOWING:
+                                    sink.putAscii("unbounded following");
+                                    break;
+                                default:
+                                    // CURRENT
+                                    sink.put("current row");
+                                    break;
+                            }
+                        }
+
+                        switch (ac.getExclusionKind()) {
+                            case WindowColumn.EXCLUDE_CURRENT_ROW:
+                                sink.putAscii(" exclude current row");
+                                break;
+                            case WindowColumn.EXCLUDE_GROUP:
+                                sink.putAscii(" exclude group");
+                                break;
+                            case WindowColumn.EXCLUDE_TIES:
+                                sink.putAscii(" exclude ties");
+                                break;
+                            case WindowColumn.EXCLUDE_NO_OTHERS:
+                                sink.putAscii(" exclude no others");
+                                break;
+                            default:
+                                assert false;
+                                break;
                         }
                     }
                     sink.putAscii(')');
@@ -1572,7 +1688,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_NONE, "select");
         modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, "select-choose");
         modelTypeName.extendAndSet(SELECT_MODEL_VIRTUAL, "select-virtual");
-        modelTypeName.extendAndSet(SELECT_MODEL_ANALYTIC, "select-analytic");
+        modelTypeName.extendAndSet(SELECT_MODEL_WINDOW, "select-window");
         modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, "select-group-by");
         modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
         modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");

@@ -31,10 +31,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -46,6 +43,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -83,6 +81,34 @@ public class LogFactoryTest {
             assertEnabled(logger.critical());
             assertEnabled(logger.debug());
             assertEnabled(logger.advisory());
+        }
+    }
+
+    @Test
+    public void testDirectUtf8Sequence() throws Exception {
+        final File x = temp.newFile();
+        final String orig = "Здравей свят";
+        final GcUtf8String src = new GcUtf8String(orig);
+
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            final Log logger = factory.create("x");
+            logger.xerror().$(src).$();
+
+            System.err.println(x.getAbsolutePath());
+
+            Os.sleep(100);
+            final String expected = orig + "\r\n";
+            final String actual = new String(java.nio.file.Files.readAllBytes(x.toPath()), StandardCharsets.UTF_8);
+            Assert.assertEquals(expected, actual);
         }
     }
 

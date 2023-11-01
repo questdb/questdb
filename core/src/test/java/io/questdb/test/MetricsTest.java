@@ -27,8 +27,8 @@ package io.questdb.test;
 import io.questdb.Metrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.str.CharSinkBase;
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -39,6 +39,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MetricsTest {
+
+    @Test
+    public void testGetMetricsRegistry() {
+        final NullMetricsRegistry registry = new NullMetricsRegistry();
+        final Metrics metrics = new Metrics(true, registry);
+        Assert.assertNotNull(metrics.getRegistry());
+        Assert.assertSame(registry, metrics.getRegistry());
+    }
 
     @Test
     public void testLabelNames() {
@@ -91,7 +99,7 @@ public class MetricsTest {
     public void testMetricNamesContainGCMetrics() {
         final Metrics metrics = Metrics.enabled();
 
-        final Utf8StringSink sink = new Utf8StringSink(32);
+        final DirectUtf8Sink sink = new DirectUtf8Sink(32);
         metrics.scrapeIntoPrometheus(sink);
 
         final String encoded = sink.toString();
@@ -153,9 +161,11 @@ public class MetricsTest {
         }
 
         @Override
-        public CounterWithTwoLabels newCounter(CharSequence name,
-                                               CharSequence labelName0, CharSequence[] labelValues0,
-                                               CharSequence labelName1, CharSequence[] labelValues1) {
+        public CounterWithTwoLabels newCounter(
+                CharSequence name,
+                CharSequence labelName0, CharSequence[] labelValues0,
+                CharSequence labelName1, CharSequence[] labelValues1
+        ) {
             addMetricName(name);
             addLabelNames(name, Arrays.asList(labelName0, labelName1));
             return delegate.newCounter(name, labelName0, labelValues0, labelName1, labelValues1);
@@ -186,7 +196,7 @@ public class MetricsTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
+        public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
             delegate.scrapeIntoPrometheus(sink);
         }
 

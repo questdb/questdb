@@ -107,6 +107,8 @@ public interface ConfigurationOverrides {
 
     int getSampleByIndexSearchPageSize();
 
+    boolean getSimulateCrashEnabled();
+
     String getSnapshotInstanceId();
 
     Boolean getSnapshotRecoveryEnabled();
@@ -119,6 +121,10 @@ public interface ConfigurationOverrides {
 
     int getSqlJoinMetadataPageSize();
 
+    int getSqlWindowStoreMaxPages();
+
+    int getSqlWindowStorePageSize();
+
     int getTableRegistryCompactionThreshold();
 
     MicrosecondClock getTestMicrosClock();
@@ -130,6 +136,8 @@ public interface ConfigurationOverrides {
     long getWalPurgeInterval();
 
     long getWalSegmentRolloverRowCount();
+
+    long getWalSegmentRolloverSize();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -188,6 +196,8 @@ public interface ConfigurationOverrides {
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 
     void setFactoryProvider(FactoryProvider factoryProvider);
+
+    void setSimulateCrashEnabled(boolean enabled);
 
     void setFilesFacade(FilesFacade ff);
 
@@ -257,6 +267,10 @@ public interface ConfigurationOverrides {
 
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
+    void setSqlWindowStoreMaxPages(int windowStoreMaxPages);
+
+    void setSqlWindowStorePageSize(int windowStorePageSize);
+
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 
     void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
@@ -266,6 +280,8 @@ public interface ConfigurationOverrides {
     void setWalPurgeInterval(long walPurgeInterval);
 
     void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount);
+
+    void setWalSegmentRolloverSize(long walSegmentRolloverSize);
 
     void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity);
 

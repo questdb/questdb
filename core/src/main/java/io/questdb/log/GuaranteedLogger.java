@@ -30,6 +30,7 @@ import io.questdb.network.Net;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -102,6 +103,16 @@ public final class GuaranteedLogger extends AbstractLogRecord implements Log {
 
     @Override
     public LogRecord $(@Nullable Utf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            sink().put(sequence);
+        }
+        return this;
+    }
+
+    @Override
+    public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
         if (sequence == null) {
             sink().putAscii("null");
         } else {
@@ -218,7 +229,7 @@ public final class GuaranteedLogger extends AbstractLogRecord implements Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        sink().putUtf8(lo, hi);
+        sink().put(lo, hi);
         return this;
     }
 

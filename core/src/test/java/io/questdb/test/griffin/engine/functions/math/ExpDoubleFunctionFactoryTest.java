@@ -22,22 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.analytic;
+package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.math.ExpDoubleFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public interface AnalyticContext {
-    boolean baseSupportsRandomAccess();
+public class ExpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    ColumnTypes getPartitionByKeyTypes();
+    @Test
+    public void testNegative() throws SqlException {
+        call(-2.0).andAssert(0.1353352832366127, 0.0000000001);
+    }
 
-    VirtualRecord getPartitionByRecord();
+    @Test
+    public void testPositive() throws SqlException {
+        call(2.0).andAssert(7.38905609893065, 0.0000000001);
+    }
 
-    RecordSink getPartitionBySink();
+    @Test
+    public void testZero() throws SqlException {
+        call(0.0).andAssert(1.0, 0.0000000001);
+    }
 
-    boolean isEmpty();
+    @Test
+    public void testNaN() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, 0.0);
+    }
 
-    boolean isOrdered();
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new ExpDoubleFunctionFactory();
+    }
 }

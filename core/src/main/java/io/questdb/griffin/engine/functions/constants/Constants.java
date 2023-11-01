@@ -114,7 +114,7 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
 
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));
         }
     }

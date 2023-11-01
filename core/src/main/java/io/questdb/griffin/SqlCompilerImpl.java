@@ -98,6 +98,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder;
     private final ObjectPool<QueryColumn> queryColumnPool;
+    private final QueryLogger queryLogger;
     private final ObjectPool<QueryModel> queryModelPool;
     private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
@@ -108,7 +109,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence query;
     protected boolean queryContainsSecret;
-    protected long queryLogFd;
+    protected int queryFd;
     protected boolean queryLogged;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -121,6 +122,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
 
     public SqlCompilerImpl(CairoEngine engine) {
         this.engine = engine;
+        queryLogger = engine.getConfiguration().getQueryLogger();
         this.queryBuilder = new QueryBuilder(this);
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -201,7 +203,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         compiledQuery.clear();
         query = null;
         queryLogged = false;
-        queryLogFd = -1;
+        queryFd = -1;
         queryContainsSecret = false;
         columnNames.clear();
     }
@@ -283,14 +285,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     batchCallback.preCompile(this);
                     clear(); // we don't use normal compile here because we can't reset existing lexer
 
-                    CharSequence currentQuery;
-
+                    final CharSequence currentQuery;
                     try {
                         compileInner(executionContext, query, false);
                     } finally {
                         currentQuery = query.subSequence(position, goToQueryEnd());
                         // try to log query even if exception is thrown
-                        logQuery(currentQuery);
+                        logQuery(currentQuery, executionContext);
                     }
                     // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
                     // some code in postCompile might need full text of current query
@@ -396,7 +397,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             unknownAlterStatement(executionContext, tok);
             return;
         }
-        logQuery();
+        logQuery(executionContext);
         final int tableNamePosition = lexer.getPosition();
         tok = expectToken(lexer, "table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
@@ -607,7 +608,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
             }
         } catch (CairoException e) {
-            LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();
+            if (e.isAuthorizationError()) {
+                LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$(e.getFlyweightMessage()).$();
+            } else {
+                LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();
+            }
             e.position(lexer.lastTokenPosition());
             throw e;
         }
@@ -1390,19 +1395,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         executionContext.containsSecret(false);
         if (doLog) {
             this.query = query;
-            this.queryLogFd = executionContext.getRequestFd();
+            this.queryFd = executionContext.getRequestFd();
         }
 
         if (executor != null) {
             if (shouldLog(executor)) {
-                logQuery();
+                logQuery(executionContext);
             }
             // an executor can return null as a fallback to execution model
             executor.execute(executionContext);
         }
         // executor is allowed to give up on the execution and fall back to standard behaviour
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
-            logQuery();
+            logQuery(executionContext);
             compileUsingModel(executionContext);
         }
         final short type = compiledQuery.getType();
@@ -1700,7 +1705,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     circuitBreaker
             );
         } catch (CairoException e) {
-            LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+            if (e.isAuthorizationError()) {
+                // No point printing stack trace for authorization errors
+                LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
+            } else {
+                LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+            }
             // Close writer, the table will be removed
             writerAPI = Misc.free(writerAPI);
             writer = null;
@@ -1820,7 +1830,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 } catch (EntryUnavailableException e) {
                     throw SqlException.$(name.position, "table already exists");
                 } catch (CairoException e) {
-                    LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+                    if (e.isAuthorizationError()) {
+                        // No point printing stack trace for authorization errors
+                        LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
+                    } else {
+                        LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+                    }
                     if (e.isInterruption()) {
                         throw e;
                     }
@@ -1913,6 +1928,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
+    }
+
+    private void doLogQuery(CharSequence currentQuery, SqlExecutionContext executionContext) {
+        queryLogger.logParseQuery(LOG, true, queryFd, currentQuery, executionContext.getSecurityContext());
     }
 
     private void executeWithRetries(
@@ -2821,17 +2840,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
         return codeGenerator.generate(selectQueryModel, executionContext);
     }
 
-    protected void logQuery(CharSequence currentQuery) {
+    protected final void logQuery(CharSequence currentQuery, SqlExecutionContext executionContext) {
         if (!queryContainsSecret) {
             queryLogged = true;
-            LOG.info().$("parse [fd=").$(queryLogFd).$(", q=").utf8(currentQuery).I$();
+            doLogQuery(currentQuery, executionContext);
         }
     }
 
-    protected void logQuery() {
+    protected final void logQuery(SqlExecutionContext executionContext) {
         if (!queryLogged && !queryContainsSecret) {
             queryLogged = true;
-            LOG.info().$("parse [fd=").$(queryLogFd).$(", q=").utf8(query).I$();
+            doLogQuery(query, executionContext);
         }
     }
 

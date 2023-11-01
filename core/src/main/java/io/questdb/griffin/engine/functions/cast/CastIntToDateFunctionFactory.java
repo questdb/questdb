@@ -45,15 +45,9 @@ public class CastIntToDateFunctionFactory implements FunctionFactory {
     }
 
     public static class CastIntToDateFunction extends AbstractCastToDateFunction {
-        private final Function arg;
 
         public CastIntToDateFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

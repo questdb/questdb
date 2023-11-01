@@ -563,7 +563,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 180_000_000,
                 721,
                 2_000_000,
-                2);
+                2
+        );
     }
 
     @Test
@@ -1150,7 +1151,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                             PartitionBy.NONE
                     );
                     textLoader.setForceHeaders(true);
-                    playText(engine,
+                    playText(
+                            engine,
                             textLoader,
                             csv,
                             1024,
@@ -1160,7 +1162,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                             3,
                             true
                     );
-                });
+                }
+        );
     }
 
     @Test
@@ -1181,7 +1184,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 PartitionBy.NONE
                         );
                         textLoader.setForceHeaders(true);
-                        playText(engine,
+                        playText(
+                                engine,
                                 textLoader,
                                 csv,
                                 1024,
@@ -1195,7 +1199,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     } catch (TextException expected) {
                         Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1216,7 +1221,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 PartitionBy.NONE
                         );
                         textLoader.setForceHeaders(true);
-                        playText(engine,
+                        playText(
+                                engine,
                                 textLoader,
                                 csv,
                                 1024,
@@ -1230,7 +1236,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     } catch (TextException expected) {
                         Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1316,7 +1323,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 23,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -1385,7 +1393,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 5,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -2128,7 +2137,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 4,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -2500,7 +2510,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 180_000_000,
                 721,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -2512,7 +2523,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 -1,
                 -1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -2824,7 +2836,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                         expected,
                         "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                         3,
-                        3);
+                        3
+                );
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot import text into BINARY column");
@@ -2851,7 +2864,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
     }
 
@@ -2874,7 +2888,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
     }
 
@@ -3073,7 +3088,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
     }
 
@@ -3234,7 +3250,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 5,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -3334,7 +3351,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 final String dirName = extractLast(name);
                 if (!dirName.equals("seq")) {
                     rmdirCallCount.getAndIncrement();
@@ -3342,7 +3359,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                         Assert.fail(dirName + " not expected");
                     }
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
 
             @Override
@@ -3494,7 +3511,8 @@ public class TextLoaderTest extends AbstractCairoTest {
             long expectedWrittenLineCount,
             boolean skipLinesWithExtraValues
     ) throws Exception {
-        playText(engine,
+        playText(
+                engine,
                 textLoader,
                 text,
                 firstBufSize,
@@ -3515,7 +3533,8 @@ public class TextLoaderTest extends AbstractCairoTest {
             long expectedParsedLineCount,
             long expectedWrittenLineCount
     ) throws Exception {
-        playText(engine,
+        playText(
+                engine,
                 textLoader,
                 text,
                 firstBufSize,

@@ -68,6 +68,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return exception;
     }
 
+    public static SqlException emptyWindowContext(int position) {
+        return SqlException.$(position, "window function called in non-window context, make sure to add OVER clause");
+    }
+
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
         return $(position, "inconvertible types: ")
                 .put(ColumnType.nameOf(fromType))
@@ -79,6 +83,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException invalidColumn(int position, CharSequence column) {
         return position(position).put("Invalid column: ").put(column);
+    }
+
+    public static SqlException invalidDate(CharSequence str, int position) {
+        return position(position).put("Invalid date [str=").put(str).put(']');
     }
 
     public static SqlException invalidDate(int position) {
@@ -119,7 +127,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", from=").put(ColumnType.nameOf(fromType))
                 .put(", to=").put(ColumnType.nameOf(toType))
                 .put(']');
-
     }
 
     @Override

@@ -261,7 +261,7 @@ public class GeoHashesTest {
 
     @Test(expected = NumericException.class)
     public void testFromStringTruncatingNl2() throws NumericException {
-        GeoHashes.fromStringTruncatingNl("123", 0, 3, ColumnType.GEO_HASH_MAX_BITS_LENGTH + 1);
+        GeoHashes.fromStringTruncatingNl("123", 0, 3, ColumnType.GEOLONG_MAX_BITS + 1);
     }
 
     @Test
@@ -414,7 +414,7 @@ public class GeoHashesTest {
                 "GEOHASH(12c) -> 80913 (60)\n";
 
         StringSink everything = new StringSink();
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             int type = ColumnType.getGeoHashTypeWithBits(b);
             String name = ColumnType.nameOf(type);
             everything.put(name)
