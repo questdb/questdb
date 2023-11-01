@@ -22,30 +22,44 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.analytic;
+package io.questdb.griffin.engine.window;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.sql.AnalyticSPI;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
-import io.questdb.std.IntList;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.VirtualRecord;
 
-public interface AnalyticFunction extends Function {
-    int STREAM = 1;
-    int THREE_PASS = 3;
-    int TWO_PASS = 2;
+public interface WindowContext {
+    boolean baseSupportsRandomAccess();
 
-    void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order);
+    int getExclusionKind();
 
-    void pass1(Record record, long recordOffset, AnalyticSPI spi);
+    int getExclusionKindPos();
 
-    void pass2(Record record);
+    int getFramingMode();
 
-    void preparePass2(RecordCursor cursor);
+    int getOrderByPos();
 
-    void reset();
+    ColumnTypes getPartitionByKeyTypes();
 
-    void setColumnIndex(int columnIndex);
+    VirtualRecord getPartitionByRecord();
+
+    RecordSink getPartitionBySink();
+
+    long getRowsHi();
+
+    int getRowsHiKindPos();
+
+    long getRowsLo();
+
+    int getRowsLoKindPos();
+
+    int getTimestampIndex();
+
+    boolean isDefaultFrame();
+
+    boolean isEmpty();
+
+    boolean isOrdered();
+
+    boolean isOrderedByDesignatedTimestamp();
 }

@@ -84,6 +84,14 @@ public class StringSinkTest {
     }
 
     @Test
+    public void testTrimTo() {
+        StringSink ss = new StringSink();
+        ss.put("1234567890");
+        ss.trimTo(5);
+        TestUtils.assertEquals("12345", ss);
+    }
+
+    @Test
     public void testUnprintable() {
         StringSink ss = new StringSink();
         ss.putAsPrintable("āabcdሴdef\u0012");

@@ -30,9 +30,9 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
-import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -42,13 +42,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
-    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final int sharedWorkerCount;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
+    private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
     private BindVariableService bindVariableService;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -61,7 +61,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
     private Rnd random;
-    private long requestFd = -1;
+    private int requestFd = -1;
     private SecurityContext securityContext;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
@@ -86,19 +86,44 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void clearAnalyticContext() {
-        analyticContext.clear();
+    public void clearWindowContext() {
+        windowContext.clear();
     }
 
     @Override
-    public void configureAnalyticContext(
+    public void configureWindowContext(
             @Nullable VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes partitionByKeyTypes,
             boolean ordered,
-            boolean baseSupportsRandomAccess
+            int orderByDirection,
+            int orderByPos,
+            boolean baseSupportsRandomAccess,
+            int framingMode,
+            long rowsLo,
+            int rowsLoKindPos,
+            long rowsHi,
+            int rowsHiKindPos,
+            int exclusionKind,
+            int exclusionKindPos,
+            int timestampIndex
     ) {
-        analyticContext.of(partitionByRecord, partitionBySink, partitionByKeyTypes, ordered, baseSupportsRandomAccess);
+        windowContext.of(
+                partitionByRecord,
+                partitionBySink,
+                partitionByKeyTypes,
+                ordered,
+                orderByDirection,
+                orderByPos,
+                baseSupportsRandomAccess,
+                framingMode,
+                rowsLo,
+                rowsLoKindPos,
+                rowsHi,
+                rowsHiKindPos,
+                exclusionKind,
+                exclusionKindPos,
+                timestampIndex);
     }
 
     @Override
@@ -109,11 +134,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void containsSecret(boolean containsSecret) {
         this.containsSecret = containsSecret;
-    }
-
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return analyticContext;
     }
 
     @Override
@@ -162,7 +182,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public long getRequestFd() {
+    public int getRequestFd() {
         return requestFd;
     }
 
@@ -174,6 +194,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getSharedWorkerCount() {
         return sharedWorkerCount;
+    }
+
+    @Override
+    public WindowContext getWindowContext() {
+        return windowContext;
     }
 
     @Override
@@ -260,7 +285,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return this;
     }
 
-    public void with(long requestFd) {
+    public void with(int requestFd) {
         this.requestFd = requestFd;
     }
 
@@ -280,7 +305,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
-            long requestFd,
+            int requestFd,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.securityContext = securityContext;

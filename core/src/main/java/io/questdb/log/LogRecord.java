@@ -25,6 +25,7 @@
 package io.questdb.log;
 
 import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -39,6 +40,8 @@ public interface LogRecord extends CharSinkBase<LogRecord> {
     LogRecord $(@Nullable CharSequence sequence);
 
     LogRecord $(@Nullable Utf8Sequence sequence);
+
+    LogRecord $(@Nullable DirectUtf8Sequence sequence);
 
     LogRecord $(@NotNull CharSequence sequence, int lo, int hi);
 

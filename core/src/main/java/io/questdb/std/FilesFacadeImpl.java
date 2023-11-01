@@ -61,10 +61,18 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean closeRemove(int fd, LPSZ path) {
-        if (fd > -1) {
+        // On Windows we cannot remove file that is open, close it first
+        if (isRestrictedFileSystem() && fd > -1) {
             Files.close(fd);
         }
-        return remove(path);
+
+        // On other file systems we can remove file that is open, and sometimes we want to close the file descriptor
+        // after the removal, in case when file descriptor is the lock FD.
+        boolean ok = remove(path);
+        if (!isRestrictedFileSystem() && fd > -1) {
+            Files.close(fd);
+        }
+        return ok;
     }
 
     @Override
@@ -372,8 +380,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rmdir(Path name) {
-        return Files.rmdir(name, true);
+    final public boolean rmdir(Path name) {
+        return rmdir(name, true);
     }
 
     @Override

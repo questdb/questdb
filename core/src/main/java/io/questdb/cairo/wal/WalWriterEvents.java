@@ -58,11 +58,22 @@ class WalWriterEvents implements Closeable {
 
     @Override
     public void close() {
-        eventMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    public void close(boolean truncate, byte truncateMode) {
+        eventMem.close(truncate, truncateMode);
         Unsafe.free(longBuffer, Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
         longBuffer = 0L;
         ff.close(indexFd);
         indexFd = -1;
+    }
+
+    /**
+     * Size in bytes consumed by the events file, including any symbols.
+     */
+    public long size() {
+        return eventMem.getAppendOffset();
     }
 
     private void appendIndex(long value) {
@@ -251,9 +262,9 @@ class WalWriterEvents implements Closeable {
         this.symbolMapNullFlags = symbolMapNullFlags;
     }
 
-    void openEventFile(Path path, int pathLen) {
+    void openEventFile(Path path, int pathLen, boolean truncate) {
         if (eventMem.getFd() > -1) {
-            close();
+            close(truncate, Vm.TRUNCATE_TO_POINTER);
         }
         openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
         indexFd = ff.openRW(path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), CairoConfiguration.O_NONE);

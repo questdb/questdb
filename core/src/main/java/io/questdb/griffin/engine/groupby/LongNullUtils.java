@@ -29,7 +29,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.std.Numbers;
 
 public final class LongNullUtils {
-    private static final long[] LONG_NULLs = new long[ColumnType.MAX];
+    private static final long[] LONG_NULLs = new long[ColumnType.NULL];
 
     public static long getLongNull(int type) {
         return LONG_NULLs[ColumnType.tagOf(type)];

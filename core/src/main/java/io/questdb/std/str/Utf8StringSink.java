@@ -24,6 +24,8 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -72,6 +74,15 @@ public class Utf8StringSink implements MutableUtf8Sink {
     }
 
     @Override
+    public Utf8StringSink put(long lo, long hi) {
+        checkSize(Bytes.checkedLoHiSize(lo, hi, pos));
+        for (long p = lo; p < hi; p++) {
+            buffer[pos++] = Unsafe.getUnsafe().getByte(p);
+        }
+        return this;
+    }
+
+    @Override
     public Utf8StringSink put(@Nullable Utf8Sequence us) {
         if (us != null) {
             int s = us.size();
@@ -114,6 +125,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
     }
 
     private void checkSize(int extra) {
+        assert extra >= 0;
         int size = pos + extra;
         if (buffer.length > size) {
             return;

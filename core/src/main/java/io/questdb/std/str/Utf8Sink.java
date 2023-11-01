@@ -45,6 +45,8 @@ public interface Utf8Sink extends CharSinkBase<Utf8Sink> {
         return this;
     }
 
+    Utf8Sink put(long lo, long hi);
+
     /**
      * Encodes the given char sequence from UTF-16 to UTF-8 and writes it to the sink.
      */
@@ -72,6 +74,13 @@ public interface Utf8Sink extends CharSinkBase<Utf8Sink> {
     }
 
     Utf8Sink put(@Nullable Utf8Sequence us);
+
+    default Utf8Sink put(@Nullable DirectUtf8Sequence dus) {
+        if (dus != null) {
+            put(dus.lo(), dus.hi());
+        }
+        return this;
+    }
 
     Utf8Sink put(byte b);
 

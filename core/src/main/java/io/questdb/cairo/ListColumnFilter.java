@@ -24,9 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.IntList;
 
-public class ListColumnFilter extends IntList implements ColumnFilter {
+public class ListColumnFilter extends IntList implements ColumnFilter, Plannable {
 
     public ListColumnFilter() {
     }
@@ -49,5 +51,20 @@ public class ListColumnFilter extends IntList implements ColumnFilter {
     @Override
     public int getColumnIndex(int position) {
         return getQuick(position);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        for (int i = 0, n = size(); i < n; i++) {
+            int colIdx = get(i);
+            int col = (colIdx > 0 ? colIdx : -colIdx) - 1;
+            if (i > 0) {
+                sink.val(", ");
+            }
+            sink.putBaseColumnName(col);
+            if (colIdx < 0) {
+                sink.val(" ").val("desc");
+            }
+        }
     }
 }

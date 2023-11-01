@@ -240,8 +240,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
                                     metadata.clear();
                                     long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                                     path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                    metadata.switchTo(path, path.size()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
-                                    metadata.close(Vm.TRUNCATE_TO_POINTER);
+                                    metadata.switchTo(path, path.size(), true); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
+                                    metadata.close(true, Vm.TRUNCATE_TO_POINTER);
 
                                     mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                                     mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn

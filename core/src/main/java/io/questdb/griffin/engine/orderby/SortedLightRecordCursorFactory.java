@@ -59,6 +59,12 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         this.sortColumnFilter = sortColumnFilter;
     }
 
+    public static void addSortKeys(PlanSink sink, ListColumnFilter filter) {
+        sink.attr("keys").val('[');
+        filter.toPlan(sink);
+        sink.val(']');
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -97,22 +103,6 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
-    }
-
-    static void addSortKeys(PlanSink sink, ListColumnFilter filter) {
-        sink.attr("keys").val('[');
-        for (int i = 0, n = filter.size(); i < n; i++) {
-            int colIdx = filter.get(i);
-            int col = (colIdx > 0 ? colIdx : -colIdx) - 1;
-            if (i > 0) {
-                sink.val(", ");
-            }
-            sink.putBaseColumnName(col);
-            if (colIdx < 0) {
-                sink.val(" ").val("desc");
-            }
-        }
-        sink.val(']');
     }
 
     @Override

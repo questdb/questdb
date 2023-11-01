@@ -24,11 +24,15 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.DateFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.AbstractUnaryDateFunction;
 
-public abstract class AbstractCastToDateFunction extends DateFunction implements UnaryFunction {
+public abstract class AbstractCastToDateFunction extends AbstractUnaryDateFunction {
+
+    public AbstractCastToDateFunction(Function arg) {
+        super(arg);
+    }
 
     @Override
     public void toPlan(PlanSink sink) {

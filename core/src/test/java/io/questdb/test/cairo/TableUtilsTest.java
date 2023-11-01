@@ -222,7 +222,7 @@ public class TableUtilsTest extends AbstractTest {
         long mem1 = Unsafe.getUnsafe().allocateMemory(32);
         long mem2 = Unsafe.getUnsafe().allocateMemory(32);
         try {
-            for (int columnType = 0; columnType < ColumnType.MAX; columnType++) {
+            for (int columnType = 0; columnType < ColumnType.NULL; columnType++) {
 
                 if (!ColumnType.isVariableLength(columnType)) {
                     int size = ColumnType.sizeOf(columnType);

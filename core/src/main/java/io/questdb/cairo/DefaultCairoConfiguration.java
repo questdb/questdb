@@ -79,11 +79,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getAnalyticColumnPoolCapacity() {
-        return 64;
-    }
-
-    @Override
     public @NotNull String getAttachPartitionSuffix() {
         return TableUtils.ATTACHABLE_DIR_MARKER;
     }
@@ -515,36 +510,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlAnalyticRowIdMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public int getSqlAnalyticRowIdPageSize() {
-        return 1024;
-    }
-
-    @Override
-    public int getSqlAnalyticStoreMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public int getSqlAnalyticStorePageSize() {
-        return 1024 * 1024;
-    }
-
-    @Override
-    public int getSqlAnalyticTreeKeyMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public int getSqlAnalyticTreeKeyPageSize() {
-        return 4 * 1024;
-    }
-
-    @Override
     public int getSqlCharacterStoreCapacity() {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly
@@ -767,6 +732,41 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlWindowInitialRangeBufferSize() {
+        return 32;
+    }
+
+    @Override
+    public int getSqlWindowRowIdMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlWindowRowIdPageSize() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlWindowStoreMaxPages() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlWindowStorePageSize() {
+        return 1024 * 1024;
+    }
+
+    @Override
+    public int getSqlWindowTreeKeyMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlWindowTreeKeyPageSize() {
+        return 4 * 1024;
+    }
+
+    @Override
     public int getStrFunctionMaxBufferLength() {
         return 1024 * 1024;
     }
@@ -857,6 +857,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalSegmentRolloverSize() {
+        return 0;  // watermark level disabled.
+    }
+
+    @Override
     public double getWalSquashUncommittedRowsMultiplier() {
         return 20;
     }
@@ -864,6 +869,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalTxnNotificationQueueCapacity() {
         return 4096;
+    }
+
+    @Override
+    public int getWindowColumnPoolCapacity() {
+        return 64;
     }
 
     @Override

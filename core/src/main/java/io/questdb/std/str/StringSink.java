@@ -169,6 +169,10 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Cha
         return new String(buffer, 0, pos);
     }
 
+    public void trimTo(int pos) {
+        clear(pos);
+    }
+
     private void checkSize(int extra) {
         int len = pos + extra;
         if (buffer.length > len) {
