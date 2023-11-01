@@ -494,6 +494,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
                 return sb.f_type;
             case 0x35:
                 strcpy((char *) lpszName, "UFS");
+                // tested with FreeBSD 13.2, partition type 'freebsd-ufs'
                 return FLAG_FS_SUPPORTED * sb.f_type;
             case 0x9fa2:
                 strcpy((char *) lpszName, "USBDEVICE");

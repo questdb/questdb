@@ -353,9 +353,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
             case 0x00011954:
                 strcpy((char *) lpszName, "UFS");
                 return sb.f_type;
-            case 0x35:
-                strcpy((char *) lpszName, "UFS");
-                return FLAG_FS_SUPPORTED * sb.f_type;
             case 0x9fa2:
                 strcpy((char *) lpszName, "USBDEVICE");
                 return sb.f_type;
