@@ -115,11 +115,11 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
 
     @Override
     public void close() {
-        clear(Vm.TRUNCATE_TO_PAGE);
+        clear(true, Vm.TRUNCATE_TO_PAGE);
     }
 
-    public void close(byte truncateMode) {
-        clear(truncateMode);
+    public void close(boolean truncate, byte truncateMode) {
+        clear(truncate, truncateMode);
     }
 
     public void disableDeduplicate() {
@@ -175,9 +175,9 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public void switchTo(Path path, int pathLen) {
+    public void switchTo(Path path, int pathLen, boolean truncate) {
         if (metaMem.getFd() > -1) {
-            metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
+            metaMem.close(truncate, Vm.TRUNCATE_TO_POINTER);
         }
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         syncToMetaFile(metaMem, structureVersion, columnCount, timestampIndex, tableId, suspended, this);
@@ -213,10 +213,10 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         suspended = false;
     }
 
-    protected void clear(byte truncateMode) {
+    protected void clear(boolean truncate, byte truncateMode) {
         reset();
         if (metaMem != null) {
-            metaMem.close(true, truncateMode);
+            metaMem.close(truncate, truncateMode);
         }
         Misc.free(roMetaMem);
     }

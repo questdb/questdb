@@ -22,13 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.str.Path;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface WalInitializer {
-    void initDirectory(Path dirPath);
+public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "vwap(DD)";
+    }
 
-    void rollbackDirectory(Path path);
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new VwapDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
+    }
 }

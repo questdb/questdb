@@ -883,10 +883,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             assertException(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
                 if (errorPos > -1) {
                     Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
                 }
-                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
             } else {
                 throw e;
             }
@@ -1207,6 +1207,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
     }
 
+    protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {
+        node1.getConfigurationOverrides().setSqlWindowStoreMaxPages(windowStoreMaxPages);
+    }
+
+    protected static void configOverrideSqlWindowStorePageSize(int windowStorePageSize) {
+        node1.getConfigurationOverrides().setSqlWindowStorePageSize(windowStorePageSize);
+    }
+
     protected static void configOverrideWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuota(walApplyTableTimeQuota);
     }
@@ -1218,6 +1226,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
         node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
+    }
+
+    protected static void configOverrideWalSegmentRolloverSize(long walSegmentRolloverSize) {
+        node1.getConfigurationOverrides().setWalSegmentRolloverSize(walSegmentRolloverSize);
     }
 
     protected static void configOverrideWriterMixedIOEnabled(boolean enableMixedIO) {

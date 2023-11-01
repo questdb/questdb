@@ -49,10 +49,8 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
-    private static final DateFormat[] DATE_FORMATS;
     private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
     private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
-    private static final int DATE_FORMATS_SIZE;
     private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
@@ -452,21 +450,11 @@ public class SqlUtil {
     }
 
     public static long implicitCastStrAsDate(CharSequence value) {
-        if (value != null) {
-            final int hi = value.length();
-            for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
-                try {
-                    return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.EN_LOCALE);
-                } catch (NumericException ignore) {
-                }
-            }
-            try {
-                return Numbers.parseLong(value, 0, hi);
-            } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DATE);
-            }
+        try {
+            return DateFormatUtils.parseDate(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DATE);
         }
-        return Numbers.LONG_NaN;
     }
 
     public static double implicitCastStrAsDouble(CharSequence value) {
@@ -726,15 +714,6 @@ public class SqlUtil {
 
         final DateFormatCompiler milliCompiler = new DateFormatCompiler();
         final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
-
-        DATE_FORMATS = new DateFormat[]{
-                pgDateTimeFormat,
-                PG_DATE_Z_FORMAT,
-                PG_DATE_MILLI_TIME_Z_FORMAT,
-                UTC_FORMAT
-        };
-
-        DATE_FORMATS_SIZE = DATE_FORMATS.length;
 
         // we are using "millis" compiler deliberately because clients encode millis into strings
         DATE_FORMATS_FOR_TIMESTAMP = new DateFormat[]{

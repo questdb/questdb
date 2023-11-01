@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.analytic;
+package io.questdb.griffin.engine.window;
 
 
 import io.questdb.cairo.*;
@@ -40,27 +40,33 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final ObjList<AnalyticFunction> allFunctions;
+public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final ObjList<WindowFunction> allFunctions;
     private final RecordCursorFactory base;
+    private final GenericRecordMetadata chainMetadata;
     private final ObjList<RecordComparator> comparators;
-    private final CachedAnalyticRecordCursor cursor;
-    private final ObjList<ObjList<AnalyticFunction>> orderedFunctions;
+    private final CachedWindowRecordCursor cursor;
+    private final ObjList<ObjList<WindowFunction>> ordered2PassFunctions;
+    private final ObjList<ObjList<WindowFunction>> orderedFunctions;
     private final int orderedGroupCount;
+    private final ObjList<IntList> sortKeys;
+    private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
-    private final ObjList<AnalyticFunction> unorderedFunctions;
+    private final ObjList<WindowFunction> unorderedFunctions;
     private boolean closed = false;
 
-    public CachedAnalyticRecordCursorFactory(
+    public CachedWindowRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordSink recordSink,
             GenericRecordMetadata metadata,
-            @Transient ColumnTypes chainMetadata,
+            @Transient ColumnTypes chainTypes,
             ObjList<RecordComparator> comparators,
-            ObjList<ObjList<AnalyticFunction>> orderedFunctions,
-            @Nullable ObjList<AnalyticFunction> unorderedFunctions,
-            @NotNull IntList columnIndexes
+            ObjList<ObjList<WindowFunction>> orderedFunctions,
+            @Nullable ObjList<WindowFunction> unorderedFunctions,
+            @NotNull IntList columnIndexes,
+            @NotNull final ObjList<IntList> sortKeys,
+            @NotNull GenericRecordMetadata chainMetadata
     ) {
         super(metadata);
         this.base = base;
@@ -69,34 +75,71 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         this.orderedFunctions = orderedFunctions;
         this.comparators = comparators;
         RecordChain recordChain = new RecordChain(
-                chainMetadata,
+                chainTypes,
                 recordSink,
-                configuration.getSqlAnalyticStorePageSize(),
-                configuration.getSqlAnalyticStoreMaxPages()
+                configuration.getSqlWindowStorePageSize(),
+                configuration.getSqlWindowStoreMaxPages()
         );
+        this.sortKeys = sortKeys;
+        this.chainMetadata = chainMetadata;
 
         ObjList<LongTreeChain> orderedSources = new ObjList<>(orderedGroupCount);
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderedGroupCount; i++) {
             orderedSources.add(
                     new LongTreeChain(
-                            configuration.getSqlAnalyticTreeKeyPageSize(),
-                            configuration.getSqlAnalyticTreeKeyMaxPages(),
-                            configuration.getSqlAnalyticRowIdPageSize(),
-                            configuration.getSqlAnalyticRowIdMaxPages()
+                            configuration.getSqlWindowTreeKeyPageSize(),
+                            configuration.getSqlWindowTreeKeyMaxPages(),
+                            configuration.getSqlWindowRowIdPageSize(),
+                            configuration.getSqlWindowRowIdMaxPages()
                     )
             );
         }
 
-        this.cursor = new CachedAnalyticRecordCursor(columnIndexes, recordChain, orderedSources);
-
+        this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, orderedSources);
         this.allFunctions = new ObjList<>();
+
+        ObjList<ObjList<WindowFunction>> orderedTmp = null;
         for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
-            allFunctions.addAll(orderedFunctions.getQuick(i));
+            ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
+            allFunctions.addAll(functions);
+
+            ObjList<WindowFunction> twoPassFunctions = null;
+            for (int j = 0, k = functions.size(); j < k; j++) {
+                WindowFunction function = functions.getQuick(j);
+                if (function.getPassCount() > WindowFunction.ONE_PASS) {
+                    if (twoPassFunctions == null) {
+                        twoPassFunctions = new ObjList<WindowFunction>();
+                    }
+                    twoPassFunctions.add(function);
+                }
+            }
+            if (twoPassFunctions != null) {
+                if (orderedTmp == null) {
+                    orderedTmp = new ObjList<ObjList<WindowFunction>>();
+                }
+
+                orderedTmp.extendAndSet(i, twoPassFunctions);
+            }
         }
+
+        ordered2PassFunctions = orderedTmp;
+
+        ObjList<WindowFunction> unorderedTmp = null;
         if (unorderedFunctions != null) {
             allFunctions.addAll(unorderedFunctions);
+
+            for (int i = 0, n = unorderedFunctions.size(); i < n; i++) {
+                WindowFunction function = unorderedFunctions.getQuick(i);
+                if (function.getPassCount() > WindowFunction.ONE_PASS) {
+                    if (unorderedTmp == null) {
+                        unorderedTmp = new ObjList<WindowFunction>();
+                    }
+                    unorderedTmp.add(function);
+                }
+            }
         }
+        this.unordered2PassFunctions = unorderedTmp;
 
         this.unorderedFunctions = unorderedFunctions;
     }
@@ -104,6 +147,11 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
+    }
+
+    @Override
+    public String getBaseColumnName(int idx) {
+        return chainMetadata.getColumnName(idx);
     }
 
     @Override
@@ -125,14 +173,64 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("CachedAnalytic");
-        sink.optAttr("functions", allFunctions);
+        sink.type("CachedWindow");
+
+        boolean oldVal = sink.getUseBaseMetadata();
+        try {
+            if (orderedFunctions.size() > 0) {
+                sink.attr("orderedFunctions");
+                sink.val("[");
+
+                sink.useBaseMetadata(true);
+
+                for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.val(',');
+                    }
+                    sink.val('[');
+
+                    addSortKeys(sink, sortKeys.getQuick(i));
+
+                    sink.val("] => [");
+                    ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
+                    for (int j = 0, k = functions.size(); j < k; j++) {
+                        if (j > 0) {
+                            sink.val(',');
+                        }
+                        sink.val(functions.getQuick(j));
+                    }
+
+                    sink.val("]");
+                }
+                sink.val(']');
+            }
+
+            sink.optAttr("unorderedFunctions", unorderedFunctions, true);
+
+        } finally {
+            sink.useBaseMetadata(oldVal);
+        }
+
         sink.child(base);
     }
 
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    private void addSortKeys(PlanSink sink, IntList list) {
+        for (int i = 0, n = list.size(); i < n; i++) {
+            int colIdx = list.get(i);
+            int col = (colIdx > 0 ? colIdx : -colIdx) - 1;
+            if (i > 0) {
+                sink.val(", ");
+            }
+            sink.val(chainMetadata.getColumnName(col));
+            if (colIdx < 0) {
+                sink.val(" ").val("desc");
+            }
+        }
     }
 
     private void resetFunctions() {
@@ -152,7 +250,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         closed = true;
     }
 
-    class CachedAnalyticRecordCursor implements RecordCursor {
+    class CachedWindowRecordCursor implements RecordCursor {
 
         private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
@@ -163,7 +261,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         private boolean isRecordChainBuilt;
         private long recordChainOffset;
 
-        public CachedAnalyticRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
+        public CachedWindowRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
             this.columnIndexes = columnIndexes;
             this.recordChain = recordChain;
             this.recordChain.setSymbolTableResolver(this);
@@ -179,7 +277,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                 for (int i = 0, n = orderedSources.size(); i < n; i++) {
                     Misc.free(orderedSources.getQuick(i));
                 }
-                resetFunctions(); // calls close on map within RowNumber
+                resetFunctions();
                 isOpen = false;
             }
         }
@@ -252,13 +350,13 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                 }
             }
 
-            // step #2: populate all analytic functions with records in order of respective tree
+            // step #2: populate all window functions with records in order of respective tree
             // run pass1 for all ordered functions
             long offset;
             if (orderedGroupCount > 0) {
                 for (int i = 0; i < orderedGroupCount; i++) {
                     final LongTreeChain tree = orderedSources.getQuick(i);
-                    final ObjList<AnalyticFunction> functions = orderedFunctions.getQuick(i);
+                    final ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
                     final LongTreeChain.TreeCursor cursor = tree.getCursor();
                     final int functionCount = functions.size();
                     while (cursor.hasNext()) {
@@ -275,11 +373,63 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
             // run pass1 for all unordered functions
             if (unorderedFunctions != null) {
                 for (int j = 0, n = unorderedFunctions.size(); j < n; j++) {
-                    final AnalyticFunction f = unorderedFunctions.getQuick(j);
+                    final WindowFunction f = unorderedFunctions.getQuick(j);
                     recordChain.toTop();
                     while (recordChain.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
+                    }
+                }
+            }
+
+            // prepare pass 2 for ordered functions
+            if (ordered2PassFunctions != null) {
+                for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
+                    final ObjList<WindowFunction> functions = ordered2PassFunctions.getQuick(i);
+                    if (functions == null) {
+                        continue;
+                    }
+                    for (int j = 0, k = functions.size(); j < k; j++) {
+                        functions.getQuick(j).preparePass2();
+                    }
+                }
+            }
+            // prepare pass 2 for unordered functions
+            if (unordered2PassFunctions != null) {
+                for (int j = 0, n = unordered2PassFunctions.size(); j < n; j++) {
+                    unordered2PassFunctions.getQuick(j).preparePass2();
+                }
+            }
+
+            // run pass2 for all ordered functions
+            if (ordered2PassFunctions != null) {
+                for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
+                    final LongTreeChain tree = orderedSources.getQuick(i);
+                    final ObjList<WindowFunction> functions = ordered2PassFunctions.getQuick(i);
+                    if (functions == null) {
+                        continue;
+                    }
+                    final LongTreeChain.TreeCursor cursor = tree.getCursor();
+                    final int functionCount = functions.size();
+                    while (cursor.hasNext()) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        offset = cursor.next();
+                        recordChain.recordAt(chainRecord, offset);
+                        for (int j = 0; j < functionCount; j++) {
+                            functions.getQuick(j).pass2(chainRecord, offset, recordChain);
+                        }
+                    }
+                }
+            }
+
+            // run pass2 for all unordered functions
+            if (unordered2PassFunctions != null) {
+                for (int j = 0, n = unordered2PassFunctions.size(); j < n; j++) {
+                    final WindowFunction f = unordered2PassFunctions.getQuick(j);
+                    recordChain.toTop();
+                    while (recordChain.hasNext()) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        f.pass2(chainRecord, chainRecord.getRowId(), recordChain);
                     }
                 }
             }

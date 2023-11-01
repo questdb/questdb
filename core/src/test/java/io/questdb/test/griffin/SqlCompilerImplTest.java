@@ -2481,7 +2481,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 Assert.assertEquals(target + Files.SEPARATOR, name.toString());
                 return false;
             }

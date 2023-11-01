@@ -24,6 +24,7 @@
 
 package io.questdb.test.std.str;
 
+import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -51,6 +52,17 @@ public class Utf8StringSinkTest {
             sink.clear(i);
             TestUtils.assertEquals(str.substring(0, i), sink);
         }
+    }
+
+    @Test
+    public void testDirectUtf8Sequence() {
+        final String str = "Здравей свят";
+        final GcUtf8String src = new GcUtf8String(str);
+        final Utf8StringSink sink = new Utf8StringSink(4);
+        sink.put(src);
+        final byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+        TestUtils.assertEquals(expectedBytes, sink);
+        TestUtils.assertEquals(src, sink);
     }
 
     @Test

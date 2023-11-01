@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.BuildInformation;
-import io.questdb.FactoryProvider;
-import io.questdb.TelemetryConfiguration;
-import io.questdb.VolumeDefinitions;
+import io.questdb.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -59,8 +56,6 @@ public interface CairoConfiguration {
     boolean enableTestFactories();
 
     boolean getAllowTableRegistrySharedWrite();
-
-    int getAnalyticColumnPoolCapacity();
 
     // the '+' is used to prevent overlap with table names
     @NotNull
@@ -269,6 +264,10 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    default QueryLogger getQueryLogger() {
+        return DefaultQueryLogger.INSTANCE;
+    }
+
     @NotNull
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();
@@ -318,18 +317,6 @@ public interface CairoConfiguration {
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 
     long getSpinLockTimeout();
-
-    int getSqlAnalyticRowIdMaxPages();
-
-    int getSqlAnalyticRowIdPageSize();
-
-    int getSqlAnalyticStoreMaxPages();
-
-    int getSqlAnalyticStorePageSize();
-
-    int getSqlAnalyticTreeKeyMaxPages();
-
-    int getSqlAnalyticTreeKeyPageSize();
 
     int getSqlCharacterStoreCapacity();
 
@@ -425,6 +412,20 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getSqlWindowInitialRangeBufferSize();
+
+    int getSqlWindowRowIdMaxPages();
+
+    int getSqlWindowRowIdPageSize();
+
+    int getSqlWindowStoreMaxPages();
+
+    int getSqlWindowStorePageSize();
+
+    int getSqlWindowTreeKeyMaxPages();
+
+    int getSqlWindowTreeKeyPageSize();
+
     int getStrFunctionMaxBufferLength();
 
     @NotNull
@@ -461,13 +462,33 @@ public interface CairoConfiguration {
 
     long getWalPurgeInterval();
 
+    default int getWalPurgeWaitBeforeDelete() {
+        return 0;
+    }
+
     int getWalRecreateDistressedSequencerAttempts();
 
+    /**
+     * If after a commit a WAL segment has more than this number of rows, roll the next transaction onto a new segment.
+     * <p>
+     *
+     * @see #getWalSegmentRolloverSize()
+     */
     long getWalSegmentRolloverRowCount();
+
+    /**
+     * If after a commit a WAL segment is larger than this size, roll the next transaction onto a new segment.
+     * <p>
+     *
+     * @see #getWalSegmentRolloverRowCount()
+     */
+    long getWalSegmentRolloverSize();
 
     double getWalSquashUncommittedRowsMultiplier();
 
     int getWalTxnNotificationQueueCapacity();
+
+    int getWindowColumnPoolCapacity();
 
     int getWithClauseModelPoolCapacity();
 

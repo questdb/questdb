@@ -58,6 +58,7 @@ io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqDateFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBooleanCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory
@@ -84,6 +85,7 @@ io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtDateFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtIPv4FunctionFactory
 io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory
@@ -609,6 +611,9 @@ io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilingDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilingFloatFunctionFactory
 
+# ExpFunctionFactory
+io.questdb.griffin.engine.functions.math.ExpDoubleFunctionFactory
+
 # FloorFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory
@@ -714,6 +719,9 @@ io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory
 
+# vwap()
+io.questdb.griffin.engine.functions.groupby.VwapDoubleGroupByFunctionFactory
+
 # stddev()
 io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory
 
@@ -773,9 +781,10 @@ io.questdb.griffin.engine.functions.str.TrimFunctionFactory
 io.questdb.griffin.engine.functions.str.LTrimFunctionFactory
 io.questdb.griffin.engine.functions.str.RTrimFunctionFactory
 
-# analytic functions
-io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
-io.questdb.griffin.engine.functions.analytic.RankFunctionFactory
+# window functions
+io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
+io.questdb.griffin.engine.functions.window.RankFunctionFactory
+io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
 
 # metadata functions
 io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory
