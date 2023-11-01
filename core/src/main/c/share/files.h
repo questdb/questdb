@@ -163,7 +163,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
  * Signature: (IJ)Z
  */
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *, jclass, jint, jlong);        
+        (JNIEnv *, jclass, jint, jlong);
 
 /*
  * Class:     com_questdb_std_Files
@@ -367,6 +367,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
 #define FILES_RENAME_ERR_OK 0
 #define FILES_RENAME_ERR_EXDEV 1
 #define FILES_RENAME_ERR_OTHER 2
+
+#define FLAG_FS_SUPPORTED -1
 
 #ifdef __cplusplus
 }
