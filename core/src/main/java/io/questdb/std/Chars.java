@@ -414,27 +414,27 @@ public final class Chars {
         return value.hashCode();
     }
 
-    public static int indexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {
+    public static int indexOf(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence term) {
         int termLen = term.length();
         if (termLen == 0) {
             return 0;
         }
 
         char first = term.charAt(0);
-        int max = sequenceHi - termLen;
+        int max = seqHi - termLen;
 
-        for (int i = sequenceLo; i <= max; ++i) {
-            if (sequence.charAt(i) != first) {
+        for (int i = seqLo; i <= max; ++i) {
+            if (seq.charAt(i) != first) {
                 do {
                     ++i;
-                } while (i <= max && sequence.charAt(i) != first);
+                } while (i <= max && seq.charAt(i) != first);
             }
 
             if (i <= max) {
                 int j = i + 1;
                 int end = j + termLen - 1;
 
-                for (int k = 1; j < end && sequence.charAt(j) == term.charAt(k); ++k) {
+                for (int k = 1; j < end && seq.charAt(j) == term.charAt(k); ++k) {
                     ++j;
                 }
 
@@ -447,10 +447,10 @@ public final class Chars {
         return -1;
     }
 
-    public static int indexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term, int occurrence) {
+    public static int indexOf(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence term, int occurrence) {
         int m = term.length();
         if (m == 0) {
-            return -1;
+            return 0;
         }
 
         if (occurrence == 0) {
@@ -460,16 +460,16 @@ public final class Chars {
         int foundIndex = -1;
         int count = 0;
         if (occurrence > 0) {
-            for (int i = sequenceLo; i < sequenceHi; i++) {
+            for (int i = seqLo; i < seqHi; i++) {
                 if (foundIndex == -1) {
-                    if (sequenceHi - i < m) {
+                    if (seqHi - i < m) {
                         return -1;
                     }
-                    if (sequence.charAt(i) == term.charAt(0)) {
+                    if (seq.charAt(i) == term.charAt(0)) {
                         foundIndex = i;
                     }
                 } else { // first character matched, try to match the rest of the term
-                    if (sequence.charAt(i) != term.charAt(i - foundIndex)) {
+                    if (seq.charAt(i) != term.charAt(i - foundIndex)) {
                         // start again from after where the first character was found
                         i = foundIndex;
                         foundIndex = -1;
@@ -486,16 +486,16 @@ public final class Chars {
                 }
             }
         } else { // if occurrence is negative, search in reverse
-            for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
+            for (int i = seqHi - 1; i >= seqLo; i--) {
                 if (foundIndex == -1) {
-                    if (i - sequenceLo + 1 < m) {
+                    if (i - seqLo + 1 < m) {
                         return -1;
                     }
-                    if (sequence.charAt(i) == term.charAt(m - 1)) {
+                    if (seq.charAt(i) == term.charAt(m - 1)) {
                         foundIndex = i;
                     }
                 } else { // last character matched, try to match the rest of the term
-                    if (sequence.charAt(i) != term.charAt(m - 1 + i - foundIndex)) {
+                    if (seq.charAt(i) != term.charAt(m - 1 + i - foundIndex)) {
                         // start again from after where the first character was found
                         i = foundIndex;
                         foundIndex = -1;
@@ -516,27 +516,27 @@ public final class Chars {
         return -1;
     }
 
-    public static int indexOf(CharSequence s, char c) {
-        return indexOf(s, 0, c);
+    public static int indexOf(CharSequence seq, char c) {
+        return indexOf(seq, 0, c);
     }
 
-    public static int indexOf(CharSequence s, final int lo, char c) {
-        return indexOf(s, lo, s.length(), c);
+    public static int indexOf(CharSequence seq, final int seqLo, char c) {
+        return indexOf(seq, seqLo, seq.length(), c);
     }
 
-    public static int indexOf(CharSequence s, final int lo, int hi, char c) {
-        return indexOf(s, lo, hi, c, 1);
+    public static int indexOf(CharSequence seq, int seqLo, int seqHi, char c) {
+        return indexOf(seq, seqLo, seqHi, c, 1);
     }
 
-    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, char ch, int occurrence) {
+    public static int indexOf(CharSequence seq, int seqLo, int seqHi, char ch, int occurrence) {
         if (occurrence == 0) {
             return -1;
         }
 
         int count = 0;
         if (occurrence > 0) {
-            for (int i = sequenceLo; i < sequenceHi; i++) {
-                if (sequence.charAt(i) == ch) {
+            for (int i = seqLo; i < seqHi; i++) {
+                if (seq.charAt(i) == ch) {
                     count++;
                     if (count == occurrence) {
                         return i;
@@ -544,8 +544,8 @@ public final class Chars {
                 }
             }
         } else {    // if occurrence is negative, search in reverse
-            for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
-                if (sequence.charAt(i) == ch) {
+            for (int i = seqHi - 1; i >= seqLo; i--) {
+                if (seq.charAt(i) == ch) {
                     count--;
                     if (count == occurrence) {
                         return i;
@@ -558,26 +558,26 @@ public final class Chars {
     }
 
     // Term has to be lower-case.
-    public static int indexOfLowerCase(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence termLC) {
+    public static int indexOfLowerCase(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence termLC) {
         int termLen = termLC.length();
         if (termLen == 0) {
             return 0;
         }
 
         char first = termLC.charAt(0);
-        int max = sequenceHi - termLen;
+        int max = seqHi - termLen;
 
-        for (int i = sequenceLo; i <= max; ++i) {
-            if (Character.toLowerCase(sequence.charAt(i)) != first) {
+        for (int i = seqLo; i <= max; ++i) {
+            if (Character.toLowerCase(seq.charAt(i)) != first) {
                 do {
                     ++i;
-                } while (i <= max && Character.toLowerCase(sequence.charAt(i)) != first);
+                } while (i <= max && Character.toLowerCase(seq.charAt(i)) != first);
             }
 
             if (i <= max) {
                 int j = i + 1;
                 int end = j + termLen - 1;
-                for (int k = 1; j < end && Character.toLowerCase(sequence.charAt(j)) == termLC.charAt(k); ++k) {
+                for (int k = 1; j < end && Character.toLowerCase(seq.charAt(j)) == termLC.charAt(k); ++k) {
                     ++j;
                 }
                 if (j == end) {
