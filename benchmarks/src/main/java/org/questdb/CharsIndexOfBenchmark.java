@@ -68,12 +68,12 @@ public class CharsIndexOfBenchmark {
 
     @Benchmark
     public int testBidirectionalIndexOf() {
-        return Chars.indexOf(seq, 0, seq.length(), "google");
+        return Chars.indexOf(seq, 0, seq.length(), "google", 1);
     }
 
     @Benchmark
-    public int testNaiveIndexOf() {
-        return Chars.indexOf(seq, 0, seq.length(), "google", 1);
+    public int testIndexOf() {
+        return Chars.indexOf(seq, 0, seq.length(), "google");
     }
 
     @Benchmark
