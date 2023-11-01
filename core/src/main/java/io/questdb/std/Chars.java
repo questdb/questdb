@@ -264,6 +264,26 @@ public final class Chars {
     }
 
     /**
+     * Returns {@code true} if and only if the two specified char sequences are
+     * identical to each other for {@code length} chars starting at {@code aLo}
+     * index for the {@code a} sequence and {@code bLo} index for the {@code b} sequence.
+     * A more compact way to express this is:
+     * <p>
+     * {@code a[aLo : aLo + length] == b[bLo : bLo + length]}
+     */
+    public static boolean equals(@NotNull CharSequence a, int aLo, @NotNull CharSequence b, int bLo, int length) {
+        if (a.length() - length < aLo || b.length() - length < bLo) {
+            return false;
+        }
+        for (int i = 0; i < length; i++) {
+            if (a.charAt(i + aLo) != b.charAt(i + bLo)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Case-insensitive comparison of two char sequences.
      *
      * @param l left sequence
@@ -414,8 +434,83 @@ public final class Chars {
         return value.hashCode();
     }
 
-    public static int indexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {
-        return indexOf(sequence, sequenceLo, sequenceHi, term, 1);
+    /**
+     * Returns the index of needle in haystack, or -1 if needle is not in haystack.
+     * Based on the <a href="https://en.wikipedia.org/wiki/Two-way_string-matching_algorithm">Two-Way
+     * string matching algorithm</a> and, in particular
+     * <a href="https://github.com/netty/netty/blob/9b80d081ff3478c46152b012ae0e21f939467ac3/buffer/src/main/java/io/netty/buffer/ByteBufUtil.java#L235C55-L235C63">
+     * Netty implementation</a>.
+     */
+    public static int indexOf(@NotNull CharSequence haystack, int haystackLo, int haystackHi, @NotNull CharSequence needle) {
+        int n = haystackHi - haystackLo;
+        int m = needle.length();
+        if (m == 0) {
+            return 0;
+        }
+
+        if (m == 1) {
+            return indexOf(haystack, haystackLo, haystackHi, needle.charAt(0));
+        }
+
+        int i;
+        int j = 0;
+        long suffixes = maxSuf(needle, m, 0, true);
+        long prefixes = maxSuf(needle, m, 0, false);
+        int ell = Math.max((int) (suffixes >> 32), (int) (prefixes >> 32));
+        int per = Math.max((int) suffixes, (int) prefixes);
+        int memory;
+        int length = Math.min(m - per, ell + 1);
+
+        if (equals(needle, 0, needle, per, length)) {
+            memory = -1;
+            while (j <= n - m) {
+                i = Math.max(ell, memory) + 1;
+                while (i < m && needle.charAt(i) == haystack.charAt(i + j + haystackLo)) {
+                    ++i;
+                }
+                if (i > n) {
+                    return -1;
+                }
+                if (i >= m) {
+                    i = ell;
+                    while (i > memory && needle.charAt(i) == haystack.charAt(i + j + haystackLo)) {
+                        --i;
+                    }
+                    if (i <= memory) {
+                        return j + haystackLo;
+                    }
+                    j += per;
+                    memory = m - per - 1;
+                } else {
+                    j += i - ell;
+                    memory = -1;
+                }
+            }
+        } else {
+            per = Math.max(ell + 1, m - ell - 1) + 1;
+            while (j <= n - m) {
+                i = ell + 1;
+                while (i < m && needle.charAt(i) == haystack.charAt(i + j + haystackLo)) {
+                    ++i;
+                }
+                if (i > n) {
+                    return -1;
+                }
+                if (i >= m) {
+                    i = ell;
+                    while (i >= 0 && needle.charAt(i) == haystack.charAt(i + j + haystackLo)) {
+                        --i;
+                    }
+                    if (i < 0) {
+                        return j + haystackLo;
+                    }
+                    j += per;
+                } else {
+                    j += i - ell;
+                }
+            }
+        }
+        return -1;
     }
 
     public static int indexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term, int occurrence) {
@@ -1165,6 +1260,37 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    private static long maxSuf(@NotNull CharSequence x, int m, int start, boolean isSuffix) {
+        int p = 1;
+        int ms = -1;
+        int j = start;
+        int k = 1;
+        char a;
+        char b;
+        while (j + k < m) {
+            a = x.charAt(j + k);
+            b = x.charAt(ms + k);
+            boolean suffix = isSuffix ? a < b : a > b;
+            if (suffix) {
+                j += k;
+                k = 1;
+                p = j - ms;
+            } else if (a == b) {
+                if (k != p) {
+                    ++k;
+                } else {
+                    j += p;
+                    k = 1;
+                }
+            } else {
+                ms = j;
+                j = ms + 1;
+                k = p = 1;
+            }
+        }
+        return ((long) ms << 32) + p;
     }
 
     static {

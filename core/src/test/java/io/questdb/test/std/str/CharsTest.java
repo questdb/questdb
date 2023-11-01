@@ -295,6 +295,18 @@ public class CharsTest {
     }
 
     @Test
+    public void testIndexOf() {
+        Assert.assertEquals(4, Chars.indexOf("foo bar baz", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOf("foo bar baz", 0, 11, "ba"));
+        Assert.assertEquals(8, Chars.indexOf("foo bar baz", 6, 11, "ba"));
+        Assert.assertEquals(1, Chars.indexOf("foo bar baz", 0, 7, "oo"));
+        Assert.assertEquals(0, Chars.indexOf("foo bar baz", 2, 4, ""));
+        Assert.assertEquals(-1, Chars.indexOf("foo bar baz", 2, 4, "y"));
+        Assert.assertEquals(-1, Chars.indexOf("", 0, 0, "oo"));
+        Assert.assertEquals(-1, Chars.indexOf("", 0, 0, "y"));
+    }
+
+    @Test
     public void testIsBlank() {
         Assert.assertTrue(Chars.isBlank(null));
         Assert.assertTrue(Chars.isBlank(""));
