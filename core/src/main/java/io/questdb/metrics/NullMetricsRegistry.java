@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class NullMetricsRegistry implements MetricsRegistry {
@@ -75,6 +75,6 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
-    public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
     }
 }

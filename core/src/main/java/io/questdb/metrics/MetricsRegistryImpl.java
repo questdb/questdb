@@ -25,7 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class MetricsRegistryImpl implements MetricsRegistry {
@@ -88,7 +88,7 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
-    public void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         for (int i = 0, n = metrics.size(); i < n; i++) {
             Scrapable metric = metrics.getQuick(i);
             metric.scrapeIntoPrometheus(sink);

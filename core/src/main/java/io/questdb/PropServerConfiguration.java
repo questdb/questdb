@@ -335,8 +335,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walEnabledDefault;
     private final int walMaxLagTxnCount;
     private final long walPurgeInterval;
+    private final int walPurgeWaitBeforeDelete;
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
+    private final long walSegmentRolloverSize;
     private final double walSquashUncommittedRowsMultiplier;
     private final boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
@@ -511,11 +513,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         // instead cairo.wal.enabled.default=true is added to the config, so only new QuestDB installations have WAL enabled by default
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
         this.walPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
+        this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         walApplyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_ENABLED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
+        this.walSegmentRolloverSize = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 0);  // disabled by default.
+        if ((this.walSegmentRolloverSize != 0) && (this.walSegmentRolloverSize < 1024)) {  // 1KiB segments minimum
+            throw CairoException.critical(0).put("cairo.wal.segment.rollover.size must be 0 (disabled) or >= 1024 (1KiB)");
+        }
         this.walWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, Numbers.SIZE_1MB));
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 20.0);
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, Math.max((int) Math.round(walSquashUncommittedRowsMultiplier), 1));
@@ -523,6 +530,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
         this.tempRenamePendingTablePrefix = getString(properties, env, PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX, "temp_5822f658-31f6-11ee-be56-0242ac120002");
+        if (tempRenamePendingTablePrefix.length() > maxFileNameLength - 4) {
+            throw CairoException.critical(0).put("Temp pending table prefix is too long [")
+                    .put(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.toString()).put("=")
+                    .put(maxFileNameLength).put(", ")
+                    .put(PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX.toString()).put("=")
+                    .put(tempRenamePendingTablePrefix).put(']');
+        }
+        if (!TableUtils.isValidTableName(tempRenamePendingTablePrefix, maxFileNameLength)) {
+            throw CairoException.critical(0).put("Invalid temp pending table prefix [")
+                    .put(PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX.toString()).put("=")
+                    .put(tempRenamePendingTablePrefix).put(']');
+        }
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
@@ -2541,6 +2560,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getWalPurgeWaitBeforeDelete() {
+            return walPurgeWaitBeforeDelete;
+        }
+
+        @Override
         public int getWalRecreateDistressedSequencerAttempts() {
             return walRecreateDistressedSequencerAttempts;
         }
@@ -2548,6 +2572,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverRowCount() {
             return walSegmentRolloverRowCount;
+        }
+
+        @Override
+        public long getWalSegmentRolloverSize() {
+            return walSegmentRolloverSize;
         }
 
         @Override

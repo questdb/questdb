@@ -80,6 +80,7 @@ public class Overrides implements ConfigurationOverrides {
     private int rndFunctionMemoryPageSize = -1;
     private RostiAllocFacade rostiAllocFacade = null;
     private int sampleByIndexSearchPageSize;
+    private boolean simulateCrashEnabled;
     private String snapshotInstanceId = null;
     private Boolean snapshotRecoveryEnabled = null;
     private long spinLockTimeout = -1;
@@ -93,6 +94,7 @@ public class Overrides implements ConfigurationOverrides {
     private int walMaxLagTxnCount = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
+    private long walSegmentRolloverSize = -1;
     private int walTxnNotificationQueueCapacity = -1;
     private long writerAsyncCommandBusyWaitTimeout = -1;
     private long writerAsyncCommandMaxTimeout = -1;
@@ -286,6 +288,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public boolean getSimulateCrashEnabled() {
+        return simulateCrashEnabled;
+    }
+
+    @Override
     public String getSnapshotInstanceId() {
         return snapshotInstanceId;
     }
@@ -351,6 +358,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return walSegmentRolloverRowCount;
+    }
+
+    @Override
+    public long getWalSegmentRolloverSize() {
+        return walSegmentRolloverSize;
     }
 
     @Override
@@ -461,6 +473,7 @@ public class Overrides implements ConfigurationOverrides {
         walMaxLagTxnCount = -1;
         repeatMigrationsFromVersion = -1;
         factoryProvider = null;
+        simulateCrashEnabled = false;
     }
 
     @Override
@@ -541,6 +554,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setFactoryProvider(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
+    }
+
+    @Override
+    public void setSimulateCrashEnabled(boolean enabled) {
+        this.simulateCrashEnabled = enabled;
     }
 
     @Override
@@ -745,6 +763,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
         this.walSegmentRolloverRowCount = walSegmentRolloverRowCount;
+    }
+
+    @Override
+    public void setWalSegmentRolloverSize(long walSegmentRolloverSize) {
+        this.walSegmentRolloverSize = walSegmentRolloverSize;
     }
 
     @Override

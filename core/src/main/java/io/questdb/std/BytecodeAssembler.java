@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.bytes.Bytes;
 import io.questdb.std.ex.BytecodeException;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -673,8 +674,9 @@ public class BytecodeAssembler {
         // add standard stuff
         objectClassIndex = poolClass(Object.class);
         defaultConstructorMethodIndex = poolMethod(objectClassIndex, poolNameAndType(
-                defaultConstructorNameIndex = poolUtf8("<init>"),
-                defaultConstructorDescIndex = poolUtf8("()V"))
+                        defaultConstructorNameIndex = poolUtf8("<init>"),
+                        defaultConstructorDescIndex = poolUtf8("()V")
+                )
         );
         codeAttributeIndex = poolUtf8("Code");
     }
@@ -835,6 +837,15 @@ public class BytecodeAssembler {
         @Override
         public Utf8Appender put(int value) {
             Utf8Sink.super.put(value);
+            return this;
+        }
+
+        @Override
+        public Utf8Appender put(long lo, long hi) {
+            Bytes.checkedLoHiSize(lo, hi, BytecodeAssembler.this.position());
+            for (long p = lo; p < hi; p++) {
+                BytecodeAssembler.this.putByte(Unsafe.getUnsafe().getByte(p));
+            }
             return this;
         }
 

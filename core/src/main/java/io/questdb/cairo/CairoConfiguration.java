@@ -462,9 +462,27 @@ public interface CairoConfiguration {
 
     long getWalPurgeInterval();
 
+    default int getWalPurgeWaitBeforeDelete() {
+        return 0;
+    }
+
     int getWalRecreateDistressedSequencerAttempts();
 
+    /**
+     * If after a commit a WAL segment has more than this number of rows, roll the next transaction onto a new segment.
+     * <p>
+     *
+     * @see #getWalSegmentRolloverSize()
+     */
     long getWalSegmentRolloverRowCount();
+
+    /**
+     * If after a commit a WAL segment is larger than this size, roll the next transaction onto a new segment.
+     * <p>
+     *
+     * @see #getWalSegmentRolloverRowCount()
+     */
+    long getWalSegmentRolloverSize();
 
     double getWalSquashUncommittedRowsMultiplier();
 

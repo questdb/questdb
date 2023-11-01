@@ -295,7 +295,7 @@ public class LogRecordSinkTest {
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
-                logRecord.putUtf8(utf8.lo(), utf8.hi());
+                logRecord.put(utf8.lo(), utf8.hi());
                 Assert.assertEquals(expectedLen, logRecord.size());
             } finally {
                 Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);

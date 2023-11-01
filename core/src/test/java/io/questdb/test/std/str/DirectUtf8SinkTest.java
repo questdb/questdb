@@ -146,6 +146,18 @@ public class DirectUtf8SinkTest {
     }
 
     @Test
+    public void testDirectUtf8Sequence() {
+        try (DirectUtf8Sink srcSink = new DirectUtf8Sink(4); DirectUtf8Sink destSink = new DirectUtf8Sink(4)) {
+            final String str = "Здравей свят";
+            srcSink.put(str);
+            final byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+            TestUtils.assertEquals(expectedBytes, srcSink);
+            destSink.put(srcSink);
+            TestUtils.assertEquals(expectedBytes, destSink);
+        }
+    }
+
+    @Test
     public void testPutUtf8Sequence() {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(1)) {
             final String str = "こんにちは世界";
@@ -228,7 +240,7 @@ public class DirectUtf8SinkTest {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(4)) {
             final String str = "Здравей свят";
             sink.put(str);
-            byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+            final byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
             TestUtils.assertEquals(expectedBytes, sink);
         }
     }

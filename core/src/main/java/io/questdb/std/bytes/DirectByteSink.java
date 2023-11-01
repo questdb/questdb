@@ -189,12 +189,13 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (dbs == null) {
             return this;
         }
-        return put(dbs.ptr(), dbs.size());
+        return put(dbs.lo(), dbs.hi());
     }
 
-    public DirectByteSink put(long src, long len) {
+    public DirectByteSink put(long lo, long hi) {
+        final long len = hi - lo;
         final long dest = book(len);
-        Vect.memcpy(dest, src, len);
+        Vect.memcpy(dest, lo, len);
         advance(len);
         return this;
     }

@@ -24,9 +24,11 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
+/** Anything that can be scraped for Prometheus metrics. */
 public interface Scrapable {
-    void scrapeIntoPrometheus(@NotNull CharSinkBase<?> sink);
+    // We need a sink that we can borrow from and append to in native code.
+    void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink);
 }

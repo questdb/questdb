@@ -857,6 +857,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalSegmentRolloverSize() {
+        return 0;  // watermark level disabled.
+    }
+
+    @Override
     public double getWalSquashUncommittedRowsMultiplier() {
         return 20;
     }

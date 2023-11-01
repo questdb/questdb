@@ -1703,6 +1703,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int r;
         try {
             r = authenticator.handleIO();
+            if (r == Authenticator.OK) {
+                CharSequence principal = authenticator.getPrincipal();
+                SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
+                try {
+                    securityContext.authorizePGWIRE();
+                    sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+                    r = authenticator.loginOK();
+                } catch (CairoException e) {
+                    r = authenticator.denyAccess();
+                }
+            }
         } catch (AuthenticatorException e) {
             throw PeerDisconnectedException.INSTANCE;
         }
@@ -1719,10 +1730,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             default:
                 throw BadProtocolException.INSTANCE;
         }
-        CharSequence principal = authenticator.getPrincipal();
-        SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
-        securityContext.authorizePGWIRE();
-        sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+
         sendRNQ = true;
 
         // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it
@@ -3024,6 +3032,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
+        public Utf8Sink put(long lo, long hi) {
+            // Once this is actually needed, the impl would look something like:
+            // final long size = hi - lo;
+            // ensureCapacity(size);
+            // Vect.memcpy(sendBufferPtr, lo, size);
+            // sendBufferPtr += size;
+            // return this;
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
             // this method is only called by date format utility to print timezone name
             if (us != null) {
@@ -3115,7 +3134,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             bookmarkPtr = -1;
         }
 
-        private void ensureCapacity(int size) {
+        private void ensureCapacity(long size) {
             if (sendBufferPtr + size < sendBufferLimit) {
                 return;
             }

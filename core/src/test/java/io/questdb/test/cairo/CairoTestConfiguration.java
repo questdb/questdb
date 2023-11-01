@@ -200,6 +200,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public boolean getSimulateCrashEnabled() {
+        return overrides.getSimulateCrashEnabled();
+    }
+
+    @Override
     public int getRepeatMigrationsFromVersion() {
         return overrides.getRepeatMigrationsFromVersion();
     }
@@ -327,6 +332,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return overrides.getWalSegmentRolloverRowCount() < 0 ? super.getWalSegmentRolloverRowCount() : overrides.getWalSegmentRolloverRowCount();
+    }
+
+    @Override
+    public long getWalSegmentRolloverSize() {
+        return overrides.getWalSegmentRolloverSize() < 0 ? super.getWalSegmentRolloverSize() : overrides.getWalSegmentRolloverSize();
     }
 
     @Override

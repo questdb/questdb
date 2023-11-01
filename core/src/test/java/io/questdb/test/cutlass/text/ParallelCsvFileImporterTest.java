@@ -808,11 +808,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 if (Utf8s.endsWithAscii(name, tab34_0)) {
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
         };
 
@@ -910,11 +910,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 if (Utf8s.equalsAscii(tempDir, name)) {
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
         };
 
@@ -943,11 +943,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 if (Utf8s.endsWithAscii(name, mangledPartDir)) {
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rmdir(name, lazy);
             }
         };
 
