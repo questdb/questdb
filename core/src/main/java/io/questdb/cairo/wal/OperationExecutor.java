@@ -27,6 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -58,7 +59,7 @@ class OperationExecutor implements Closeable {
                 sharedWorkerCount
         );
         renameSupportExecutionContext.with(
-                engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                AllowAllSecurityContext.INSTANCE,
                 bindVariableService,
                 rnd,
                 -1,

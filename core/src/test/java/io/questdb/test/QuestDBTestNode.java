@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
@@ -207,7 +208,7 @@ public class QuestDBTestNode {
             bindVariableService = new BindVariableServiceImpl(cairo.configuration);
             sqlExecutionContext = new SqlExecutionContextImpl(cairo.engine, 1)
                     .with(
-                            cairo.configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            AllowAllSecurityContext.INSTANCE,
                             bindVariableService,
                             null,
                             -1,

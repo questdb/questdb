@@ -24,13 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.LongList;
-import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-@SuppressWarnings("unused")
-public interface SecurityContext {
+public interface SecurityContext extends QuietCloseable, Mutable {
 
     void assumeServiceAccount(CharSequence serviceAccountName);
 
@@ -174,5 +171,9 @@ public interface SecurityContext {
      */
     default CharSequence getSessionPrincipal() {
         return getPrincipal();
+    }
+
+    default SecurityContext init(@Transient CharSequence principal) {
+        return this;
     }
 }

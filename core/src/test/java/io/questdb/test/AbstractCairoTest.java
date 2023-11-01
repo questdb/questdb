@@ -28,6 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
@@ -408,7 +409,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         nodes.clear();
         node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides(), getEngineFactory(), getConfigurationFactory());
         configuration = node1.getConfiguration();
-        securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
+        securityContext = AllowAllSecurityContext.INSTANCE;
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         messageBus = node1.getMessageBus();

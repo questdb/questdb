@@ -1704,13 +1704,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             r = authenticator.handleIO();
             if (r == Authenticator.OK) {
-                CharSequence principal = authenticator.getPrincipal();
-                SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
+                SecurityContext securityContext = securityContextFactory.getInstance(authenticator.getPrincipal(), SecurityContextFactory.PGWIRE);
                 try {
                     securityContext.authorizePGWIRE();
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
+                    // todo: handle this separately from auth failure
                     r = authenticator.denyAccess();
                 }
             }
@@ -1863,6 +1863,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 );
                 break;
             case 'X': // 'Terminate'
+                sqlExecutionContext.getSecurityContext().close();
                 throw PeerDisconnectedException.INSTANCE;
             case 'C':
                 // close

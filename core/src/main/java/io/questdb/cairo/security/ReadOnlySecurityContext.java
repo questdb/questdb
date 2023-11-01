@@ -310,6 +310,14 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void clear() {
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
     public void exitServiceAccount(CharSequence serviceAccountName) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }

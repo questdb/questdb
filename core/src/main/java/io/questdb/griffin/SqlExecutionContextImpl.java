@@ -285,6 +285,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return this;
     }
 
+    public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext) {
+        return with(securityContext, null, null);
+    }
+
     public void with(int requestFd) {
         this.requestFd = requestFd;
     }

@@ -13,9 +13,9 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     // todo: consider making the constants configurable
     private static final int MAX_POOL_SEGMENTS = 64;
     // todo: are you sure there are no side effects here? for example the dirName? at very least it's being logged
-    // by the pool and that's confusing
-    // note: we should not use too many colours otherwise the pool might create more compiler instances
-    // then with no pooling at all. This is because we have to have a separate compiler for each colour.
+    //  by the pool and that's confusing
+    //  note: we should not use too many colours otherwise the pool might create more compiler instances
+    //  then with no pooling at all. This is because we have to have a separate compiler for each colour.
     private static final TableToken[] TOKENS = {
             new TableToken("blue", "/compilers/blue/", 0, false, false),
             new TableToken("red", "/compilers/red/", 0, false, false),
@@ -39,8 +39,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
     @Override
     protected byte getListenerSrc() {
-        // todo: what is this?
-        return 0;
+        return PoolListener.SRC_SQL_COMPILER;
     }
 
     @Override
@@ -133,8 +132,8 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void refresh() {
             // todo: is this correct? should we be doing this?
-            // and if so then perhaps we should do this while returning the compiler to the pool?
-            this.clear();
+            //  and if so then perhaps we should do this while returning the compiler to the pool?
+            clear();
         }
 
         @Override

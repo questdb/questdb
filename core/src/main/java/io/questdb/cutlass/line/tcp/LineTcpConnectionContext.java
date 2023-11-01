@@ -110,6 +110,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     @Override
     public void clear() {
         super.clear();
+        securityContext.close();
         securityContext = DenyAllSecurityContext.INSTANCE;
         authenticator.clear();
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);

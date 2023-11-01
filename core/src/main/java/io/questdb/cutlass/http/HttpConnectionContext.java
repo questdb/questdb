@@ -312,7 +312,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.retryAttemptAttributes.lastRunTimestamp = 0;
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
-        this.securityContext = DenyAllSecurityContext.INSTANCE;
+        securityContext.close();
+        securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.clear();
         clearSuspendEvent();
     }
@@ -414,11 +415,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (!authenticator.authenticate(headerParser)) {
                 return false;
             }
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    authenticator.getPrincipal(),
-                    SecurityContextFactory.HTTP
-            );
-            securityContext.authorizeHTTP();
+            try {
+                securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                        authenticator.getPrincipal(),
+                        SecurityContextFactory.HTTP
+                );
+                securityContext.authorizeHTTP();
+            } catch (CairoException e) {
+                // todo: handle this separately from auth failure
+                return false;
+            }
         }
         return true;
     }

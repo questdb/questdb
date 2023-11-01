@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -83,11 +84,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.retryDelay = configuration.getColumnPurgeRetryDelay();
         this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(
-                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                null,
-                null
-        );
+        this.sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE);
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             this.tableToken = sqlCompiler.query()
                     .$("CREATE TABLE IF NOT EXISTS \"")
