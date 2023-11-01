@@ -28,15 +28,18 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
+
+import java.io.Closeable;
+import java.io.IOException;
 
 /**
  * Returns rows from current data frame in order of cursors list :
@@ -44,24 +47,22 @@ import io.questdb.std.str.CharSink;
  * - then from second cursor, third, ...
  * until all cursors are exhausted .
  */
-public class SequentialRecordCursorFactory<T extends RecordCursorFactory> extends AbstractRecordCursorFactory {
-
-    private static final Log LOG = LogFactory.getLog(SequentialRecordCursorFactory.class);
+public class SequentialRecordCursorFactory<T extends RecordCursorFactory> implements RecordCursorFactory {
     private final SequentialRecordCursor cursor;
     private final ObjList<T> cursorFactories;
     private final ObjList<RecordCursor> cursors;
-    private  long cursorSize = 0;
 
     public SequentialRecordCursorFactory(ObjList<T> cursorFactories) {
-        super(cursorFactories.getLast().getMetadata());
         this.cursorFactories = cursorFactories;
         cursors = new ObjList<>();
         cursor = new SequentialRecordCursor();
-
     }
 
     @Override
     public RecordMetadata getMetadata() {
+        if (cursorFactories.size() == 0) {
+            return AnyRecordMetadata.INSTANCE;
+        }
         return cursorFactories.getQuick(0).getMetadata();
     }
 
@@ -75,7 +76,6 @@ public class SequentialRecordCursorFactory<T extends RecordCursorFactory> extend
         for (int i = 0; i < cursorFactories.size(); i++) {
             RecordCursor cursor = cursorFactories.getQuick(i).getCursor(executionContext);
             cursors.extendAndSet(i, cursor);
-            cursorSize += cursor.size();
         }
         cursor.init();
         return cursor;
@@ -89,22 +89,36 @@ public class SequentialRecordCursorFactory<T extends RecordCursorFactory> extend
         }
     }
 
+    @Override
+    public void close() {
+        RecordCursorFactory.super.close();
+        for (int i = 0; i < cursorFactories.size(); i++) {
+               RecordCursorFactory factory = cursorFactories.get(i);
+               factory.close();
+        }
+        cursorFactories.clear();
+    }
+
     private class SequentialRecordCursor implements NoRandomAccessRecordCursor {
-        private final SequentialRecord sequentialRecord  = new SequentialRecord();
+        private final SequentialRecord sequentialRecord = new SequentialRecord();
 
         private RecordCursor currentCursor;
         private int cursorIndex = 0;
 
         private void init() {
-                cursorIndex = 0;
-                currentCursor = cursors.getQuick(0);
+            cursorIndex = 0;
+            currentCursor = cursors.getQuiet(0);
+            if (currentCursor != null) {
                 sequentialRecord.setCurrentRecord(currentCursor.getRecord());
+            }
         }
+
         @Override
         public void close() {
             for (int i = 0; i < cursors.size(); i++) {
                 cursors.getQuick(i).close();
             }
+            cursors.clear();
         }
 
         @Override
@@ -114,18 +128,21 @@ public class SequentialRecordCursorFactory<T extends RecordCursorFactory> extend
 
         @Override
         public boolean hasNext() {
+            if (currentCursor == null) {
+                return false;
+            }
 
             boolean hasNext = currentCursor.hasNext();
             if (hasNext) {
                 return true;
             }
 
-            while(cursorIndex+1 < cursors.size()) {
+            while (cursorIndex + 1 < cursors.size()) {
                 cursorIndex++;
                 currentCursor = cursors.getQuick(cursorIndex);
                 sequentialRecord.setCurrentRecord(currentCursor.getRecord());
-                hasNext  = currentCursor.hasNext();
-                if (hasNext){
+                hasNext = currentCursor.hasNext();
+                if (hasNext) {
                     return true;
                 }
             }
@@ -134,7 +151,7 @@ public class SequentialRecordCursorFactory<T extends RecordCursorFactory> extend
 
         @Override
         public long size() throws DataUnavailableException {
-            return cursorSize;
+            return -1;
         }
 
 
@@ -145,7 +162,6 @@ public class SequentialRecordCursorFactory<T extends RecordCursorFactory> extend
             }
             init();
         }
-
 
 
     }
@@ -175,7 +191,7 @@ public class SequentialRecordCursorFactory<T extends RecordCursorFactory> extend
 
         @Override
         public byte getByte(int col) {
-            return  currentRecord.getByte(col);
+            return currentRecord.getByte(col);
         }
 
         @Override
@@ -241,11 +257,6 @@ public class SequentialRecordCursorFactory<T extends RecordCursorFactory> extend
         @Override
         public long getLong128Lo(int col) {
             return currentRecord.getLong128Lo(col);
-        }
-
-        @Override
-        public void getLong256(int col, CharSink sink) {
-            currentRecord.getLong256(col, sink);
         }
 
         @Override

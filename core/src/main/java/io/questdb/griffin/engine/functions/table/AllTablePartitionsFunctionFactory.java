@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.SequentialRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
@@ -61,13 +62,20 @@ public class AllTablePartitionsFunctionFactory implements FunctionFactory {
             try {
                 TableToken tt = tableTokensBucket.get(i);
 
-                    ShowPartitionsRecordCursorFactory factory = new ShowPartitionsRecordCursorFactory(tt);
-                    factories.add(factory);
+                ShowPartitionsRecordCursorFactory factory = new ShowPartitionsRecordCursorFactory(tt);
+                factories.add(factory);
 
             } catch (CairoException e) {
                 throw SqlException.$(argPos.getQuick(i), e.getFlyweightMessage());
             }
         }
-        return new CursorFunction(new SequentialRecordCursorFactory<>(factories));
+        return new CursorFunction(new SequentialRecordCursorFactory<>(factories)) {
+            @Override
+            public void close() {
+                tableTokensBucket.clear();
+                factories.clear();
+
+            }
+        };
     }
 }

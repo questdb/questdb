@@ -101,7 +101,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         IS_DETACHED(11, "detached", ColumnType.BOOLEAN),
         IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN),
 
-        TABLE_NAME(12, "tableName", ColumnType.STRING);
+        TABLE_NAME(13, "tableName", ColumnType.STRING);
 
         private final int idx;
         private final TableColumnMetadata metadata;
