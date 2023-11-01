@@ -22,48 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.model;
+package io.questdb.griffin.engine.functions.eq;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 
-public final class AnalyticColumn extends QueryColumn {
-    public final static ObjectFactory<AnalyticColumn> FACTORY = AnalyticColumn::new;
-    private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
-    private final IntList orderByDirection = new IntList(2);
-    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
-
-    private AnalyticColumn() {
-    }
-
-    public void addOrderBy(ExpressionNode node, int direction) {
-        orderBy.add(node);
-        orderByDirection.add(direction);
+public class EqDateFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "=(MM)";
     }
 
     @Override
-    public void clear() {
-        super.clear();
-        partitionBy.clear();
-        orderBy.clear();
-        orderByDirection.clear();
-    }
-
-    public ObjList<ExpressionNode> getOrderBy() {
-        return orderBy;
-    }
-
-    public IntList getOrderByDirection() {
-        return orderByDirection;
-    }
-
-    public ObjList<ExpressionNode> getPartitionBy() {
-        return partitionBy;
+    public boolean isBoolean() {
+        return true;
     }
 
     @Override
-    public AnalyticColumn of(CharSequence alias, ExpressionNode ast) {
-        return (AnalyticColumn) super.of(alias, ast);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new EqDateFunctionFactory.EqDateFunction(args.getQuick(0), args.getQuick(1));
+    }
+
+    private static class EqDateFunction extends AbstractEqBinaryFunction {
+        public EqDateFunction(Function left, Function right) {
+            super(left, right);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (left.getDate(rec) == right.getDate(rec));
+        }
     }
 }

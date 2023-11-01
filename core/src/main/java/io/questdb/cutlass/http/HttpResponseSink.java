@@ -29,6 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.*;
+import io.questdb.std.bytes.Bytes;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
@@ -331,6 +332,15 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
+        public Utf8Sink put(long lo, long hi) {
+            final int size = Bytes.checkedLoHiSize(lo, hi, 0);
+            final long dest = getWriteAddress(size);
+            Vect.memcpy(dest, lo, size);
+            onWrite(size);
+            return this;
+        }
+
+        @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
             if (us != null) {
                 int size = us.size();
@@ -362,7 +372,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             return _wptr - _rptr;
         }
 
-        long getWriteAddress(int len) {
+        long getWriteAddress(long len) {
             assert _wptr != 0;
             if (getWriteNAvailable() >= len) {
                 return _wptr;
@@ -468,12 +478,15 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
         }
 
+        /**
+         * Variant of `put(long lo, long hi)` that writes up to the available space in the buffer.
+         * If there isn't enough space to write the whole length, the written length is returned.
+         */
         @Override
         public int writeBytes(long srcAddr, int len) {
             assert len > 0;
             len = (int) Math.min(len, buffer.getWriteNAvailable());
-            Vect.memcpy(buffer.getWriteAddress(len), srcAddr, len);
-            buffer.onWrite(len);
+            put(srcAddr, srcAddr + len);
             return len;
         }
     }
@@ -517,6 +530,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         // this is used for HTTP access logging
         public int getCode() {
             return code;
+        }
+
+        @Override
+        public Utf8Sink put(long lo, long hi) {
+            buffer.put(lo, hi);
+            return this;
         }
 
         @Override
@@ -641,6 +660,12 @@ public class HttpResponseSink implements Closeable, Mutable {
                     i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
                 }
             }
+            return this;
+        }
+
+        @Override
+        public Utf8Sink put(long lo, long hi) {
+            buffer.put(lo, hi);
             return this;
         }
 

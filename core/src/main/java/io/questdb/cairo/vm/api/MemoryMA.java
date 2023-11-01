@@ -47,7 +47,7 @@ public interface MemoryMA extends MemoryM, MemoryA {
         jumpTo(size);
     }
 
-    void switchTo(int fd, long offset, byte truncateMode);
+    void switchTo(int fd, long offset, boolean truncate, byte truncateMode);
 
     void sync(boolean async);
 

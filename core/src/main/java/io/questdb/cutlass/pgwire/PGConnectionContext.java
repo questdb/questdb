@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
@@ -130,6 +131,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
+    private final QueryLogger queryLogger;
     private final int recvBufferSize;
     private final ResponseCharSinkBase responseCharSinkBase = new ResponseCharSinkBase();
     private final SecurityContextFactory securityContextFactory;
@@ -218,6 +220,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 engine.getMetrics().pgWire().connectionCountGauge()
         );
         this.engine = engine;
+        queryLogger = engine.getConfiguration().getQueryLogger();
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
@@ -1283,15 +1286,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private boolean compileQuery(boolean doLog) throws SqlException {
         if (queryText != null && queryText.length() > 0) {
-            // try insert, peek because this is our private cache
+            // try insert, peek because this is our private cache,
             // and we do not want to remove statement from it
             typesAndInsert = typesAndInsertCache.peek(queryText);
 
             // not found or not insert, try select
-            // poll this cache because it is shared and we do not want
+            // poll this cache because it is shared, and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
-                logQuery(doLog);
+                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
                 return false;
@@ -1300,7 +1303,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
-                logQuery(doLog);
+                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 typesAndUpdate.defineBindVariables(bindVariableService);
                 queryTag = TAG_UPDATE;
                 typesAndUpdateIsCached = true;
@@ -1310,7 +1313,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
-                logQuery(doLog);
+                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 LOG.info().$("query cache used [fd=").$(getFd()).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
@@ -1325,7 +1328,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 processCompiledQuery(cc);
             }
         } else {
-            logQuery(doLog);
+            queryLogger.logEmptyQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
             isEmptyQuery = true;
         }
 
@@ -1700,6 +1703,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int r;
         try {
             r = authenticator.handleIO();
+            if (r == Authenticator.OK) {
+                CharSequence principal = authenticator.getPrincipal();
+                SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
+                try {
+                    securityContext.authorizePGWIRE();
+                    sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+                    r = authenticator.loginOK();
+                } catch (CairoException e) {
+                    r = authenticator.denyAccess();
+                }
+            }
         } catch (AuthenticatorException e) {
             throw PeerDisconnectedException.INSTANCE;
         }
@@ -1716,10 +1730,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             default:
                 throw BadProtocolException.INSTANCE;
         }
-        CharSequence principal = authenticator.getPrincipal();
-        SecurityContext securityContext = securityContextFactory.getInstance(principal, SecurityContextFactory.PGWIRE);
-        securityContext.authorizePGWIRE();
-        sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+
         sendRNQ = true;
 
         // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it
@@ -1776,12 +1787,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseCharSinkBase.put(MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE);
         tlsSessionStarting = true;
         sendAndReset();
-    }
-
-    private void logQuery(boolean doLog) {
-        if (doLog) {
-            LOG.info().$("parse [fd=").$(getFd()).$(", q=").utf8(queryText).I$();
-        }
     }
 
     /**
@@ -3027,6 +3032,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
+        public Utf8Sink put(long lo, long hi) {
+            // Once this is actually needed, the impl would look something like:
+            // final long size = hi - lo;
+            // ensureCapacity(size);
+            // Vect.memcpy(sendBufferPtr, lo, size);
+            // sendBufferPtr += size;
+            // return this;
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
             // this method is only called by date format utility to print timezone name
             if (us != null) {
@@ -3118,7 +3134,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             bookmarkPtr = -1;
         }
 
-        private void ensureCapacity(int size) {
+        private void ensureCapacity(long size) {
             if (sendBufferPtr + size < sendBufferLimit) {
                 return;
             }

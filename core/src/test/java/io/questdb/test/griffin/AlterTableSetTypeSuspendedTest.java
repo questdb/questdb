@@ -43,6 +43,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.test.griffin.AlterTableSetTypeTest.NON_WAL;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -60,14 +62,14 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
-                private int attempt = 0;
+                private final AtomicInteger attempt = new AtomicInteger();
 
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
+                    if (Utf8s.containsAscii(name, "x.d.1") && attempt.getAndIncrement() == 0) {
                         return -1;
                     }
-                    return Files.openRW(name, opts);
+                    return super.openRW(name, opts);
                 }
             };
 

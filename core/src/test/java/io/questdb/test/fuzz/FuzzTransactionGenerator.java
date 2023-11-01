@@ -54,13 +54,15 @@ public class FuzzTransactionGenerator {
             double probabilityOfSameTimestamp,
             int maxStrLenForStrColumns,
             String[] symbols,
-            int metaVersion
+            int metaVersion,
+            double tableDropProbability
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
         RecordMetadata meta = GenericRecordMetadata.deepCopyOf(metadata);
 
         long lastTimestamp = minTimestamp;
+
         double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert + probabilityOfTruncate;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
@@ -73,7 +75,20 @@ public class FuzzTransactionGenerator {
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
         transactionCount = Math.max(Math.min(transactionCount, 1_500_000 / rowCount), 3);
 
+        // Decide if drop will be generated
+        boolean generateDrop = rnd.nextDouble() < tableDropProbability;
+        int dropIteration = generateDrop ? rnd.nextInt(transactionCount) : -1;
+        if (generateDrop) {
+            transactionCount++;
+        }
+
         for (int i = 0; i < transactionCount; i++) {
+            if (i == dropIteration) {
+                generateTableDropCreate(transactionList, metaVersion, waitBarrierVersion++, meta);
+                metaVersion = 0;
+                continue;
+            }
+
             double transactionType = rnd.nextDouble();
             if (transactionType < probabilityOfRemovingColumn) {
                 // generate column remove
@@ -219,6 +234,16 @@ public class FuzzTransactionGenerator {
 
         // nothing to drop, only timestamp column left
         return null;
+    }
+
+    private static void generateTableDropCreate(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, RecordMetadata meta) {
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transaction.reopenTable = true;
+        transaction.operationList.add(new FuzzDropCreateTableOperation());
+        transactionList.add(transaction);
     }
 
     private static void generateTruncateTable(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {

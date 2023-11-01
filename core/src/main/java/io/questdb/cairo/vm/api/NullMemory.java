@@ -340,7 +340,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void switchTo(int fd, long offset, byte truncateMode) {
+    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
     }
 
     @Override

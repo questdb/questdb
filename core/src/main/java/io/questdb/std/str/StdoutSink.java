@@ -27,6 +27,7 @@ package io.questdb.std.str;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -51,6 +52,24 @@ public final class StdoutSink implements Utf8Sink, Closeable {
             Files.append(stdout, buffer, len);
             ptr = buffer;
         }
+    }
+
+    @Override
+    public Utf8Sink put(long lo, long hi) {
+        long remaining = hi - lo;
+        while (remaining > 0) {
+            final long avail = limit - ptr;
+            if (avail > 0) {
+                final long chunkSize = Math.min(avail, remaining);
+                Vect.memcpy(ptr, hi - remaining, chunkSize);
+                ptr += chunkSize;
+                remaining -= chunkSize;
+            }
+            if (remaining > 0) {
+                flush();
+            }
+        }
+        return this;
     }
 
     @Override

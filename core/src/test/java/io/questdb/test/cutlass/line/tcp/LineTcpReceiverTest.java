@@ -708,7 +708,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n" +
                     meteorology + ",location=south temperature=80 1465839830101000200\n";
 
-            sendWaitWalReleaseCount(lineData, 3);
+            sendWaitWalReleaseCount(lineData, 4);
 
             mayDrainWalQueue();
 
@@ -1564,7 +1564,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path path) {
+                public boolean rmdir(Path path, boolean lazy) {
                     return false;
                 }
             };

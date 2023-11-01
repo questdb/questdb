@@ -33,6 +33,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 public class PrometheusMetricsProcessor implements HttpRequestProcessor {
@@ -115,6 +116,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
         /**
          * Metrics serialization destination, sent into one or more chunks later.
          */
+        @NotNull
         public final DirectUtf8Sink sink = new DirectUtf8Sink(Files.PAGE_SIZE);
         private final RequestStatePool pool;
         /**

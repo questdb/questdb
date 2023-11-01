@@ -47,6 +47,7 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -81,7 +82,7 @@ public final class TestUtils {
 
     public static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
-    private static final StringSink sink = new StringSink();
+    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private TestUtils() {
     }
@@ -126,7 +127,7 @@ public final class TestUtils {
         if (Chars.contains(actual, expected)) {
             return;
         }
-        Assert.fail((message != null ? message + ": '" : "'") + actual.toString() + "' does not contain: " + expected);
+        Assert.fail((message != null ? message + ": '" : "'") + actual + "' does not contain: " + expected);
     }
 
     public static void assertContains(CharSequence actual, CharSequence expected) {
@@ -145,6 +146,7 @@ public final class TestUtils {
             RecordMetadata metadataActual,
             boolean symbolsAsStrings
     ) {
+        StringSink sink = getTlSink();
         assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
@@ -168,8 +170,8 @@ public final class TestUtils {
 
                 if (tsL == timestampValue && tsR == timestampValue) {
                     // store both records
-                    addRecordToMap(l, metadataActual, mapL, symbolsAsStrings);
-                    addRecordToMap(r, metadataExpected, mapR, symbolsAsStrings);
+                    addRecordToMap(sink, l, metadataActual, mapL, symbolsAsStrings);
+                    addRecordToMap(sink, r, metadataExpected, mapR, symbolsAsStrings);
                     continue;
                 }
 
@@ -230,8 +232,8 @@ public final class TestUtils {
                     }
 
                     // store both records
-                    addRecordToMap(l, metadataActual, mapL, symbolsAsStrings);
-                    addRecordToMap(r, metadataExpected, mapR, symbolsAsStrings);
+                    addRecordToMap(sink, l, metadataActual, mapL, symbolsAsStrings);
+                    addRecordToMap(sink, r, metadataExpected, mapR, symbolsAsStrings);
                 }
             }
         }
@@ -337,13 +339,13 @@ public final class TestUtils {
     }
 
     public static void assertEquals(CharSequence expected, Sinkable actual) {
-        sink.clear();
+        StringSink sink = getTlSink();
         actual.toSink(sink);
         assertEquals(null, expected, sink);
     }
 
     public static void assertEquals(CharSequence expected, Utf8Sequence actual) {
-        sink.clear();
+        StringSink sink = getTlSink();
         Utf8s.utf8ToUtf16(actual, sink);
         assertEquals(null, expected, sink);
     }
@@ -373,7 +375,7 @@ public final class TestUtils {
     }
 
     public static void assertEquals(Utf8Sequence expected, Utf8Sequence actual) {
-        sink.clear();
+        StringSink sink = getTlSink();
         Utf8s.utf8ToUtf16(expected, sink);
         String expectedStr = sink.toString();
         sink.clear();
@@ -1267,13 +1269,13 @@ public final class TestUtils {
     }
 
     public static String ipv4ToString(int ip) {
-        StringSink sink = new StringSink();
+        StringSink sink = getTlSink();
         Numbers.intToIPv4Sink(sink, ip);
         return sink.toString();
     }
 
     public static String ipv4ToString2(long ipAndBroadcast) {
-        StringSink sink = new StringSink();
+        StringSink sink = getTlSink();
         Numbers.intToIPv4Sink(sink, (int) (ipAndBroadcast >> 32));
         sink.put('/');
         Numbers.intToIPv4Sink(sink, (int) (ipAndBroadcast));
@@ -1609,8 +1611,10 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-4);
                         break;
                     case ColumnType.INT:
-                    case ColumnType.IPv4:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
+                        break;
+                    case ColumnType.IPv4:
+                        Assert.assertEquals(rr.getIPv4(i), lr.getIPv4(i));
                         break;
                     case ColumnType.GEOINT:
                         Assert.assertEquals(rr.getGeoInt(i), lr.getGeoInt(i));
@@ -1704,17 +1708,6 @@ public final class TestUtils {
         }
     }
 
-    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
-        long increment = 0;
-        if (PartitionBy.isPartitioned(partitionBy)) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
-            assert partitionAddMethod != null;
-            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
-            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
-        }
-        return increment;
-    }
-
 /*
     private static RecordMetadata copySymAstStr(RecordMetadata src) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -1731,6 +1724,23 @@ public final class TestUtils {
     }
 */
 
+    private static StringSink getTlSink() {
+        StringSink ss = tlSink.get();
+        ss.clear();
+        return ss;
+    }
+
+    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
+        long increment = 0;
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+        return increment;
+    }
+
     private static void putGeoHash(long hash, int bits, CharSink sink) {
         if (hash == GeoHashes.NULL) {
             return;
@@ -1743,7 +1753,7 @@ public final class TestUtils {
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean symbolsAsStrings) {
-        sink.clear();
+        StringSink sink = getTlSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             printColumn(record, metadata, i, sink, symbolsAsStrings, false);
             if (i < n - 1) {
@@ -1760,15 +1770,15 @@ public final class TestUtils {
                 Long.toHexString(expected.getLong3());
     }
 
-    static void addAllRecordsToMap(RecordCursor cursor, RecordMetadata metadata, Map<String, Integer> map) {
+    static void addAllRecordsToMap(StringSink sink, RecordCursor cursor, RecordMetadata metadata, Map<String, Integer> map) {
         cursor.toTop();
         Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            addRecordToMap(record, metadata, map, false);
+            addRecordToMap(sink, record, metadata, map, false);
         }
     }
 
-    static void addRecordToMap(Record record, RecordMetadata metadata, Map<String, Integer> map, boolean symbolsAsStrings) {
+    static void addRecordToMap(StringSink sink, Record record, RecordMetadata metadata, Map<String, Integer> map, boolean symbolsAsStrings) {
         sink.clear();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             printColumn(record, metadata, i, sink, symbolsAsStrings, true);

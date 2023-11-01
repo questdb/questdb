@@ -129,16 +129,7 @@ public class LogRecordSink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mu
     }
 
     @Override
-    public Utf8Sink putEOL() {
-        int rem = (int) (lim - _wptr);
-        int len = Misc.EOL.length();
-        int n = Math.min(rem, len);
-        Utf8s.strCpyAscii(Misc.EOL, n, _wptr);
-        _wptr += n;
-        return this;
-    }
-
-    public Utf8Sink putUtf8(long lo, long hi) {
+    public Utf8Sink put(long lo, long hi) {
         final long rem = (lim - _wptr - EOL_LENGTH);
         final long size = hi - lo;
         if (rem >= size) {
@@ -163,6 +154,16 @@ public class LogRecordSink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mu
             // Copying the final few bytes one at a time ensures we don't write any partial codepoints.
             put(Unsafe.getUnsafe().getByte(lo + i));
         }
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putEOL() {
+        int rem = (int) (lim - _wptr);
+        int len = Misc.EOL.length();
+        int n = Math.min(rem, len);
+        Utf8s.strCpyAscii(Misc.EOL, n, _wptr);
+        _wptr += n;
         return this;
     }
 

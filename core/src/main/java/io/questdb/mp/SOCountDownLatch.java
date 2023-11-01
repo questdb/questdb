@@ -70,6 +70,8 @@ public class SOCountDownLatch implements CountDownLatchSPI {
             if (elapsed < nanos) {
                 if (getCount() == 0) {
                     return true;
+                } else {
+                    nanos -= elapsed;
                 }
             } else {
                 return getCount() == 0;

@@ -30,6 +30,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -306,7 +307,8 @@ public class LogAlertSocketTest {
                         "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
                         "Content-Length: 6o\r\n" +
                         "\r\n" +
-                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
+        );
     }
 
     @Test
@@ -332,12 +334,14 @@ public class LogAlertSocketTest {
                         "Content-Type: application/json\r\n" +
                         "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
                         "\r\n" +
-                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
+        );
     }
 
     @Test
     public void testParseBadResponse2() throws Exception {
-        testParseStatusResponse("HTTP/1.1 400 Bad Request\r\n" +
+        testParseStatusResponse(
+                "HTTP/1.1 400 Bad Request\r\n" +
                         "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
                         "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
                         "Access-Control-Allow-Origin: *\r\n" +
@@ -359,12 +363,14 @@ public class LogAlertSocketTest {
                         "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
                         "Content-Length: 6\r\n" +
                         "\r\n" +
-                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
+        );
     }
 
     @Test
     public void testParseBadResponse3() throws Exception {
-        testParseStatusResponse("HTTP/1.1 400 Bad Request\r\n" +
+        testParseStatusResponse(
+                "HTTP/1.1 400 Bad Request\r\n" +
                         "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
                         "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
                         "Access-Control-Allow-Origin: *\r\n" +
@@ -384,7 +390,8 @@ public class LogAlertSocketTest {
                         "Content-Type: application/json\r\n" +
                         "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
                         "Content-Length: 66\r\n" +
-                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
+        );
     }
 
     @Test
@@ -559,6 +566,11 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord $(@Nullable Utf8Sequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
             throw new UnsupportedOperationException();
         }
 

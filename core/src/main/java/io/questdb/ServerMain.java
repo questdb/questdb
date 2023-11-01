@@ -31,7 +31,6 @@ import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.auth.AuthUtils;
@@ -65,8 +64,10 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final Log log;
+    private final Metrics metrics;
     private final AtomicBoolean running = new AtomicBoolean();
-    private final WorkerPoolManager workerPoolManager;
+    private boolean initialized;
+    private WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -76,131 +77,13 @@ public class ServerMain implements Closeable {
         this.config = bootstrap.getConfiguration();
         this.log = bootstrap.getLog();
         this.banner = bootstrap.getBanner();
-        final Metrics metrics = bootstrap.getMetrics();
+        this.metrics = bootstrap.getMetrics();
 
         // create cairo engine
-        final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         engine = freeOnExit.register(bootstrap.newCairoEngine());
         config.init(engine, freeOnExit);
         freeOnExit.register(config.getFactoryProvider());
         engine.load();
-
-        // create the worker pool manager, and configure the shared pool
-        final boolean walSupported = config.getCairoConfiguration().isWalSupported();
-        final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
-        final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
-        workerPoolManager = new WorkerPoolManager(config, metrics) {
-            @Override
-            protected void configureSharedPool(WorkerPool sharedPool) {
-                try {
-                    sharedPool.assign(engine.getEngineMaintenanceJob());
-
-                    final MessageBus messageBus = engine.getMessageBus();
-                    // register jobs that help parallel execution of queries and column indexing.
-                    sharedPool.assign(new ColumnIndexerJob(messageBus));
-                    sharedPool.assign(new GroupByJob(messageBus));
-                    sharedPool.assign(new LatestByAllIndexedJob(messageBus));
-
-                    if (!isReadOnly) {
-                        O3Utils.setupWorkerPool(
-                                sharedPool,
-                                engine,
-                                config.getCairoConfiguration().getCircuitBreakerConfiguration()
-                        );
-
-                        if (walSupported) {
-                            sharedPool.assign(new CheckWalTransactionsJob(engine));
-                            final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
-                            engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
-                            walPurgeJob.delayByHalfInterval();
-                            sharedPool.assign(walPurgeJob);
-                            sharedPool.freeOnExit(walPurgeJob);
-
-                            // wal apply job in the shared pool when there is no dedicated pool
-                            if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
-                                setupWalApplyJob(sharedPool, engine, sharedPool.getWorkerCount());
-                            }
-                        }
-
-                        // text import
-                        CopyJob.assignToPool(messageBus, sharedPool);
-                        if (cairoConfig.getSqlCopyInputRoot() != null) {
-                            final CopyRequestJob copyRequestJob = new CopyRequestJob(
-                                    engine,
-                                    // save CPU resources for collecting and processing jobs
-                                    Math.max(1, sharedPool.getWorkerCount() - 2)
-                            );
-                            sharedPool.assign(copyRequestJob);
-                            sharedPool.freeOnExit(copyRequestJob);
-                        }
-                    }
-
-                    // telemetry
-                    if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-                        final TelemetryJob telemetryJob = new TelemetryJob(engine);
-                        freeOnExit.register(telemetryJob);
-                        if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-                            sharedPool.assign(telemetryJob);
-                        }
-                    }
-                } catch (Throwable thr) {
-                    throw new Bootstrap.BootstrapException(thr);
-                }
-            }
-        };
-
-        if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
-            WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
-                    config.getWalApplyPoolConfiguration(),
-                    metrics,
-                    WorkerPoolManager.Requester.WAL_APPLY
-            );
-            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
-        }
-
-        // http
-        freeOnExit.register(Services.createHttpServer(
-                config.getHttpServerConfiguration(),
-                engine,
-                workerPoolManager,
-                metrics
-        ));
-
-        // http min
-        freeOnExit.register(Services.createMinHttpServer(
-                config.getHttpMinServerConfiguration(),
-                engine,
-                workerPoolManager,
-                metrics
-        ));
-
-        // pg wire
-        freeOnExit.register(Services.createPGWireServer(
-                config.getPGWireConfiguration(),
-                engine,
-                workerPoolManager,
-                metrics
-        ));
-
-        if (!isReadOnly) {
-            // ilp/tcp
-            freeOnExit.register(Services.createLineTcpReceiver(
-                    config.getLineTcpReceiverConfiguration(),
-                    engine,
-                    workerPoolManager,
-                    metrics
-            ));
-
-            // ilp/udp
-            freeOnExit.register(Services.createLineUdpReceiver(
-                    config.getLineUdpReceiverConfiguration(),
-                    engine,
-                    workerPoolManager
-            ));
-        }
-
-        System.gc(); // GC 1
-        log.advisoryW().$("server is ready to be started").$();
     }
 
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
@@ -280,7 +163,9 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            workerPoolManager.halt();
+            if (initialized) {
+                workerPoolManager.halt();
+            }
             freeOnExit.close();
         }
     }
@@ -315,8 +200,10 @@ public class ServerMain implements Closeable {
         start(false);
     }
 
-    public void start(boolean addShutdownHook) {
+    public synchronized void start(boolean addShutdownHook) {
         if (!closed.get() && running.compareAndSet(false, true)) {
+            initialize();
+
             if (addShutdownHook) {
                 addShutdownHook();
             }
@@ -325,6 +212,130 @@ public class ServerMain implements Closeable {
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
         }
+    }
+
+    private synchronized void initialize() {
+        initialized = true;
+
+
+        // create the worker pool manager, and configure the shared pool
+        final boolean walSupported = config.getCairoConfiguration().isWalSupported();
+        final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
+        final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
+        final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+
+        workerPoolManager = new WorkerPoolManager(config, metrics) {
+            @Override
+            protected void configureSharedPool(WorkerPool sharedPool) {
+                try {
+                    sharedPool.assign(engine.getEngineMaintenanceJob());
+
+                    final MessageBus messageBus = engine.getMessageBus();
+                    // register jobs that help parallel execution of queries and column indexing.
+                    sharedPool.assign(new ColumnIndexerJob(messageBus));
+                    sharedPool.assign(new GroupByJob(messageBus));
+                    sharedPool.assign(new LatestByAllIndexedJob(messageBus));
+
+                    if (!isReadOnly) {
+                        O3Utils.setupWorkerPool(
+                                sharedPool,
+                                engine,
+                                config.getCairoConfiguration().getCircuitBreakerConfiguration()
+                        );
+
+                        if (walSupported) {
+                            sharedPool.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
+                            final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                            engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
+                            walPurgeJob.delayByHalfInterval();
+                            sharedPool.assign(walPurgeJob);
+                            sharedPool.freeOnExit(walPurgeJob);
+
+                            // wal apply job in the shared pool when there is no dedicated pool
+                            if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
+                                setupWalApplyJob(sharedPool, engine, sharedPool.getWorkerCount());
+                            }
+                        }
+
+                        // text import
+                        CopyJob.assignToPool(messageBus, sharedPool);
+                        if (cairoConfig.getSqlCopyInputRoot() != null) {
+                            final CopyRequestJob copyRequestJob = new CopyRequestJob(
+                                    engine,
+                                    // save CPU resources for collecting and processing jobs
+                                    Math.max(1, sharedPool.getWorkerCount() - 2)
+                            );
+                            sharedPool.assign(copyRequestJob);
+                            sharedPool.freeOnExit(copyRequestJob);
+                        }
+                    }
+
+                    // telemetry
+                    if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
+                        final TelemetryJob telemetryJob = new TelemetryJob(engine);
+                        freeOnExit.register(telemetryJob);
+                        if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
+                            sharedPool.assign(telemetryJob);
+                        }
+                    }
+                } catch (Throwable thr) {
+                    throw new Bootstrap.BootstrapException(thr);
+                }
+            }
+        };
+
+        if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
+            WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
+                    config.getWalApplyPoolConfiguration(),
+                    metrics,
+                    WorkerPoolManager.Requester.WAL_APPLY
+            );
+            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+        }
+
+        // http
+        freeOnExit.register(Services.createHttpServer(
+                config.getHttpServerConfiguration(),
+                engine,
+                workerPoolManager,
+                metrics
+        ));
+
+        // http min
+        freeOnExit.register(Services.createMinHttpServer(
+                config.getHttpMinServerConfiguration(),
+                engine,
+                workerPoolManager,
+                metrics
+        ));
+
+        // pg wire
+        freeOnExit.register(Services.createPGWireServer(
+                config.getPGWireConfiguration(),
+                engine,
+                workerPoolManager,
+                metrics
+        ));
+
+        if (!isReadOnly && config.isIlpEnabled()) {
+            // ilp/tcp
+            freeOnExit.register(Services.createLineTcpReceiver(
+                    config.getLineTcpReceiverConfiguration(),
+                    engine,
+                    workerPoolManager,
+                    metrics
+            ));
+
+            // ilp/udp
+            freeOnExit.register(Services.createLineUdpReceiver(
+                    config.getLineUdpReceiverConfiguration(),
+                    engine,
+                    workerPoolManager
+            ));
+        }
+
+        System.gc(); // GC 1
+        log.advisoryW().$("server is ready to be started").$();
     }
 
     private void addShutdownHook() {
