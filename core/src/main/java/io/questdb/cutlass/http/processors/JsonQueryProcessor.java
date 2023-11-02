@@ -567,7 +567,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {
-                header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
+//                header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
                 doResumeSend(state, context, sqlExecutionContext);
                 metrics.jsonQuery().markComplete();
             } else {

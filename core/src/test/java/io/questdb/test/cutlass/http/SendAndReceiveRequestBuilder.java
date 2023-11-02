@@ -372,7 +372,10 @@ public class SendAndReceiveRequestBuilder {
         long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int j = 0; j < requestCount; j++) {
+                System.out.println("--- about to execute iteration: " + j);
                 executeExplicit(request, fd, expectedResponse, len, ptr, null);
+                System.out.println("--- finished iteration: " + j);
+
             }
         } finally {
             Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);

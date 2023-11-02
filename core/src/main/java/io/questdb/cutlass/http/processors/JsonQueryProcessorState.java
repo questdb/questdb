@@ -51,6 +51,7 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
+    static final int QUERY_HTTP_HEADER = 0;
     static final int QUERY_METADATA = 2;
     static final int QUERY_METADATA_SUFFIX = 3;
     static final int QUERY_PREFIX = 1;
@@ -88,7 +89,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean pausedQuery = false;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
-    private int queryState = QUERY_PREFIX;
+    private int queryState = QUERY_HTTP_HEADER;
     private int queryTimestampIndex;
     private short queryType;
     private boolean quoteLargeNum = false;
@@ -107,6 +108,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             int doubleScale
     ) {
         this.httpConnectionContext = httpConnectionContext;
+        resumeActions.extendAndSet(QUERY_HTTP_HEADER, this::onHttpHeader);
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
         resumeActions.extendAndSet(QUERY_METADATA, this::onQueryMetadata);
         resumeActions.extendAndSet(QUERY_METADATA_SUFFIX, this::onQueryMetadataSuffix);
@@ -141,7 +143,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         query.clear();
         columnsQueryParameter.clear();
-        queryState = QUERY_PREFIX;
+        queryState = QUERY_HTTP_HEADER;
         columnIndex = 0;
         countRows = false;
         explain = false;
@@ -470,6 +472,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.columnNames.add(metadata.getColumnName(i));
     }
 
+    private void onHttpHeader(HttpChunkedResponseSocket socket, int columnCount) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        onQuerySetupFirstRecord();
+        // todo: do not hard-code Keep-Alive
+        JsonQueryProcessor.header(socket, getHttpConnectionContext(), "Keep-Alive: timeout=5, max=10000\r\n", 200);
+        onQueryPrefix(socket, columnCount);
+    }
+
     private void doFirstRecordLoop(
             HttpChunkedResponseSocket socket,
             int columnCount
@@ -734,6 +743,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void onQueryPrefix(HttpChunkedResponseSocket socket, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        queryState = QUERY_PREFIX;
         if (doQueryPrefix(socket)) {
             doQueryMetadata(socket, columnCount);
             doQueryMetadataSuffix(socket);
@@ -846,7 +856,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
         this.cursor = factory.getCursor(sqlExecutionContext);
-        onQuerySetupFirstRecord();
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
