@@ -80,6 +80,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long count;
     private boolean countRows = false;
     private RecordCursor cursor;
+    private boolean cursorHasRows;
     private long executeStartNanos;
     private boolean explain = false;
     private boolean noMeta = false;
@@ -473,7 +474,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponseSocket socket,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (onQuerySetupFirstRecord()) {
+        if (cursorHasRows) {
             doRecordFetchLoop(socket, columnCount);
         } else {
             doQuerySuffix(socket, columnCount);
@@ -761,7 +762,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         doNextRecordLoop(socket, columnCount);
     }
 
-    private boolean onQuerySetupFirstRecord() {
+    private void onQuerySetupFirstRecord() {
         if (skip > 0) {
             final RecordCursor cursor = this.cursor;
             long target = skip + 1;
@@ -769,18 +770,20 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 target--;
             }
             if (target > 0) {
-                return false;
+                cursorHasRows = false;
+                return;
             }
             count = skip;
         } else {
             if (!cursor.hasNext()) {
-                return false;
+                cursorHasRows = false;
+                return;
             }
         }
 
         columnIndex = 0;
         record = cursor.getRecord();
-        return true;
+        cursorHasRows = true;
     }
 
     private void putBinValue(HttpChunkedResponseSocket socket) {
@@ -843,6 +846,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
         this.cursor = factory.getCursor(sqlExecutionContext);
+        onQuerySetupFirstRecord();
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
