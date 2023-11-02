@@ -25,13 +25,14 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
-import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 
 public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     // specifies the precision for the recorded values (between 0 and 5).
@@ -39,7 +40,11 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     private final int numberOfSignificantValueDigits = 3;
     private final Function left;
     private final Function right;
-    private DoubleHistogram histogram;
+    private final ObjList<DoubleHistogram> histograms = new ObjList<>();
+
+    private int histogramIndex;
+
+    private int valueIndex;
 
     public ApproxPercentileDoubleGroupByFunction(Function left, Function right) {
         this.left = left;
@@ -47,17 +52,31 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        this.histogram = new DoubleHistogram(this.numberOfSignificantValueDigits);
+    public void clear() {
+        histograms.clear();
+        histogramIndex = 0;
+    }
 
-        final double value = right.getDouble(record);
-        histogram.recordValue(value);
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        final DoubleHistogram histogram;
+        if (histograms.size() <= histogramIndex) {
+            histograms.extendAndSet(histogramIndex, histogram = new DoubleHistogram(numberOfSignificantValueDigits));
+        } else {
+            histogram = histograms.getQuick(histogramIndex);
+        }
+        histogram.reset();
+
+        final double val = right.getDouble(record);
+        histogram.recordValue(val);
+        mapValue.putInt(valueIndex, histogramIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final double value = right.getDouble(record);
-        histogram.recordValue(value);
+        final DoubleHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
+        final double val = right.getDouble(record);
+        histogram.recordValue(val);
     }
 
     @Override
@@ -68,7 +87,8 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
 
     @Override
     public double getDouble(Record rec) {
-        if(histogram.empty()) {
+        final DoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        if (histogram.empty()) {
             return Numbers.LONG_NaN;
         }
         return histogram.getValueAtPercentile(left.getDouble(rec) * 100);
@@ -78,8 +98,23 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     public String getName() { return "approx_percentile"; }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {}
+    public boolean isConstant() {
+        return false;
+    }
 
     @Override
-    public void setNull(MapValue mapValue) {}
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putInt(valueIndex, Integer.MIN_VALUE);
+    }
 }
