@@ -334,4 +334,25 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testSimplePatternLikeString() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x ( s string ) ");
+            compile("insert into x values ( 'foo' ), ( 'foobar' ), ( null ) ");
+
+            assertLike("s\n", "select * from x where s ilike 'f'", false);
+            assertLike("s\n", "select * from x where s ilike '_'", false);
+            assertLike("s\nfoo\nfoobar\n\n", "select * from x where s ilike '%'", true);
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike 'f%'", false);
+            assertLike("s\nfoobar\n", "select * from x where s ilike '%r'", false);
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike 'fOO%'", false);
+            assertLike("s\nfoobar\n", "select * from x where s ilike '%baR'", false);
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%OO%'", false);
+        });
+    }
+
+    private void assertLike(String expected, String query, boolean expectSize) throws SqlException {
+        assertQuery(expected, query, null, true, expectSize);
+    }
 }

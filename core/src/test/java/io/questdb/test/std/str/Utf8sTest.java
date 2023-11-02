@@ -14,7 +14,7 @@ public class Utf8sTest {
     public void testContainsAscii() {
         Assert.assertTrue(Utf8s.containsAscii(new Utf8String("foo bar baz"), "bar"));
         Assert.assertFalse(Utf8s.containsAscii(new Utf8String("foo bar baz"), "buz"));
-        Assert.assertFalse(Utf8s.containsAscii(new Utf8String("foo bar baz"), ""));
+        Assert.assertTrue(Utf8s.containsAscii(new Utf8String("foo bar baz"), ""));
         Assert.assertFalse(Utf8s.containsAscii(Utf8String.EMPTY, "foobar"));
     }
 
