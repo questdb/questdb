@@ -140,6 +140,52 @@ public class SqlUtil {
         throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
     }
 
+    public static long expectSeconds(CharSequence tok, int position) throws SqlException {
+        int k = -1;
+
+        final int len = tok.length();
+
+        // look for end of digits
+        for (int i = 0; i < len; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
+        }
+
+        try {
+            long interval = Numbers.parseLong(tok, 0, k);
+            int nChars = len - k;
+            if (nChars > 1) {
+                throw SqlException.$(position + k, "expected single letter interval qualifier in ").put(tok);
+            }
+
+            switch (tok.charAt(k)) {
+                case 's': // seconds
+                    return interval;
+                case 'm': // minutes
+                    return interval * Timestamps.MINUTE_SECONDS;
+                case 'h': // hours
+                    return interval * Timestamps.HOUR_SECONDS;
+                case 'd': // days
+                    return interval * Timestamps.DAY_SECONDS;
+                case 'y': // years
+                    return interval * Timestamps.YEAR_SECONDS;
+                default:
+                    break;
+            }
+        } catch (NumericException ex) {
+            // Ignored
+        }
+
+        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
+    }
+
     /**
      * Fetches next non-whitespace token that's not part of single or multiline comment.
      *

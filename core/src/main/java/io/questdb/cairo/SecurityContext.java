@@ -71,7 +71,9 @@ public interface SecurityContext {
 
     void authorizeCreateGroup();
 
-    void authorizeCreateJwk(CharSequence userOrServiceAccountName);
+    void authorizeCreateJwkToken(CharSequence userOrServiceAccountName);
+
+    void authorizeCreateRestToken(CharSequence userOrServiceAccountName);
 
     void authorizeCreateServiceAccount();
 
@@ -83,7 +85,9 @@ public interface SecurityContext {
 
     void authorizeDropGroup();
 
-    void authorizeDropJwk(CharSequence userOrServiceAccountName);
+    void authorizeDropJwkToken(CharSequence userOrServiceAccountName);
+
+    void authorizeDropRestToken(CharSequence userOrServiceAccountName);
 
     void authorizeDropServiceAccount();
 

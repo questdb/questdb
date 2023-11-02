@@ -115,7 +115,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
+    public void authorizeCreateJwkToken(CharSequence userOrServiceAccountName) {
+    }
+
+    @Override
+    public void authorizeCreateRestToken(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -139,7 +143,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDropJwk(CharSequence userOrServiceAccountName) {
+    public void authorizeDropJwkToken(CharSequence userOrServiceAccountName) {
+    }
+
+    @Override
+    public void authorizeDropRestToken(CharSequence userOrServiceAccountName) {
     }
 
     @Override
