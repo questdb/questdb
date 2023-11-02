@@ -70,6 +70,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final SCSequence eventSubSequence = new SCSequence();
     private final int floatScale;
     private final HttpConnectionContext httpConnectionContext;
+    private final CharSequence keepAliveHeader;
     private final NanosecondClock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
@@ -105,8 +106,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpConnectionContext httpConnectionContext,
             NanosecondClock nanosecondClock,
             int floatScale,
-            int doubleScale
-    ) {
+            int doubleScale,
+            CharSequence keepAliveHeader) {
         this.httpConnectionContext = httpConnectionContext;
         resumeActions.extendAndSet(QUERY_SETUP_FIRST_RECORD, this::onSetupFirstRecord);
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
@@ -122,6 +123,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
+        this.keepAliveHeader = keepAliveHeader;
     }
 
     @Override
@@ -485,8 +487,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // We assume HTTP headers will always fit into our buffer => a state transition to the QUERY_PREFIX
         // before actually sending HTTP headers. Otherwise, we would have to make JsonQueryProcessor.header() idempotent
         queryState = QUERY_PREFIX;
-        // todo: do not hard-code Keep-Alive
-        JsonQueryProcessor.header(socket, getHttpConnectionContext(), "Keep-Alive: timeout=5, max=10000\r\n", 200);
+        JsonQueryProcessor.header(socket, getHttpConnectionContext(), keepAliveHeader, 200);
         onQueryPrefix(socket, columnCount);
     }
 

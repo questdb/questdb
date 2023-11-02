@@ -235,7 +235,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     context,
                     nanosecondClock,
                     configuration.getFloatScale(),
-                    configuration.getDoubleScale()
+                    configuration.getDoubleScale(),
+                    configuration.getKeepAliveHeader()
             ));
         }
 
