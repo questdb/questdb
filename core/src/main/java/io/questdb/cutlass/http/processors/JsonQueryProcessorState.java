@@ -473,9 +473,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void onHttpHeader(HttpChunkedResponseSocket socket, int columnCount) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        onQuerySetupFirstRecord();
-        queryState = QUERY_PREFIX;
+        // If there is an exception in the first record setup then upper layer will handle with it
+        // either it will send error to client or deal with DataUnavailableException
+        setupFirstRecord();
+        // If we make this past setup then we can send HTTP header
 
+        // We assume HTTP headers will always fit into our buffer => a state transition to the QUERY_PREFIX
+        // even before sending HTTP headers. Otherwise, we would have to make JsonQueryProcessor.header() idempotent
+        queryState = QUERY_PREFIX;
         // todo: do not hard-code Keep-Alive
         JsonQueryProcessor.header(socket, getHttpConnectionContext(), "Keep-Alive: timeout=5, max=10000\r\n", 200);
         onQueryPrefix(socket, columnCount);
@@ -773,7 +778,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         doNextRecordLoop(socket, columnCount);
     }
 
-    private void onQuerySetupFirstRecord() {
+    private void setupFirstRecord() {
         if (skip > 0) {
             final RecordCursor cursor = this.cursor;
             long target = skip + 1;
