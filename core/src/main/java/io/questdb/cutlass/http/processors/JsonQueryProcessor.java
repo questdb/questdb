@@ -501,7 +501,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, false, sqlExecutionContext)) {
-                header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
+//                header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
                 doResumeSend(state, context, sqlExecutionContext);
                 metrics.jsonQuery().markComplete();
             } else {
@@ -551,7 +551,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         // Make sure to mark the query as non-cacheable.
         if (state.of(factory, false, sqlExecutionContext)) {
-            header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
+//            header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
             doResumeSend(state, context, sqlExecutionContext);
             metrics.jsonQuery().markComplete();
         } else {

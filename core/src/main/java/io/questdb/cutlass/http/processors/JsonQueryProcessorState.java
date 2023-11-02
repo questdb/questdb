@@ -474,6 +474,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void onHttpHeader(HttpChunkedResponseSocket socket, int columnCount) throws PeerIsSlowToReadException, PeerDisconnectedException {
         onQuerySetupFirstRecord();
+        queryState = QUERY_PREFIX;
+
         // todo: do not hard-code Keep-Alive
         JsonQueryProcessor.header(socket, getHttpConnectionContext(), "Keep-Alive: timeout=5, max=10000\r\n", 200);
         onQueryPrefix(socket, columnCount);
@@ -743,7 +745,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void onQueryPrefix(HttpChunkedResponseSocket socket, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        queryState = QUERY_PREFIX;
         if (doQueryPrefix(socket)) {
             doQueryMetadata(socket, columnCount);
             doQueryMetadataSuffix(socket);
