@@ -35,7 +35,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     protected IODispatcher<T> dispatcher;
     protected long heartbeatId = -1;
     private boolean disconnectPending = false;
-    private LongGauge connectionCountGauge;
+    private final LongGauge connectionCountGauge;
 
     protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log, LongGauge connectionCountGauge) {
         this.socket = socketFactory.newInstance(nf, log);

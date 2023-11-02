@@ -31,7 +31,6 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
-import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.log.Log;
@@ -42,7 +41,9 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.cutlass.http.processors.TextImportProcessor.CONTENT_TYPE_TEXT;
 import static io.questdb.network.IODispatcher.*;
+import static io.questdb.network.Net.SHUT_WR;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
@@ -160,7 +161,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public void fail(HttpRequestProcessorSelector selector, HttpException e) {
         LOG.info().$("failed to retry query [fd=").$(getFd()).I$();
         HttpRequestProcessor processor = getHttpRequestProcessor(selector);
-        failProcessor(processor, e, DISCONNECT_REASON_RETRY_FAILED);
+        retryFailed(processor, e);
     }
 
     @Override
@@ -222,7 +223,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         boolean keepGoing;
         switch (operation) {
             case IOOperation.READ:
-                System.out.println("READING!!!");
                 keepGoing = handleClientRecv(selector, rescheduleContext);
                 break;
             case IOOperation.WRITE:
@@ -304,8 +304,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         try {
             pendingRetry = true;
             rescheduleContext.reschedule(this);
-        } catch (RetryFailedOperationException e) {
-            failProcessor(processor, e, DISCONNECT_REASON_RETRY_FAILED);
+        } catch (HttpException e) {
+            retryFailed(processor, e);
         }
     }
 
@@ -548,33 +548,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
-    private void failProcessor(HttpRequestProcessor processor, HttpException e, int reason) {
-        pendingRetry = false;
-        boolean canReset = true;
-        try {
-            LOG.info()
-                    .$("failed query result cannot be delivered. Kicked out [fd=").$(getFd())
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
-            processor.failRequest(this, e);
-            dispatcher.disconnect(this, reason);
-        } catch (PeerDisconnectedException peerDisconnectedException) {
-            dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
-        } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
-            LOG.info().$("peer is slow to receive failed to retry response [fd=").$(getFd()).I$();
-            processor.parkRequest(this, false);
-            resumeProcessor = processor;
-            dispatcher.registerChannel(this, IOOperation.WRITE);
-            canReset = false;
-        } catch (ServerDisconnectException serverDisconnectException) {
-            dispatcher.disconnect(this, reason);
-        } finally {
-            if (canReset) {
-                reset();
-            }
-        }
-    }
-
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor;
         final CharSequence url = headerParser.getUrl();
@@ -692,12 +665,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 suspendEvent = e.getEvent();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
                 busyRecv = false;
-            } catch (NotEnoughLinesException e) {
-                failProcessor(processor, e, DISCONNECT_REASON_KICKED_TXT_NOT_ENOUGH_LINES);
-                busyRecv = false;
             }
         } catch (HttpException e) {
+            // this is HTTP protocol violation, which means we failed to parse protocol text
+            // we
             LOG.error().$("http error [fd=").$(getFd()).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
+            sendBadRequestError(e.getFlyweightMessage());
+            socket.shutdown(SHUT_WR);
             dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
             busyRecv = false;
         }
@@ -769,6 +743,32 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         simpleResponse().sendStatusWithHeader(401, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
         dispatcher.registerChannel(this, IOOperation.READ);
         return false;
+    }
+
+    private void retryFailed(HttpRequestProcessor processor, HttpException e) {
+        pendingRetry = false;
+        try {
+            LOG.info()
+                    .$("failed query result cannot be delivered. Kicked out [fd=").$(getFd())
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .I$();
+            processor.notifyRetryFailed(this, e);
+            dispatcher.disconnect(this, DISCONNECT_REASON_RETRY_FAILED);
+        } finally {
+            reset();
+        }
+    }
+
+    private void sendBadRequestError(CharSequence clientDiagnosticMessage) {
+        HttpChunkedResponseSocket skt = getChunkedResponseSocket();
+        try {
+            skt.status(400, CONTENT_TYPE_TEXT);
+            skt.sendHeader();
+            skt.encodeUtf8(clientDiagnosticMessage);
+            skt.sendChunk(true);
+        } catch (Throwable e) {
+            LOG.error().$("could not send error response [fd=").$(socket.getFd()).I$();
+        }
     }
 
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {

@@ -27,13 +27,11 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectCharSink;
+import org.jetbrains.annotations.TestOnly;
 
 public class TypeManager implements Mutable {
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
@@ -41,15 +39,13 @@ public class TypeManager implements Mutable {
     private final InputFormatConfiguration inputFormatConfiguration;
     private final SymbolAdapter notIndexedSymbolAdapter;
     private final int probeCount;
-    private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final StringAdapter stringAdapter;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
+    private final ObjList<TypeAdapter> typeAdapterList = new ObjList<>();
+    private final IntObjHashMap<ObjList<TypeAdapter>> typeAdapterMap = new IntObjHashMap<>();
 
-    public TypeManager(
-            TextConfiguration configuration,
-            DirectCharSink utf8Sink
-    ) {
+    public TypeManager(TextConfiguration configuration, DirectCharSink utf8Sink) {
         this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
         this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
@@ -57,7 +53,7 @@ public class TypeManager implements Mutable {
         this.stringAdapter = new StringAdapter(utf8Sink);
         this.indexedSymbolAdapter = new SymbolAdapter(utf8Sink, true);
         this.notIndexedSymbolAdapter = new SymbolAdapter(utf8Sink, false);
-        addDefaultProbes();
+        addDefaultAdapters();
 
         final ObjList<DateFormat> dateFormats = inputFormatConfiguration.getDateFormats();
         final ObjList<DateLocale> dateLocales = inputFormatConfiguration.getDateLocales();
@@ -65,7 +61,7 @@ public class TypeManager implements Mutable {
         final IntList dateUtf8Flags = inputFormatConfiguration.getDateUtf8Flags();
         for (int i = 0, n = dateFormats.size(); i < n; i++) {
             if (dateUtf8Flags.getQuick(i) == 1) {
-                probes.add(
+                typeAdapterList.add(
                         new DateUtf8Adapter(utf8Sink).of(
                                 datePatterns.getQuick(i),
                                 dateFormats.getQuick(i),
@@ -73,7 +69,7 @@ public class TypeManager implements Mutable {
                         )
                 );
             } else {
-                probes.add(
+                typeAdapterList.add(
                         new DateAdapter().of(
                                 datePatterns.getQuick(i),
                                 dateFormats.getQuick(i),
@@ -89,20 +85,34 @@ public class TypeManager implements Mutable {
         final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
             if (timestampUtf8Flags.getQuick(i) == 1) {
-                probes.add(new TimestampUtf8Adapter(utf8Sink).of(
+                typeAdapterList.add(new TimestampUtf8Adapter(utf8Sink).of(
                         timestampPatterns.getQuick(i),
                         timestampFormats.getQuick(i),
                         timestampLocales.getQuick(i))
                 );
             } else {
-                probes.add(new TimestampAdapter().of(
+                typeAdapterList.add(new TimestampAdapter().of(
                         timestampPatterns.getQuick(i),
                         timestampFormats.getQuick(i),
                         timestampLocales.getQuick(i))
                 );
             }
         }
-        this.probeCount = probes.size();
+        this.probeCount = typeAdapterList.size();
+
+        // index adapters by type
+        for (int i = 0; i < probeCount; i++) {
+            TypeAdapter typeAdapter = typeAdapterList.getQuick(i);
+            ObjList<TypeAdapter> mappedList;
+            int index = typeAdapterMap.keyIndex(typeAdapter.getType());
+            if (index > -1) {
+                mappedList = new ObjList<>();
+                typeAdapterMap.putAt(index, typeAdapter.getType(), mappedList);
+            } else {
+                mappedList = typeAdapterMap.valueAt(index);
+            }
+            mappedList.add(typeAdapter);
+        }
     }
 
     @Override
@@ -112,8 +122,9 @@ public class TypeManager implements Mutable {
         timestampAdapterPool.clear();
     }
 
+    @TestOnly
     public ObjList<TypeAdapter> getAllAdapters() {
-        return probes;
+        return typeAdapterList;
     }
 
     public InputFormatConfiguration getInputFormatConfiguration() {
@@ -121,7 +132,7 @@ public class TypeManager implements Mutable {
     }
 
     public TypeAdapter getProbe(int index) {
-        return probes.getQuick(index);
+        return typeAdapterList.getQuick(index);
     }
 
     public int getProbeCount() {
@@ -169,6 +180,14 @@ public class TypeManager implements Mutable {
         }
     }
 
+    public ObjList<TypeAdapter> getTypeAdapterList() {
+        return typeAdapterList;
+    }
+
+    public IntObjHashMap<ObjList<TypeAdapter>> getTypeAdapterMap() {
+        return typeAdapterMap;
+    }
+
     public DateUtf8Adapter nextDateAdapter() {
         return dateAdapterPool.next();
     }
@@ -189,14 +208,14 @@ public class TypeManager implements Mutable {
         return adapter;
     }
 
-    private void addDefaultProbes() {
-        probes.add(getTypeAdapter(ColumnType.CHAR));
-        probes.add(getTypeAdapter(ColumnType.INT));
-        probes.add(getTypeAdapter(ColumnType.LONG));
-        probes.add(getTypeAdapter(ColumnType.DOUBLE));
-        probes.add(getTypeAdapter(ColumnType.BOOLEAN));
-        probes.add(getTypeAdapter(ColumnType.LONG256));
-        probes.add(getTypeAdapter(ColumnType.UUID));
-        probes.add(getTypeAdapter(ColumnType.IPv4));
+    private void addDefaultAdapters() {
+        typeAdapterList.add(getTypeAdapter(ColumnType.CHAR));
+        typeAdapterList.add(getTypeAdapter(ColumnType.INT));
+        typeAdapterList.add(getTypeAdapter(ColumnType.LONG));
+        typeAdapterList.add(getTypeAdapter(ColumnType.DOUBLE));
+        typeAdapterList.add(getTypeAdapter(ColumnType.BOOLEAN));
+        typeAdapterList.add(getTypeAdapter(ColumnType.LONG256));
+        typeAdapterList.add(getTypeAdapter(ColumnType.UUID));
+        typeAdapterList.add(getTypeAdapter(ColumnType.IPv4));
     }
 }

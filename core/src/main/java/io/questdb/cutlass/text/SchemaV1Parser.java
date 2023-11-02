@@ -54,8 +54,8 @@ public class SchemaV1Parser implements JsonParser, Mutable, Closeable {
     private static final int S_NEED_OBJECT = 2;
     private static final int S_NEED_PROPERTY = 3;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
-    private final ObjList<CharSequence> columnNames;
-    private final ObjList<TypeAdapter> columnTypes;
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
     private final ObjectPool<FloatingCharSequence> csPool;
     private final DateFormatFactory dateFormatFactory;
     private final DateLocale dateLocale;
@@ -77,8 +77,6 @@ public class SchemaV1Parser implements JsonParser, Mutable, Closeable {
     private boolean utf8 = false;
 
     public SchemaV1Parser(TextConfiguration textConfiguration, TypeManager typeManager) {
-        this.columnNames = new ObjList<>();
-        this.columnTypes = new ObjList<>();
         this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolCapacity());
         this.dateLocaleFactory = typeManager.getInputFormatConfiguration().getDateLocaleFactory();
         this.dateFormatFactory = typeManager.getInputFormatConfiguration().getDateFormatFactory();

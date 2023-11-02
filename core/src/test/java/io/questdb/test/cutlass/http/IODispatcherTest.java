@@ -110,7 +110,7 @@ public class IODispatcherTest extends AbstractTest {
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
-            "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
+            "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
             "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
             "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
@@ -857,6 +857,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
+                false,
                 true,
                 1
         );
@@ -898,6 +899,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
+                false,
                 true,
                 1
         );
@@ -1028,10 +1030,20 @@ public class IODispatcherTest extends AbstractTest {
             String request,
             NetworkFacade nf,
             boolean expectReceiveDisconnect,
+            boolean expectSendDisconnect,
             int requestCount
     ) throws Exception {
-        testImport(response, request, nf, null, expectReceiveDisconnect, requestCount, engine -> {
-        });
+        testImport(
+                response,
+                request,
+                nf,
+                null,
+                expectReceiveDisconnect,
+                expectSendDisconnect,
+                requestCount,
+                engine -> {
+                }
+        );
     }
 
     public void testImport(
@@ -1040,6 +1052,7 @@ public class IODispatcherTest extends AbstractTest {
             NetworkFacade nf,
             CairoConfiguration configuration,
             boolean expectReceiveDisconnect,
+            boolean expectSendDisconnect,
             int requestCount,
             HttpQueryTestBuilder.HttpClientCode createTable
     ) throws Exception {
@@ -1065,7 +1078,8 @@ public class IODispatcherTest extends AbstractTest {
                                     requestCount,
                                     0,
                                     false,
-                                    expectReceiveDisconnect
+                                    expectReceiveDisconnect,
+                                    expectSendDisconnect
                             );
                         }
                 );
@@ -1131,6 +1145,7 @@ public class IODispatcherTest extends AbstractTest {
                                         1,
                                         0,
                                         false,
+                                        false,
                                         false
                                 );
 
@@ -1178,6 +1193,8 @@ public class IODispatcherTest extends AbstractTest {
                                         "3000,3000\r\n",
                                 null,
                                 "test",
+                                null,
+                                null,
                                 null,
                                 null,
                                 null
@@ -1231,6 +1248,8 @@ public class IODispatcherTest extends AbstractTest {
                         "clipboard-157200856",
                         "json",
                         null,
+                        null,
+                        null,
                         null
                 )
         );
@@ -1268,6 +1287,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n",
                 NetworkFacadeImpl.INSTANCE,
                 false,
+                false,
                 1
         );
     }
@@ -1286,7 +1306,7 @@ public class IODispatcherTest extends AbstractTest {
                                     "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
-                                    "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
+                                    "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
                                     "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
                                     "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
                                     "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
@@ -1328,11 +1348,15 @@ public class IODispatcherTest extends AbstractTest {
                             null,
                             null,
                             null,
+                            null,
+                            null,
                             null
                     );
 
                     // append different data structure to the same table
 
+                    // todo: new world - we should provide better diagnostics from the server
+                    //    to include which columns we could map and which columns is extras
                     testHttpClient.assertSendMultipart(
                             "column count mismatch [textColumnCount=6, tableColumnCount=5, table=fhv_tripdata_2017-02.csv]",
                             "[\r\n" +
@@ -1372,6 +1396,8 @@ public class IODispatcherTest extends AbstractTest {
                             null,
                             null,
                             null,
+                            null,
+                            null,
                             null
                     );
                 }
@@ -1404,10 +1430,13 @@ public class IODispatcherTest extends AbstractTest {
                             "testTs1",
                             null,
                             null,
+                            null,
+                            null,
                             null
                     );
 
                     // insert the same data again, existing table must be using custom formatters still
+                    System.out.println("STEP2******************************");
 
                     testHttpClient.assertSendMultipart(
                             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
@@ -1429,6 +1458,8 @@ public class IODispatcherTest extends AbstractTest {
                                     "2023-07-01T14:59:55.711'+0000',2023-07-01T14:59:55.711111222'+0000',2023-03-12'T'17:56:22'-0700',2023-08-20'T'13:20:10*633+0000",
                             null,
                             "testTs1",
+                            null,
+                            null,
                             null,
                             null,
                             null
@@ -1455,6 +1486,8 @@ public class IODispatcherTest extends AbstractTest {
                         null,
                         null,
                         null,
+                        null,
+                        null,
                         null
                 )
         );
@@ -1476,6 +1509,8 @@ public class IODispatcherTest extends AbstractTest {
                         null,
                         "",
                         "fhv_tripdata_2017-02.csv",
+                        null,
+                        null,
                         null,
                         null,
                         null,
@@ -1550,6 +1585,7 @@ public class IODispatcherTest extends AbstractTest {
                                         1,
                                         0,
                                         false,
+                                        false,
                                         false
                                 );
 
@@ -1579,40 +1615,10 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportForceUnknownDate() throws Exception {
-        testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "2c\r\n" +
-                        "{\"status\":\"DATE format pattern is required\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Content-Length: 832\r\n" +
-                        "Accept: */*\r\n" +
-                        "Origin: http://localhost:9000\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
-                        "\r\n" +
-                        "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"\r\n" +
-                        "\r\n" +
-                        "timestamp,bid\r\n" +
+        testImport(engine -> testHttpClient.assertSendMultipart(
+                "{\"status\":\"DATE format pattern is required\"}",
+                "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]",
+                "timestamp,bid\r\n" +
                         "27/05/2018 00:00:01,100\r\n" +
                         "27/05/2018 00:00:02,101\r\n" +
                         "27/05/2018 00:00:03,102\r\n" +
@@ -1633,51 +1639,23 @@ public class IODispatcherTest extends AbstractTest {
                         "27/05/2018 00:00:18,117\r\n" +
                         "27/05/2018 00:00:19,118\r\n" +
                         "27/05/2018 00:00:20,119\r\n" +
-                        "27/05/2018 00:00:21,120\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
-                NetworkFacadeImpl.INSTANCE,
-                true,
-                1
-        );
+                        "27/05/2018 00:00:21,120\r\n",
+                null,
+                "clipboard-157200856",
+                "json",
+                null,
+                null,
+                "true",
+                "true"
+        ));
     }
 
     @Test
     public void testImportForceUnknownTimestamp() throws Exception {
-        testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "31\r\n" +
-                        "{\"status\":\"TIMESTAMP format pattern is required\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Content-Length: 832\r\n" +
-                        "Accept: */*\r\n" +
-                        "Origin: http://localhost:9000\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
-                        "\r\n" +
-                        "[{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"\r\n" +
-                        "\r\n" +
-                        "timestamp,bid\r\n" +
+        testImport(engine -> testHttpClient.assertSendMultipart(
+                "{\"status\":\"TIMESTAMP format pattern is required\"}",
+                null,
+                "timestamp,bid\r\n" +
                         "27/05/2018 00:00:01,100\r\n" +
                         "27/05/2018 00:00:02,101\r\n" +
                         "27/05/2018 00:00:03,102\r\n" +
@@ -1698,13 +1676,15 @@ public class IODispatcherTest extends AbstractTest {
                         "27/05/2018 00:00:18,117\r\n" +
                         "27/05/2018 00:00:19,118\r\n" +
                         "27/05/2018 00:00:20,119\r\n" +
-                        "27/05/2018 00:00:21,120\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
-                NetworkFacadeImpl.INSTANCE,
-                true,
-                1
-        );
+                        "27/05/2018 00:00:21,120\r\n",
+                null,
+                "clipboard-157200856",
+                "json",
+                null,
+                null,
+                "true",
+                "true"
+        ));
     }
 
     @Test
@@ -1768,6 +1748,7 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
+                                        false,
                                         false,
                                         false
                                 );
@@ -1861,6 +1842,7 @@ public class IODispatcherTest extends AbstractTest {
                                         1,
                                         0,
                                         false,
+                                        false,
                                         false
                                 );
 
@@ -1904,6 +1886,8 @@ public class IODispatcherTest extends AbstractTest {
                                         "2000,2000\r\n",
                                 null,
                                 "test",
+                                null,
+                                null,
                                 null,
                                 null,
                                 null
@@ -1971,6 +1955,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--"
                 , NetworkFacadeImpl.INSTANCE
+                , false
                 , false
                 , 5
         );
@@ -2042,6 +2027,7 @@ public class IODispatcherTest extends AbstractTest {
                         return 0;
                     }
                 },
+                false,
                 false,
                 10
         );
@@ -2271,6 +2257,7 @@ public class IODispatcherTest extends AbstractTest {
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
                 false,
+                false,
                 1
         );
     }
@@ -2364,6 +2351,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "--------------------------af41c30bab413e07--",
                 NetworkFacadeImpl.INSTANCE,
+                false,
                 false,
                 1
         );
@@ -2466,6 +2454,7 @@ public class IODispatcherTest extends AbstractTest {
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
                 false,
+                false,
                 1
         );
     }
@@ -2482,46 +2471,10 @@ public class IODispatcherTest extends AbstractTest {
                         "test",
                         "json",
                         "ts",
-                        "MONTH"
-
+                        "MONTH",
+                        null,
+                        null
                 )
-        );
-        testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "e8\r\n" +
-                        "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":1,\"header\":true,\"partitionBy\":\"MONTH\",\"timestamp\":\"ts\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"a\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                "POST /upload?fmt=json&overwrite=true&forceHeader=false&name=test&timestamp=ts&partitionBy=MONTH HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Content-Length: 832\r\n" +
-                        "Accept: */*\r\n" +
-                        "Origin: http://localhost:9000\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"\r\n" +
-                        "\r\n" +
-                        "ts,a\r\n" +
-                        "2022-11-01T22:34:49.273814+0000,\"a\"\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
-                NetworkFacadeImpl.INSTANCE,
-                false,
-                1
         );
     }
 
@@ -4731,7 +4684,8 @@ public class IODispatcherTest extends AbstractTest {
                             1,
                             0,
                             false,
-                            true
+                            true,
+                            false
                     );
                 },
                 false,
@@ -5221,6 +5175,8 @@ public class IODispatcherTest extends AbstractTest {
                             "test",
                             "json",
                             null,
+                            null,
+                            null,
                             null
                     );
 
@@ -5368,6 +5324,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--",
                 NetworkFacadeImpl.INSTANCE,
+                false,
                 true,
                 1
         );
@@ -5402,6 +5359,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--",
                 NetworkFacadeImpl.INSTANCE,
+                false,
                 true,
                 1
         );
@@ -5436,6 +5394,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--",
                 NetworkFacadeImpl.INSTANCE,
+                false,
                 true,
                 1
         );
@@ -5560,6 +5519,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
+                false,
                 false,
                 1
         );
@@ -6909,6 +6869,7 @@ public class IODispatcherTest extends AbstractTest {
                             1,
                             0,
                             false,
+                            false,
                             false
                     );
 
@@ -6941,6 +6902,7 @@ public class IODispatcherTest extends AbstractTest {
                             1,
                             0,
                             false,
+                            false,
                             false
                     );
 
@@ -6972,6 +6934,7 @@ public class IODispatcherTest extends AbstractTest {
                                     "\r\n",
                             1,
                             0,
+                            false,
                             false,
                             false
                     );
@@ -7059,6 +7022,7 @@ public class IODispatcherTest extends AbstractTest {
                                     1,
                                     0,
                                     false,
+                                    false,
                                     false
                             );
 
@@ -7089,6 +7053,7 @@ public class IODispatcherTest extends AbstractTest {
                                             "\r\n",
                                     1,
                                     0,
+                                    false,
                                     false,
                                     false
                             );
@@ -7203,6 +7168,7 @@ public class IODispatcherTest extends AbstractTest {
                             1,
                             0,
                             false,
+                            false,
                             false
                     );
 
@@ -7234,6 +7200,7 @@ public class IODispatcherTest extends AbstractTest {
                             1,
                             0,
                             false,
+                            false,
                             false
                     );
 
@@ -7262,6 +7229,7 @@ public class IODispatcherTest extends AbstractTest {
                                     JSON_DDL_RESPONSE,
                             1,
                             0,
+                            false,
                             false,
                             false
                     );
@@ -7293,6 +7261,7 @@ public class IODispatcherTest extends AbstractTest {
                                     "00\r\n\r\n",
                             1,
                             0,
+                            false,
                             false,
                             false
                     );
@@ -7446,7 +7415,8 @@ public class IODispatcherTest extends AbstractTest {
                     1,
                     0,
                     false,
-                    true
+                    true,
+                    false
             );
             Assert.assertEquals(1, engine.getMetrics().health().unhandledErrorsCount());
         }, false);
@@ -7479,7 +7449,8 @@ public class IODispatcherTest extends AbstractTest {
                             1,
                             0,
                             false,
-                            true
+                            true,
+                            false
                     );
                     Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
                 }
@@ -7792,6 +7763,7 @@ public class IODispatcherTest extends AbstractTest {
                 requestCount,
                 pauseBetweenSendAndReceive,
                 print,
+                false,
                 false
         );
     }
@@ -7803,11 +7775,13 @@ public class IODispatcherTest extends AbstractTest {
             int requestCount,
             long pauseBetweenSendAndReceive,
             boolean print,
-            boolean expectReceiveDisconnect
+            boolean expectReceiveDisconnect,
+            boolean expectSendDisconnect
     ) {
         new SendAndReceiveRequestBuilder()
                 .withNetworkFacade(nf)
                 .withExpectReceiveDisconnect(expectReceiveDisconnect)
+                .withExpectSendDisconnect(expectSendDisconnect)
                 .withPrintOnly(print)
                 .withRequestCount(requestCount)
                 .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
@@ -8072,6 +8046,7 @@ public class IODispatcherTest extends AbstractTest {
                 NetworkFacadeImpl.INSTANCE,
                 configuration,
                 false,
+                false,
                 1,
                 engine -> {
                     try (TableModel model = new TableModel(configuration, tableName, partitionBy)
@@ -8169,6 +8144,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
+                false,
                 false,
                 1
         );

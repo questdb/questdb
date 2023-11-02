@@ -32,7 +32,12 @@ public interface CharSink extends CharSinkBase {
     int encodeSurrogate(char c, CharSequence in, int pos, int hi);
 
     default CharSink encodeUtf8(CharSequence cs) {
-        return encodeUtf8(cs, 0, cs.length());
+        if (cs!=null) {
+            return encodeUtf8(cs, 0, cs.length());
+        } else {
+            put("null");
+            return this;
+        }
     }
 
     default CharSink encodeUtf8(CharSequence cs, int lo, int hi) {
@@ -49,7 +54,11 @@ public interface CharSink extends CharSinkBase {
     }
 
     default CharSink encodeUtf8AndQuote(CharSequence cs) {
-        put('\"').encodeUtf8(cs).put('\"');
+        if (cs != null) {
+            put('\"').encodeUtf8(cs).put('\"');
+        } else {
+            put("null");
+        }
         return this;
     }
 

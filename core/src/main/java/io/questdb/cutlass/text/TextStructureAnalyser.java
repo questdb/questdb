@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cutlass.text.schema2.SchemaV2;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
@@ -37,8 +38,8 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Closeable {
-    private static final Log LOG = LogFactory.getLog(TextMetadataDetector.class);
+public class TextStructureAnalyser implements CsvTextLexer.Listener, Mutable, Closeable {
+    private static final Log LOG = LogFactory.getLog(TextStructureAnalyser.class);
     private final IntList _blanks = new IntList();
     private final IntList _histogram = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
@@ -50,10 +51,11 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final DirectCharSink utf8Sink;
     private int fieldCount;
     private boolean forceHeader = false;
-    private boolean header = false;
+    private boolean hasHeader = false;
+    private int requiredColumnHi;
     private CharSequence tableName;
 
-    public TextMetadataDetector(
+    public TextStructureAnalyser(
             TypeManager typeManager,
             TextConfiguration textConfiguration,
             SchemaV2 schema
@@ -71,9 +73,11 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         _blanks.clear();
         _histogram.clear();
         fieldCount = 0;
-        header = false;
+        hasHeader = false;
         columnTypes.clear();
         forceHeader = false;
+        fieldTypeAdapters.clear();
+        requiredColumnHi = 0;
     }
 
     @Override
@@ -87,7 +91,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         // if some fields come up as non-string after subtracting row - we have a header
         if ((calcTypes(lineCount - errorCount, true) && !calcTypes(lineCount - errorCount - 1, false)) || forceHeader) {
             // copy headers
-            header = true;
+            hasHeader = true;
         } else {
             LOG.info()
                     .$("no header [table=").$(tableName)
@@ -98,11 +102,11 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         }
 
         for (int i = 0; i < fieldCount; i++) {
-            if (!header || columnNames.getQuick(i).length() == 0) {
+            if (!hasHeader || columnNames.getQuick(i).length() == 0) {
                 tempSink.clear();
                 tempSink.put('f').put(i);
 
-                if (header) {
+                if (hasHeader) {
                     for (int attempt = 0; attempt < 20; attempt++) {
                         if (!columnNames.contains(tempSink)) {
                             break;
@@ -137,14 +141,38 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         }
     }
 
-    public boolean isHeader() {
-        return header;
+    public boolean hasHeader() {
+        return hasHeader;
     }
 
-    public void of(CharSequence tableName, boolean forceHeader) {
+    private final ObjList<ObjList<TypeAdapter>> fieldTypeAdapters = new ObjList<>();
+
+    /**
+     * Initializes the instance to prepare for data consumption from the CsvTextLexer
+     *
+     * @param tableName           name of the target table for logging purposes
+     * @param forceHeader         when the header is forced the first line is excluded from computing column types
+     * @param requiredColumnTypes column types that are required by existing table, e.g. what's required of the structure
+     *                            analyzer is to establish parsing patters rather than infer type. This is a sparse list,
+     *                            in that columns that are flexible for their types have ColumnType.TYPES_SIZE value. The
+     *                            column types should be in the order of columns in CSV file rather than table
+     */
+    public void of(CharSequence tableName, boolean forceHeader, ColumnTypes requiredColumnTypes) {
         clear();
         this.forceHeader = forceHeader;
         this.tableName = tableName;
+        this.requiredColumnHi = requiredColumnTypes.getColumnCount();
+        if (this.requiredColumnHi > 0) {
+            IntObjHashMap<ObjList<TypeAdapter>> typeAdapterMap = typeManager.getTypeAdapterMap();
+            for (int i = 0; i < requiredColumnHi; i++) {
+                int columnType = requiredColumnTypes.getColumnType(i);
+                if (columnType != ColumnType.TYPES_SIZE) {
+                    fieldTypeAdapters.add(typeAdapterMap.get(columnType));
+                } else {
+                    fieldTypeAdapters.add(typeManager.getTypeAdapterList());
+                }
+            }
+        }
     }
 
     @Override
@@ -155,16 +183,18 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             stashPossibleHeader(values, fieldCount);
         }
 
-        int count = typeManager.getProbeCount();
         for (int i = 0; i < fieldCount; i++) {
             DirectByteCharSequence cs = values.getQuick(i);
             if (cs.length() == 0) {
                 _blanks.increment(i);
             }
-            int offset = i * count;
-            for (int k = 0; k < count; k++) {
-                final TypeAdapter probe = typeManager.getProbe(k);
-                if (probe.probe(cs)) {
+
+            final ObjList<TypeAdapter> typeAdapterList =  requiredColumnHi > 0 && i < requiredColumnHi ? fieldTypeAdapters.getQuick(i) : typeManager.getTypeAdapterList();
+            final int typeAdapterCount = typeAdapterList.size();
+            int offset = i * typeAdapterCount;
+            for (int k = 0; k < typeAdapterCount; k++) {
+                final TypeAdapter typeAdapter = typeAdapterList.getQuick(k);
+                if (typeAdapter.probe(cs)) {
                     _histogram.increment(k + offset);
                 }
             }

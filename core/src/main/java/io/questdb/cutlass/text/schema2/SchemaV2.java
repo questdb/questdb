@@ -25,6 +25,8 @@
 package io.questdb.cutlass.text.schema2;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -35,13 +37,15 @@ public class SchemaV2 implements Mutable, Sinkable {
     public static final int FORMATS_ACTION_REPLACE = 2;
     // todo: schema could pool columns
     private final ObjList<Column> columnList = new ObjList<>();
+    private final IntObjHashMap<Column> fileColumnIndexToColumnMap = new IntObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<Column> fileColumnNameToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final IntObjHashMap<ObjList<TypeAdapter>> formats = new IntObjHashMap<>();
-    private final LowerCaseCharSequenceObjHashMap<Column> nameToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<Column> tableColumnNameToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private int formatsAction = FORMATS_ACTION_ADD;
 
     // legacy v1 schema interaction
-    public void addColumn(CharSequence columnName, int columnType, TypeAdapter format) {
-        int index = nameToColumnMap.keyIndex(columnName);
+    public void addColumn(CharSequence columnName, int columnType, TypeAdapter format) throws TextException {
+        int index = fileColumnNameToColumnMap.keyIndex(columnName);
         if (index > -1) {
             final String columnNameStr = Chars.toString(columnName);
             // new column name
@@ -53,7 +57,9 @@ public class SchemaV2 implements Mutable, Sinkable {
             );
             column.addFormat(format);
             this.columnList.add(column);
-            this.nameToColumnMap.putAt(index, columnNameStr, column);
+            this.fileColumnNameToColumnMap.putAt(index, columnNameStr, column);
+        } else {
+            throw TextException.$("duplicate schema column [name=").put(columnName).put(']');
         }
     }
 
@@ -63,20 +69,62 @@ public class SchemaV2 implements Mutable, Sinkable {
             int columnType,
             CharSequence tableColumnName,
             @Transient ObjList<TypeAdapter> formats
-    ) {
-        int index = nameToColumnMap.keyIndex(fileColumnName);
-        if (index > -1) {
-            final String fileColumnNameStr = Chars.toString(fileColumnName);
-            // new column name
-            final Column column = new Column(
-                    fileColumnNameStr,
-                    fileColumnIndex,
-                    columnType,
-                    Chars.toString(tableColumnName)
-            );
-            column.addAllFormats(formats);
-            this.columnList.add(column);
-            this.nameToColumnMap.putAt(index, fileColumnNameStr, column);
+    ) throws JsonException {
+        final int fileColumnNameMapIndex;
+        if (fileColumnName != null) {
+            fileColumnNameMapIndex = fileColumnNameToColumnMap.keyIndex(fileColumnName);
+            if (fileColumnNameMapIndex < 0) {
+                throw TextException.$("schema error, duplicate file column name [file_column_name=").put(fileColumnName).put(']');
+            }
+        } else {
+            // file column name is not provided, will not add it to the map
+            fileColumnNameMapIndex = -1;
+        }
+
+        final int fileColumnIndexMapIndex;
+        if (fileColumnIndex != -1) {
+            // file column is referenced by index
+            fileColumnIndexMapIndex = fileColumnIndexToColumnMap.keyIndex(fileColumnIndex);
+            if (fileColumnIndexMapIndex < 0) {
+                throw TextException.$("schema error, duplicate file column index [file_column_index=").put(fileColumnIndex).put(']');
+            }
+        } else {
+            // file column index is not provided, will not add it to the map
+            fileColumnIndexMapIndex = -1;
+        }
+
+        final int tableColumnNameMapIndex;
+        if (tableColumnName != null) {
+            tableColumnNameMapIndex = tableColumnNameToColumnMap.keyIndex(tableColumnName);
+            if (fileColumnIndexMapIndex < 0) {
+                throw TextException.$("schema error, duplicate file column index [table_column_name=").put(tableColumnName).put(']');
+            }
+        } else {
+            tableColumnNameMapIndex = -1;
+        }
+
+        final String fileColumnNameStr = Chars.toString(fileColumnName);
+        final String tableColumnNameStr = Chars.toString(tableColumnName);
+        // new column name
+        final Column column = new Column(
+                fileColumnNameStr,
+                fileColumnIndex,
+                columnType,
+                tableColumnNameStr
+        );
+        column.addAllFormats(formats);
+        this.columnList.add(column);
+
+        if (fileColumnNameMapIndex != -1) {
+            this.fileColumnNameToColumnMap.putAt(fileColumnNameMapIndex, fileColumnNameStr, column);
+        }
+
+        if (fileColumnIndexMapIndex != -1) {
+            this.fileColumnIndexToColumnMap.putAt(fileColumnIndexMapIndex, fileColumnIndex, column);
+        }
+
+        if (tableColumnNameMapIndex != -1) {
+            this.tableColumnNameToColumnMap.putAt(tableColumnNameMapIndex, tableColumnNameStr, column);
         }
     }
 
@@ -95,7 +143,7 @@ public class SchemaV2 implements Mutable, Sinkable {
     @Override
     public void clear() {
         columnList.clear();
-        nameToColumnMap.clear();
+        fileColumnNameToColumnMap.clear();
         // formats are keyed on column type, we could reduce allocation by
         // reusing lists for each type
         for (int i = 0, n = ColumnType.MAX; i < n; i++) {
@@ -108,7 +156,7 @@ public class SchemaV2 implements Mutable, Sinkable {
     }
 
     public @Nullable TypeAdapter findFirstFormat(CharSequence columnName) {
-        final Column column = nameToColumnMap.get(columnName);
+        final Column column = fileColumnNameToColumnMap.get(columnName);
         if (column != null && column.getFormatCount() > 0) {
             return column.getFormat(0);
         }
@@ -123,8 +171,24 @@ public class SchemaV2 implements Mutable, Sinkable {
         return columnList.size();
     }
 
+    public ObjList<Column> getColumnList() {
+        return columnList;
+    }
+
+    public IntObjHashMap<Column> getFileColumnIndexToColumnMap() {
+        return fileColumnIndexToColumnMap;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<Column> getFileColumnNameToColumnMap() {
+        return fileColumnNameToColumnMap;
+    }
+
     public int getFormatsAction() {
         return formatsAction;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<Column> getTableColumnNameToColumnMap() {
+        return tableColumnNameToColumnMap;
     }
 
     public void setFormatsAction(int formatsAction) {

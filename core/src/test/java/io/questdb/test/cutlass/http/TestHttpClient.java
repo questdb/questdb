@@ -132,7 +132,9 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence tableName,
             @Nullable CharSequence responseFormat,
             @Nullable CharSequence timestampColumnName,
-            @Nullable CharSequence partitionBy
+            @Nullable CharSequence partitionBy,
+            @Nullable CharSequence forceHeader,
+            @Nullable CharSequence overwrite
     ) {
         sink.clear();
         try {
@@ -144,6 +146,8 @@ public class TestHttpClient implements QuietCloseable {
                     responseFormat,
                     timestampColumnName,
                     partitionBy,
+                    forceHeader,
+                    overwrite,
                     sink
             );
             TestUtils.assertEquals(expectedResponse, sink);
@@ -207,6 +211,8 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence responseFormat,
             CharSequence timestampColumnName,
             CharSequence partitionBy,
+            CharSequence forceHeader,
+            CharSequence overwrite,
             CharSink sink
     ) {
         HttpClient.Request req = httpClient.newRequest();
@@ -217,7 +223,8 @@ public class TestHttpClient implements QuietCloseable {
                 .query("fmt", responseFormat)
                 .query("timestamp", timestampColumnName)
                 .query("partitionBy", partitionBy)
-                .query("overwrite", "false")
+                .query("overwrite", overwrite)
+                .query("forceHeader", forceHeader)
 //                .query("skipLev", "false")
 //                .query("delimiter", "")
 //                .query("atomicitiy", "skipCol")

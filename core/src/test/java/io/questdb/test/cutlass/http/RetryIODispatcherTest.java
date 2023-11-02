@@ -31,7 +31,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.ServerDisconnectException;
+import io.questdb.network.PeerDisconnectedException;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
@@ -123,7 +123,7 @@ public class RetryIODispatcherTest extends AbstractTest {
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
-            "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
+            "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
             "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
             "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
@@ -152,8 +152,8 @@ public class RetryIODispatcherTest extends AbstractTest {
                             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                             .withCustomTextImportProcessor(((configuration, engine, workerCount) -> new TextImportProcessor(engine) {
                                 @Override
-                                public void onRequestRetry(HttpConnectionContext context) throws ServerDisconnectException {
-                                    throw ServerDisconnectException.INSTANCE;
+                                public void onRequestRetry(HttpConnectionContext context) throws PeerDisconnectedException {
+                                    throw PeerDisconnectedException.INSTANCE;
                                 }
                             })),
                     0, ValidImportRequest, ValidImportResponse, false, true);
@@ -339,8 +339,12 @@ public class RetryIODispatcherTest extends AbstractTest {
                                     .withNetwork(getSendDelayNetworkFacade(500))
                                     .withMultipartIdleSpinCount(10)
                             ),
-                    500, ValidImportRequest, ValidImportResponse
-                    , true, false);
+                    500,
+                    ValidImportRequest,
+                    ValidImportResponse,
+                    true,
+                    false
+            );
             TestUtils.removeTestPath(root);
             TestUtils.createTestPath(root);
         }

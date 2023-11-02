@@ -62,12 +62,28 @@ public class Column implements Mutable, Sinkable {
         formats.clear();
     }
 
+    public int getColumnType() {
+        return columnType;
+    }
+
+    public CharSequence getFileColumnName() {
+        return fileColumnName;
+    }
+
     public TypeAdapter getFormat(int formatIndex) {
         return formats.getQuick(formatIndex);
     }
 
     public int getFormatCount() {
         return formats.size();
+    }
+
+    public CharSequence getTableColumnName() {
+        return tableColumnName;
+    }
+
+    public CharSequence getTableOrFileColumnName() {
+        return tableColumnName != null ? tableColumnName : fileColumnName;
     }
 
     @Override

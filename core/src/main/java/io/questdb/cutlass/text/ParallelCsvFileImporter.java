@@ -97,7 +97,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution;
     private final TextDelimiterScanner textDelimiterScanner;
-    private final TextMetadataDetector textMetadataDetector;
+    private final TextStructureAnalyser textStructureAnalyser;
     private final Path tmpPath;
     private final TypeManager typeManager;
     private final DirectCharSink utf8Sink;
@@ -175,7 +175,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
-        this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration, schema);
+        this.textStructureAnalyser = new TextStructureAnalyser(typeManager, textConfiguration, schema);
 
         this.targetTableStructure = new TableStructureAdapter(configuration);
         this.targetTableStatus = -1;
@@ -295,7 +295,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         utf8Sink.clear();
         typeManager.clear();
         symbolCapacities.clear();
-        textMetadataDetector.clear();
+        textStructureAnalyser.clear();
         otherToTimestampAdapterPool.clear();
         partitions.clear();
         linesIndexed = 0;
@@ -329,7 +329,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.inputFilePath.close();
         this.tmpPath.close();
         this.utf8Sink.close();
-        this.textMetadataDetector.close();
+        this.textStructureAnalyser.close();
         this.textDelimiterScanner.close();
         this.localImportJob.close();
     }
@@ -451,14 +451,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     schema.addColumn(timestampColumn, ColumnType.TIMESTAMP, timestampAdapter);
                 }
 
-                textMetadataDetector.of(tableName, forceHeader);
-                lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
-                textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
-                forceHeader = textMetadataDetector.isHeader();
+                // todo: reuse
+                ArrayColumnTypes requiredTypes = new ArrayColumnTypes();
+                textStructureAnalyser.of(tableName, forceHeader, requiredTypes);
+                lexer.parse(buf, buf + n, textAnalysisMaxLines, textStructureAnalyser);
+                textStructureAnalyser.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
+                forceHeader = textStructureAnalyser.hasHeader();
 
                 prepareTable(
-                        textMetadataDetector.getColumnNames(),
-                        textMetadataDetector.getColumnTypes(),
+                        textStructureAnalyser.getColumnNames(),
+                        textStructureAnalyser.getColumnTypes(),
                         inputFilePath,
                         typeManager,
                         securityContext
@@ -1079,7 +1081,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     task.ofPhasePartitionImport(
                             cairoEngine,
                             targetTableStructure,
-                            textMetadataDetector.getColumnTypes(),
+                            textStructureAnalyser.getColumnTypes(),
                             atomicity,
                             columnDelimiter,
                             importRoot,

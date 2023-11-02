@@ -130,14 +130,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     @Override
     public void close() {
-//        Misc.free(compiler);
         Misc.free(path);
         Misc.free(circuitBreaker);
     }
 
-    public void execute0(
-            JsonQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    public void execute0(JsonQueryProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
 
         OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
@@ -194,8 +192,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (CairoError | CairoException e) {
             internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(), e, state, context.getMetrics());
             readyForNextRequest(context);
-            if (e instanceof CairoException
-                    && ((CairoException) e).isEntityDisabled()) {
+            if (e instanceof CairoException && ((CairoException) e).isEntityDisabled()) {
                 throw ServerDisconnectException.INSTANCE;
             }
         } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
@@ -208,12 +205,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final JsonQueryProcessorState state = LV.get(context);
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        logInternalError(e, state, metrics);
-        sendException(socket, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader());
-        socket.shutdownWrite();
+    public void notifyRetryFailed(HttpConnectionContext context, HttpException e) {
+        logInternalError(e, LV.get(context), metrics);
     }
 
     @Override
@@ -241,9 +234,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void onRequestRetry(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    public void onRequestRetry(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, ServerDisconnectException {
         JsonQueryProcessorState state = LV.get(context);
         execute0(state);
     }
@@ -259,9 +251,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void resumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    public void resumeSend(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context
@@ -322,11 +313,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
-    private static void logInternalError(
-            Throwable e,
-            JsonQueryProcessorState state,
-            Metrics metrics
-    ) {
+    private static void logInternalError(Throwable e, JsonQueryProcessorState state, Metrics metrics) {
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
