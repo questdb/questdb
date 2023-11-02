@@ -95,7 +95,10 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),
     CAIRO_SQL_JOIN_METADATA_MAX_RESIZES("cairo.sql.join.metadata.max.resizes"),
+    CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE("cairo.sql.analytic.initial.range.buffer.size"),
+    CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE("cairo.sql.window.initial.range.buffer.size"),
     CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY("cairo.sql.analytic.column.pool.capacity"),
+    CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY("cairo.sql.window.column.pool.capacity"),
     CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY("cairo.sql.create.table.model.pool.capacity"),
     CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY("cairo.sql.column.cast.model.pool.capacity"),
     CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY("cairo.sql.rename.table.model.pool.capacity"),
@@ -162,11 +165,17 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_REPLACE_BUFFER_MAX_SIZE("cairo.replace.buffer.max.size"),
     CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE("cairo.sql.string.function.buffer.max.size"),
     CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE("cairo.sql.analytic.store.page.size"),
+    CAIRO_SQL_WINDOW_STORE_PAGE_SIZE("cairo.sql.window.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
+    CAIRO_SQL_WINDOW_STORE_MAX_PAGES("cairo.sql.window.store.max.pages"),
     CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE("cairo.sql.analytic.rowid.page.size"),
+    CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE("cairo.sql.window.rowid.page.size"),
     CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES("cairo.sql.analytic.rowid.max.pages"),
+    CAIRO_SQL_WINDOW_ROWID_MAX_PAGES("cairo.sql.window.rowid.max.pages"),
     CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE("cairo.sql.analytic.tree.page.size"),
+    CAIRO_SQL_WINDOW_TREE_PAGE_SIZE("cairo.sql.window.tree.page.size"),
     CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"),
+    CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
     CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT("cairo.o3.txn.scoreboard.entry.count"),
     CAIRO_LATESTBY_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
@@ -389,6 +398,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
     CAIRO_WAL_PURGE_INTERVAL("cairo.wal.purge.interval"),
     CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
+    CAIRO_WAL_SEGMENT_ROLLOVER_SIZE("cairo.wal.segment.rollover.size"),
     CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.wal.writer.data.append.page.size"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
@@ -412,7 +422,8 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
     CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
-    CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size");
+    CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
+    DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

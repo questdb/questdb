@@ -44,15 +44,8 @@ public class CastByteToDateFunctionFactory implements FunctionFactory {
     }
 
     public static class CastByteToDateFunction extends AbstractCastToDateFunction {
-        private final Function arg;
-
         public CastByteToDateFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

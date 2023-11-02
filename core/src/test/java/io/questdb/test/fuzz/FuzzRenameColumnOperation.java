@@ -24,6 +24,7 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -39,7 +40,7 @@ public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
+    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
         AlterOperationBuilder builder = new AlterOperationBuilder().ofRenameColumn(
                 0,
                 wApi.getTableToken(),

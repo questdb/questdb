@@ -27,10 +27,7 @@ package io.questdb.test.std.str;
 import io.questdb.cairo.TableToken;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -159,6 +156,22 @@ public class PathTest {
     }
 
     @Test
+    public void testHugeAppend() {
+        final long threeGiB = 3L * 1024 * 1024 * 1024;
+        final long src = Unsafe.calloc(threeGiB, MemoryTag.NATIVE_DEFAULT);
+        try {
+            try (Path p0 = new Path()) {
+                p0.put(src, src + threeGiB);
+                Assert.fail("Expected exception");
+            }
+        } catch (IllegalArgumentException iae) {
+            TestUtils.assertContains(iae.getMessage(), "size exceeds 2GiB limit");
+        } finally {
+            Unsafe.free(src, threeGiB, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testLpszConcat() {
         try (Path p1 = new Path()) {
             p1.of("abc").concat("123").$();
@@ -209,8 +222,10 @@ public class PathTest {
         }
 
         try (Path p = new Path()) {
-            TestUtils.assertEquals("9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999" + System.getProperty("file.separator") + "xyz",
-                    p.of(b).concat("xyz").$());
+            TestUtils.assertEquals(
+                    "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999" + System.getProperty("file.separator") + "xyz",
+                    p.of(b).concat("xyz").$()
+            );
         }
     }
 
@@ -278,6 +293,24 @@ public class PathTest {
         try (Path p0 = new Path(4).putAscii("foobar").$()) {
             path.of("baz").prefix(p0, p0.size()).$();
             TestUtils.assertEquals("foobarbaz", path.toString());
+        }
+    }
+
+    @Test
+    public void testPutDirectUtf8Sequence() {
+        try (Path p0 = new Path(16); DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
+            Assert.assertEquals(16, p0.capacity());
+            final String payload1 = "Moo: 🐄";
+            sink.put(payload1);
+            p0.put(sink);
+            Assert.assertEquals(p0.capacity(), 16);
+            Assert.assertEquals(payload1, p0.toString());
+            final String payload2 = ", mooooooooooooooooooooo: 🐮!";
+            sink.clear();
+            sink.put(payload2);
+            p0.put(sink);
+            Assert.assertEquals(255, path.capacity());
+            Assert.assertEquals(payload1 + payload2, p0.toString());
         }
     }
 

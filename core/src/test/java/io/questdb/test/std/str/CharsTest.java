@@ -295,6 +295,32 @@ public class CharsTest {
     }
 
     @Test
+    public void testIndexOf() {
+        Assert.assertEquals(4, Chars.indexOf("foo bar baz", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOf("foo bar baz", 0, 11, "ba"));
+        Assert.assertEquals(8, Chars.indexOf("foo bar baz", 6, 11, "ba"));
+        Assert.assertEquals(1, Chars.indexOf("foo bar baz", 0, 7, "oo"));
+        Assert.assertEquals(0, Chars.indexOf("foo bar baz", 2, 4, ""));
+        Assert.assertEquals(-1, Chars.indexOf("foo bar baz", 0, 11, "BaR"));
+        Assert.assertEquals(-1, Chars.indexOf("foo bar baz", 2, 4, "y"));
+        Assert.assertEquals(-1, Chars.indexOf("", 0, 0, "oo"));
+        Assert.assertEquals(-1, Chars.indexOf("", 0, 0, "y"));
+    }
+
+    @Test
+    public void testIndexOfLowerCase() {
+        Assert.assertEquals(4, Chars.indexOfLowerCase("foo bar baz", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOfLowerCase("FOO BAR BAZ", 0, 11, "bar"));
+        Assert.assertEquals(4, Chars.indexOfLowerCase("foo bar baz", 0, 11, "ba"));
+        Assert.assertEquals(8, Chars.indexOfLowerCase("foo BAr BAz", 6, 11, "ba"));
+        Assert.assertEquals(1, Chars.indexOfLowerCase("foo bar baz", 0, 7, "oo"));
+        Assert.assertEquals(0, Chars.indexOfLowerCase("foo bar baz", 2, 4, ""));
+        Assert.assertEquals(-1, Chars.indexOfLowerCase("foo bar baz", 2, 4, "y"));
+        Assert.assertEquals(-1, Chars.indexOfLowerCase("", 0, 0, "oo"));
+        Assert.assertEquals(-1, Chars.indexOfLowerCase("", 0, 0, "y"));
+    }
+
+    @Test
     public void testIsBlank() {
         Assert.assertTrue(Chars.isBlank(null));
         Assert.assertTrue(Chars.isBlank(""));
@@ -380,21 +406,21 @@ public class CharsTest {
     }
 
     @Test
-    public void testStartsWithIgnoreCase() {
-        Assert.assertTrue(Chars.startsWithIgnoreCase("", ""));
+    public void testStartsWithLowerCase() {
+        Assert.assertTrue(Chars.startsWithLowerCase("", ""));
         String[] positive = {"", "a", "ab", "abc"};
         for (String s : positive) {
-            Assert.assertTrue(Chars.startsWithIgnoreCase("abc", s));
-            Assert.assertTrue(Chars.startsWithIgnoreCase("ABC", s));
-            Assert.assertTrue(Chars.startsWithIgnoreCase("abc", s.toUpperCase()));
-            Assert.assertTrue(Chars.startsWithIgnoreCase("ABC", s.toUpperCase()));
+            Assert.assertTrue(Chars.startsWithLowerCase("abc", s));
+            Assert.assertTrue(Chars.startsWithLowerCase("ABC", s));
         }
 
-        Assert.assertFalse(Chars.startsWithIgnoreCase("", "abcd"));
-        Assert.assertFalse(Chars.startsWithIgnoreCase("abc", "abcd"));
-        Assert.assertFalse(Chars.startsWithIgnoreCase("abc", "ABCD"));
-        Assert.assertFalse(Chars.startsWithIgnoreCase("ABC", "abcd"));
-        Assert.assertFalse(Chars.startsWithIgnoreCase("ABC", "ABCD"));
+        Assert.assertTrue(Chars.startsWithLowerCase("abcd", ""));
+        Assert.assertFalse(Chars.startsWithLowerCase("", "abcd"));
+        Assert.assertFalse(Chars.startsWithLowerCase("abc", "abcd"));
+        Assert.assertFalse(Chars.startsWithLowerCase("ABC", "abcd"));
+        // The pattern has to be lower-case.
+        Assert.assertFalse(Chars.startsWithLowerCase("abc", "ABC"));
+        Assert.assertFalse(Chars.startsWithLowerCase("ABC", "ABC"));
     }
 
     private static void base64DecodeByteSink(Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectUtf8Sink> decoderUnderTest) {

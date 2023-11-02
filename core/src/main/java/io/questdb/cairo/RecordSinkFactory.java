@@ -108,6 +108,19 @@ public class RecordSinkFactory {
             final int factor = columnFilter.getIndexFactor(index);
             index = (index * factor - 1);
             final int type = columnTypes.getColumnType(index);
+
+            if (factor < 0) {
+                int size = ColumnType.sizeOf(type);
+
+                // skip n-bytes
+                if (size > 0) {
+                    asm.aload(2);
+                    asm.iconst(size);
+                    asm.invokeInterface(wSkip, 1);
+                    continue;
+                }
+            }
+
             switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
                     asm.aload(2);
@@ -225,16 +238,6 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetRecord, 1);
                     asm.invokeInterface(wPutRecord, 1);
-                    break;
-                case -ColumnType.INT:
-                    asm.aload(2);
-                    asm.iconst(Integer.BYTES);
-                    asm.invokeInterface(wSkip, 1);
-                    break;
-                case -ColumnType.LONG:
-                    asm.aload(2);
-                    asm.iconst(Long.BYTES);
-                    asm.invokeInterface(wSkip, 1);
                     break;
                 case ColumnType.GEOBYTE:
                     asm.aload(2);

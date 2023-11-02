@@ -22,19 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableToken;
-import io.questdb.std.str.Path;
+public interface WindowSPI {
+    long getAddress(long recordAddress, int columnIndex);
 
-public class DefaultWalInitializer implements WalInitializer {
-    public static final DefaultWalInitializer INSTANCE = new DefaultWalInitializer();
-
-    @Override
-    public void initDirectory(Path dirPath) {
-    }
-
-    @Override
-    public void rollbackDirectory(Path path) {
-    }
+    Record getRecordAt(long recordOffset);
 }

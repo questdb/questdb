@@ -48,6 +48,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
@@ -2499,6 +2500,135 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    public void testRolloverSegmentSize(int colType, boolean colNeedsIndex, long bytesPerRow, long additionalBytesPerTxn, Consumer<TableWriter.Row> valueInserter) throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                final String tableName = testName.getMethodName();
+                final TableToken tableToken;
+                try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                        .col("a", colType)
+                        .timestamp("ts")
+                        .wal()
+                ) {
+                    tableToken = createTable(model);
+                }
+
+                final long rolloverSize = 1024;
+                configOverrideWalSegmentRolloverSize(rolloverSize);  // 1 KiB
+
+                final long eventsBytesPerTxn = 50 + additionalBytesPerTxn;
+                final long eventsHeader = 12;  // number of bytes in the events file header.
+                final long txnCount = 3;  // number of `.commit()` calls in this test.
+
+                // The maximum number of rows we can insert before we trigger the size-based rollover.
+                // If the col needs an index, we need to remove this from the size count.
+                final long nonBreachRowCount = (
+                        rolloverSize
+                                - (colNeedsIndex ? 8 : 0)
+                                - eventsHeader
+                                - (eventsBytesPerTxn * txnCount)
+                ) / bytesPerRow;
+
+                long timestamp = 1694590000000000L;
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    // Insert the one less than the maximum number of rows to cause a roll-over at the next row.
+                    for (long rowIndex = 0; rowIndex < (nonBreachRowCount - 1); ++rowIndex, timestamp += 1000) {
+                        final TableWriter.Row row = walWriter.newRow(timestamp);
+                        valueInserter.accept(row);
+                        row.append();
+                    }
+                    walWriter.commit();
+
+                    assertWalExistence(true, tableName, 1);
+                    assertSegmentExistence(true, tableName, 1, 0);
+                    assertSegmentExistence(false, tableName, 1, 1);
+
+                    // Inserting the next row is still within limit: Will not roll over.
+                    {
+                        final TableWriter.Row row = walWriter.newRow(timestamp);
+                        valueInserter.accept(row);
+                        row.append();
+                        timestamp += 1000;
+                    }
+                    walWriter.commit();
+
+                    assertSegmentExistence(false, tableName, 1, 1);
+
+                    // We're now over the limit, but the logic is to roll over the row _after_ this one.
+                    {
+                        final TableWriter.Row row = walWriter.newRow(timestamp);
+                        valueInserter.accept(row);
+                        row.append();
+                        timestamp += 1000;
+                    }
+                    walWriter.commit();
+
+                    assertSegmentExistence(false, tableName, 1, 1);
+
+                    // finally, a row rolled over.
+                    {
+                        final TableWriter.Row row = walWriter.newRow(timestamp);
+                        valueInserter.accept(row);
+                        row.append();
+                    }
+                    walWriter.commit();
+
+                    assertSegmentExistence(true, tableName, 1, 1);
+                }
+            });
+        } finally {
+            configOverrideWalSegmentRolloverSize(0);
+        }
+    }
+
+    @Test
+    public void testRolloverSegmentSizeInt() throws Exception {
+        // Size of all columns per row: 4 bytes for INT, 16 bytes for timestamp (8 bytes index + 8 bytes timestamp).
+        final long bytesPerRow = 4 + 16;
+        final AtomicInteger value = new AtomicInteger();
+        testRolloverSegmentSize(ColumnType.INT, false, bytesPerRow, 0, (row) -> row.putInt(0, value.getAndIncrement()));
+    }
+
+    @Test
+    public void testRolloverSegmentSizeStr() throws Exception {
+        // NB. All our test strings are unique 3 chars. This gives us fixed sizes per row.
+        //
+        // Size of all columns per row:
+        //   * 8 bytes for the string index column (secondary column).
+        //   * 10 bytes data column (primary column):
+        //       * 6 bytes payload (because utf-16).
+        //       * 4 bytes len prefix.
+        //   * 16 bytes for timestamp (8 bytes index + 8 bytes timestamp).
+        final long bytesPerRow = 8 + 10 + 16;
+        final AtomicInteger value = new AtomicInteger();
+        testRolloverSegmentSize(ColumnType.STRING, true, bytesPerRow, 0, (row) -> {
+            final String formatted = String.format("%03d", value.getAndIncrement());
+            row.putStr(0, formatted);
+        });
+    }
+
+    @Test
+    public void testRolloverSegmentSizeSymbol() throws Exception {
+        // NB. All our test strings are unique 3 chars. This gives us fixed sizes per row.
+        //
+        // Size of all columns per row:
+        //   * 4 bytes for the symbol index column (primary column):
+        //   * 14 bytes in the events file:
+        //       * 4 bytes for symbol index value.
+        //       * 4 bytes len prefix.
+        //       * 6 bytes payload (because utf-16).
+        final long bytesPerRow = 4 + 14 + 16;
+
+        // Overhead to track symbols per txn (per symbol column, in actual fact - but we only have one).
+        final long additionalBytesPerTxn = 17;
+        final AtomicInteger value = new AtomicInteger();
+        testRolloverSegmentSize(ColumnType.SYMBOL, false, bytesPerRow, additionalBytesPerTxn, (row) -> {
+            final String formatted = String.format("%03d", value.getAndIncrement());
+            row.putSym(0, formatted);
+        });
+    }
+
     @Test
     public void testSameWalAfterEngineCleared() throws Exception {
         assertMemoryLeak(() -> {
@@ -3024,7 +3154,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             assertTableExistence(true, tableToken);
 
-            engine.setWalInitializer(new WalInitializer() {
+            engine.setWalDirectoryPolicy(new WalDirectoryPolicy() {
                 @Override
                 public void initDirectory(Path dirPath) {
                     final File segmentDirFile = new File(dirPath.toString());
@@ -3037,8 +3167,18 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
+                public boolean isInUse(Path path) {
+                    return false;
+                }
+
+                @Override
                 public void rollbackDirectory(Path path) {
                     // do nothing
+                }
+
+                @Override
+                public boolean truncateFilesOnClose() {
+                    return true;
                 }
             });
 

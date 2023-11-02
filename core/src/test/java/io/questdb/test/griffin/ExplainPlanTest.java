@@ -34,8 +34,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.analytic.RankFunctionFactory;
-import io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
@@ -52,6 +50,8 @@ import io.questdb.griffin.engine.functions.eq.*;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -275,50 +275,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAnalytic0() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t",
-                "CachedAnalytic\n" +
-                        "  functions: [row_number(),row_number()]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
-    public void testAnalytic1() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t",
-                "CachedAnalytic\n" +
-                        "  functions: [row_number()]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [str,ts,l,10]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
-    public void testAnalytic2() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t",
-                "CachedAnalytic\n" +
-                        "  functions: [row_number()]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [str,ts,l1,ts::long+l1]\n" +
-                        "        SelectedRecord\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: t\n"
-        );
-    }
-
-    @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -529,7 +485,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedAnalyticRecordCursorFactoryWithLimit() throws Exception {
+    public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as ( " +
                     "  select " +
@@ -539,21 +495,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "   from long_sequence(100)" +
                     ") timestamp(ts) partition by hour");
 
-            String sql = "select i, row_number() over (partition by sym) from x limit 3";
+            String sql = "select i, row_number() over (partition by sym), avg(i) over () from x limit 3";
             assertPlan(
                     sql,
                     "Limit lo: 3\n" +
-                            "    CachedAnalytic\n" +
-                            "      functions: [row_number()]\n" +
+                            "    CachedWindow\n" +
+                            "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over ()]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\n" +
-                    "1\t1\n" +
-                    "2\t2\n" +
-                    "3\t1\n", sql);
+            assertSql("i\trow_number\tavg\n" +
+                    "1\t1\t50.5\n" +
+                    "2\t2\t50.5\n" +
+                    "3\t1\t50.5\n", sql);
         });
     }
 
@@ -1659,7 +1615,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
         );
     }
-    
+
     @Test
     public void testFiltersOnIndexedSymbolColumns() throws SqlException {
         ddl("CREATE TABLE reference_prices (\n" +
@@ -2004,12 +1960,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         argPositions.setAll(args.size(), 0);
 
-                        if (factory instanceof RowNumberFunctionFactory || factory instanceof RankFunctionFactory) {
-                            sqlExecutionContext.configureAnalyticContext(null, null, null, true, true);
+                        //TODO: test with partition by, order by and various frame modes
+                        if (factory.isWindow()) {
+                            sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
+                        }
+                        Function function = null;
+                        try {
+                            function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
+                            function.toPlan(planSink);
+                        } finally {
+                            sqlExecutionContext.clearWindowContext();
                         }
 
-                        Function function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
-                        function.toPlan(planSink);
                         goodArgsFound = true;
 
                         Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
@@ -4016,6 +3978,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLikeFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (s1 string, s2 string, s3 string, s4 string, s5 string, s6 string);");
+
+            assertPlan(
+                    "select * from tab " +
+                            "where s1 like '%a'  and s2 ilike '%a' " +
+                            "  and s3 like 'a%'  and s4 ilike 'a%' " +
+                            "  and s5 like '%a%' and s6 ilike '%a%';",
+                    "Async Filter workers: 1\n" +
+                            "  filter: (((((s1 like %a and s2 ilike %a) and s3 like a%) and s4 ilike a%) and s5 like %a%) and s6 ilike %a%)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
     public void testLtJoin0() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -4385,16 +4366,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp DESC " +
                         "LIMIT 1",
-                "Limit lo: 1\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 1\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row backward scan\n" +
-                        "                    Frame backward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 1\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
 
@@ -4403,16 +4383,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp  " +
                         "LIMIT -1",
-                "Limit lo: -1\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 1\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row backward scan\n" +
-                        "                    Frame backward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 1\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000010Z\t10.0\t11.0\n");
 
@@ -4421,16 +4400,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "WHERE device_data.id = '12345678' " +
                         "ORDER BY timestamp DESC " +
                         "LIMIT -2",
-                "Limit lo: -2\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [date,val,val+1]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              limit: 2\n" +
-                        "              filter: id='12345678'\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: device_data\n",
+                "VirtualRecord\n" +
+                        "  functions: [date,val,val+1]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Filter workers: 1\n" +
+                        "          limit: 2\n" +
+                        "          filter: id='12345678'\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: device_data\n",
                 "date\tval\tcolumn\n" +
                         "1970-01-01T00:00:00.000002Z\t2.0\t3.0\n" +
                         "1970-01-01T00:00:00.000001Z\t1.0\t2.0\n");
@@ -8108,6 +8086,501 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
+    }
+
+    @Test
+    public void testWindow0() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[l] => [row_number()]]\n" +
+                        "  unorderedFunctions: [row_number() over (partition by [l])]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow1() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[ts] => [row_number() over (partition by [l])]]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [str,ts,l,10]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow2() throws Exception {
+        assertPlan(
+                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
+                "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t",
+                "CachedWindow\n" +
+                        "  orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [str,ts,l1,ts::long+l1]\n" +
+                        "        SelectedRecord\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: t\n"
+        );
+    }
+
+    @Test
+    public void testWindow3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+
+            assertPlan("select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
+                    "Window\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
+                            "avg(j) over (partition by i order by j, i desc rows unbounded preceding) " +
+                            "from tab " +
+                            "order by ts desc",
+                    "SelectedRecord\n" +
+                            "    CachedWindow\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n");
+
+            assertPlan("select row_number() over (partition by i order by i desc, j asc), " +
+                            "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding)," +
+                            "        rank() over (partition by j, i) " +
+                            "from tab order by ts desc",
+                    "SelectedRecord\n" +
+                            "    CachedWindow\n" +
+                            "      orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
+                            "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testWindowModelOrderByIsNotIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select sum(avg) from (\n" +
+                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts desc\n" +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg) from (\n" +
+                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg) sm from (\n" +
+                            "select ts, hostname, usage_system, avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts asc\n" +
+                            ") order by sm ",
+                    "Sort\n" +
+                            "  keys: [sm]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(avg)]\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+        });
+    }
+
+    @Test
+    public void testWindowOrderByUnderWindowModelIsPreserved() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select sum(avg) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts desc" +
+                            ") ",
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(avg)]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select sum(avg) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by 1 desc",
+                    "Sort\n" +
+                            "  keys: [sum desc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(avg)]\n" +
+                            "        CachedWindow\n" +
+                            "          orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+        });
+    }
+
+    //TODO: remove artificial limit models used to force ordering on window models (and avoid unnecessary sorts)
+    @Test
+    public void testWindowParentModelOrderPushdownIsBlockedWhenWindowModelSpecifiesOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts desc " +
+                            ") order by ts asc",
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts asc " +
+                            ") order by ts desc",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts asc " +
+                            ") order by hostname",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts asc ",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts desc ",
+                    "CachedWindow\n" +
+                            "  orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Window\n" +
+                            "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            "order by ts desc " +
+                            ") order by ts asc ",
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            "order by ts asc " +
+                            ") order by ts desc ",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc ) " +
+                            "order by ts asc " +
+                            ") order by hostname ",
+                    "Sort\n" +
+                            "  keys: [hostname]\n" +
+                            "    Limit lo: 9223372036854775807L\n" +
+                            "        Window\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cpu_ts\n");
+
+
+        });
+    }
+
+    @Test
+    public void testWindowParentModelOrderPushdownIsDoneWhenNestedModelsSpecifyNoneOrMatchingOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+
+            String expectedForwardPlan = "Window\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by hostname) " +
+                            ") order by ts asc",
+                    expectedForwardPlan);
+
+            String expectedForwardLimitPlan = "Sort\n" +
+                    "  keys: [ts]\n" +
+                    "    Limit lo: 9223372036854775807L\n" +
+                    "        Window\n" +
+                    "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts asc  " +
+                            ") order by ts asc",
+                    expectedForwardLimitPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            "order by ts asc  " +
+                            ") order by ts asc",
+                    expectedForwardLimitPlan);
+
+            String expectedBackwardPlan = "Window\n" +
+                    "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "    DataFrame\n" +
+                    "        Row backward scan\n" +
+                    "        Frame backward scan on: cpu_ts\n";
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts asc) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by hostname) " +
+                            ") order by ts desc",
+                    expectedBackwardPlan);
+
+            String expectedBackwardLimitPlan = "Sort\n" +
+                    "  keys: [ts desc]\n" +
+                    "    Limit lo: 9223372036854775807L\n" +
+                    "        Window\n" +
+                    "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
+                    "            DataFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: cpu_ts\n";
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from cpu_ts " +
+                            "order by ts desc  " +
+                            ") order by ts desc",
+                    expectedBackwardLimitPlan);
+
+            assertPlan("select * from " +
+                            "( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            "order by ts desc  " +
+                            ") order by ts desc",
+                    expectedBackwardLimitPlan);
+        });
+    }
+
+    @Test
+    public void testWindowRecordCursorFactoryWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as ( " +
+                    "  select " +
+                    "    cast(x as int) i, " +
+                    "    rnd_symbol('a','b','c') sym, " +
+                    "    timestamp_sequence(0, 100000000) ts " +
+                    "   from long_sequence(100)" +
+                    ") timestamp(ts) partition by hour");
+
+            String sql = "select i, row_number() over (partition by sym), avg(i) over (partition by i rows unbounded preceding) from x limit 3";
+            assertPlan(
+                    sql,
+                    "Limit lo: 3\n" +
+                            "    Window\n" +
+                            "      functions: [row_number() over (partition by [sym]),avg(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+
+            assertSql("i\trow_number\tavg\n" +
+                    "1\t1\t1.0\n" +
+                    "2\t2\t2.0\n" +
+                    "3\t1\t3.0\n", sql);
+        });
     }
 
     @Test

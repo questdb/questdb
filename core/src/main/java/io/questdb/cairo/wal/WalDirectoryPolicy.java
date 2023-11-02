@@ -22,10 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.wal;
 
-public interface AnalyticSPI {
-    long getAddress(long recordAddress, int columnIndex);
+import io.questdb.std.str.Path;
 
-    Record getRecordAt(long recordOffset);
+public interface WalDirectoryPolicy {
+    void initDirectory(Path dirPath);
+
+    boolean isInUse(Path path);
+
+    void rollbackDirectory(Path path);
+
+    boolean truncateFilesOnClose();
 }

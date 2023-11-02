@@ -50,7 +50,6 @@ public class SqlParser {
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final CharacterStore characterStore;
     private final CharSequence column;
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
@@ -73,8 +72,10 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    private final ObjectPool<WindowColumn> windowColumnPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
+    private boolean overClauseMode = false;
     private boolean subQueryMode = false;
 
     SqlParser(
@@ -90,7 +91,7 @@ public class SqlParser {
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
-        this.analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, configuration.getAnalyticColumnPoolCapacity());
+        this.windowColumnPool = new ObjectPool<>(WindowColumn.FACTORY, configuration.getWindowColumnPoolCapacity());
         this.createTableModelPool = new ObjectPool<>(CreateTableModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
         this.columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
@@ -343,8 +344,30 @@ public class SqlParser {
         return index;
     }
 
+    private boolean isCurrentRow(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (SqlKeywords.isCurrentKeyword(tok)) {
+            tok = tok(lexer, "'row'");
+            if (SqlKeywords.isRowKeyword(tok)) {
+                return true;
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "'row' expected");
+        }
+        return false;
+    }
+
     private boolean isFieldTerm(CharSequence tok) {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
+    }
+
+    private boolean isUnboundedPreceding(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (SqlKeywords.isUnboundedKeyword(tok)) {
+            tok = tok(lexer, "'preceding'");
+            if (SqlKeywords.isPrecedingKeyword(tok)) {
+                return true;
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "'preceding' expected");
+        }
+        return false;
     }
 
     private ExpressionNode literal(GenericLexer lexer, CharSequence name) {
@@ -371,7 +394,7 @@ public class SqlParser {
 
     private CharSequence optTok(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (subQueryMode && Chars.equals(tok, ')'))) {
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
             return null;
         }
         return tok;
@@ -1739,51 +1762,259 @@ public class SqlParser {
                 final int colPosition = lexer.lastTokenPosition();
 
                 if (tok != null && isOverKeyword(tok)) {
-                    // analytic
+                    // window function
                     expectTok(lexer, '(');
+                    overClauseMode = true;//prevent lexer returning ')' ending over clause as null in a sub-query
+                    try {
+                        WindowColumn winCol = windowColumnPool.next().of(null, expr);
+                        col = winCol;
 
-                    col = analyticColumnPool.next().of(null, expr);
-                    tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
+                        tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
 
-                    if (isPartitionKeyword(tok)) {
-                        expectTok(lexer, "by");
+                        if (isPartitionKeyword(tok)) {
+                            expectTok(lexer, "by");
 
-                        ObjList<ExpressionNode> partitionBy = ((AnalyticColumn) col).getPartitionBy();
+                            ObjList<ExpressionNode> partitionBy = winCol.getPartitionBy();
 
-                        do {
-                            // allow dangling comma by previewing the token
-                            tok = tok(lexer, "column name, 'order' or ')'");
-                            if (SqlKeywords.isOrderKeyword(tok)) {
-                                if (partitionBy.size() == 0) {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "at least one column is expected in `partition by` clause");
+                            do {
+                                // allow dangling comma by previewing the token
+                                tok = tok(lexer, "column name, 'order' or ')'");
+                                if (SqlKeywords.isOrderKeyword(tok)) {
+                                    if (partitionBy.size() == 0) {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "at least one column is expected in `partition by` clause");
+                                    }
+                                    break;
                                 }
-                                break;
-                            }
-                            lexer.unparseLast();
-                            partitionBy.add(expectExpr(lexer));
-                            tok = tok(lexer, "'order' or ')'");
-                        } while (Chars.equals(tok, ','));
-                    }
-                    if (isOrderKeyword(tok)) {
-                        expectTok(lexer, "by");
+                                lexer.unparseLast();
+                                partitionBy.add(expectExpr(lexer));
+                                tok = tok(lexer, "'order' or ')'");
+                            } while (Chars.equals(tok, ','));
+                        }
 
-                        do {
-                            final ExpressionNode orderByExpr = expectExpr(lexer);
+                        if (isOrderKeyword(tok)) {
+                            expectTok(lexer, "by");
 
-                            tok = tokIncludingLocalBrace(lexer, "'asc' or 'desc'");
+                            do {
+                                final ExpressionNode orderByExpr = expectExpr(lexer);
 
-                            if (isDescKeyword(tok)) {
-                                ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
-                                tok = tokIncludingLocalBrace(lexer, "',' or ')'");
-                            } else {
-                                ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
-                                if (isAscKeyword(tok)) {
+                                tok = tokIncludingLocalBrace(lexer, "'asc' or 'desc'");
+
+                                if (isDescKeyword(tok)) {
+                                    winCol.addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
                                     tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+                                } else {
+                                    winCol.addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
+                                    if (isAscKeyword(tok)) {
+                                        tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+                                    }
                                 }
+                            } while (Chars.equals(tok, ','));
+                        }
+                        int framingMode = -1;
+                        if (isRowsKeyword(tok)) {
+                            framingMode = WindowColumn.FRAMING_ROWS;
+                        } else if (isRangeKeyword(tok)) {
+                            framingMode = WindowColumn.FRAMING_RANGE;
+                        } else if (isGroupsKeyword(tok)) {
+                            framingMode = WindowColumn.FRAMING_GROUPS;
+                        } else if (!Chars.equals(tok, ')')) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'rows', 'groups', 'range' or ')' expected");
+                        }
+
+                    /* PG documentation:
+                       The default framing option is RANGE UNBOUNDED PRECEDING, which is the same as RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
+                       With ORDER BY, this sets the frame to be all rows from the partition start up through the current row's last ORDER BY peer.
+                       Without ORDER BY, this means all rows of the partition are included in the window frame, since all rows become peers of the current row.
+                     */
+
+                        if (framingMode != -1) {
+
+                            winCol.setFramingMode(framingMode);
+
+                            if (framingMode == WindowColumn.FRAMING_GROUPS && winCol.getOrderBy().size() == 0) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "GROUPS mode requires an ORDER BY clause");
                             }
-                        } while (Chars.equals(tok, ','));
+
+                            // These keywords define for each row a window (a physical or logical
+                            // set of rows) used for calculating the function result. The function is
+                            // then applied to all the rows in the window. The window moves through the
+                            // query result set or partition from top to bottom.
+
+                        /*
+                        { ROWS | GROUPS | RANGE }
+                        { BETWEEN
+                            { UNBOUNDED PRECEDING
+                            | CURRENT ROW
+                            | value_expr { PRECEDING | FOLLOWING }
+                            }
+                            AND
+                            { UNBOUNDED FOLLOWING
+                            | CURRENT ROW
+                            | value_expr { PRECEDING | FOLLOWING }
+                            }
+                        | { UNBOUNDED PRECEDING
+                          | CURRENT ROW
+                          | value_expr PRECEDING
+                          }
+                        }
+                        */
+                            tok = tok(lexer, "'between', 'unbounded', 'current' or expression");
+                            if (isBetweenKeyword(tok)) {
+
+                                // Use the BETWEEN ... AND clause to specify a start point and end point for the window.
+                                // The first expression (before AND) defines the start point and the second
+                                // expression (after AND) defines the end point.
+
+                                // If you omit BETWEEN and specify only one end point, then Oracle considers it the start
+                                // point, and the end point defaults to the current row.
+
+                                tok = tok(lexer, "'unbounded', 'current' or expression");
+                                // lo
+                                if (isUnboundedPreceding(lexer, tok)) {
+                                    // Specify UNBOUNDED PRECEDING to indicate that the window starts at the first
+                                    // row of the partition. This is the start point specification and cannot be
+                                    // used as an end point specification.
+                                    winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                                } else if (isCurrentRow(lexer, tok)) {
+                                    // As a start point, CURRENT ROW specifies that the window begins at the current row.
+                                    // In this case the end point cannot be value_expr PRECEDING.
+                                    winCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+                                } else {
+                                    int pos = lexer.lastTokenPosition();
+                                    lexer.unparseLast();
+                                    winCol.setRowsLoExpr(expectExpr(lexer), pos);
+                                    if (framingMode == WindowColumn.FRAMING_RANGE) {
+                                        long timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != -1) {
+                                            winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                        }
+                                    }
+
+                                    tok = tok(lexer, "'preceding' or 'following'");
+                                    if (SqlKeywords.isPrecedingKeyword(tok)) {
+                                        winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                                    } else if (SqlKeywords.isFollowingKeyword(tok)) {
+                                        winCol.setRowsLoKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                                    } else {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
+                                    }
+                                }
+
+                                if (winCol.getOrderBy().size() != 1 && winCol.requiresOrderBy()) {//groups mode is validated earlier
+                                    throw SqlException.$(lexer.lastTokenPosition(), "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
+                                }
+
+                                tok = tok(lexer, "'and'");
+
+                                if (SqlKeywords.isAndKeyword(tok)) {
+                                    tok = tok(lexer, "'unbounded', 'current' or expression");
+                                    // hi
+                                    if (SqlKeywords.isUnboundedKeyword(tok)) {
+                                        tok = tok(lexer, "'following'");
+                                        if (SqlKeywords.isFollowingKeyword(tok)) {
+                                            // Specify UNBOUNDED FOLLOWING to indicate that the window ends at the
+                                            // last row of the partition. This is the end point specification and
+                                            // cannot be used as a start point specification.
+                                            winCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                                        } else {
+                                            throw SqlException.$(lexer.lastTokenPosition(), "'following' expected");
+                                        }
+                                    } else if (isCurrentRow(lexer, tok)) {
+                                        winCol.setRowsHiKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+                                    } else {
+                                        int pos = lexer.lastTokenPosition();
+                                        lexer.unparseLast();
+                                        winCol.setRowsHiExpr(expectExpr(lexer), pos);
+                                        if (framingMode == WindowColumn.FRAMING_RANGE) {
+                                            long timeUnit = parseTimeUnit(lexer);
+                                            if (timeUnit != -1) {
+                                                winCol.setRowsHiExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                            }
+                                        }
+
+                                        tok = tok(lexer, "'preceding'  'following'");
+                                        if (SqlKeywords.isPrecedingKeyword(tok)) {
+                                            if (winCol.getRowsLoKind() == WindowColumn.CURRENT) {
+                                                // As a start point, CURRENT ROW specifies that the window begins at the current row.
+                                                // In this case the end point cannot be value_expr PRECEDING.
+                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row not must be PRECEDING");
+                                            }
+                                            winCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                                        } else if (SqlKeywords.isFollowingKeyword(tok)) {
+                                            winCol.setRowsHiKind(WindowColumn.FOLLOWING, lexer.lastTokenPosition());
+                                        } else {
+                                            throw SqlException.$(lexer.lastTokenPosition(), "'preceding' or 'following' expected");
+                                        }
+                                    }
+                                } else {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'and' expected");
+                                }
+                            } else {
+                                // If you omit BETWEEN and specify only one end point, then QuestDB considers it the
+                                // start point, and the end point defaults to the current row.
+                                int pos = lexer.lastTokenPosition();
+                                if (isUnboundedPreceding(lexer, tok)) {
+                                    winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                                } else if (isCurrentRow(lexer, tok)) {
+                                    winCol.setRowsLoKind(WindowColumn.CURRENT, lexer.lastTokenPosition());
+                                } else {
+                                    lexer.unparseLast();
+                                    winCol.setRowsLoExpr(expectExpr(lexer), pos);
+                                    if (framingMode == WindowColumn.FRAMING_RANGE) {
+                                        long timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != -1) {
+                                            winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                        }
+                                    }
+                                    tok = tok(lexer, "'preceding'");
+                                    if (SqlKeywords.isPrecedingKeyword(tok)) {
+                                        winCol.setRowsLoKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
+                                    } else {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "'preceding' expected");
+                                    }
+                                }
+
+                                winCol.setRowsHiKind(WindowColumn.CURRENT, pos);
+                            }
+
+                            if (winCol.getOrderBy().size() != 1 && winCol.requiresOrderBy()) {//groups mode is validated earlier
+                                throw SqlException.$(lexer.lastTokenPosition(), "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
+                            }
+
+                            tok = tok(lexer, "'exclude' or ')' expected");
+
+                            if (isExcludeKeyword(tok)) {
+                                tok = tok(lexer, "'current', 'group', 'ties' or 'no other' expected");
+                                int excludePos = lexer.lastTokenPosition();
+                                if (SqlKeywords.isCurrentKeyword(tok)) {
+                                    tok = tok(lexer, "'row' expected");
+                                    if (SqlKeywords.isRowKeyword(tok)) {
+                                        winCol.setExclusionKind(WindowColumn.EXCLUDE_CURRENT_ROW, excludePos);
+                                    } else {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "'row' expected");
+                                    }
+                                } else if (SqlKeywords.isGroupKeyword(tok)) {
+                                    winCol.setExclusionKind(WindowColumn.EXCLUDE_GROUP, excludePos);
+                                } else if (SqlKeywords.isTiesKeyword(tok)) {
+                                    winCol.setExclusionKind(WindowColumn.EXCLUDE_TIES, excludePos);
+                                } else if (SqlKeywords.isNoKeyword(tok)) {
+                                    tok = tok(lexer, "'others' expected");
+                                    if (SqlKeywords.isOthersKeyword(tok)) {
+                                        winCol.setExclusionKind(WindowColumn.EXCLUDE_NO_OTHERS, excludePos);
+                                    } else {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "'others' expected");
+                                    }
+                                } else {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'current', 'group', 'ties' or 'no other' expected");
+                                }
+
+                                tok = tok(lexer, "')' expected");
+                            }
+                        }
+                        expectTok(tok, lexer.lastTokenPosition(), ')');
+                    } finally {
+                        overClauseMode = false;
                     }
-                    expectTok(tok, lexer.lastTokenPosition(), ')');
                     tok = optTok(lexer);
 
                 } else {
@@ -1914,6 +2145,28 @@ public class SqlParser {
         final int symbolCapacity = expectInt(lexer);
         TableUtils.validateSymbolCapacity(errorPosition, symbolCapacity);
         return Numbers.ceilPow2(symbolCapacity);
+    }
+
+    private long parseTimeUnit(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "'preceding' or time unit");
+        long unit = -1;
+        if (SqlKeywords.isMicrosecondKeyword(tok) || SqlKeywords.isMicrosecondsKeyword(tok)) {
+            unit = WindowColumn.ITME_UNIT_MICROSECOND;
+        } else if (SqlKeywords.isMillisecondKeyword(tok) || SqlKeywords.isMillisecondsKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_MILLISECOND;
+        } else if (SqlKeywords.isSecondKeyword(tok) || SqlKeywords.isSecondsKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_SECOND;
+        } else if (SqlKeywords.isMinuteKeyword(tok) || SqlKeywords.isMinutesKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_MINUTE;
+        } else if (SqlKeywords.isHourKeyword(tok) || SqlKeywords.isHoursKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_HOUR;
+        } else if (SqlKeywords.isDayKeyword(tok) || SqlKeywords.isDaysKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_DAY;
+        }
+        if (unit == -1) {
+            lexer.unparseLast();
+        }
+        return unit;
     }
 
     private ExpressionNode parseTimestamp(GenericLexer lexer, CharSequence tok) throws SqlException {
@@ -2335,7 +2588,7 @@ public class SqlParser {
         queryModelPool.clear();
         queryColumnPool.clear();
         expressionNodePool.clear();
-        analyticColumnPool.clear();
+        windowColumnPool.clear();
         createTableModelPool.clear();
         columnCastModelPool.clear();
         renameTableModelPool.clear();

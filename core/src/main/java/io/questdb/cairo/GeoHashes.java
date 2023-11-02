@@ -110,7 +110,7 @@ public class GeoHashes {
     public static void appendBinaryStringUnsafe(long hash, int bits, CharSinkBase<?> sink) {
         // Below assertion can happen if there is corrupt metadata
         // which should not happen in production code since reader and writer check table metadata
-        assert bits > 0 && bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH;
+        assert bits > 0 && bits <= ColumnType.GEOLONG_MAX_BITS;
         for (int i = bits - 1; i >= 0; --i) {
             sink.putAscii(((hash >> i) & 1) == 1 ? '1' : '0');
         }
@@ -142,7 +142,7 @@ public class GeoHashes {
     }
 
     public static long fromBitString(CharSequence bits, int start) throws NumericException {
-        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEOLONG_MAX_BITS + start));
     }
 
     public static long fromBitStringNl(CharSequence bits, int start) throws NumericException {
@@ -150,7 +150,7 @@ public class GeoHashes {
         if (len - start <= 0) {
             return NULL;
         }
-        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEOLONG_MAX_BITS + start));
     }
 
     public static long fromCoordinatesDeg(double lat, double lon, int bits) throws NumericException {
@@ -160,7 +160,7 @@ public class GeoHashes {
         if (lon < -180.0 || lon > 180.0) {
             throw NumericException.INSTANCE;
         }
-        if (bits < 0 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+        if (bits < 0 || bits > ColumnType.GEOLONG_MAX_BITS) {
             throw NumericException.INSTANCE;
         }
         return fromCoordinatesDegUnsafe(lat, lon, bits);

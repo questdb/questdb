@@ -108,7 +108,7 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
     private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,
                                                        int expectedEmptyLines,
                                                        boolean supportsRandomAccess) throws Exception {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             if (b > 1) {
                 setUp();
             }

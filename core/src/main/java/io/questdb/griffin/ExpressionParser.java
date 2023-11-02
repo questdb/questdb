@@ -85,7 +85,7 @@ public class ExpressionParser {
         if (tokLen > 1) {
             if (tokLen >= 3 && tok.charAt(tokLen - 3) == '/') { // '/dd'
                 short bits = (short) (10 * tok.charAt(tokLen - 2) + tok.charAt(tokLen - 1) - 528); // 10 * 48 + 48
-                if (bits >= 1 && bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+                if (bits >= 1 && bits <= ColumnType.GEOLONG_MAX_BITS) {
                     return Numbers.encodeLowHighShorts((short) 3, bits);
                 }
                 throw SqlException.$(position, "invalid bits size for GEOHASH constant: ").put(tok);
