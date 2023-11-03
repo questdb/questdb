@@ -4639,8 +4639,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testPostJoinConditionColumnsAreResolved() throws Exception {
-        test2686Prepare();
-
         assertMemoryLeak(() -> {
             String query = "SELECT count(*)\n" +
                     "FROM test as T1\n" +
