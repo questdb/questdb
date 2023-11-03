@@ -22,18 +22,28 @@
  *
  ******************************************************************************/
 
-open module io.questdb.test {
-    requires transitive io.questdb;
-    requires static junit;
-    requires transitive jdk.unsupported;
-    requires static org.jetbrains.annotations;
-    requires static java.sql;
-    requires static org.postgresql.jdbc;
-    requires static java.management;
-    requires hamcrest.core;
+package io.questdb.test.cutlass;
 
-    uses io.questdb.griffin.FunctionFactory;
+import org.hamcrest.Description;
+import org.hamcrest.TypeSafeMatcher;
 
-    exports io.questdb.test;
-    exports io.questdb.test.cairo;
+import java.util.regex.Pattern;
+
+public final class RegexpMatcher<T extends CharSequence> extends TypeSafeMatcher<T> {
+
+    private final Pattern pattern;
+
+    public RegexpMatcher(String regexp) {
+        this.pattern = Pattern.compile(regexp);
+    }
+
+    @Override
+    public void describeTo(Description description) {
+        description.appendText("matches regexp ").appendValue(pattern.pattern());
+    }
+
+    @Override
+    protected boolean matchesSafely(T item) {
+        return pattern.matcher(item).matches();
+    }
 }

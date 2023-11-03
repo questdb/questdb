@@ -34,7 +34,9 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.cutlass.RegexpMatcher;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
 
 public class TestHttpClient implements QuietCloseable {
@@ -115,8 +117,28 @@ public class TestHttpClient implements QuietCloseable {
     ) {
         try {
             sink.clear();
-            toSink0(url, sql, sink, username, password);
+            toSink0(url, sql, sink, username, password, null);
             TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetRegexp(
+            CharSequence url,
+            String expectedResponseRegexp,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            CharSequence expectedStatus
+    ) {
+        try {
+            sink.clear();
+            toSink0(url, sql, sink, username, password, expectedStatus);
+            RegexpMatcher<CharSequence> matcher = new RegexpMatcher<>(expectedResponseRegexp);
+            MatcherAssert.assertThat(sink, matcher);
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -135,7 +157,7 @@ public class TestHttpClient implements QuietCloseable {
 
     public void toSink(CharSequence url, CharSequence sql, CharSink sink) {
         try {
-            toSink0(url, sql, sink, null, null);
+            toSink0(url, sql, sink, null, null, null);
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -148,7 +170,8 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence sql,
             CharSink sink,
             @Nullable CharSequence username,
-            @Nullable CharSequence password
+            @Nullable CharSequence password,
+            CharSequence expectedStatus
     ) {
         HttpClient.Request req = httpClient.newRequest();
         req
@@ -161,8 +184,12 @@ public class TestHttpClient implements QuietCloseable {
         }
 
         HttpClient.ResponseHeaders rsp = req.send("localhost", 9001);
-
         rsp.await();
+
+        if (expectedStatus != null) {
+            TestUtils.assertEquals(expectedStatus, rsp.getStatusCode());
+        }
+
         ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
         Chunk chunk;
 

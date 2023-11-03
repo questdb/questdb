@@ -4750,21 +4750,14 @@ public class IODispatcherTest extends AbstractTest {
                 .run((engine) -> {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        new SendAndReceiveRequestBuilder()
-                                .withExpectReceiveDisconnect(false)
-                                // the response is incomplete due to non-deterministic FD included in the exception message
-                                .executeWithStandardRequestHeaders(
-                                        "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                        "HTTP/1.1 400 Bad request\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "Keep-Alive: timeout=5, max=10000\r\n" +
-                                                "\r\n" +
-                                                "83\r\n" +
-                                                "{\"query\":\"select i, avg(l), max(l) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted"
-                                );
+                        // we use regexp, because the fd is different every time
+                        testHttpClient.assertGetRegexp(
+                                "/query",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                                "select i, avg(l), max(l) from t group by i order by i asc limit 3",
+                                null, null,
+                                "400"
+                        );
                     }
                 });
     }
