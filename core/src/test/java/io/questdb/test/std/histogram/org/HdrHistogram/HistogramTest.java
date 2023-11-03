@@ -715,8 +715,6 @@ public class HistogramTest {
         public static Collection<Object[]> data() {
             return Arrays.asList(new Object[][] {{HistogramType.Histogram3, "Histogram", 3},
                     {HistogramType.Histogram2, "Histogram", 2},
-                    {HistogramType.Concurrent3, "ConcurrentHistogram", 3},
-                    {HistogramType.Concurrent2, "ConcurrentHistogram", 2},
                     {HistogramType.Atomic3, "AtomicHistogram", 3},
                     {HistogramType.Atomic2, "AtomicHistogram", 2}});
         }

@@ -130,7 +130,7 @@ public class HistogramEncodingTest {
 
     @RunWith(Parameterized.class)
     public static class ParameterizedHistogramEncodingTest {
-        enum HistogramType {Histogram, Concurrent, Atomic}
+        enum HistogramType {Histogram, Atomic}
         @Parameterized.Parameters(name = "{0}")
         public static Collection<Object[]> data() {
             return Arrays.asList(new Object[][] {{HistogramType.Histogram, Histogram.class},
