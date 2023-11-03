@@ -30,6 +30,24 @@ import org.junit.Test;
 public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testInvalidPercentile1() throws Exception {
+        assertException(
+                "select approx_percentile(1.1, 1) from long_sequence(1)",
+                25,
+                "percentile must be between 0 and 1"
+        );
+    }
+
+    @Test
+    public void testInvalidPercentile2() throws Exception {
+        assertException(
+                "select approx_percentile(x, 1) from long_sequence(1)",
+                25,
+                "percentile must be a constant"
+        );
+    }
+
+    @Test
     public void testApproxPercentileDoubleColumn() throws Exception {
         compile("create table test (col double)");
         insert("insert into test values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)");

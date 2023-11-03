@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -43,7 +44,17 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final Function left = args.getQuick(0);
+        if (!left.isConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "percentile must be a constant");
+        }
+
+        double percentile = left.getDouble(null);
+        if (percentile < 0 || percentile > 1) {
+            throw SqlException.$(argPositions.getQuick(0), "percentile must be between 0 and 1");
+        }
+
         return new ApproxPercentileDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }
