@@ -71,7 +71,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
         if (Numbers.isFinite(val)) {
             histogram.recordValue(val);
         }
-        mapValue.putInt(valueIndex, histogramIndex++);
+        mapValue.putLong(valueIndex, histogramIndex++);
     }
 
     @Override
@@ -91,6 +91,10 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
 
     @Override
     public double getDouble(Record rec) {
+        if (histograms.size() == 0) {
+            return Double.NaN;
+        }
+
         final DoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
         if (histogram.empty()) {
             return Double.NaN;
@@ -114,11 +118,16 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Integer.MIN_VALUE);
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
     }
 }

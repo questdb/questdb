@@ -48,11 +48,40 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
-    public void testDoubleColumn() throws Exception {
-        compile("create table test (col double)");
-        insert("insert into test values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)");
+    public void testDoubleColumn50thPercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(100))");
+            assertSql(
+                    "approx_percentile\n50.0302734375\n", "select approx_percentile(0.5, x) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testDoubleColumn0thPercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(100))");
+            assertSql(
+                    "approx_percentile\n1.0\n", "select approx_percentile(0, x) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testDoubleColumn100thPercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(100))");
+            assertSql(
+                    "approx_percentile\n100.0615234375\n", "select approx_percentile(1.0, x) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testDoubleEmpty() throws Exception {
+        compile("create table test (col long)");
         assertMemoryLeak(() -> assertSql("approx_percentile\n" +
-                "5.0029296875\n", "select approx_percentile(0.5, col) from test")
+                "NaN\n", "select approx_percentile(0.5, col) from test")
         );
     }
 
@@ -68,9 +97,19 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testDoubleColumnWithNull() throws Exception {
         compile("create table test (col long)");
-        insert("insert into test values (1.0), (null), (1.0), (1.0)");
+        insert("insert into test values (1.0), (null), (null), (null)");
         assertMemoryLeak(() -> assertSql("approx_percentile\n" +
                 "1.0\n", "select approx_percentile(0.5, col) from test")
         );
+    }
+
+    @Test
+    public void testDoubleAllSameValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select 5.0 col from long_sequence(100))");
+            assertSql(
+                    "approx_percentile\n5.0\n", "select approx_percentile(0.5, col) from test"
+            );
+        });
     }
 }
