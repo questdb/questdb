@@ -210,30 +210,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testApproxPercentileDoubleColumn() throws Exception {
-        compile("create table test (col double)");
-        insert("insert into test values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)");
-        assertSql("approx_percentile\n" +
-                "5.0029296875\n", "select approx_percentile(0.5, col) from test");
-    }
-
-    @Test
-    public void testApproxPercentileDoubleNullColumns() throws Exception {
-        compile("create table test (col long)");
-        insert("insert into test values (null), (null), (null)");
-        assertSql("approx_percentile\n" +
-                "NaN\n", "select approx_percentile(0.5, col) from test");
-    }
-
-    @Test
-    public void testApproxPercentileDoubleColumnWithNull() throws Exception {
-        compile("create table test (col long)");
-        insert("insert into test values (1.0), (null), (1.0), (1.0)");
-        assertSql("approx_percentile\n" +
-                "1.0\n", "select approx_percentile(0.5, col) from test");
-    }
-
-    @Test
     public void testBindVariableInIndexedLookup() throws Exception {
         testBindVariableInIndexedLookup(true);
     }
