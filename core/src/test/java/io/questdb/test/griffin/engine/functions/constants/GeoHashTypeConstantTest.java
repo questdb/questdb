@@ -34,7 +34,7 @@ public class GeoHashTypeConstantTest {
 
     @Test
     public void testConstant() {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             GeoHashTypeConstant constant = GeoHashTypeConstant.getInstanceByPrecision(b);
             int type = ColumnType.getGeoHashTypeWithBits(b);
             Assert.assertEquals(type, constant.getType());

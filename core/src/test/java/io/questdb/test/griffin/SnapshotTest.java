@@ -70,16 +70,12 @@ public class SnapshotTest extends AbstractCairoTest {
             protected boolean testConnection(int fd) {
                 return false;
             }
-
-            {
-                setTimeout(-100); // trigger timeout on first check
-            }
         };
         AbstractCairoTest.setUpStatic();
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
     }
@@ -91,7 +87,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
         super.setUp();
         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
-        rootLen = path.length();
+        rootLen = path.size();
         testFilesFacade.errorOnSync = false;
         circuitBreaker.setTimeout(Long.MAX_VALUE);
     }
@@ -101,7 +97,7 @@ public class SnapshotTest extends AbstractCairoTest {
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash$());
-        // reset activePrepareFlag for all tests
+        // reset inProgress for all tests
         ddl("snapshot complete");
     }
 
@@ -169,7 +165,6 @@ public class SnapshotTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("Enable when table readers start preventing from column file deletion. This could be done along with column versioning.")
     @Test
     public void testRecoverSnapshotRestoresDroppedColumns() throws Exception {
         final String snapshotId = "00000000-0000-0000-0000-000000000000";
@@ -189,13 +184,16 @@ public class SnapshotTest extends AbstractCairoTest {
                     "JW\tC\t1\n" +
                     "WH\tB\t2\n" +
                     "PE\tB\t3\n";
-            assertSql("select * from " + tableName, expectedAllColumns);
+            assertSql(expectedAllColumns, "select * from " + tableName);
 
             ddl("alter table " + tableName + " drop column b");
-            assertSql("select * from " + tableName, "a\tc\n" +
-                    "JW\t1\n" +
-                    "WH\t2\n" +
-                    "PE\t3\n");
+            assertSql(
+                    "a\tc\n" +
+                            "JW\t1\n" +
+                            "WH\t2\n" +
+                            "PE\t3\n",
+                    "select * from " + tableName
+            );
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -203,12 +201,13 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.recoverSnapshot();
 
             // Dropped column should be there.
-            assertSql("select * from " + tableName, expectedAllColumns);
+            assertSql(expectedAllColumns, "select * from " + tableName);
         });
     }
 
     @Test
     public void testRunWalPurgeJobLockTimeout() throws Exception {
+        circuitBreaker.setTimeout(-100); // trigger timeout on first check
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             SimpleWaitingLock lock = new SimpleWaitingLock();
@@ -439,6 +438,26 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSnapshotPrepareFailsOnLockedTableReader() throws Exception {
+        circuitBreaker.setTimeout(-100); // trigger timeout on first check
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int)");
+
+            TableToken tableToken = engine.getTableTokenIfExists("test");
+            engine.lockReadersByTableToken(tableToken);
+
+            try {
+                ddl("snapshot prepare");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
+            } finally {
+                engine.unlockReaders(tableToken);
+            }
+        });
+    }
+
+    @Test
     public void testSnapshotPrepareFailsOnSyncError() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
@@ -545,6 +564,155 @@ public class SnapshotTest extends AbstractCairoTest {
                     "Waiting for SNAPSHOT COMPLETE to be called"
             );
             ddl("snapshot complete");
+        });
+    }
+
+    @Test
+    public void testSnapshotPreventsNonWalTableDeletion() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            ddl("snapshot prepare;");
+
+            try {
+                drop("drop table test;");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test' [reason='snapshotInProgress']");
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPreventsNonWalTableRenaming() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            ddl("snapshot prepare;");
+
+            try {
+                ddl("rename table test to test2;");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=snapshotInProgress]");
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPreventsNonWalTableTruncation() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            ddl("snapshot prepare;");
+
+            try {
+                ddl("truncate table test;");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "there is an active query against 'test'");
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotRestoresDroppedWalTable() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            drainWalQueue();
+
+            ddl("snapshot prepare;");
+
+            drop("drop table test;");
+            drainWalQueue();
+
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
+
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
+            engine.clear();
+            engine.closeNameRegistry();
+            snapshotInstanceId = restartedId;
+            engine.recoverSnapshot();
+            engine.reloadTableNames();
+
+            drainWalQueue();
+
+            // Dropped table should be there.
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
+            assertSql(
+                    "ts\tname\tval\n" +
+                            "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
+                    "test;"
+            );
+        });
+    }
+
+    @Test
+    public void testSnapshotRestoresRenamedWalTableName() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            drainWalQueue();
+
+            ddl("snapshot prepare;");
+
+            ddl("rename table test to test2;");
+            drainWalQueue();
+
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
+
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
+            engine.clear();
+            engine.closeNameRegistry();
+            snapshotInstanceId = restartedId;
+            engine.recoverSnapshot();
+            engine.reloadTableNames();
+
+            drainWalQueue();
+
+            // Renamed table should be there under the original name.
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
+        });
+    }
+
+    @Test
+    public void testSnapshotRestoresTruncatedWalTable() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values (now(), 'foobar', 42);");
+            drainWalQueue();
+
+            ddl("snapshot prepare;");
+
+            ddl("truncate table test;");
+            drainWalQueue();
+
+            assertSql("count\n0\n", "select count() from test;");
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            snapshotInstanceId = restartedId;
+            engine.recoverSnapshot();
+
+            drainWalQueue();
+
+            // Dropped rows should be there.
+            assertSql("count\n1\n", "select count() from test;");
         });
     }
 
@@ -656,13 +824,13 @@ public class SnapshotTest extends AbstractCairoTest {
             // all updates above should be applied to table
             assertSql(
                     "x\tsym\tts\tsym2\tiii\tjjj\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n",
+                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
+                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
+                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
+                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
+                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
+                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
+                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n",
                     tableName
             );
 
@@ -678,10 +846,8 @@ public class SnapshotTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
             insert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
 
-
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-
             snapshotInstanceId = restartedId;
             engine.recoverSnapshot();
 
@@ -690,14 +856,14 @@ public class SnapshotTest extends AbstractCairoTest {
 
             assertSql(
                     "x\tsym\tts\tsym2\tiii\tjjj\tkkk\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
-                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n",
+                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
+                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
+                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
+                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\tNaN\n" +
+                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
+                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
+                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
+                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n",
                     tableName
             );
 
@@ -711,16 +877,16 @@ public class SnapshotTest extends AbstractCairoTest {
 
             assertSql(
                     "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
-                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
-                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
-                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n",
+                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
+                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\n" +
+                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\n" +
+                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
+                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
+                            "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
+                            "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n",
                     tableName
             );
 
@@ -758,18 +924,18 @@ public class SnapshotTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql(
                     "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\tNaN\n" +
-                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\tNaN\n" +
-                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\tNaN\n" +
-                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
-                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
-                    "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
-                    "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n",
+                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\tNaN\n" +
+                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\tNaN\n" +
+                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\tNaN\n" +
+                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\tNaN\n" +
+                            "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
+                            "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
+                            "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
+                            "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n",
                     tableName
             );
         });
@@ -877,7 +1043,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
-                int tableNameLen = path.length();
+                int tableNameLen = path.size();
                 FilesFacade ff = configuration.getFilesFacade();
                 try (TableReader tableReader = newTableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
@@ -939,7 +1105,7 @@ public class SnapshotTest extends AbstractCairoTest {
                                     cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());
-                                    TestUtils.assertEquals(cvReader0.getCachedList(), cvReader1.getCachedList());
+                                    TestUtils.assertEquals(cvReader0.getCachedColumnVersionList(), cvReader1.getCachedColumnVersionList());
                                 }
                             }
                         }
@@ -967,9 +1133,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
-                int tableNameLen = path.length();
+                int tableNameLen = path.size();
                 copyPath.concat(tableToken);
-                int copyTableNameLen = copyPath.length();
+                int copyTableNameLen = copyPath.size();
 
                 // _meta
                 path.concat(TableUtils.META_FILE_NAME).$();

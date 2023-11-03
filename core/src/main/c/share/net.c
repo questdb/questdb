@@ -40,6 +40,27 @@ int set_int_sockopt(int fd, int level, int opt, int value) {
     return setsockopt(fd, level, opt, &value, sizeof(value));
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
+        (JNIEnv *e, jclass cl, jint fd, jint idle_sec) {
+    if (set_int_sockopt(fd, SOL_SOCKET, SO_KEEPALIVE, 1) < 0) {
+        return -1;
+    }
+    #if defined(__linux__) || defined(__FreeBSD__)
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle_sec) < 0) {
+            return -1;
+        }
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, idle_sec) < 0) {
+            return -1;
+        }
+    #endif
+    #ifdef __APPLE__
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec) < 0) {
+            return -1;
+        }
+    #endif
+    return fd;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
         (JNIEnv *e, jclass cl, jboolean blocking) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);

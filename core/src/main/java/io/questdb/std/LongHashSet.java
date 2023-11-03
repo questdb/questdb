@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -99,10 +101,6 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
         return true;
     }
 
-    public boolean excludes(long key) {
-        return keyIndex(key) > -1;
-    }
-
     public long get(int index) {
         return list.getQuick(index);
     }
@@ -116,7 +114,7 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
         int hashCode = 0;
         for (int i = 0, n = keys.length; i < n; i++) {
             if (keys[i] != noEntryKeyValue) {
-                hashCode += keys[i];
+                hashCode += (int) keys[i];
             }
         }
         return hashCode;
@@ -131,7 +129,7 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         list.toSink(sink);
     }
 

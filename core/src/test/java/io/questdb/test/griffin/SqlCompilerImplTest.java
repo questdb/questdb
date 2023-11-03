@@ -38,6 +38,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -65,7 +66,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
     }
@@ -1867,13 +1868,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCompareStringAndChar() throws Exception {
         assertMemoryLeak(() -> {
-            // constant 
+            // constant
             assertSql("column\ntrue\n", "select 'ab' > 'a'");
             assertSql("column\nfalse\n", "select 'ab' = 'a'");
             assertSql("column\ntrue\n", "select 'ab' != 'a'");
             assertSql("column\nfalse\n", "select 'ab' < 'a'");
 
-            // non-constant 
+            // non-constant
             assertSql("column\ntrue\ntrue\n", "select x < 'd' from (select 'a' x union all select 'cd')");
             assertSql("column\ntrue\n", "select rnd_str('be', 'cd') < 'd' ");
             assertSql("column\ntrue\n", "select rnd_str('ac', 'be', 'cd') != 'd'");
@@ -2413,7 +2414,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             @Override
             public int openRO(LPSZ name) {
                 int fd = super.openRO(name);
-                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
                     metaFd = fd;
                 }
                 return fd;
@@ -2422,7 +2423,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                     txnFd = fd;
                 }
                 return fd;
@@ -2433,7 +2434,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 ff,
                 sql,
                 "Could not create table. See log for details"
-
         );
     }
 
@@ -2474,16 +2474,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         AbstractCairoTest.ff = new TestFilesFacadeImpl() {
             @Override
             public boolean isDirOrSoftLinkDir(LPSZ path) {
-                if (Chars.equals(path, target)) {
+                if (Utf8s.equalsAscii(target, path)) {
                     return false;
                 }
                 return super.exists(path);
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 Assert.assertEquals(target + Files.SEPARATOR, name.toString());
-                return -1;
+                return false;
             }
 
             @Override
@@ -2518,7 +2518,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             File table = new File(target);
             Assert.assertTrue(table.exists());
             Assert.assertTrue(table.isDirectory());
-            Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
+            Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
             Assert.assertTrue(volume.delete());
         }
     }
@@ -3050,9 +3050,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testFailOnEmptyColumnName() throws Exception {
         ddl("create table tab ( ts timestamp)");
 
-        assertFailure(28, "Invalid column: ",
-                "SELECT * FROM tab WHERE SUM(\"\", \"\")"
-        );
+        assertFailure(32, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"\")");
+        assertFailure(28, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"ts\")");
     }
 
     @Test
@@ -3083,6 +3082,23 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFunctionNotIn() throws SqlException {
+        ddl("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
+        insert("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
+
+        assertSql("timestamp\tcol\tid\n" +
+                        "1970-01-01T00:00:00.000003Z\tdee\tC\n",
+                "SELECT * FROM tab\n" +
+                        "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n");
+
+        assertSql("timestamp\tcol\tid\n" +
+                        "1970-01-01T00:00:00.000003Z\tdee\tC\n",
+                "SELECT * FROM tab\n" +
+                        "WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')\n" +
+                        "LATEST ON timestamp PARTITION BY id");
+    }
+
+    @Test
     public void testGeoLiteralAsColName() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");
@@ -3103,7 +3119,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralBinLength() throws Exception {
         assertMemoryLeak(() -> {
-            StringSink bitString = Misc.getThreadLocalBuilder();
+            StringSink bitString = Misc.getThreadLocalSink();
             bitString.put(Chars.repeat("0", 59)).put('1');
             assertSql("geobits\n" +
                     "000000000001\n", "select ##" + bitString + " as geobits");
@@ -3143,8 +3159,84 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInt() throws SqlException {
+        ddl("create table if not exists test(id int)");
+        insert("insert into test(id) select rnd_int() from long_sequence(3)");
+
+        assertSql("id\n" +
+                "-1148479920\n" +
+                "315515118\n" +
+                "1548800833\n", "select id " +
+                "from test " +
+                "group by id " +
+                "order by id ");
+    }
+
+    @Test
+    public void testGroupByInt2() throws SqlException {
+        ddl("create table if not exists test(ts timestamp)");
+        insert("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
+
+        assertSql("hour\n" +
+                "0\n" +
+                "1\n" +
+                "2\n", "select hour(ts) " +
+                "from test " +
+                "group by 1 " +
+                "order by 1 ");
+    }
+
+    @Test
+    public void testGroupByLimit() throws SqlException {
+        ddl("create table if not exists test(id uuid)");
+        insert("insert into test(id) select rnd_uuid4() from long_sequence(3)");
+        try (RecordCursorFactory factory = select(
+                "select id " +
+                        "from test " +
+                        "group by id " +
+                        "limit 10")) {
+
+            String expected = "id\n" +
+                    "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                    "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                    "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n";
+
+            assertCursor(expected, factory, true, false, false);
+            assertCursor(expected, factory, true, false, false);
+        }
+    }
+
+    @Test
+    public void testGroupBySymbol() throws SqlException {
+        ddl("create table if not exists test(id symbol)");
+        insert("insert into test(id) select rnd_symbol('A', 'B', 'C') from long_sequence(10)");
+
+        assertSql("id\n" +
+                "A\n" +
+                "B\n" +
+                "C\n", "select id " +
+                "from test " +
+                "group by id " +
+                "order by id ");
+    }
+
+    @Test
     public void testInLongTypeMismatch() throws Exception {
         assertFailure(43, "cannot compare LONG with type DOUBLE", "select 1 from long_sequence(1) where x in (123.456)");
+    }
+
+    @Test
+    public void testInShortByteIntLong() throws Exception {
+        ddl("CREATE table abc (aa long, a int, b short, c byte)");
+        insert("insert into abc values(1, 1, 1, 1)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where aa in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where a in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where b in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where c in (1, 2)");
     }
 
     @Test
@@ -3154,33 +3246,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             compile("insert into tab values (0, 0), (1, 1), (2,2)");
 
             for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
-                assertSql("count\n3\n",
+                assertSql(
+                        "count\n3\n",
                         "SELECT count(T2.created) " +
                                 "FROM tab as T1 " +
                                 "JOIN (SELECT * FROM tab) as T2 ON T1.created < T2.created " +
                                 join + " JOIN tab as T3 ON T2.value=T3.value"
                 );
             }
-            assertSql("count\n1\n",
+            assertSql(
+                    "count\n1\n",
                     "SELECT count(T2.created) " +
                             "FROM tab as T1 " +
                             "JOIN tab T2 ON T1.created < T2.created " +
                             "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
-                            "JOIN tab T4 on T3.created < T4.created");
+                            "JOIN tab T4 on T3.created < T4.created"
+            );
 
-            assertSql("count\n3\n",
+            assertSql(
+                    "count\n3\n",
                     "SELECT count(T2.created) " +
                             "FROM tab as T1 " +
                             "JOIN tab T2 ON T1.created < T2.created " +
                             "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
-                            "LEFT JOIN tab T4 on T3.created < T4.created");
+                            "LEFT JOIN tab T4 on T3.created < T4.created"
+            );
 
-            assertSql("count\n3\n",
+            assertSql(
+                    "count\n3\n",
                     "SELECT count(T2.created) " +
                             "FROM tab as T1 " +
                             "JOIN tab T2 ON T1.created < T2.created " +
                             "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
-                            "LEFT JOIN tab T4 on T3.created-T4.created = 0 ");
+                            "LEFT JOIN tab T4 on T3.created-T4.created = 0 "
+            );
         });
     }
 
@@ -4334,26 +4433,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
-        // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)
-        // 2.- then it finds column t1.ts with no explicit alias, so it attempts to give it what it finds after the dot,
-        //     but alas that alias is taken, so it fabricates alias ts1
-        // 3.- then it finds column t1.ts again, but this time with an explicit alias ts1, which is taken by the prev.
-        //     column and therefore is a duplicate, so the reported error is correct -> Duplicate column 'ts1'
-        assertFailure(35, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;"
-        );
+        // wildcard aliases are created after all other aliases
+        // a duplicate column may be produced while optimiser does not have info on other aliases
+        // if this occurs, the column is renamed once we have full alias info for all columns and this error is avoided
 
-        // in this case, the optimizer, left to right, expands "t1.*" to x, ts1, and then the user defines
-        // t2.ts as ts1 which produces the error
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertFailure(28, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
-        );
+        assertSql("TS\tts2\tts1\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tts2\tx\tts3\tx1\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n", "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tx\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+
+        assertSql("TS\tts1\tx\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
     }
 
     @Test
@@ -4403,8 +4497,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinReorder() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+            ddl("create table tab ( created timestamp, value long ) timestamp(created) ");
+            insert("insert into tab values (0, 0), (1, 1), (2,2)");
 
             String query1 = "SELECT T1.created FROM " +
                     "( SELECT * " +
@@ -4626,7 +4720,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertFailure(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by \"\"");
         });
     }
-
 
     @Test
     public void testOrderByFloat() throws Exception {
@@ -5327,7 +5420,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "APPL\tAPPL\tAPPL_APPL\n" +
                     "APPL\tAPPL\tAPPL_APPL\n" +
                     "APPL\tAPPL\tAPPL_APPL\n";
-            assertQuery(expected, "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b", null, false, false);
+            assertQuery(expected, "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b", null, false, true);
         });
     }
 
@@ -5408,7 +5501,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
         }
     }
-
 
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws SqlException {
         ddl(ddl);

@@ -24,35 +24,72 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DefaultWalJobFactory;
+import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
+import io.questdb.cutlass.http.DefaultHttpCookieHandler;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SocketFactory;
+import org.jetbrains.annotations.NotNull;
 
 public class DefaultFactoryProvider implements FactoryProvider {
     public static final DefaultFactoryProvider INSTANCE = new DefaultFactoryProvider();
 
     @Override
-    public HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
+    public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
         return DefaultHttpAuthenticatorFactory.INSTANCE;
     }
 
     @Override
-    public LineAuthenticatorFactory getLineAuthenticatorFactory() {
+    public @NotNull HttpCookieHandler getHttpCookieHandler() {
+        return DefaultHttpCookieHandler.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getHttpMinSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getHttpSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
         return DefaultLineAuthenticatorFactory.INSTANCE;
     }
 
     @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+    public @NotNull SocketFactory getLineSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getPGWireSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return DefaultPgWireAuthenticatorFactory.INSTANCE;
     }
 
     @Override
-    public SecurityContextFactory getSecurityContextFactory() {
+    public @NotNull SecurityContextFactory getSecurityContextFactory() {
         return AllowAllSecurityContextFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull WalJobFactory getWalJobFactory() {
+        return DefaultWalJobFactory.INSTANCE;
     }
 }

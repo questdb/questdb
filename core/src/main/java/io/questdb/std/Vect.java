@@ -70,6 +70,8 @@ public final class Vect {
 
     public static native long countLong(long pLong, long count);
 
+    public static native long dedupMergeVarColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr);
+
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
             long count,
@@ -330,4 +332,8 @@ public final class Vect {
 
     // accept externally allocated memory for merged index of proper size
     private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
+
+    static {
+        Os.init();
+    }
 }

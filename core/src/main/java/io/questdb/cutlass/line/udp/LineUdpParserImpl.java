@@ -29,12 +29,13 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 
 import java.io.Closeable;
 
@@ -66,7 +67,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
     private final Path path = new Path();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private final LineProtoTimestampAdapter timestampAdapter;
+    private final LineTimestampAdapter timestampAdapter;
     private final LineUdpReceiverConfiguration udpConfiguration;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     // state
@@ -134,7 +135,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     @Override
     public void onEvent(CachedCharSequence token, int eventType, CharSequenceCache cache) {
-
         switch (eventType) {
             case EVT_MEASUREMENT:
                 int wrtIndex = writerCache.keyIndex(token);

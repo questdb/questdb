@@ -26,8 +26,8 @@ package io.questdb.std;
 
 import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 public interface FilesFacade {
     long MAP_FAILED = -1;
@@ -94,7 +94,7 @@ public interface FilesFacade {
 
     boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type);
 
-    boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink);
+    boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, MutableUtf8Sink nameSink);
 
     boolean isRestrictedFileSystem();
 
@@ -144,7 +144,9 @@ public interface FilesFacade {
 
     int rename(LPSZ from, LPSZ to);
 
-    int rmdir(Path name);
+    boolean rmdir(Path name);  // Implementation-specific laziness.
+
+    boolean rmdir(Path name, boolean lazy);
 
     int softLink(LPSZ src, LPSZ softLink);
 
@@ -154,13 +156,13 @@ public interface FilesFacade {
 
     boolean truncate(int fd, long size);
 
-    int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink);
+    int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, MutableUtf8Sink nameSink);
 
     int unlink(LPSZ softLink);
 
-    int unlinkOrRemove(Path path, Log LOG);
+    boolean unlinkOrRemove(Path path, Log LOG);
 
-    int unlinkOrRemove(Path path, int checkedType, Log LOG);
+    boolean unlinkOrRemove(Path path, int checkedType, Log LOG);
 
     void walk(Path src, FindVisitor func);
 

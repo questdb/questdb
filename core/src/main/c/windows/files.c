@@ -499,7 +499,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
                 // windows share (CIFS) reports filesystem as NTFS
                 // local disks support transactions, but CIFS does not
                 strcpy((char *) lpszName, fileSystemName);
-                return -1 * 0x2b;
+                return FLAG_FS_SUPPORTED * 0x2b;
             }
             // unsupported file system
             strcpy((char *) lpszName, "SMB");

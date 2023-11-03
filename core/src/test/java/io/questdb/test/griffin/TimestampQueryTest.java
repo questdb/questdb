@@ -66,22 +66,32 @@ public class TimestampQueryTest extends AbstractCairoTest {
     public void testCastAsValidColumnNameSelectTest() throws Exception {
         assertMemoryLeak(() -> {
             //create table
-            String createStmt = "create table xyz(time timestamp, cast geohash(8c)) timestamp(time) partition by DAY;";
+            String createStmt = "create table xyz(time timestamp, \"cast\" geohash(8c)) timestamp(time) partition by DAY;";
             ddl(createStmt);
             //insert
             insert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "time\tcast\n" +
                     "2020-12-31T23:59:59.000000Z\tu33d8b12\n";
-            String query = "select time, cast from xyz;";
+            String query = "select time, \"cast\" from xyz;";
             assertSql(expected, query);
         });
     }
 
     @Test
     public void testDesignatedTimestampOpSymbolColumns() throws Exception {
-        assertQuery("a\tdk\tk\n" +
+        assertQuery(
+                "a\tdk\tk\n" +
                 "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
-                "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n", "select a, dk, k from x where dk < cast(a as timestamp)", "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)", "k", null, null, true, false, false);
+                "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, dk, k from x where dk < cast(a as timestamp)",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                false,
+                false
+        );
     }
 
     @Test

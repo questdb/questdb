@@ -39,7 +39,7 @@ public class WriterOutOfDateException extends RuntimeException implements Flywei
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new WriterOutOfDateException()) != null;
         ex.message.clear();
-        ex.message.put(outdatedTableName).put("']");
+        ex.message.put("['").put(outdatedTableName).put("']");
         return ex;
     }
 

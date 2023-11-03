@@ -34,10 +34,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
@@ -879,24 +879,44 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     private static abstract class DelegatingSqlExecutionContext implements SqlExecutionContext {
         @Override
-        public void clearAnalyticContext() {
-            sqlExecutionContext.clearAnalyticContext();
+        public void clearWindowContext() {
+            sqlExecutionContext.clearWindowContext();
         }
 
         @Override
-        public void configureAnalyticContext(
+        public void configureWindowContext(
                 @Nullable VirtualRecord partitionByRecord,
                 @Nullable RecordSink partitionBySink,
                 @Nullable ColumnTypes keyTypes,
                 boolean isOrdered,
-                boolean baseSupportsRandomAccess
+                int orderByDirection,
+                int orderByPos,
+                boolean baseSupportsRandomAccess,
+                int framingMode,
+                long rowsLo,
+                int rowsLoKindPos,
+                long rowsHi,
+                int rowsHiKindPos,
+                int exclusionKind,
+                int exclusionKindPos,
+                int timestampIndex
         ) {
-            sqlExecutionContext.configureAnalyticContext(partitionByRecord, partitionBySink, keyTypes, isOrdered, baseSupportsRandomAccess);
-        }
-
-        @Override
-        public AnalyticContext getAnalyticContext() {
-            return sqlExecutionContext.getAnalyticContext();
+            sqlExecutionContext.configureWindowContext(
+                    partitionByRecord,
+                    partitionBySink,
+                    keyTypes,
+                    isOrdered,
+                    orderByDirection,
+                    orderByPos,
+                    baseSupportsRandomAccess,
+                    framingMode,
+                    rowsLo,
+                    rowsLoKindPos,
+                    rowsHi,
+                    rowsHiKindPos,
+                    exclusionKind,
+                    exclusionKindPos,
+                    timestampIndex);
         }
 
         @Override
@@ -945,13 +965,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getRequestFd() {
+        public int getRequestFd() {
             return sqlExecutionContext.getRequestFd();
         }
 
         @Override
         public @NotNull SecurityContext getSecurityContext() {
             return sqlExecutionContext.getSecurityContext();
+        }
+
+        @Override
+        public WindowContext getWindowContext() {
+            return sqlExecutionContext.getWindowContext();
         }
 
         @Override

@@ -35,7 +35,6 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -77,11 +76,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getAllowTableRegistrySharedWrite() {
         return false;
-    }
-
-    @Override
-    public int getAnalyticColumnPoolCapacity() {
-        return 64;
     }
 
     @Override
@@ -226,7 +220,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
+        return DateFormatUtils.EN_LOCALE;
     }
 
     @Override
@@ -245,6 +239,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDetachedMkDirMode() {
+        return 509;
+    }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
     }
@@ -255,7 +254,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public @NotNull FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
 
@@ -456,11 +455,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return 4;
-    }
-
-    @Override
     public int getReaderPoolMaxSegments() {
         return 5;
     }
@@ -513,36 +507,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSpinLockTimeout() {
         return 5000;
-    }
-
-    @Override
-    public int getSqlAnalyticRowIdMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public int getSqlAnalyticRowIdPageSize() {
-        return 1024;
-    }
-
-    @Override
-    public int getSqlAnalyticStoreMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public int getSqlAnalyticStorePageSize() {
-        return 1024 * 1024;
-    }
-
-    @Override
-    public int getSqlAnalyticTreeKeyMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public int getSqlAnalyticTreeKeyPageSize() {
-        return 4 * 1024;
     }
 
     @Override
@@ -698,11 +662,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlMapKeyCapacity() {
-        return 128;
-    }
-
-    @Override
     public int getSqlMapMaxPages() {
         return 1024;
     }
@@ -710,11 +669,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlMapMaxResizes() {
         return 64;
-    }
-
-    @Override
-    public int getSqlMapPageSize() {
-        return 16 * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -775,6 +729,41 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSortValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public int getSqlWindowInitialRangeBufferSize() {
+        return 32;
+    }
+
+    @Override
+    public int getSqlWindowRowIdMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlWindowRowIdPageSize() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlWindowStoreMaxPages() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlWindowStorePageSize() {
+        return 1024 * 1024;
+    }
+
+    @Override
+    public int getSqlWindowTreeKeyMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlWindowTreeKeyPageSize() {
+        return 4 * 1024;
     }
 
     @Override
@@ -868,6 +857,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalSegmentRolloverSize() {
+        return 0;  // watermark level disabled.
+    }
+
+    @Override
     public double getWalSquashUncommittedRowsMultiplier() {
         return 20;
     }
@@ -875,6 +869,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalTxnNotificationQueueCapacity() {
         return 4096;
+    }
+
+    @Override
+    public int getWindowColumnPoolCapacity() {
+        return 64;
     }
 
     @Override

@@ -53,5 +53,4 @@ public class DateFormatFactory {
     private static DateFormat map(CharSequence value) {
         return tlCompiler.get().compile(value);
     }
-
 }

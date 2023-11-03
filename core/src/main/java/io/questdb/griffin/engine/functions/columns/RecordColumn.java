@@ -49,11 +49,6 @@ public class RecordColumn extends RecordFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
     }

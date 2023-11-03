@@ -31,7 +31,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
@@ -41,10 +41,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -150,7 +147,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     q,
                     subSeq,
                     milliClock,
-                    commitInterval, this, engine.getMetrics(), assignedTables[i]);
+                    commitInterval, this, engine.getMetrics(), assignedTables[i]
+            );
             writerWorkerPool.assign(i, lineTcpWriterJob);
             writerWorkerPool.freeOnExit(lineTcpWriterJob);
         }
@@ -184,12 +182,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     public boolean doMaintenance(
-            ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
+            Utf8StringObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
             long millis
     ) {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final Utf8String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
 
             if (millis - tud.getLastMeasurementMillis() >= writerIdleTimeout) {
@@ -245,10 +243,10 @@ public class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    public void releaseWalTableDetails(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8) {
-        ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
+    public void releaseWalTableDetails(Utf8StringObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8) {
+        ObjList<Utf8String> keys = tableUpdateDetailsUtf8.keys();
         for (int n = keys.size() - 1; n > -1; --n) {
-            final ByteCharSequence tableNameUtf8 = keys.getQuick(n);
+            final Utf8String tableNameUtf8 = keys.getQuick(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (tud.isWal()) {
                 tableUpdateDetailsUtf8.remove(tableNameUtf8);
@@ -262,7 +260,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             LineTcpConnectionContext ctx,
             LineTcpParser parser
     ) throws Exception {
-        DirectByteCharSequence measurementName = parser.getMeasurementName();
+        DirectUtf8Sequence measurementName = parser.getMeasurementName();
         TableUpdateDetails tud;
         try {
             tud = ctx.getTableUpdateDetails(measurementName);
@@ -330,7 +328,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
     }
 
-    private static void handleAppendException(DirectByteCharSequence measurementName, TableUpdateDetails tud, Throwable ex) {
+    private static void handleAppendException(DirectUtf8Sequence measurementName, TableUpdateDetails tud, Throwable ex) {
         tud.setWriterInError();
         LOG.critical().$("closing writer because of error [table=").$(tud.getTableNameUtf16())
                 .$(",ex=")
@@ -346,7 +344,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             TableUpdateDetails tud
     ) throws CommitFailedException, MetadataChangedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
-        LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
+        final LineTcpTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
         final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());
         ld.resetStateIfNecessary();
@@ -359,7 +357,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = timestampAdapter.getMicros(timestamp);
+            timestamp = timestampAdapter.getMicros(timestamp, parser.getTimestampUnit());
         } else {
             timestamp = configuration.getMicrosecondClock().getTicks();
         }
@@ -374,7 +372,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     final int columnType = metadata.getColumnType(columnWriterIndex);
                     if (columnType > -1) {
                         if (columnWriterIndex == tud.getTimestampIndex()) {
-                            timestamp = timestampAdapter.getMicros(ent.getLongValue());
+                            timestamp = timestampAdapter.getMicros(ent.getLongValue(), ent.getUnit());
                             ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
                         } else {
                             ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
@@ -390,7 +388,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
                         columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         if (columnWriterIndex < 0) {
-                            securityContext.authorizeLineAlterTableAddColumn(writer.getTableToken());
+                            securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
                             tud.commit(false);
                             try {
                                 writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
@@ -449,7 +447,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.LONG:
                                 r.putLong(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.INT: {
                                 final long entityValue = ent.getLongValue();
                                 if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
@@ -486,23 +483,18 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.TIMESTAMP:
                                 r.putTimestamp(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.DATE:
                                 r.putDate(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, ent.getLongValue());
                                 break;
-
                             case ColumnType.SYMBOL:
-                                r.putSym(columnIndex, ent.getValue());
+                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
-
                             default:
                                 throw castError("integer", i, colType, ent.getName());
                         }
@@ -513,15 +505,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getFloatValue());
                                 break;
-
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
-
                             case ColumnType.SYMBOL:
-                                r.putSym(columnIndex, ent.getValue());
+                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
-
                             default:
                                 throw castError("float", i, colType, ent.getName());
                         }
@@ -529,7 +518,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     }
                     case LineTcpParser.ENTITY_TYPE_STRING: {
                         final int geoHashBits = ColumnType.getGeoHashBits(colType);
-                        final DirectByteCharSequence entityValue = ent.getValue();
+                        final DirectUtf8Sequence entityValue = ent.getValue();
                         if (geoHashBits == 0) { // not geohash
                             switch (ColumnType.tagOf(colType)) {
                                 case ColumnType.IPv4:
@@ -540,16 +529,14 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         throw castError("string", i, colType, ent.getName());
                                     }
                                     break;
-
                                 case ColumnType.STRING:
-                                    r.putStrUtf8AsUtf16(columnIndex, entityValue, parser.hasNonAsciiChars());
+                                    r.putStrUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;
-
                                 case ColumnType.CHAR:
-                                    if (entityValue.length() == 1 && entityValue.byteAt(0) > -1) {
-                                        r.putChar(columnIndex, entityValue.charAt(0));
+                                    if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
+                                        r.putChar(columnIndex, (char) entityValue.byteAt(0));
                                     } else if (stringToCharCastAllowed) {
-                                        int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());
+                                        int encodedResult = Utf8s.utf8CharDecode(entityValue.lo(), entityValue.hi());
                                         if (Numbers.decodeLowShort(encodedResult) > 0) {
                                             r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));
                                         } else {
@@ -559,12 +546,11 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         throw castError("string", i, colType, ent.getName());
                                     }
                                     break;
-
                                 case ColumnType.SYMBOL:
                                     r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;
                                 case ColumnType.UUID:
-                                    r.putUuid(columnIndex, entityValue);
+                                    r.putUuidUtf8(columnIndex, entityValue);
                                     break;
                                 default:
                                     throw castError("string", i, colType, ent.getName());
@@ -572,8 +558,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         } else {
                             long geoHash;
                             try {
-                                DirectByteCharSequence value = ent.getValue();
-                                geoHash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), geoHashBits);
+                                DirectUtf8Sequence value = ent.getValue();
+                                geoHash = GeoHashes.fromStringTruncatingNl(value.lo(), value.hi(), geoHashBits);
                             } catch (NumericException e) {
                                 geoHash = GeoHashes.NULL;
                             }
@@ -584,13 +570,11 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     case LineTcpParser.ENTITY_TYPE_LONG256: {
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.LONG256:
-                                r.putLong256(columnIndex, ent.getValue());
+                                r.putLong256Utf8(columnIndex, ent.getValue());
                                 break;
-
                             case ColumnType.SYMBOL:
-                                r.putSym(columnIndex, ent.getValue());
+                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
-
                             default:
                                 throw castError("long256", i, colType, ent.getName());
                         }
@@ -601,35 +585,27 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             case ColumnType.BOOLEAN:
                                 r.putBool(columnIndex, ent.getBooleanValue());
                                 break;
-
                             case ColumnType.BYTE:
                                 r.putByte(columnIndex, (byte) (ent.getBooleanValue() ? 1 : 0));
                                 break;
-
                             case ColumnType.SHORT:
                                 r.putShort(columnIndex, (short) (ent.getBooleanValue() ? 1 : 0));
                                 break;
-
                             case ColumnType.INT:
                                 r.putInt(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
-
                             case ColumnType.LONG:
                                 r.putLong(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
-
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
-
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
-
                             case ColumnType.SYMBOL:
-                                r.putSym(columnIndex, ent.getValue());
+                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
-
                             default:
                                 throw castError("boolean", i, colType, ent.getName());
                         }
@@ -638,17 +614,16 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.TIMESTAMP:
-                                r.putTimestamp(columnIndex, ent.getLongValue());
+                                long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
+                                r.putTimestamp(columnIndex, timestampValue);
                                 break;
-
                             case ColumnType.DATE:
-                                r.putTimestamp(columnIndex, ent.getLongValue() / 1000);
+                                long dateValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
+                                r.putTimestamp(columnIndex, dateValue / 1000);
                                 break;
-
                             case ColumnType.SYMBOL:
-                                r.putSym(columnIndex, ent.getValue());
+                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
                                 break;
-
                             default:
                                 throw castError("timestamp", i, colType, ent.getName());
                         }
@@ -664,8 +639,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         break;
                     }
                     default:
-                        // unsupported types are ignored
-                        break;
+                        break; // unsupported types are ignored
                 }
             }
             r.append();
@@ -677,11 +651,13 @@ public class LineTcpMeasurementScheduler implements Closeable {
             if (r != null) {
                 r.cancel();
             }
+            throw th;
         } catch (Throwable th) {
             LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
             if (r != null) {
                 r.cancel();
             }
+            throw th;
         }
     }
 
@@ -722,10 +698,10 @@ public class LineTcpMeasurementScheduler implements Closeable {
             @NotNull LineTcpConnectionContext ctx,
             @NotNull LineTcpParser parser
     ) {
-        final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
+        final DirectUtf8Sequence tableNameUtf8 = parser.getMeasurementName();
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
         tableNameUtf16.clear();
-        Chars.utf8toUtf16(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);
+        Utf8s.utf8ToUtf16(tableNameUtf8.lo(), tableNameUtf8.hi(), tableNameUtf16);
 
         tableUpdateDetailsLock.writeLock().lock();
         try {
@@ -757,9 +733,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
-                    securityContext.authorizeLineTableCreate();
-                    tableToken = engine.createTableInsecure(securityContext, ddlMem, path, true, tsa, false, false);
-                    LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
+                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                 }
 
                 // by the time we get here, definitely exists on disk
@@ -793,18 +767,18 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 -1,
                                 netIoJobs,
                                 defaultColumnTypes,
-                                ByteCharSequence.newInstance(tableNameUtf8)
+                                Utf8String.newInstance(tableNameUtf8)
                         );
-                        ctx.addTableUpdateDetails(ByteCharSequence.newInstance(tableNameUtf8), tud);
+                        ctx.addTableUpdateDetails(Utf8String.newInstance(tableNameUtf8), tud);
                         return tud;
                     } else {
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8));
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, Utf8String.newInstance(tableNameUtf8));
                     }
                 }
             }
 
             // tud.getTableNameUtf8() can be different case from incoming tableNameUtf8
-            ByteCharSequence key = Chars.equals(tud.getTableNameUtf8(), tableNameUtf8) ? tud.getTableNameUtf8() : ByteCharSequence.newInstance(tableNameUtf8);
+            Utf8String key = Utf8s.equals(tud.getTableNameUtf8(), tableNameUtf8) ? tud.getTableNameUtf8() : Utf8String.newInstance(tableNameUtf8);
             netIoJob.addTableUpdateDetails(key, tud);
             return tud;
         } finally {
@@ -820,7 +794,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private TableUpdateDetails unsafeAssignTableToWriterThread(
             int tudKeyIndex,
             CharSequence tableNameUtf16,
-            ByteCharSequence tableNameUtf8
+            Utf8String tableNameUtf8
     ) {
         unsafeCalcThreadLoad();
         long leastLoad = Long.MAX_VALUE;

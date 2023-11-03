@@ -93,7 +93,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void close() {
-        buffer = Unsafe.free(buffer, bufferSize, this.memoryTag);
+        buffer = Unsafe.free(buffer, bufferSize, memoryTag);
         fd = -1;
     }
 
@@ -149,6 +149,17 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.timeout = timeout;
     }
 
+    public void statefulThrowExceptionIfTimeout() {
+        // Same as statefulThrowExceptionIfTripped but does not check the connection state.
+        // Useful to check timeout before trying to send something on the connection.
+        if (testCount < throttle) {
+            testCount++;
+        } else {
+            testCount = 0;
+            testTimeout();
+        }
+    }
+
     @Override
     public void statefulThrowExceptionIfTripped() {
         if (testCount < throttle) {
@@ -162,7 +173,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         testCount = 0;
         testTimeout();
-        if (testConnection(this.fd)) {
+        if (testConnection(fd)) {
             throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
     }

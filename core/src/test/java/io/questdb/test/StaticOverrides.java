@@ -119,11 +119,6 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return AbstractCairoTest.queryCacheEventQueueCapacity;
-    }
-
-    @Override
     public int getRecreateDistressedSequencerAttempts() {
         return AbstractCairoTest.recreateDistressedSequencerAttempts;
     }
@@ -192,7 +187,6 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.snapshotInstanceId = null;
         AbstractCairoTest.snapshotRecoveryEnabled = null;
         AbstractCairoTest.writerCommandQueueCapacity = 4;
-        AbstractCairoTest.queryCacheEventQueueCapacity = -1;
         AbstractCairoTest.pageFrameReduceShardCount = -1;
         AbstractCairoTest.pageFrameReduceQueueCapacity = -1;
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
@@ -287,11 +281,6 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setPageFrameReduceShardCount(int pageFrameReduceShardCount) {
         AbstractCairoTest.pageFrameReduceShardCount = pageFrameReduceShardCount;
-    }
-
-    @Override
-    public void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity) {
-        AbstractCairoTest.queryCacheEventQueueCapacity = queryCacheEventQueueCapacity;
     }
 
     @Override

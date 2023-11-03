@@ -26,5 +26,5 @@ package io.questdb.std.str;
 
 import io.questdb.std.Mutable;
 
-public interface MutableCharSink extends CharSink, Mutable, CharSequence {
+public interface MutableCharSink extends CharSink, CharSequence, Mutable {
 }

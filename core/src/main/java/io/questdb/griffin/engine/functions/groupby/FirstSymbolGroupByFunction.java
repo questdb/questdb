@@ -38,8 +38,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupByFunction, UnaryFunction {
-    private final SymbolFunction arg;
-    private int valueIndex;
+    protected final SymbolFunction arg;
+    protected int valueIndex;
 
     public FirstSymbolGroupByFunction(@NotNull SymbolFunction arg) {
         this.arg = arg;

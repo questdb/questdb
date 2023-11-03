@@ -469,16 +469,16 @@ public class TableBackupTest {
         Assert.assertTrue(Files.exists(finalBackupPath));
 
         finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
-        final int trimLen = finalBackupPath.length();
+        final int trimLen = finalBackupPath.size();
         Assert.assertTrue(Files.exists(finalBackupPath.concat("server.conf").$()));
         Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("mime.types").$()));
         Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("log-file.conf").$()));
         Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("date.formats").$()));
 
         if (isWal) {
-            path.parent().concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            path.parent().concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0").$();
             Assert.assertTrue(Files.exists(path));
-            finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0").$();
             Assert.assertTrue(Files.exists(finalBackupPath));
         }
     }
@@ -516,6 +516,11 @@ public class TableBackupTest {
 
     private void backupTable(TableToken tableToken) throws SqlException {
         mainCompiler.compile("BACKUP TABLE \"" + tableToken.getTableName() + '"', mainSqlExecutionContext);
+    }
+
+    private void compileAndDrainWalQueue(String sql) throws SqlException {
+        mainEngine.compile(sql, mainSqlExecutionContext);
+        drainWalQueue();
     }
 
     private void drainWalQueue() {
@@ -561,11 +566,6 @@ public class TableBackupTest {
         drainWalQueue();
     }
 
-    private void compileAndDrainWalQueue(String sql) throws SqlException {
-        mainEngine.compile(sql, mainSqlExecutionContext);
-        drainWalQueue();
-    }
-
     private void selectAll(TableToken tableToken, boolean backup, MutableCharSink sink) throws Exception {
         CairoEngine engine = mainEngine;
         SqlCompiler compiler = mainCompiler;
@@ -599,7 +599,7 @@ public class TableBackupTest {
             finalBackupPath.put(n);
         }
         finalBackupPath.slash$();
-        finalBackupPathLen = finalBackupPath.length();
+        finalBackupPathLen = finalBackupPath.size();
         finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.DB_DIRECTORY).slash$();
     }
 }

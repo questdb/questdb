@@ -62,12 +62,12 @@ public class RecoverVarIndex extends RebuildColumnBase {
             return;
         }
 
-        int trimTo = path.length();
+        int trimTo = path.size();
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
 
         try {
             path.concat(columnName);
-            int colNameLen = path.length();
+            int colNameLen = path.size();
             path.put(".d");
             if (columnNameTxn != -1L) {
                 path.put('.').put(columnNameTxn);

@@ -58,7 +58,7 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
         return new LtIPv4FunctionFactory.LtIPv4Function(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class LtIPv4Function extends NegatableBooleanFunction implements BinaryFunction {
+    static class LtIPv4Function extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 

@@ -25,7 +25,9 @@
 package io.questdb.std.datetime;
 
 import io.questdb.std.NumericException;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Instances of DateFormat do not have state. They are thread-safe. In that multiple threads can use
@@ -33,9 +35,9 @@ import io.questdb.std.str.CharSink;
  */
 public interface DateFormat {
 
-    void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink);
+    void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSinkBase<?> sink);
 
-    long parse(CharSequence in, DateLocale locale) throws NumericException;
+    long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException;
 
-    long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException;
+    long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException;
 }

@@ -100,7 +100,7 @@ public class ConcurrentHashMapTest {
         assertEquals(1, map.size());
         assertEquals(map.get("TABLE"), "5");
         assertEquals(((Map<CharSequence, String>) map).get("TABLE"), "5");
-        assertNull(((Map<CharSequence, String>) map).get(Integer.valueOf(42)));
+        assertNull(((Map<CharSequence, String>) map).get(42));
 
         ConcurrentHashMap<String> cs = new ConcurrentHashMap<>(5, 0.58F);
         cs.put("Table", "1");

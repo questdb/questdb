@@ -46,17 +46,12 @@ public class CastSymbolToDateFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToDateFunction {
-        private final Function arg;
+    public static class Func extends AbstractCastToDateFunction {
 
         public Func(Function arg) {
-            this.arg = arg;
+            super(arg);
         }
 
-        @Override
-        public Function getArg() {
-            return arg;
-        }
 
         @Override
         public long getDate(Record rec) {

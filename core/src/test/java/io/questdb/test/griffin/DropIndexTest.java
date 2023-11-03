@@ -81,11 +81,11 @@ public class DropIndexTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         path = new Path().put(configuration.getRoot()).concat(dirName);
-        tablePathLen = path.length();
+        tablePathLen = path.size();
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
     }
@@ -536,7 +536,7 @@ public class DropIndexTest extends AbstractCairoTest {
             int indexValueBlockSize
     ) {
         try (TxReader txReader = new TxReader(ff)) {
-            int pathLen = path.length();
+            int pathLen = path.size();
             txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionedBy);
             path.trimTo(pathLen);
             txReader.unsafeLoadAll();

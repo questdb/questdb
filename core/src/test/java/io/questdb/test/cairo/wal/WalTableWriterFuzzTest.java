@@ -738,16 +738,14 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                 assertExceptionNoLeakCheck(
                         "UPDATE " + tableName + " SET INT=systimestamp()",
-                        43,
-                        "inconvertible types: TIMESTAMP -> INT"
+                        43
                 );
                 drainWalQueue();
                 assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
 
                 assertExceptionNoLeakCheck(
                         "UPDATE " + tableCopyName + " SET INT=systimestamp()",
-                        48,
-                        "inconvertible types: TIMESTAMP -> INT"
+                        48
                 );
                 assertSqlCursors(tableCopyName, tableName);
             }
@@ -955,7 +953,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
     private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws SqlException {
         try (TableReader reader = getReader(tableName)) {
-            assertSql("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n", "SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'"
+            assertSql("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = '" + tableName + "'"
             );
             reader.reload();
             assertEquals(expectedMaxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());

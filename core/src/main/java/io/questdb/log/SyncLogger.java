@@ -24,71 +24,67 @@
 
 package io.questdb.log;
 
-import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
+import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 
-public final class SyncLogger implements LogRecord, Log {
-    private final static ThreadLocal<StringSink> line = new ThreadLocal<>(StringSink::new);
-    private final RingQueue<LogRecordSink> advisoryRing;
+public final class SyncLogger extends AbstractLogRecord implements Log {
+    private final static ThreadLocal<Utf8StringSink> line = new ThreadLocal<>(Utf8StringSink::new);
     private final Sequence advisorySeq;
     private final MicrosecondClock clock;
-    private final RingQueue<LogRecordSink> criticalRing;
     private final Sequence criticalSeq;
-    private final RingQueue<LogRecordSink> debugRing;
     private final Sequence debugSeq;
-    private final RingQueue<LogRecordSink> errorRing;
     private final Sequence errorSeq;
-    private final RingQueue<LogRecordSink> infoRing;
     private final Sequence infoSeq;
     private final CharSequence name;
 
     SyncLogger(
             MicrosecondClock clock,
             CharSequence name,
-            RingQueue<LogRecordSink> debugRing,
             Sequence debugSeq,
-            RingQueue<LogRecordSink> infoRing,
             Sequence infoSeq,
-            RingQueue<LogRecordSink> errorRing,
             Sequence errorSeq,
-            RingQueue<LogRecordSink> criticalRing,
             Sequence criticalSeq,
-            RingQueue<LogRecordSink> advisoryRing,
             Sequence advisorySeq
     ) {
         this.clock = clock;
         this.name = name;
-        this.debugRing = debugRing;
         this.debugSeq = debugSeq;
-        this.infoRing = infoRing;
         this.infoSeq = infoSeq;
-        this.errorRing = errorRing;
         this.errorSeq = errorSeq;
-        this.criticalRing = criticalRing;
         this.criticalSeq = criticalSeq;
-        this.advisoryRing = advisoryRing;
         this.advisorySeq = advisorySeq;
     }
 
     @Override
     public void $() {
-        StringSink sink = line.get();
-        System.out.println(sink);
+        Utf8StringSink sink = line.get();
+        System.out.println(sink.asAsciiCharSequence());
         sink.clear();
     }
 
     @Override
-    public LogRecord $(CharSequence sequence) {
+    public LogRecord $(@Nullable CharSequence sequence) {
         if (sequence == null) {
-            sink().put("null");
+            sink().putAscii("null");
+        } else {
+            sink().putAscii(sequence);
+        }
+        return this;
+    }
+
+    @Override
+    public LogRecord $(@Nullable Utf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
         } else {
             sink().put(sequence);
         }
@@ -96,7 +92,17 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(CharSequence sequence, int lo, int hi) {
+    public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            sink().put(sequence);
+        }
+        return this;
+    }
+
+    @Override
+    public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
         sink().put(sequence, lo, hi);
         return this;
     }
@@ -132,27 +138,19 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(Throwable e) {
-        if (e != null) {
-            sink().put(Misc.EOL).put(e);
-        }
-        return this;
-    }
-
-    @Override
-    public LogRecord $(File x) {
+    public LogRecord $(@Nullable File x) {
         sink().put(x == null ? "null" : x.getAbsolutePath());
         return this;
     }
 
     @Override
-    public LogRecord $(Object x) {
+    public LogRecord $(@Nullable Object x) {
         sink().put(x == null ? "null" : x.toString());
         return this;
     }
 
     @Override
-    public LogRecord $(Sinkable x) {
+    public LogRecord $(@Nullable Sinkable x) {
         if (x == null) {
             sink().put("null");
         } else {
@@ -193,7 +191,7 @@ public final class SyncLogger implements LogRecord, Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        Chars.utf8toUtf16(lo, hi, this);
+        Utf8s.utf8ToUtf16(lo, hi, this);
         return this;
     }
 
@@ -210,11 +208,6 @@ public final class SyncLogger implements LogRecord, Log {
     @Override
     public LogRecord critical() {
         return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
-    }
-
-    @Override
-    public LogRecord criticalW() {
-        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
@@ -271,29 +264,25 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord utf8(CharSequence sequence) {
+    public LogRecord utf8(@Nullable CharSequence sequence) {
         if (sequence == null) {
             sink().put("null");
         } else {
-            sink().encodeUtf8(sequence);
+            sink().put(sequence);
         }
         return this;
     }
 
     public LogRecord xAdvisoryW() {
-        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
-    }
-
-    public LogRecord xCriticalW() {
-        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
+        return next(advisorySeq);
     }
 
     public LogRecord xDebugW() {
-        return next(debugSeq, debugRing, LogLevel.DEBUG);
+        return next(debugSeq);
     }
 
     public LogRecord xErrorW() {
-        return next(errorSeq, errorRing, LogLevel.ERROR);
+        return next(errorSeq);
     }
 
     /**
@@ -303,42 +292,43 @@ public final class SyncLogger implements LogRecord, Log {
      * @return log record API
      */
     public LogRecord xInfoW() {
-        return next(infoSeq, infoRing, LogLevel.INFO);
+        return next(infoSeq);
     }
 
     @Override
     public LogRecord xadvisory() {
-        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
+        return next(advisorySeq);
     }
 
     public LogRecord xcritical() {
-        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
+        return next(criticalSeq);
     }
 
     public LogRecord xdebug() {
-        return next(debugSeq, debugRing, LogLevel.DEBUG);
+        return next(debugSeq);
     }
 
     public LogRecord xerror() {
-        return next(errorSeq, errorRing, LogLevel.ERROR);
+        return next(errorSeq);
     }
 
     public LogRecord xinfo() {
-        return next(infoSeq, infoRing, LogLevel.INFO);
+        return next(infoSeq);
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {
         return rec.ts().$(level).$(name);
     }
 
-    private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
+    private LogRecord next(Sequence seq) {
         if (seq == null) {
             return NullLogRecord.INSTANCE;
         }
         return this;
     }
 
-    private StringSink sink() {
+    @Override
+    protected Utf8StringSink sink() {
         return line.get();
     }
 }

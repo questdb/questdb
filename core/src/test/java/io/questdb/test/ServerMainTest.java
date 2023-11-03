@@ -24,9 +24,10 @@
 
 package io.questdb.test;
 
-import io.questdb.Bootstrap;
-import io.questdb.DefaultBootstrapConfiguration;
-import io.questdb.ServerMain;
+import io.questdb.*;
+import io.questdb.client.Sender;
+import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -37,6 +38,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMainTest extends AbstractBootstrapTest {
 
@@ -45,6 +47,86 @@ public class ServerMainTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testServerMainILPDisabled() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put("QDB_LINE_TCP_NET_BIND_TO", "0.0.0.0:9023");
+
+            // Helps to test some exotic init options to increase test coverage.
+            env.put("QDB_CAIRO_SQL_COPY_ROOT", dbPath.toString());
+            env.put("QDB_TELEMETRY", dbPath.toString());
+            env.put("QDB_TELEMETRY_DISABLE_COMPLETELY", "false");
+            env.put("QDB_TELEMETRY_ENABLED", "true");
+
+            // Global enable / disable ILP switch
+            AtomicBoolean ilpEnabled = new AtomicBoolean(false);
+
+            Bootstrap bootstrap = new Bootstrap(
+                    new DefaultBootstrapConfiguration() {
+                        @Override
+                        public Map<String, String> getEnv() {
+                            return env;
+                        }
+
+                        @Override
+                        public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                            return new PropServerConfiguration(
+                                    bootstrap.getRootDirectory(),
+                                    bootstrap.loadProperties(),
+                                    getEnv(),
+                                    bootstrap.getLog(),
+                                    bootstrap.getBuildInformation(),
+                                    FilesFacadeImpl.INSTANCE,
+                                    bootstrap.getMicrosecondClock(),
+                                    FactoryProviderFactoryImpl.INSTANCE
+                            ) {
+                                @Override
+                                public boolean isIlpEnabled() {
+                                    return ilpEnabled.get();
+                                }
+                            };
+                        }
+                    },
+                    getServerMainArgs()
+            ) {
+                public ServerConfiguration getConfiguration() {
+                    return super.getConfiguration();
+                }
+            };
+
+            ilpEnabled.set(false);
+            // Start with ILP disabled
+            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start();
+                try (Sender sender = Sender.builder()
+                        .address("localhost")
+                        .port(9023)
+                        .build()) {
+                    sender.table("test").stringColumn("value", "test").atNow();
+                    sender.flush();
+                    Assert.fail();
+                } catch (LineSenderException e) {
+                    // expected
+                    TestUtils.assertContains(e.getMessage(), "could not connect to host");
+                }
+            }
+
+            ilpEnabled.set(true);
+            // Start with ILP enabled
+            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start();
+                try (Sender sender = Sender.builder()
+                        .address("localhost")
+                        .port(9023)
+                        .build()) {
+                    sender.table("test").stringColumn("value", "test").atNow();
+                    sender.flush();
+                }
+            }
+        });
     }
 
     @Test
@@ -96,10 +178,11 @@ public class ServerMainTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 Assert.assertNotNull(serverMain.getConfiguration());
                 Assert.assertNotNull(serverMain.getEngine());
-                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+                Assert.assertNull(serverMain.getWorkerPoolManager());
                 Assert.assertFalse(serverMain.hasStarted());
                 Assert.assertFalse(serverMain.hasBeenClosed());
                 serverMain.start();
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
             }
         });
     }

@@ -45,7 +45,6 @@ public class PartitionDateParseUtil {
                     int sec = Numbers.parseInt(seq, pos, pos += 2);
                     checkRange(sec, 0, 59);
                     if (pos < lim && seq.charAt(pos) == '-') {
-
                         pos++;
                         // varlen milli and micros
                         int micrLim = pos + 6;
@@ -69,7 +68,6 @@ public class PartitionDateParseUtil {
                                 + micr;
                     } else {
                         if (pos == lim) {
-
                             // seconds
                             ts += (day - 1) * Timestamps.DAY_MICROS
                                     + hour * Timestamps.HOUR_MICROS
@@ -90,7 +88,6 @@ public class PartitionDateParseUtil {
                 // year + month + day + hour
                 ts += (day - 1) * Timestamps.DAY_MICROS
                         + hour * Timestamps.HOUR_MICROS;
-
             }
         } else {
             // year + month + day

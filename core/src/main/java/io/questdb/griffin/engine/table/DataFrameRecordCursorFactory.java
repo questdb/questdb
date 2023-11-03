@@ -26,14 +26,13 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -130,21 +129,16 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public boolean supportsUpdateRowId(TableToken tableToken) {
-        return dataFrameCursorFactory.supportTableRowId(tableToken);
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("DataFrame");
         toPlanInner(sink);
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":");
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":");
         dataFrameCursorFactory.toSink(sink);
-        sink.put('}');
+        sink.putAscii('}');
     }
 
     @Override

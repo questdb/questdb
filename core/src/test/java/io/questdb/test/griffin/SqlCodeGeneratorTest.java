@@ -35,10 +35,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
@@ -91,7 +91,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 
@@ -112,7 +112,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 
@@ -421,7 +421,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                false
+                true
         );
     }
 
@@ -3061,7 +3061,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 true
                         );
                     } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token:");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [");
                     }
                 });
     }
@@ -3600,7 +3600,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRO(LPSZ name) {
-                    if (Chars.endsWith(name, "b.d")) {
+                    if (Utf8s.endsWithAscii(name, "b.d")) {
                         return -1;
                     }
                     return super.openRO(name);
@@ -7251,9 +7251,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
+                            "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                             sink,
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                                     "1\tпривет от штиблет\t\tNONE\t1000\t300000000\n"
                     );
 

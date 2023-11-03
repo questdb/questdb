@@ -32,8 +32,6 @@ public interface Log {
 
     LogRecord critical();
 
-    LogRecord criticalW();
-
     LogRecord debug();
 
     LogRecord debugW();

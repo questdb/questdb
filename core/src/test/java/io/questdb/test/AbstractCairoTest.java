@@ -53,6 +53,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.*;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -113,7 +114,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static int pageFrameMaxRows = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
-    protected static int queryCacheEventQueueCapacity = -1;
     protected static SecurityContext securityContext;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
@@ -427,7 +427,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         forEachNode(QuestDBTestNode::closeCairo);
         circuitBreaker = Misc.free(circuitBreaker);
         nodes.clear();
@@ -469,7 +469,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         if (inputWorkRoot != null) {
             try (Path path = new Path().of(inputWorkRoot).$()) {
                 if (Files.exists(path)) {
-                    Files.rmdir(path);
+                    Files.rmdir(path, true);
                 }
             }
         }
@@ -496,7 +496,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
-        final Rnd rnd = new Rnd(Os.currentTimeMicros(), System.currentTimeMillis());
+        final Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < numberOfIterations; i++) {
             int symbolColIndex = rnd.nextInt(symbolColumnCount);
             SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);
@@ -721,7 +721,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
+    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
@@ -883,18 +883,18 @@ public abstract class AbstractCairoTest extends AbstractTest {
             assertException(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
                 if (errorPos > -1) {
                     Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
                 }
-                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
             } else {
                 throw e;
             }
         }
     }
 
-    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
-        assertException(sql, errorPos, contains, false);
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos) throws Exception {
+        assertException(sql, errorPos, "inconvertible types: TIMESTAMP -> INT", false);
     }
 
     protected static void assertFactoryMemoryUsage() {
@@ -1207,17 +1207,29 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
     }
 
+    protected static void configOverrideSqlWindowStoreMaxPages(int windowStoreMaxPages) {
+        node1.getConfigurationOverrides().setSqlWindowStoreMaxPages(windowStoreMaxPages);
+    }
+
+    protected static void configOverrideSqlWindowStorePageSize(int windowStorePageSize) {
+        node1.getConfigurationOverrides().setSqlWindowStorePageSize(windowStorePageSize);
+    }
+
     protected static void configOverrideWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuota(walApplyTableTimeQuota);
     }
 
-    protected static void configOverrideWalMaxLagTxnCount(int walMaxLagTxnCount) {
-        node1.getConfigurationOverrides().setWalMaxLagTxnCount(walMaxLagTxnCount);
+    protected static void configOverrideWalMaxLagTxnCount() {
+        node1.getConfigurationOverrides().setWalMaxLagTxnCount(1);
     }
 
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
         node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
+    }
+
+    protected static void configOverrideWalSegmentRolloverSize(long walSegmentRolloverSize) {
+        node1.getConfigurationOverrides().setWalSegmentRolloverSize(walSegmentRolloverSize);
     }
 
     protected static void configOverrideWriterMixedIOEnabled(boolean enableMixedIO) {
@@ -1472,14 +1484,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(wal).$();
         final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(wal).$();
         if (ff.exists(dstWal)) {
-            Assert.assertEquals(0, ff.rmdir(dstWal));
+            Assert.assertTrue(ff.rmdir(dstWal));
         }
         Assert.assertEquals(0, ff.mkdir(dstWal, mkdirMode));
         Assert.assertEquals(0, ff.copyRecursive(srcWal, dstWal, mkdirMode));
 
         final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(WalUtils.SEQ_DIR).$();
         final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(WalUtils.SEQ_DIR).$();
-        Assert.assertEquals(0, ff.rmdir(dstTxnLog));
+        Assert.assertTrue(ff.rmdir(dstTxnLog));
         Assert.assertEquals(0, ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode));
 
         dstNode.getEngine().getTableSequencerAPI().openSequencer(srcTableToken);
@@ -1682,8 +1694,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
-            return new File(Chars.toString(path));
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            return new File(Utf8s.toString(path));
         }
     }
 
@@ -1697,7 +1709,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
             final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Chars.toString(path), expectLocked, !could);
+            Assert.assertEquals(Utf8s.toString(path), expectLocked, !could);
         }
     }
 
@@ -1705,7 +1717,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
-            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
@@ -1738,7 +1750,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
@@ -1751,7 +1763,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
@@ -1765,7 +1777,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
             final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Chars.toString(path), expectLocked, !could);
+            Assert.assertEquals(Utf8s.toString(path), expectLocked, !could);
         }
     }
 
@@ -1774,7 +1786,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (Path path = new Path()) {
             TableToken tableToken = engine.verifyTableName(tableName);
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
-            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
@@ -1837,7 +1849,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return update(updateSql, sqlExecutionContext, null);
     }
 
-    protected long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+    protected long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             while (true) {
                 try {

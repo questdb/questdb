@@ -24,9 +24,10 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;
 
 public interface FuzzTransactionOperation {
-    boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex);
+    boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex);
 }

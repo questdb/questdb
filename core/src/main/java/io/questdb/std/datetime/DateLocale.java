@@ -119,7 +119,7 @@ public class DateLocale {
     }
 
     private static void defineToken(String token, int pos, IntObjHashMap<ObjList<CharSequence>> map) {
-        if (token == null || token.length() == 0) {
+        if (token == null || token.isEmpty()) {
             return;
         }
 
@@ -136,7 +136,6 @@ public class DateLocale {
     }
 
     private static long findToken(CharSequence content, int lo, int hi, IntObjHashMap<ObjList<CharSequence>> map) throws NumericException {
-
         if (lo >= hi) {
             throw NumericException.INSTANCE;
         }

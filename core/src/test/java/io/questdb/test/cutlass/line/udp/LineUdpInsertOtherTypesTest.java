@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.line.udp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.line.AbstractLineSender;
 import org.junit.Test;
 
 
@@ -793,10 +792,10 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
         assertType(tableName, targetColumnName, columnType, expected, sender -> {
             long ts = 0L;
             for (int i = 0, n = values.length; i < n; i++) {
-                ((AbstractLineSender) sender.metric(tableName).put(' ')
-                        .encodeUtf8(targetColumnName)) // this method belongs to a super class that returns this
-                        .put('=')
-                        .put(values[i]) // field method decorates this token, I want full control
+                sender.metric(tableName).putAsciiInternal(' ')
+                        .put(targetColumnName) // this method belongs to a super class that returns this
+                        .putAsciiInternal('=')
+                        .putAsciiInternal(values[i]) // field method decorates this token, I want full control
                         .$(ts += 1000000000);
             }
         });

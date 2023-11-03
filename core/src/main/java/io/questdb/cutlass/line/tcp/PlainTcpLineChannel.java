@@ -42,6 +42,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (fd < 0) {
             throw new LineSenderException("could not allocate a file descriptor").errno(nf.errno());
         }
+        nf.configureKeepAlive(fd);
         this.sockaddr = nf.sockaddr(address, port);
         if (nf.connect(fd, sockaddr) != 0) {
             int errno = nf.errno();
@@ -61,6 +62,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (fd < 0) {
             throw new LineSenderException("could not allocate a file descriptor").errno(nf.errno());
         }
+        nf.configureKeepAlive(fd);
         long addrInfo = nf.getAddrInfo(host, port);
         if (addrInfo == -1) {
             nf.close(fd, LOG);
@@ -93,7 +95,7 @@ public final class PlainTcpLineChannel implements LineChannel {
 
     @Override
     public int receive(long ptr, int len) {
-        return nf.recv(fd, ptr, len);
+        return nf.recvRaw(fd, ptr, len);
     }
 
     @Override
@@ -101,7 +103,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (len > 0) {
             long o = 0;
             while (len > 0) {
-                int n = nf.send(fd, ptr + o, len);
+                int n = nf.sendRaw(fd, ptr + o, len);
                 if (n > 0) {
                     len -= n;
                     o += n;

@@ -26,15 +26,15 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.DenyAllSecurityContext;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -50,7 +50,7 @@ class LineTcpMeasurementEvent implements Closeable {
     private final int maxColumnNameLength;
     private final PrincipalOnlySecurityContext principalOnlySecurityContext = new PrincipalOnlySecurityContext();
     private final boolean stringToCharCastAllowed;
-    private final LineProtoTimestampAdapter timestampAdapter;
+    private final LineTcpTimestampAdapter timestampAdapter;
     private boolean commitOnWriterClose;
     private TableUpdateDetails tableUpdateDetails;
     private int writerWorkerId;
@@ -59,7 +59,7 @@ class LineTcpMeasurementEvent implements Closeable {
             long bufLo,
             long bufSize,
             MicrosecondClock clock,
-            LineProtoTimestampAdapter timestampAdapter,
+            LineTcpTimestampAdapter timestampAdapter,
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
             int maxColumnNameLength,
@@ -82,7 +82,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 .put(']');
     }
 
-    public static CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
+    public static CairoException castError(String ilpType, int columnWriterIndex, int colType, DirectUtf8Sequence name) {
         return CairoException.critical(0)
                 .put("cast error for line protocol ").put(ilpType)
                 .put(" [columnWriterIndex=").put(columnWriterIndex)
@@ -134,6 +134,7 @@ class LineTcpMeasurementEvent implements Closeable {
             if (metadataVersion > writer.getMetadataVersion()) {
                 // I/O thread has a more recent version of the WAL table metadata than the writer.
                 // Let the WAL writer commit, so that it refreshes its metadata copy.
+                // TODO: this method is not used for WAL tables, check if the below commit still needed
                 writer.commit();
             }
             long timestamp = buffer.readLong(offset);
@@ -186,6 +187,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         row = null;
                         final int colType = defaultColumnTypes.MAPPED_COLUMN_TYPES[entityType];
                         // we have to commit before adding a new column as WalWriter doesn't do that automatically
+                        // TODO: this method is not used for WAL tables, check if the below commit still needed
                         writer.commit();
                         try {
                             writer.addColumn(columnName, colType, principalOnlySecurityContext.of(principal));
@@ -308,10 +310,10 @@ class LineTcpMeasurementEvent implements Closeable {
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
         tableUpdateDetails = tud;
-        securityContext.authorizeLineInsert(tud.getTableToken());
+        securityContext.authorizeInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = timestampAdapter.getMicros(timestamp);
+            timestamp = timestampAdapter.getMicros(timestamp, parser.getTimestampUnit());
         }
         buffer.addStructureVersion(buffer.getAddress(), localDetails.getMetadataVersion());
         // timestamp, entitiesWritten are written to the buffer after saving all fields
@@ -326,7 +328,7 @@ class LineTcpMeasurementEvent implements Closeable {
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
                 if (columnWriterIndex == tud.getTimestampIndex()) {
-                    timestamp = timestampAdapter.getMicros(entity.getLongValue());
+                    timestamp = timestampAdapter.getMicros(entity.getLongValue(), entity.getUnit());
                     continue;
                 }
 
@@ -336,7 +338,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 // send column by name
                 final String colNameUtf16 = localDetails.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
-                    securityContext.authorizeLineAlterTableAddColumn(tud.getTableToken());
+                    securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
                     offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
                     colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
                 } else if (!autoCreateNewColumns) {
@@ -370,7 +372,6 @@ class LineTcpMeasurementEvent implements Closeable {
                         case ColumnType.LONG:
                             offset = buffer.addLong(offset, entity.getLongValue());
                             break;
-
                         case ColumnType.INT: {
                             final long entityValue = entity.getLongValue();
                             if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
@@ -405,21 +406,18 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
                         }
                         case ColumnType.TIMESTAMP:
-                            offset = buffer.addTimestamp(offset, entity.getLongValue());
+                            long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), LineTcpParser.ENTITY_UNIT_NONE);
+                            offset = buffer.addTimestamp(offset, timestampValue);
                             break;
-
                         case ColumnType.DATE:
                             offset = buffer.addDate(offset, entity.getLongValue());
                             break;
-
                         case ColumnType.DOUBLE:
                             offset = buffer.addDouble(offset, entity.getLongValue());
                             break;
-
                         case ColumnType.FLOAT:
                             offset = buffer.addFloat(offset, entity.getLongValue());
                             break;
-
                         case ColumnType.SYMBOL:
                             offset = buffer.addSymbol(
                                     offset,
@@ -428,7 +426,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                     localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
-
                         default:
                             throw castError("integer", columnWriterIndex, colType, entity.getName());
                     }
@@ -439,11 +436,9 @@ class LineTcpMeasurementEvent implements Closeable {
                         case ColumnType.DOUBLE:
                             offset = buffer.addDouble(offset, entity.getFloatValue());
                             break;
-
                         case ColumnType.FLOAT:
                             offset = buffer.addFloat(offset, (float) entity.getFloatValue());
                             break;
-
                         case ColumnType.SYMBOL:
                             offset = buffer.addSymbol(
                                     offset,
@@ -451,7 +446,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                     parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
-
                         default:
                             throw castError("float", columnWriterIndex, colType, entity.getName());
                     }
@@ -459,7 +453,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 }
                 case LineTcpParser.ENTITY_TYPE_STRING: {
                     final int colTypeMeta = localDetails.getColumnTypeMeta(columnWriterIndex);
-                    final DirectByteCharSequence entityValue = entity.getValue();
+                    final DirectUtf8Sequence entityValue = entity.getValue();
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.IPv4:
@@ -473,12 +467,11 @@ class LineTcpMeasurementEvent implements Closeable {
                             case ColumnType.STRING:
                                 offset = buffer.addString(offset, entityValue, parser.hasNonAsciiChars());
                                 break;
-
                             case ColumnType.CHAR:
-                                if (entityValue.length() == 1 && entityValue.byteAt(0) > -1) {
-                                    offset = buffer.addChar(offset, entityValue.charAt(0));
+                                if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
+                                    offset = buffer.addChar(offset, (char) entityValue.byteAt(0));
                                 } else if (stringToCharCastAllowed) {
-                                    int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());
+                                    int encodedResult = Utf8s.utf8CharDecode(entityValue.lo(), entityValue.hi());
                                     if (Numbers.decodeLowShort(encodedResult) > 0) {
                                         offset = buffer.addChar(offset, (char) Numbers.decodeHighShort(encodedResult));
                                     } else {
@@ -488,7 +481,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                     throw castError("string", columnWriterIndex, colType, entity.getName());
                                 }
                                 break;
-
                             case ColumnType.SYMBOL:
                                 offset = buffer.addSymbol(
                                         offset,
@@ -497,7 +489,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                         localDetails.getSymbolLookup(columnWriterIndex)
                                 );
                                 break;
-
                             case ColumnType.UUID:
                                 try {
                                     offset = buffer.addUuid(offset, entityValue);
@@ -505,7 +496,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                     throw castError("string", columnWriterIndex, colType, entity.getName());
                                 }
                                 break;
-
                             default:
                                 throw castError("string", columnWriterIndex, colType, entity.getName());
                         }
@@ -519,7 +509,6 @@ class LineTcpMeasurementEvent implements Closeable {
                         case ColumnType.LONG256:
                             offset = buffer.addLong256(offset, entity.getValue(), parser.hasNonAsciiChars());
                             break;
-
                         case ColumnType.SYMBOL:
                             offset = buffer.addSymbol(
                                     offset,
@@ -528,7 +517,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                     localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
-
                         default:
                             throw castError("long256", columnWriterIndex, colType, entity.getName());
                     }
@@ -540,31 +528,24 @@ class LineTcpMeasurementEvent implements Closeable {
                         case ColumnType.BOOLEAN:
                             offset = buffer.addBoolean(offset, entityValue);
                             break;
-
                         case ColumnType.BYTE:
                             offset = buffer.addByte(offset, entityValue);
                             break;
-
                         case ColumnType.SHORT:
                             offset = buffer.addShort(offset, entityValue);
                             break;
-
                         case ColumnType.INT:
                             offset = buffer.addInt(offset, entityValue);
                             break;
-
                         case ColumnType.LONG:
                             offset = buffer.addLong(offset, entityValue);
                             break;
-
                         case ColumnType.FLOAT:
                             offset = buffer.addFloat(offset, entityValue);
                             break;
-
                         case ColumnType.DOUBLE:
                             offset = buffer.addDouble(offset, entityValue);
                             break;
-
                         case ColumnType.SYMBOL:
                             offset = buffer.addSymbol(
                                     offset,
@@ -573,7 +554,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                     localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
-
                         default:
                             throw castError("boolean", columnWriterIndex, colType, entity.getName());
                     }
@@ -582,13 +562,13 @@ class LineTcpMeasurementEvent implements Closeable {
                 case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                     switch (ColumnType.tagOf(colType)) {
                         case ColumnType.TIMESTAMP:
-                            offset = buffer.addTimestamp(offset, entity.getLongValue());
+                            long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), entity.getUnit());
+                            offset = buffer.addTimestamp(offset, timestampValue);
                             break;
-
                         case ColumnType.DATE:
-                            offset = buffer.addDate(offset, entity.getLongValue() / 1000);
+                            long dateValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), entity.getUnit());
+                            offset = buffer.addDate(offset, dateValue / 1000);
                             break;
-
                         case ColumnType.SYMBOL:
                             offset = buffer.addSymbol(
                                     offset,
@@ -597,7 +577,6 @@ class LineTcpMeasurementEvent implements Closeable {
                                     localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
-
                         default:
                             throw castError("timestamp", columnWriterIndex, colType, entity.getName());
                     }

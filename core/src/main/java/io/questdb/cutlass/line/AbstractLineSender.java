@@ -28,14 +28,18 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.*;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.security.*;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
-public abstract class AbstractLineSender extends AbstractCharSink implements Closeable, Sender {
+public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender {
     protected final int capacity;
     private final long bufA;
     private final long bufB;
@@ -66,17 +70,11 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public void $(long timestamp) {
-        put(' ').put(timestamp);
+        putAsciiInternal(' ').put(timestamp);
         atNow();
     }
 
     public void $() {
-        atNow();
-    }
-
-    @Override
-    public final void at(long timestamp) {
-        put(' ').put(timestamp);
         atNow();
     }
 
@@ -86,7 +84,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             throw new LineSenderException("no symbols or columns were provided");
         }
 
-        put('\n');
+        putAsciiInternal('\n');
         lineStart = ptr;
         hasTable = false;
         hasColumns = false;
@@ -95,15 +93,16 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     public final void authenticate(String keyId, PrivateKey privateKey) {
         validateNotClosed();
-        encodeUtf8(keyId).put('\n');
+        put(keyId);
+        putAsciiInternal('\n');
         sendAll();
 
         byte[] challengeBytes = receiveChallengeBytes();
         byte[] signature = signAndEncode(privateKey, challengeBytes);
         for (int n = 0, m = signature.length; n < m; n++) {
-            put((char) signature[n]);
+            putAsciiInternal((char) signature[n]);
         }
-        put('\n');
+        putAsciiInternal('\n');
         sendAll();
     }
 
@@ -147,9 +146,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     public AbstractLineSender field(CharSequence name, CharSequence value) {
         writeFieldName(name).put('"');
         quoted = true;
-        encodeUtf8(value);
+        put(value);
         quoted = false;
-        put('"');
+        putAsciiInternal('"');
         return this;
     }
 
@@ -159,7 +158,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, boolean value) {
-        writeFieldName(name).put(value ? 't' : 'f');
+        writeFieldName(name).putAsciiInternal(value ? 't' : 'f');
         return this;
     }
 
@@ -186,47 +185,57 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
         quoted = false;
         hasTable = true;
-        encodeUtf8(metric);
+        put(metric);
         return this;
     }
 
     @Override
-    public AbstractLineSender put(CharSequence cs) {
-        validateNotClosed();
-        int l = cs.length();
-        if (ptr + l < hi) {
-            Chars.asciiStrCpy(cs, l, ptr);
-        } else {
-            send00();
-            if (ptr + l < hi) {
-                Chars.asciiStrCpy(cs, l, ptr);
-            } else {
-                throw new LineSenderException("value too long. increase buffer size.");
-            }
-        }
-        ptr += l;
+    public AbstractLineSender put(@Nullable CharSequence cs) {
+        Utf8Sink.super.put(cs);
         return this;
     }
 
     @Override
     public AbstractLineSender put(char c) {
-        validateNotClosed();
-        if (ptr >= hi) {
-            send00();
-        }
-        Unsafe.getUnsafe().putByte(ptr++, (byte) c);
+        Utf8Sink.super.put(c);
         return this;
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
+    public AbstractLineSender put(@Nullable Utf8Sequence us) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public AbstractLineSender put(byte c) {
+        validateNotClosed();
+        if (ptr >= hi) {
+            send00();
+        }
+        Unsafe.getUnsafe().putByte(ptr++, c);
+        return this;
+    }
+
+    @Override
+    public AbstractLineSender put(long value) {
+        Numbers.append(this, value, false);
+        return this;
+    }
+
+    @Override
+    public AbstractLineSender put(long lo, long hi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public AbstractLineSender putAscii(char @NotNull [] chars, int start, int len) {
         validateNotClosed();
         if (ptr + len < hi) {
-            Chars.asciiCopyTo(chars, start, len, ptr);
+            Utf8s.strCpyAscii(chars, start, len, ptr);
         } else {
             send00();
             if (ptr + len < hi) {
-                Chars.asciiCopyTo(chars, start, len, ptr);
+                Utf8s.strCpyAscii(chars, start, len, ptr);
             } else {
                 throw new LineSenderException("value too long. increase buffer size.");
             }
@@ -236,38 +245,70 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public CharSink put(long value) {
-        Numbers.append(this, value, false);
+    public AbstractLineSender putAscii(@Nullable CharSequence cs) {
+        validateNotClosed();
+        if (cs != null) {
+            int l = cs.length();
+            if (ptr + l < hi) {
+                Utf8s.strCpyAscii(cs, l, ptr);
+            } else {
+                send00();
+                if (ptr + l < hi) {
+                    Utf8s.strCpyAscii(cs, l, ptr);
+                } else {
+                    throw new LineSenderException("value too long. increase buffer size.");
+                }
+            }
+            ptr += l;
+        }
         return this;
     }
 
     @Override
-    public void putUtf8Special(char c) {
+    public AbstractLineSender putAscii(char c) {
         validateNotClosed();
         switch (c) {
             case ' ':
             case ',':
             case '=':
                 if (!quoted) {
-                    put('\\');
+                    put((byte) '\\');
                 }
             default:
-                put(c);
+                put((byte) c);
                 break;
             case '\n':
             case '\r':
-                put('\\').put(c);
+                put((byte) '\\').put((byte) c);
                 break;
             case '"':
                 if (quoted) {
-                    put('\\');
+                    put((byte) '\\');
                 }
-                put(c);
+                put((byte) c);
                 break;
             case '\\':
-                put('\\').put('\\');
+                put((byte) '\\').put((byte) '\\');
                 break;
         }
+        return this;
+    }
+
+    // doesn't do special char checks
+    public AbstractLineSender putAsciiInternal(char c) {
+        put((byte) c);
+        return this;
+    }
+
+    // doesn't do special char checks
+    public AbstractLineSender putAsciiInternal(@Nullable CharSequence cs) {
+        if (cs != null) {
+            int l = cs.length();
+            for (int i = 0; i < l; i++) {
+                putAsciiInternal(cs.charAt(i));
+            }
+        }
+        return this;
     }
 
     @Override
@@ -293,14 +334,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             throw new LineSenderException("symbols must be written before any other column types");
         }
         validateColumnName(tag);
-        put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
+        putAsciiInternal(',').put(tag);
+        putAsciiInternal('=').put(value);
         hasSymbols = true;
-        return this;
-    }
-
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value) {
-        writeFieldName(name).put(value).put('t');
         return this;
     }
 
@@ -369,19 +405,19 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
     }
 
-    private CharSink writeFieldName(CharSequence name) {
-        validateNotClosed();
-        validateColumnName(name);
-        if (hasTable) {
-            if (!hasColumns) {
-                put(' ');
-                hasColumns = true;
-            } else {
-                put(',');
-            }
-            return encodeUtf8(name).put('=');
+    protected static long unitToNanos(ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return 1;
+            case MICROS:
+                return 1_000;
+            case MILLIS:
+                return 1_000_000;
+            case SECONDS:
+                return 1_000_000_000;
+            default:
+                return unit.getDuration().toNanos();
         }
-        throw new LineSenderException("table expected");
     }
 
     protected void send00() {
@@ -436,5 +472,21 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         if (closed) {
             throw new LineSenderException("sender already closed");
         }
+    }
+
+    protected AbstractLineSender writeFieldName(CharSequence name) {
+        validateNotClosed();
+        validateColumnName(name);
+        if (hasTable) {
+            if (!hasColumns) {
+                putAsciiInternal(' ');
+                hasColumns = true;
+            } else {
+                putAsciiInternal(',');
+            }
+            put(name);
+            return putAsciiInternal('=');
+        }
+        throw new LineSenderException("table expected");
     }
 }

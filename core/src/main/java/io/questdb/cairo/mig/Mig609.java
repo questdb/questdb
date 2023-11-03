@@ -43,7 +43,7 @@ final class Mig609 {
     static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
-        final int plen = path.length();
+        final int plen = path.size();
 
         path.trimTo(plen).concat(META_FILE_NAME).$();
         try (MemoryMARW metaMem = migrationContext.getRwMemory()) {

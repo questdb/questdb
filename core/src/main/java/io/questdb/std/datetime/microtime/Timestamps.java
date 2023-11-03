@@ -41,6 +41,7 @@ public final class Timestamps {
     public static final long O3_MIN_TS = 0L;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
+    public static final long SECOND_NANOS = 1000000000;
     public static final long STARTUP_TIMESTAMP;
     public static final int STATE_DELIM = 4;
     public static final int STATE_END = 6;
@@ -972,7 +973,7 @@ public final class Timestamps {
     }
 
     public static String toString(long micros) {
-        CharSink sink = Misc.getThreadLocalBuilder();
+        CharSink sink = Misc.getThreadLocalSink();
         TimestampFormatUtils.appendDateTime(sink, micros);
         return sink.toString();
     }
@@ -1000,7 +1001,7 @@ public final class Timestamps {
     }
 
     public static String toUSecString(long micros) {
-        CharSink sink = Misc.getThreadLocalBuilder();
+        CharSink sink = Misc.getThreadLocalSink();
         TimestampFormatUtils.appendDateTimeUSec(sink, micros);
         return sink.toString();
     }

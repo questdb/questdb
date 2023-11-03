@@ -52,6 +52,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.mp.TestWorkerPool;
@@ -347,9 +348,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (
-                        Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
-                                Chars.contains(name, weather) &&
-                                --count == 0
+                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
+                                && Utf8s.containsAscii(name, weather)
+                                && --count == 0
                 ) {
                     dropWeatherTable();
                 }
@@ -682,13 +683,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         String weather = "weather";
         String meteorology = "meteorology";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
-            private int count = 1;
+            private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (
-                        Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && --count == 0
+                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
+                                && count.decrementAndGet() == 0
                 ) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
@@ -707,23 +708,25 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n" +
                     meteorology + ",location=south temperature=80 1465839830101000200\n";
 
-            sendWaitWalReleaseCount(lineData, 3);
+            sendWaitWalReleaseCount(lineData, 4);
 
             mayDrainWalQueue();
 
-            String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
-                    "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
-                    "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
-                    "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tNaN\n" +
-                    "west4\tNaN\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
-                    "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tNaN\n";
-            assertTable(expected, meteorology);
+            assertEventually(() -> {
+                String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
+                        "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
+                        "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
+                        "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tNaN\n" +
+                        "west4\tNaN\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
+                        "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tNaN\n";
+                assertTable(expected, meteorology);
 
-            expected = "location\tsource\ttemp\ttimestamp\n" +
-                    "east5\tsensor2\t50.0\t2016-06-13T17:43:50.100800Z\n" +
-                    "west6\tsensor3\t60.0\t2016-06-13T17:43:50.100900Z\n" +
-                    "north\tsensor4\t70.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, weather);
+                expected = "location\tsource\ttemp\ttimestamp\n" +
+                        "east5\tsensor2\t50.0\t2016-06-13T17:43:50.100800Z\n" +
+                        "west6\tsensor3\t60.0\t2016-06-13T17:43:50.100900Z\n" +
+                        "north\tsensor4\t70.0\t2016-06-13T17:43:50.101000Z\n";
+                assertTable(expected, weather);
+            });
 
         }, false, 250);
     }
@@ -741,9 +744,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (
-                        Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
-                                Chars.contains(name, weather) &&
-                                --count == 0
+                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
+                                && Utf8s.containsAscii(name, weather)
+                                && --count == 0
                 ) {
                     renameTable(weather, meteorology);
                 }
@@ -1196,62 +1199,62 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-                ddl("create table test (" +
-                        "col ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day");
+            ddl("create table test (" +
+                    "col ipv4, " +
+                    "ts timestamp " +
+                    ") timestamp(ts) partition by day");
 
-                engine.releaseInactive();
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"0.0.0.0\" 631150000000000000\n" +
-                                    "test col=\"0.0.0.0\" 31152000000000000\n" +
-                                    "test col=\"0.0.0.0\" 631160000000000000\n" +
-                                    "test col=\"0.0.0.0\" 631170000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-                mayDrainWalQueue();
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("test"));
-                }
+            engine.releaseInactive();
+            runInContext((receiver) -> {
+                String lineData =
+                        "test col=\"0.0.0.0\" 631150000000000000\n" +
+                                "test col=\"0.0.0.0\" 31152000000000000\n" +
+                                "test col=\"0.0.0.0\" 631160000000000000\n" +
+                                "test col=\"0.0.0.0\" 631170000000000000\n";
+                sendLinger(lineData, "test");
+            });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("test"));
+            }
 
-                String expected = "col\tts\n" +
-                        "\t1970-12-27T13:20:00.000000Z\n" +
-                        "\t1989-12-31T23:26:40.000000Z\n" +
-                        "\t1990-01-01T02:13:20.000000Z\n" +
-                        "\t1990-01-01T05:00:00.000000Z\n";
-                assertTable(expected, "test");
+            String expected = "col\tts\n" +
+                    "\t1970-12-27T13:20:00.000000Z\n" +
+                    "\t1989-12-31T23:26:40.000000Z\n" +
+                    "\t1990-01-01T02:13:20.000000Z\n" +
+                    "\t1990-01-01T05:00:00.000000Z\n";
+            assertTable(expected, "test");
         });
     }
 
     @Test
     public void testTcpIPv4Null2() throws Exception {
         assertMemoryLeak(() -> {
-                ddl("create table test (" +
-                        "col ipv4, " +
-                        "ts timestamp " +
-                        ") timestamp(ts) partition by day");
+            ddl("create table test (" +
+                    "col ipv4, " +
+                    "ts timestamp " +
+                    ") timestamp(ts) partition by day");
 
-                engine.releaseInactive();
-                runInContext((receiver) -> {
-                    String lineData =
-                            "test col=\"\" 631150000000000000\n" +
-                                    "test col=\"\" 31152000000000000\n" +
-                                    "test col=\"\" 631160000000000000\n" +
-                                    "test col=\"\" 631170000000000000\n";
-                    sendLinger(lineData, "test");
-                });
-                mayDrainWalQueue();
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("test"));
-                }
+            engine.releaseInactive();
+            runInContext((receiver) -> {
+                String lineData =
+                        "test col=\"\" 631150000000000000\n" +
+                                "test col=\"\" 31152000000000000\n" +
+                                "test col=\"\" 631160000000000000\n" +
+                                "test col=\"\" 631170000000000000\n";
+                sendLinger(lineData, "test");
+            });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("test"));
+            }
 
-                String expected = "col\tts\n" +
-                        "\t1970-12-27T13:20:00.000000Z\n" +
-                        "\t1989-12-31T23:26:40.000000Z\n" +
-                        "\t1990-01-01T02:13:20.000000Z\n" +
-                        "\t1990-01-01T05:00:00.000000Z\n";
-                assertTable(expected, "test");
+            String expected = "col\tts\n" +
+                    "\t1970-12-27T13:20:00.000000Z\n" +
+                    "\t1989-12-31T23:26:40.000000Z\n" +
+                    "\t1990-01-01T02:13:20.000000Z\n" +
+                    "\t1990-01-01T05:00:00.000000Z\n";
+            assertTable(expected, "test");
         });
     }
 
@@ -1311,13 +1314,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testTimestampColumn() throws Exception {
         String table = "Timestamp";
         runInContext((receiver) -> {
-            String lineData = table + ",location=us-midwest timestamp=1465839830100400200t,temperature=82\n" +
-                    table + ",location=us-midwest timestamp=1465839830100500200t,temperature=83\n" +
-                    table + ",location=us-eastcoast timestamp=1465839830101600200t,temperature=81\n" +
-                    table + ",location=us-midwest timestamp=1465839830102300200t,temperature=85\n" +
-                    table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=89\n" +
-                    table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=80\n" +
-                    table + ",location=us-westcost timestamp=1465839830102500200t,temperature=82\n";
+            String lineData = table + ",location=us-midwest timestamp=1465839830100400t,temperature=82\n" +
+                    table + ",location=us-midwest timestamp=1465839830100500t,temperature=83\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830101600t,temperature=81\n" +
+                    table + ",location=us-midwest timestamp=1465839830102300t,temperature=85\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830102400t,temperature=89\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830102400t,temperature=80\n" +
+                    table + ",location=us-westcost timestamp=1465839830102500t,temperature=82\n";
 
             sendLinger(lineData, table);
 
@@ -1561,8 +1564,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int rmdir(Path path) {
-                    return 5;
+                public boolean rmdir(Path path, boolean lazy) {
+                    return false;
                 }
             };
 

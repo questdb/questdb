@@ -25,8 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8String;
 
 public final class Hash {
 
@@ -67,30 +67,30 @@ public final class Hash {
     }
 
     /**
-     * Same as {@link #hashMem32(long, long)}, but with direct UTF8 char sequence
+     * Same as {@link #hashMem32(long, long)}, but with direct UTF8 string
      * instead of direct unsafe access.
      */
-    public static int hashMem32(DirectByteCharSequence seq) {
-        return hashMem32(seq.getLo(), seq.length());
+    public static int hashMem32(DirectUtf8Sequence seq) {
+        return hashMem32(seq.lo(), seq.size());
     }
 
     /**
      * Same as {@link #hashMem32(long, long)}, but with on-heap char sequence
      * instead of direct unsafe access.
      */
-    public static int hashMem32(ByteCharSequence seq) {
-        final int len = seq.length();
+    public static int hashMem32(Utf8String us) {
+        final int len = us.size();
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
-            h = h * M2 + seq.longAt(i);
+            h = h * M2 + us.longAt(i);
         }
         if (i + 3 < len) {
-            h = h * M2 + seq.intAt(i);
+            h = h * M2 + us.intAt(i);
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M2 + seq.byteAt(i);
+            h = h * M2 + us.byteAt(i);
         }
         h *= M2;
         return (int) h ^ (int) (h >>> 32);

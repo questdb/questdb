@@ -28,9 +28,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Test;
@@ -153,7 +153,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -183,7 +183,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -214,7 +214,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -245,7 +245,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -278,7 +278,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -309,7 +309,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -350,7 +350,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -486,7 +486,7 @@ public class LatestByTest extends AbstractCairoTest {
                 @Override
                 public int openRO(LPSZ name) {
                     // Query should not scan any partition, searched symbol values don't exist in symbol table
-                    if (Chars.contains(name, "1970-01-01") || Chars.contains(name, "1970-01-02")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01") || Utf8s.containsAscii(name, "1970-01-02")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -529,7 +529,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in other partitions
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -565,7 +565,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -599,7 +599,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -975,7 +975,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -1009,7 +1009,7 @@ public class LatestByTest extends AbstractCairoTest {
             public int openRO(LPSZ name) {
                 // Query should not scan the first partition
                 // all the latest values are in the second, third partition
-                if (Chars.contains(name, "1970-01-01")) {
+                if (Utf8s.containsAscii(name, "1970-01-01")) {
                     return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -1059,7 +1059,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -1092,7 +1092,7 @@ public class LatestByTest extends AbstractCairoTest {
                 public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -1192,7 +1192,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "xyz\t1\t42\n",
                         factory,
                         false,
-                        false
+                        true
                 );
             }
         });

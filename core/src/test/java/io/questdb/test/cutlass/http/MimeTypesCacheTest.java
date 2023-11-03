@@ -27,11 +27,10 @@ package io.questdb.test.cutlass.http;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -128,19 +127,11 @@ public class MimeTypesCacheTest extends AbstractTest {
 
     @Test
     public void testSimple() throws Exception {
-        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
-            @Override
-            public void run() {
-                try (Path path = new Path()) {
-                    String filePath;
-                    if (Os.isWindows()) {
-                        filePath = Files.getResourcePath(getClass().getResource("/mime.types")).substring(1);
-                    } else {
-                        filePath = Files.getResourcePath(getClass().getResource("/mime.types"));
-                    }
-                    path.of(filePath).$();
-                    assertMimeTypes(new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path));
-                }
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                String filePath = TestUtils.getTestResourcePath("/mime.types");
+                path.of(filePath).$();
+                assertMimeTypes(new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path));
             }
         });
     }
@@ -231,13 +222,13 @@ public class MimeTypesCacheTest extends AbstractTest {
 
     private static void assertMimeTypes(MimeTypesCache mimeTypes) {
         Assert.assertEquals(981, mimeTypes.size());
-        TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
-        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));
-        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("inkml"));
-        TestUtils.assertEquals("application/mp21", mimeTypes.get("m21"));
-        TestUtils.assertEquals("application/mp21", mimeTypes.get("mp21"));
-        TestUtils.assertEquals("application/mp4", mimeTypes.get("mp4s"));
-        TestUtils.assertEquals("x-conference/x-cooltalk", mimeTypes.get("ice"));
+        TestUtils.assertEquals("application/andrew-inset", mimeTypes.get(new Utf8String("ez")));
+        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get(new Utf8String("ink")));
+        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get(new Utf8String("inkml")));
+        TestUtils.assertEquals("application/mp21", mimeTypes.get(new Utf8String("m21")));
+        TestUtils.assertEquals("application/mp21", mimeTypes.get(new Utf8String("mp21")));
+        TestUtils.assertEquals("application/mp4", mimeTypes.get(new Utf8String("mp4s")));
+        TestUtils.assertEquals("x-conference/x-cooltalk", mimeTypes.get(new Utf8String("ice")));
     }
 
     private void testFailure(FilesFacade ff, CharSequence startsWith) throws Exception {

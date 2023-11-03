@@ -36,8 +36,8 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;

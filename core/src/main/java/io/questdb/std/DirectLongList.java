@@ -40,13 +40,12 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long capacity;
     private long limit;
     private long pos;
-    private long start;
 
     public DirectLongList(long capacity, int memoryTag) {
         this.memoryTag = memoryTag;
         this.capacity = (capacity * Long.BYTES);
         this.address = Unsafe.malloc(this.capacity, memoryTag);
-        this.start = this.pos = address;
+        this.pos = address;
         this.limit = pos + this.capacity;
         this.initialCapacity = this.capacity;
     }
@@ -58,31 +57,31 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         pos += Long.BYTES;
     }
 
-    public final void add(DirectLongList that) {
-        long thatSize = that.pos - that.start;
+    public final void addAll(DirectLongList that) {
+        long thatSize = that.pos - that.address;
         if (limit - pos < thatSize) {
             setCapacityBytes(this.capacity + thatSize - (limit - pos));
         }
-        Vect.memcpy(this.pos, that.start, thatSize);
+        Vect.memcpy(this.pos, that.address, thatSize);
         this.pos += thatSize;
     }
 
     public long binarySearch(long value, int scanDir) {
-        final long high = (pos - start) / 8;
+        final long high = (pos - address) / 8;
         if (high > 0) {
-            return Vect.binarySearch64Bit(start, value, 0, high - 1, scanDir);
+            return Vect.binarySearch64Bit(address, value, 0, high - 1, scanDir);
         }
         return -1;
     }
 
     // clear without "zeroing" memory
     public void clear() {
-        pos = start;
+        pos = address;
     }
 
     public void clear(long b) {
         zero(b);
-        pos = start;
+        pos = address;
     }
 
     @Override
@@ -90,7 +89,6 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         if (address != 0) {
             Unsafe.free(address, capacity, memoryTag);
             address = 0;
-            start = 0;
             limit = 0;
             pos = 0;
             capacity = 0;
@@ -98,7 +96,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public long get(long p) {
-        return Unsafe.getUnsafe().getLong(start + (p << 3));
+        return Unsafe.getUnsafe().getLong(address + (p << 3));
     }
 
     // base address of native memory
@@ -136,18 +134,19 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void set(long p, long v) {
-        assert p >= 0 && p <= (limit - start) >> 3;
-        Unsafe.getUnsafe().putLong(start + (p << 3), v);
+        assert p >= 0 && p <= (limit - address) >> 3;
+        Unsafe.getUnsafe().putLong(address + (p << 3), v);
     }
 
     // desired capacity in LONGs (not count of bytes)
     public void setCapacity(long capacity) {
+        assert capacity > 0;
         setCapacityBytes(capacity * Long.BYTES);
     }
 
     public void setPos(long p) {
         assert p * Long.BYTES <= capacity;
-        pos = start + p * Long.BYTES;
+        pos = address + p * Long.BYTES;
     }
 
     public void shrink(long newCapacity) {
@@ -158,7 +157,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public long size() {
-        return (int) ((pos - start) / Long.BYTES);
+        return (int) ((pos - address) / Long.BYTES);
     }
 
     public void sortAsUnsigned() {
@@ -167,8 +166,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     @Override
     public String toString() {
-        CharSink sb = Misc.getThreadLocalBuilder();
-        sb.put('{');
+        CharSink sb = Misc.getThreadLocalSink();
+        sb.put('[');
         final int maxElementsToPrint = 1000; // Do not try to print too much, it can hang IntelliJ debugger.
         for (int i = 0, n = (int) Math.min(maxElementsToPrint, size()); i < n; i++) {
             if (i > 0) {
@@ -179,24 +178,24 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         if (size() > maxElementsToPrint) {
             sb.put(", .. ");
         }
-        sb.put('}');
+        sb.put(']');
         return sb.toString();
     }
 
     public void zero(long v) {
-        Vect.memset(start, pos - start, (int) v);
+        Vect.memset(address, pos - address, (int) v);
     }
 
     // desired capacity in bytes (not count of LONG values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {
             final long oldCapacity = this.capacity;
+            final long oldSize = this.pos - this.address;
             this.capacity = capacity;
             long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-            this.pos = address + (this.pos - this.start);
             this.address = address;
-            this.start = address;
             this.limit = address + capacity;
+            this.pos = Math.min(this.limit, address + oldSize);
             LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
         }
     }

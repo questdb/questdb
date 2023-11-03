@@ -24,40 +24,90 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DefaultWalJobFactory;
+import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
+import io.questdb.cutlass.http.DefaultHttpCookieHandler;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SocketFactory;
+import io.questdb.std.Misc;
+import io.questdb.std.str.DirectUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderImpl implements FactoryProvider {
+    private final DefaultWalJobFactory defaultWalJobFactory = new DefaultWalJobFactory();
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
     private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
     private final SecurityContextFactory securityContextFactory;
+    private DirectUtf8Sink defaultUserPasswordSink;
+    private DirectUtf8Sink readOnlyUserPasswordSink;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
-        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration);
+        this.readOnlyUserPasswordSink = new DirectUtf8Sink(4);
+        this.defaultUserPasswordSink = new DirectUtf8Sink(4);
+        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink);
     }
 
     @Override
-    public HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
+    public void close() {
+        defaultUserPasswordSink = Misc.free(defaultUserPasswordSink);
+        readOnlyUserPasswordSink = Misc.free(readOnlyUserPasswordSink);
+    }
+
+    @Override
+    public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
         return DefaultHttpAuthenticatorFactory.INSTANCE;
     }
 
     @Override
-    public LineAuthenticatorFactory getLineAuthenticatorFactory() {
+    public @NotNull HttpCookieHandler getHttpCookieHandler() {
+        return DefaultHttpCookieHandler.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getHttpMinSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getHttpSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
         return lineAuthenticatorFactory;
     }
 
     @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+    public @NotNull SocketFactory getLineSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getPGWireSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return pgWireAuthenticatorFactory;
     }
 
     @Override
-    public SecurityContextFactory getSecurityContextFactory() {
+    public @NotNull SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
+    }
+
+    @Override
+    public @NotNull WalJobFactory getWalJobFactory() {
+        return defaultWalJobFactory;
     }
 }

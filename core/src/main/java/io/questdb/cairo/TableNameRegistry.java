@@ -32,12 +32,12 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 public interface TableNameRegistry extends Closeable {
-    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false);
+    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false, false);
 
     TableToken addTableAlias(String newName, TableToken tableToken);
 
     /**
-     * cleans the registry and releases all resources
+     * Cleans the registry and releases all resources
      */
     void close();
 

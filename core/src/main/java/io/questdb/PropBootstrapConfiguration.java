@@ -26,7 +26,7 @@ package io.questdb;
 
 import io.questdb.std.FilesFacadeImpl;
 
-class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
+public class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
 
     @Override
     public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
@@ -37,6 +37,7 @@ class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
                 bootstrap.getLog(),
                 bootstrap.getBuildInformation(),
                 FilesFacadeImpl.INSTANCE,
+                bootstrap.getMicrosecondClock(),
                 FactoryProviderFactoryImpl.INSTANCE
         );
     }

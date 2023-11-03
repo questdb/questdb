@@ -72,7 +72,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
         return new EqIPv4FunctionFactory.Func(a, b);
     }
 
-    private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
+    static Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         int constValue = constFunc.getIPv4(null);
 
         if (constValue == IPv4_NULL) {
@@ -111,7 +111,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends AbstractEqBinaryFunction {
+    static class Func extends AbstractEqBinaryFunction {
         public Func(Function left, Function right) {
             super(left, right);
         }

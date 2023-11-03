@@ -38,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -417,12 +418,13 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false);
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false);
                     try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
@@ -449,20 +451,26 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
-                    executor.execute(ValidImportRequest1.replace("STRING", "SYMBOL"),
-                            ValidImportResponse1.replace("STRING", "SYMBOL"));
+                    executor.execute(
+                            ValidImportRequest1.replace("STRING", "SYMBOL"),
+                            ValidImportResponse1.replace("STRING", "SYMBOL")
+                    );
 
-                    executor.executeWithStandardHeaders("GET /query?query=select+*+from+trips HTTP/1.1\r\n",
+                    executor.executeWithStandardHeaders(
+                            "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
                             "051b\r\n" +
-                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"},{\"name\":\"DropOff_datetime\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"B00008\",\"2017-02-01T00:30:00.000000Z\",null],[\"B00008\",\"2017-02-01T00:40:00.000000Z\",null],[\"B00009\",\"2017-02-01T00:50:00.000000Z\",null],[\"B00013\",\"2017-02-01T00:51:00.000000Z\",null],[\"B00013\",\"2017-02-01T01:41:00.000000Z\",null],[\"B00013\",\"2017-02-01T02:00:00.000000Z\",null],[\"B00013\",\"2017-02-01T03:53:00.000000Z\",null],[\"B00013\",\"2017-02-01T04:44:00.000000Z\",null],[\"B00013\",\"2017-02-01T05:05:00.000000Z\",null],[\"B00013\",\"2017-02-01T06:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T07:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T08:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T09:46:00.000000Z\",null],[\"B00014\",\"2017-02-01T10:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:26:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:55:00.000000Z\",null],[\"B00014\",\"2017-02-01T13:47:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:05:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:58:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:33:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:45:00.000000Z\",null]],\"timestamp\":-1,\"count\":24}\r\n" +
+                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"},{\"name\":\"DropOff_datetime\",\"type\":\"SYMBOL\"}],\"timestamp\":-1,\"dataset\":[[\"B00008\",\"2017-02-01T00:30:00.000000Z\",null],[\"B00008\",\"2017-02-01T00:40:00.000000Z\",null],[\"B00009\",\"2017-02-01T00:50:00.000000Z\",null],[\"B00013\",\"2017-02-01T00:51:00.000000Z\",null],[\"B00013\",\"2017-02-01T01:41:00.000000Z\",null],[\"B00013\",\"2017-02-01T02:00:00.000000Z\",null],[\"B00013\",\"2017-02-01T03:53:00.000000Z\",null],[\"B00013\",\"2017-02-01T04:44:00.000000Z\",null],[\"B00013\",\"2017-02-01T05:05:00.000000Z\",null],[\"B00013\",\"2017-02-01T06:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T07:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T08:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T09:46:00.000000Z\",null],[\"B00014\",\"2017-02-01T10:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:26:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:55:00.000000Z\",null],[\"B00014\",\"2017-02-01T13:47:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:05:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:58:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:33:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:45:00.000000Z\",null]],\"count\":24}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
 
-                    executor.executeWithStandardHeaders("GET /query?query=drop+table+trips HTTP/1.1\r\n",
+                    executor.executeWithStandardHeaders(
+                            "GET /query?query=drop+table+trips HTTP/1.1\r\n",
                             "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
 
                     String request2 = ValidImportRequest2
                             .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
@@ -475,7 +483,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     executor.executeWithStandardHeaders(
                             "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
                             "063e\r\n" +
-                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"STRING\"},{\"name\":\"Col2\",\"type\":\"STRING\"},{\"name\":\"Col3\",\"type\":\"STRING\"},{\"name\":\"Col4\",\"type\":\"STRING\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"B00008\",null,null,null,\"2017-02-01T00:30:00.000000Z\"],[\"B00008\",null,null,null,\"2017-02-01T00:40:00.000000Z\"],[\"B00009\",null,null,null,\"2017-02-01T00:50:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T00:51:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T01:41:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T02:00:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T03:53:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T04:44:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T05:05:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T06:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T07:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T08:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T09:46:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T10:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:26:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:55:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T13:47:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:05:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:58:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:33:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:45:00.000000Z\"]],\"timestamp\":4,\"count\":24}\r\n" +
+                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"STRING\"},{\"name\":\"Col2\",\"type\":\"STRING\"},{\"name\":\"Col3\",\"type\":\"STRING\"},{\"name\":\"Col4\",\"type\":\"STRING\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4,\"dataset\":[[\"B00008\",null,null,null,\"2017-02-01T00:30:00.000000Z\"],[\"B00008\",null,null,null,\"2017-02-01T00:40:00.000000Z\"],[\"B00009\",null,null,null,\"2017-02-01T00:50:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T00:51:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T01:41:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T02:00:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T03:53:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T04:44:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T05:05:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T06:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T07:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T08:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T09:46:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T10:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:26:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:55:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T13:47:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:05:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:58:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:33:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:45:00.000000Z\"]],\"count\":24}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -517,11 +525,13 @@ public class ImportIODispatcherTest extends AbstractTest {
                                         "00\r\n" +
                                         "\r\n"
                         );
-                        executor.executeWithStandardHeaders("GET /query?query=drop+table+trips HTTP/1.1\r\n",
+                        executor.executeWithStandardHeaders(
+                                "GET /query?query=drop+table+trips HTTP/1.1\r\n",
                                 "0c\r\n" +
                                         "{\"ddl\":\"OK\"}\r\n" +
                                         "00\r\n" +
-                                        "\r\n");
+                                        "\r\n"
+                        );
 
                         String request2 = ValidImportRequest2
                                 .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
@@ -622,10 +632,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     String requestJson = ValidImportRequest1
                             .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json HTTP");
                     new SendAndReceiveRequestBuilder().execute(requestJson, ValidImportResponse2Json);
-
-                    String requestTabular = ValidImportRequest1
-                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips HTTP");
-                    new SendAndReceiveRequestBuilder().execute(requestTabular, ValidImportResponse1);
+                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest1, ValidImportResponse1);
                 }));
     }
 
@@ -715,12 +722,13 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false);
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false);
                     try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
@@ -773,12 +781,14 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime HTTP");
 
                         String response = WarningValidImportResponse1
-                                .replace("\r\n" +
+                                .replace(
+                                        "\r\n" +
                                                 "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
                                                 "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
                                         "\r\n" +
                                                 "|   Partition by  |                                               DAY  |                 |         |              |\r\n" +
-                                                "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |");
+                                                "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
+                                );
                         new SendAndReceiveRequestBuilder().execute(request, response);
 
                         drainWalQueue(engine);
@@ -786,7 +796,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 engine,
                                 sqlExecutionContext,
                                 "select count() from trips",
-                                Misc.getThreadLocalBuilder(),
+                                Misc.getThreadLocalSink(),
                                 "count\n24\n"
                         );
 
@@ -801,7 +811,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 engine,
                                 sqlExecutionContext,
                                 "select count() from trips",
-                                Misc.getThreadLocalBuilder(),
+                                Misc.getThreadLocalSink(),
                                 "count\n24\n"
                         );
                     }
@@ -827,7 +837,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                             "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
 
                     String request = requestTemplate
                             .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json&partitionBy=DAY&timestamp=Pickup_DateTime&overwrite=true HTTP");
@@ -855,7 +866,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                             "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
 
                     String request = requestTemplate
                             .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
@@ -883,7 +895,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                             "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
 
                     String request = requestTemplate
                             .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
@@ -917,7 +930,7 @@ public class ImportIODispatcherTest extends AbstractTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, "x.d") && count.incrementAndGet() == 4) {
+                if (Utf8s.endsWithAscii(path, "x.d") && count.incrementAndGet() == 4) {
                     return false;
                 }
                 return Files.exists(path);
@@ -935,19 +948,23 @@ public class ImportIODispatcherTest extends AbstractTest {
                     engine.ddl("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", sqlExecutionContext);
 
                     // Cache query plan
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n",
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n",
                             "85\r\n" +
-                                    "{\"query\":\"select count(*) from xyz where x > 0;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[1]],\"timestamp\":-1,\"count\":1}\r\n" +
+                                    "{\"query\":\"select count(*) from xyz where x > 0;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}\r\n" +
                                     "00\r\n" +
-                                    "\r\n");
+                                    "\r\n"
+                    );
 
                     // Add new commit
                     engine.insert("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", sqlExecutionContext);
 
                     // Here fail expected
-                    new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
+                    new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders(
+                            "GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
                             "8e\r\n" +
-                                    "{\"query\":\"select count(*) from xyz where x > 0;\",\"error\":\"File not found: ");
+                                    "{\"query\":\"select count(*) from xyz where x > 0;\",\"error\":\"File not found: "
+                    );
 
                     // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
                     CairoConfiguration configuration = engine.getConfiguration();
@@ -1012,7 +1029,8 @@ public class ImportIODispatcherTest extends AbstractTest {
 
                     new SendAndReceiveRequestBuilder()
                             .withExpectSendDisconnect(true)
-                            .execute(request,
+                            .execute(
+                                    request,
                                     "HTTP/1.1 200 OK\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -1022,7 +1040,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                                             "12\r\n" +
                                             "not a timestamp ''\r\n" +
                                             "00\r\n" +
-                                            "\r\n");
+                                            "\r\n"
+                            );
 
                     engine.insert("insert into trips values (" +
                             "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
@@ -1065,7 +1084,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 "0c\r\n" +
                                         "{\"ddl\":\"OK\"}\r\n" +
                                         "00\r\n" +
-                                        "\r\n");
+                                        "\r\n"
+                        );
 
                         new Thread(() -> {
                             try {
@@ -1092,10 +1112,11 @@ public class ImportIODispatcherTest extends AbstractTest {
                                                     "9" + ((stringLen(row) * 2) - 1) + "\r\n" +
                                                             "{\"query\":\"SELECT Col1 FROM " + tableName + " WHERE Col1='SYM-"
                                                             + row +
-                                                            "';\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"}]," +
-                                                            "\"dataset\":[[\"SYM-" + row + "\"]],\"timestamp\":-1,\"count\":1}\r\n"
+                                                            "';\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"}],\"timestamp\":-1," +
+                                                            "\"dataset\":[[\"SYM-" + row + "\"]],\"count\":1}\r\n"
                                                             + "00\r\n"
-                                                            + "\r\n");
+                                                            + "\r\n"
+                                            );
                                         }
                                     });
 
@@ -1113,11 +1134,13 @@ public class ImportIODispatcherTest extends AbstractTest {
                     boolean finished = countDownLatch.await(Math.max(10 * importRowCount, 2000) * totalImports, TimeUnit.MILLISECONDS);
                     Assert.assertTrue(
                             "Import is not finished in reasonable time, check server errors",
-                            finished);
+                            finished
+                    );
                     Assert.assertEquals(
                             "Expected successful import count does not match actual imports",
                             totalImports,
-                            success.get());
+                            success.get()
+                    );
                 });
     }
 
@@ -1148,7 +1171,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 "0c\r\n" +
                                         "{\"ddl\":\"OK\"}\r\n" +
                                         "00\r\n" +
-                                        "\r\n");
+                                        "\r\n"
+                        );
 
                         new Thread(() -> {
                             try {
@@ -1180,11 +1204,13 @@ public class ImportIODispatcherTest extends AbstractTest {
                     boolean finished = countDownLatch.await(200 * totalImports, TimeUnit.MILLISECONDS);
                     Assert.assertTrue(
                             "Import is not finished in reasonable time, check server errors",
-                            finished);
+                            finished
+                    );
                     Assert.assertEquals(
                             "Expected successful import count does not match actual imports",
                             totalImports,
-                            success.get());
+                            success.get()
+                    );
                 });
     }
 }

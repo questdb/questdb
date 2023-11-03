@@ -31,12 +31,16 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.Chars;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
@@ -48,7 +52,12 @@ import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.util.Arrays;
+import java.util.List;
+
 public class SqlParserTest extends AbstractSqlParserTest {
+
+    private final static List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
 
     @Test
     public void test2Between() throws Exception {
@@ -56,6 +65,748 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
                 "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testACBetweenOrClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 12 preceding or 23 following) from xyz",
+                78,
+                "'and' expected"
+        );
+    }
+
+    @Test
+    public void testACCurrentCurrentClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between current row and current row exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between current row and current row) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACCurrentExprFollowingClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between current row and 4 + 3 #UNIT following exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 4+3 following) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACCurrentExprPrecedingClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 4+3 preceding) from xyz",
+                85,
+                "start row is CURRENT, end row not must be PRECEDING"
+        );
+    }
+
+    @Test
+    public void testACCurrentRowsUnboundedFollowingClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between current rows and unbounded following) from xyz",
+                73,
+                "'row' expected"
+        );
+    }
+
+    @Test
+    public void testACCurrentUnboundedFollowingClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between current row and unbounded following exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between current row and unbounded following) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACCurrentUnboundedPrecedingClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between current row and unbounded preceding) from xyz",
+                91,
+                "'following' expected"
+        );
+    }
+
+    @Test
+    public void testACExprFollowingExprFollowingClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 12 #UNIT following and 23 #UNIT following exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 12 following and 23 following) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprFollowingExprFollowingClauseInvalid() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 22 following and 3 following) from xyz",
+                65,
+                "start of window must be lower than end of window",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprInvalidExprFollowingClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 12 something and 23 following) from xyz",
+                68,
+                "'preceding' or 'following' expected"
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingCurrentClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 #UNIT preceding and current row exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 1 preceding and current row) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingCurrentInvalidClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 12 preceding and current rows) from xyz",
+                90,
+                "'row' expected"
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprFollowingClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 #UNIT preceding and 10 #UNIT following exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 10 following) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprFollowingClausePos() throws Exception {
+        createModelsAndRun(
+                () -> {
+                    sink.clear();
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        for (String frameType : frameTypes) {
+                            ExecutionModel model = compiler.testCompileModel(
+                                    "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 10 following) from xyz".replace("#FRAME", frameType),
+                                    sqlExecutionContext
+                            );
+                            ObjList<QueryColumn> columns = model.getQueryModel().getBottomUpColumns();
+                            Assert.assertEquals(3, columns.size());
+
+                            QueryColumn ac = columns.getQuick(2);
+                            Assert.assertTrue(ac.isWindowColumn());
+                            WindowColumn ac2 = (WindowColumn) ac;
+
+                            // start of window expr position
+                            Assert.assertEquals(65, ac2.getRowsLoExprPos());
+                            Assert.assertEquals(68, ac2.getRowsLoKindPos());
+
+                            // end of window expr position
+                            Assert.assertEquals(82, ac2.getRowsHiExprPos());
+                            Assert.assertEquals(85, ac2.getRowsHiKindPos());
+                        }
+                    }
+                },
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+    }
+
+    @Test
+    public void testACExprPrecedingExprInvalidClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 12 preceding and 23 something1) from xyz",
+                85,
+                "'preceding' or 'following' expected"
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprPrecedingClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 28 #UNIT preceding and 12 #UNIT preceding exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 28 preceding and 12 preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprPrecedingClauseInvalid() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
+                65,
+                "start of window must be lower than end of window",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprPrecedingClauseInvalidUnion() throws Exception {
+        assertWindowSyntaxError(
+                "select a, b, c from xyz" +
+                        " union all " +
+                        "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
+                99,
+                "start of window must be lower than end of window",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingExprPrecedingClauseValid() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 20 #UNIT preceding and 10 #UNIT preceding exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 20 preceding and 10 preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 / 1 #UNIT preceding and unbounded following exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 1/1 preceding and unbounded following) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingExcludeCurrentRowClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 0 + 1 #UNIT preceding and unbounded following exclude current row) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 0+1 preceding and unbounded following exclude current row) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingExcludeCurrentRowInvalid() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and unbounded following exclude current table) from xyz",
+                118,
+                "'row' expected"
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingExcludeGroupClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 + 0 #UNIT preceding and unbounded following exclude group) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 1+0 preceding and unbounded following exclude group) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingExcludeInvalid() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and unbounded following exclude other) from xyz",
+                110,
+                "'current', 'group', 'ties' or 'no other' expected"
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingExcludeMissing() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and unbounded following exclude) from xyz",
+                109,
+                "'current', 'group', 'ties' or 'no other' expected"
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingExcludeNoOthersClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 + 1 #UNIT preceding and unbounded following exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 1+1 preceding and unbounded following exclude no others) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingExcludeNoOthersInvalid() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and unbounded following exclude no prisoners) from xyz",
+                113,
+                "'others' expected"
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedFollowingExcludeTiesClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 / 1 #UNIT preceding and unbounded following exclude ties) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 1/1 preceding and unbounded following exclude ties) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACExprPrecedingUnboundedPrecedingClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and unbounded preceding) from xyz",
+                92,
+                "'following' expected"
+        );
+    }
+
+    @Test
+    public void testACGroupFrameRejectsTimeUnits() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b order by a groups 10 day preceding) from xyz",
+                59,
+                "'preceding' expected"
+        );
+
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b order by a groups between unbounded preceding and 10 day following) from xyz",
+                91,
+                "'preceding' or 'following' expected"
+        );
+    }
+
+    @Test
+    public void testACGroupsWithMissingOrderBy() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b groups) from xyz",
+                38,
+                "GROUPS mode requires an ORDER BY clause"
+        );
+    }
+
+    @Test
+    public void testACRangeFrameAcceptsTimeUnits() throws Exception {
+        String[] unitsAndValues = new String[]{
+                "microsecond",
+                "microseconds",
+                "millisecond",
+                "milliseconds",
+                "second",
+                "seconds",
+                "minute",
+                "minutes",
+                "hour",
+                "hours",
+                "day",
+                "days"
+        };
+        for (int i = 0; i < unitsAndValues.length; i++) {
+            String expectedUnit = unitsAndValues[i].replaceAll("s$", "");
+            assertQuery(
+                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 #unit preceding and current row exclude no others) " +
+                            "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
+                            .replace("#unit", expectedUnit),
+                    "select a,b, f(c) over (partition by b order by ts range 10 #unit preceding) from xyz"
+                            .replace("#unit", unitsAndValues[i]),
+                    modelOf("xyz")
+                            .col("a", ColumnType.INT)
+                            .col("b", ColumnType.INT)
+                            .col("c", ColumnType.INT)
+                            .timestamp("ts")
+            );
+
+            assertQuery(
+                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 #unit preceding and 1 #unit following exclude no others) " +
+                            "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
+                            .replace("#unit", expectedUnit),
+                    "select a,b, f(c) over (partition by b order by ts range between 10 #unit preceding and 1 #unit following) from xyz"
+                            .replace("#unit", unitsAndValues[i]),
+                    modelOf("xyz")
+                            .col("a", ColumnType.INT)
+                            .col("b", ColumnType.INT)
+                            .col("c", ColumnType.INT)
+                            .timestamp("ts")
+            );
+        }
+    }
+
+    @Test
+    public void testACRangeRequiredOrderByOnNonDefaultFrameBoundaries() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b range 1 preceding ) from xyz",
+                46,
+                "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column"
+        );
+
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b range between 1 preceding and 1 following ) from xyz",
+                54,
+                "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column"
+        );
+
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b range between unbounded preceding and 1 following ) from xyz",
+                78,
+                "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column"
+        );
+    }
+
+    @Test
+    public void testACRejectsExclusionModesOtherThanDefault() throws Exception {
+        for (String exclusionMode : new String[]{"GROUP", "TIES"}) {
+            assertWindowSyntaxError(
+                    "select a,b, avg(c) over (partition by b order by ts #FRAME UNBOUNDED PRECEDING EXCLUDE #mode) from xyz"
+                            .replace("#mode", exclusionMode),
+                    87,
+                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported",
+                    modelOf("xyz")
+                            .col("a", ColumnType.INT)
+                            .col("b", ColumnType.INT)
+                            .col("c", ColumnType.INT)
+                            .timestamp("ts")
+            );
+
+            assertWindowSyntaxError(
+                    "select a,b, avg(c) over (partition by b order by ts #FRAME BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE #mode) from xyz"
+                            .replace("#mode", exclusionMode),
+                    111,
+                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported",
+                    modelOf("xyz")
+                            .col("a", ColumnType.INT)
+                            .col("b", ColumnType.INT)
+                            .col("c", ColumnType.INT)
+                            .timestamp("ts")
+            );
+        }
+    }
+
+    @Test
+    public void testACRejectsWrongExclusionMode() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, avg(c) over (partition by b order by ts #FRAME UNBOUNDED PRECEDING EXCLUDE WHAT) from xyz",
+                87,
+                "'current', 'group', 'ties' or 'no other' expected",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACRequiredNonNegativePrecedingAndFollowingValues() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME -1 preceding) from xyz",
+                57,
+                "non-negative expression expected",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between -1 preceding and 1 following) from xyz",
+                65,
+                "non-negative expression expected",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between 1 preceding and -1 following) from xyz",
+                81,
+                "non-negative expression expected",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACRowsFrameRejectsTimeUnits() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b rows 10 day preceding) from xyz",
+                46,
+                "'preceding' expected"
+        );
+
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b rows between unbounded preceding and 10 day following) from xyz",
+                78,
+                "'preceding' or 'following' expected"
+        );
+    }
+
+    @Test
+    public void testACShorthandCurrentRow() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between current row and current row exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME current row) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACShorthandExprFollowing() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME 12 following) from xyz",
+                60,
+                "'preceding' expected",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACShorthandExprPreceding() throws Exception {
+        assertWindowQuery("select-window a, b, f(c) f over (partition by b order by ts #FRAME between 12 #UNIT preceding and current row exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME 12 preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACShorthandUnboundedFollowing() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME unbounded following) from xyz",
+                67,
+                "'preceding' expected"
+        );
+    }
+
+    @Test
+    public void testACShorthandUnboundedPreceding() throws Exception {
+        assertQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts groups between unbounded preceding and current row exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts GROUPS unbounded preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts rows between unbounded preceding and current row exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts ROWS unbounded preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts RANGE unbounded preceding) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACUnboundedFollowingUnboundedPrecedingClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded following and unbounded preceding) from xyz",
+                75,
+                "'preceding' expected"
+        );
+    }
+
+    @Test
+    public void testACUnboundedPrecedingCurrentClause() throws Exception {
+        assertQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts groups between unbounded preceding and current row exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts GROUPS between unbounded preceding and current row) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts rows between unbounded preceding and current row exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts ROWS between unbounded preceding and current row) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts RANGE between unbounded preceding and current row) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACUnboundedPrecedingExprFollowingClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between unbounded preceding and 10 #UNIT following exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded preceding and 10 following) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACUnboundedPrecedingExprPrecedingClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded preceding and unbounded preceding) from xyz",
+                99,
+                "'following' expected"
+        );
+    }
+
+    @Test
+    public void testACUnboundedPrecedingUnboundedFollowingClause() throws Exception {
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between unbounded preceding and unbounded following exclude no others) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded preceding and unbounded following) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testACUnboundedPrecedingUnboundedPrecedingClause() throws Exception {
+        assertWindowSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded preceding and unbounded preceding) from xyz",
+                99,
+                "'following' expected"
+        );
+    }
+
+    @Test
+    public void testACWrongFrameTypeUsed() throws Exception {
+        assertSyntaxError(
+                "select a,b, f(c) over (partition by b order by ts rangez ) from xyz",
+                50,
+                "'rows', 'groups', 'range' or ')' expected"
         );
     }
 
@@ -144,7 +895,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAliasWithSpaceX() throws Exception {
-        assertSyntaxError("from x 'a b' where x > 1", 7, "unexpected");
+        assertSyntaxError("x 'a b' where x > 1", 0, "impossible type cast, invalid type");
     }
 
     @Test
@@ -188,61 +939,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
                 modelOf("orders").col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionReferencesSameColumnAsVirtual() throws Exception {
-        assertQuery(
-                "select-analytic a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
-                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts) from xyz k",
-                modelOf("xyz")
-                        .col("c", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("a", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testAnalyticLiteralAfterFunction() throws Exception {
-        assertQuery(
-                "select-analytic a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts, b] a, concat(b,'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
-                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
-                modelOf("xyz")
-                        .col("c", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("a", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testAnalyticOrderDirection() throws Exception {
-        assertQuery(
-                "select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (select [a, b, c, ts, x, y] from xyz timestamp (ts))",
-                "select a,b, f(c) over (partition by b order by ts desc, x asc, y) my from xyz",
-                modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .col("x", ColumnType.INT)
-                        .col("y", ColumnType.INT)
-                        .col("z", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testAnalyticPartitionByMultiple() throws Exception {
-        assertQuery(
-                "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select [a, b, c, ts] from xyz timestamp (ts))",
-                "select a,b, f(c) over (partition by b, a order by ts) my, d(c) over() from xyz",
-                modelOf("xyz")
-                        .col("c", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("a", ColumnType.INT)
-                        .timestamp("ts")
         );
     }
 
@@ -487,13 +1183,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' : ");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
-        assertSyntaxError("select 'a' ) ", 11, "unexpected token: )");
+        assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");
         assertIdentifierError("select 'a' $ ");
         assertIdentifierError("select 'a' 0 ");
         assertIdentifierError("select 'a' 12 ");
-        assertIdentifierError("select 'a' \"\"\" ");
         assertIdentifierError("select 'a' \"\" ");
-        assertIdentifierError("select 'a' \" ");
         assertIdentifierError("select 'a' ''' ");
         assertIdentifierError("select 'a' '' ");
         assertIdentifierError("select 'a' ' ");
@@ -709,7 +1403,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testColumnsOfSimpleSelectWithSemicolon() throws SqlException {
         assertColumnNames("select 1;", "1");
-        assertColumnNames("select 1, 1, 1;", "1", "11", "12");
+        assertColumnNames("select 1, 1, 1;", "1", "column", "column1");
     }
 
     @Test
@@ -909,7 +1603,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like y), index(s1)",
                 23,
-                "unexpected token: "
+                "unexpected token [,]"
         );
     }
 
@@ -936,7 +1630,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (like Y.z)",
                 22,
-                "unexpected token: ."
+                "unexpected token [.]"
         );
     }
 
@@ -971,7 +1665,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table X.y as ( select a, b, c from tab )",
                 14,
-                "unexpected token: .",
+                "unexpected token [.]",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
@@ -1365,6 +2059,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableIfNotExistsTableNameIsQuotedKeyword() throws SqlException {
+        assertModel("create table from (a INT)", "create table if not exists \"from\" (a int)", ExecutionModel.CREATE_TABLE);
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsTableNameIsUnquotedKeyword() throws Exception {
+        assertException(
+                "create table if not exists from (a int)",
+                27,
+                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+        );
+    }
+
+    @Test
     public void testCreateTableIfNotTable() throws Exception {
         assertSyntaxError("create table if not x", 20, "'if not exists' expected");
     }
@@ -1682,7 +2390,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR VOLUME peterson",
                 86,
-                "unexpected token: VOLUME"
+                "unexpected token [VOLUME]"
         );
 
         assertSyntaxError(
@@ -2233,6 +2941,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableTableNameIsQuotedKeyword() throws SqlException {
+        assertModel("create table from (a INT)", "create table \"from\" (a int)", ExecutionModel.CREATE_TABLE);
+    }
+
+    @Test
+    public void testCreateTableTableNameIsUnquotedKeyword() throws Exception {
+        assertException(
+                "create table from (a int)",
+                13,
+                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
+        );
+    }
+
+    @Test
     public void testCreateTableUnexpectedToken() throws Exception {
         assertSyntaxError(
                 "create table x blah",
@@ -2376,7 +3098,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
                 96,
-                "unexpected token: x"
+                "unexpected token [x]"
         );
     }
 
@@ -2411,7 +3133,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000,",
                 95,
-                "unexpected token: ,"
+                "unexpected token [,]"
         );
     }
 
@@ -2653,6 +3375,129 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDottedConstAlias() throws Exception {
+        assertSql("column1\tdjnfkvbjke\n" +
+                ".f.e.j.hve\tdjnfkvbjke\n", "select '.f.e.j.hve', 'djnfkvbjke'");
+    }
+
+    @Test
+    public void testDottedConstAlias2() throws Exception {
+        assertSql("column1\tdjnfkvbjke\tcolumn2\tcolumn3\tcolumn4\n" +
+                ".f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4\n", "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4");
+    }
+
+    @Test
+    public void testDottedConstAlias3() throws Exception {
+        assertSql("column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4\n" +
+                ".f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4\n", "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4");
+    }
+
+    @Test
+    public void testDottedConstAlias4() throws Exception {
+        assertSql("x\tx1\n" +
+                "1\t1\n" +
+                "1\t2\n" +
+                "1\t3\n" +
+                "1\t4\n" +
+                "1\t5\n" +
+                "1\t6\n" +
+                "1\t7\n" +
+                "1\t8\n" +
+                "1\t9\n" +
+                "1\t10\n" +
+                "2\t1\n" +
+                "2\t2\n" +
+                "2\t3\n" +
+                "2\t4\n" +
+                "2\t5\n" +
+                "2\t6\n" +
+                "2\t7\n" +
+                "2\t8\n" +
+                "2\t9\n" +
+                "2\t10\n" +
+                "3\t1\n" +
+                "3\t2\n" +
+                "3\t3\n" +
+                "3\t4\n" +
+                "3\t5\n" +
+                "3\t6\n" +
+                "3\t7\n" +
+                "3\t8\n" +
+                "3\t9\n" +
+                "3\t10\n" +
+                "4\t1\n" +
+                "4\t2\n" +
+                "4\t3\n" +
+                "4\t4\n" +
+                "4\t5\n" +
+                "4\t6\n" +
+                "4\t7\n" +
+                "4\t8\n" +
+                "4\t9\n" +
+                "4\t10\n" +
+                "5\t1\n" +
+                "5\t2\n" +
+                "5\t3\n" +
+                "5\t4\n" +
+                "5\t5\n" +
+                "5\t6\n" +
+                "5\t7\n" +
+                "5\t8\n" +
+                "5\t9\n" +
+                "5\t10\n" +
+                "6\t1\n" +
+                "6\t2\n" +
+                "6\t3\n" +
+                "6\t4\n" +
+                "6\t5\n" +
+                "6\t6\n" +
+                "6\t7\n" +
+                "6\t8\n" +
+                "6\t9\n" +
+                "6\t10\n" +
+                "7\t1\n" +
+                "7\t2\n" +
+                "7\t3\n" +
+                "7\t4\n" +
+                "7\t5\n" +
+                "7\t6\n" +
+                "7\t7\n" +
+                "7\t8\n" +
+                "7\t9\n" +
+                "7\t10\n" +
+                "8\t1\n" +
+                "8\t2\n" +
+                "8\t3\n" +
+                "8\t4\n" +
+                "8\t5\n" +
+                "8\t6\n" +
+                "8\t7\n" +
+                "8\t8\n" +
+                "8\t9\n" +
+                "8\t10\n" +
+                "9\t1\n" +
+                "9\t2\n" +
+                "9\t3\n" +
+                "9\t4\n" +
+                "9\t5\n" +
+                "9\t6\n" +
+                "9\t7\n" +
+                "9\t8\n" +
+                "9\t9\n" +
+                "9\t10\n" +
+                "10\t1\n" +
+                "10\t2\n" +
+                "10\t3\n" +
+                "10\t4\n" +
+                "10\t5\n" +
+                "10\t6\n" +
+                "10\t7\n" +
+                "10\t8\n" +
+                "10\t9\n" +
+                "10\t10\n", "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b");
+    }
+
+    @Test
     public void testDropTablesMissingComma() throws Exception {
         assertSyntaxError(
                 "drop tables tab1 tab2",
@@ -2768,7 +3613,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testEmptySampleBy() throws Exception {
-        assertSyntaxError("select x, y from tab sample by", 30, "literal expected");
+        assertSyntaxError("select x, y from tab sample by", 30, "time interval unit expected");
     }
 
     @Test
@@ -2835,6 +3680,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "customers c" +
                         " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testEraseColumnPrefixInJoinWithNestedUnion() throws Exception {
+        assertQuery(
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c left join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                "customers c" +
+                        " left join ((orders union orders) o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testEraseColumnPrefixInJoinWithOuterUnion() throws Exception {
+        assertQuery(
+                "select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join select [customerId] from (select-choose [customerId] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c)" +
+                        " union all" +
+                        " select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where customerId = 100) c)",
+                "(select c.customerId" +
+                        " from customers c" +
+                        " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100)" +
+                        " union all" +
+                        " (select c.customerId " +
+                        "  from customers c" +
+                        "  left join orders o on c.customerId = o.customerId" +
+                        "  where c.customerId = 100)",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders")
                         .col("customerId", ColumnType.INT)
@@ -2987,21 +3868,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 21, "unexpected token: *",
+        assertSyntaxError("explain (xyz) select * from x", 14, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql1() throws Exception {
-        assertSyntaxError("explain select 1)", 16, "unexpected token: )",
+        assertSyntaxError("explain select 1)", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
 
     @Test
     public void testExplainWithBadSql2() throws Exception {
-        assertSyntaxError("explain select 1))", 16, "unexpected token: )",
+        assertSyntaxError("explain select 1))", 16, "unexpected token [)]",
                 modelOf("x").col("x", ColumnType.INT)
         );
     }
@@ -3085,18 +3966,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testExtraComma2OrderByInAnalyticFunction() throws Exception {
+    public void testExtraComma2OrderByInWindowFunction() throws Exception {
         assertSyntaxError("select a,b, f(c) over (partition by b order by ts,) from xyz", 50, "Expression expected");
     }
 
     @Test
-    public void testExtraCommaOrderByInAnalyticFunction() throws Exception {
+    public void testExtraCommaOrderByInWindowFunction() throws Exception {
         assertSyntaxError("select a,b, f(c) over (partition by b order by ,ts) from xyz", 47, "Expression expected");
     }
 
     @Test
-    public void testExtraCommaPartitionByInAnalyticFunction() throws Exception {
-        assertSyntaxError("select a,b, f(c) over (partition by b, order by ts) from xyz", 45, "')' expected");
+    public void testExtraCommaPartitionByInWindowFunction() throws Exception {
+        assertQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b, order by ts) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
+
+        );
     }
 
     @Test
@@ -3825,17 +4715,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidGroupBy1() throws Exception {
-        assertSyntaxError("select x, y from tab sample by x,", 32, "literal expected");
+        assertSyntaxError("select x, y from tab sample by x,", 32, "one letter sample by period unit expected");
     }
 
     @Test
     public void testInvalidGroupBy2() throws Exception {
-        assertSyntaxError("select x, y from (tab sample by x,)", 33, "literal expected");
+        assertSyntaxError("select x, y from (tab sample by x,)", 33, "one letter sample by period unit expected");
     }
 
     @Test
     public void testInvalidGroupBy3() throws Exception {
-        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "literal expected");
+        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "one letter sample by period unit expected");
     }
 
     @Test
@@ -3958,8 +4848,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInvalidTypeCast() throws Exception {
         assertSyntaxError(
                 "select cast('2005-04-02 12:00:00-07' as timestamp with time z) col from x",
-                11,
-                "unbalanced (",
+                50,
+                "dangling literal",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
     }
@@ -3968,8 +4858,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInvalidTypeCast2() throws Exception {
         assertSyntaxError(
                 "select cast('2005-04-02 12:00:00-07' as timestamp with tz) col from x",
-                11,
-                "unbalanced (",
+                50,
+                "dangling literal",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
     }
@@ -4237,8 +5127,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "(select country, sum(quantity) sum " +
                         "from orders o " +
                         "join customers c on c.customerId = o.customerId " +
-                        "join orderDetails d on o.orderId = d.orderId" +
-                        " where country ~ '^Z') where sum > 2",
+                        "join orderDetails d on o.orderId = d.orderId " +
+                        "where country ~ '^Z') where sum > 2",
                 modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE),
                 modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("comment", ColumnType.STRING)
@@ -4822,7 +5712,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest by x+1",
                 29,
-                "unexpected token: +"
+                "unexpected token [+]"
         );
     }
 
@@ -4958,7 +5848,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest on ts partition by x+1",
                 45,
-                "unexpected token: +"
+                "unexpected token [+]"
         );
     }
 
@@ -5330,9 +6220,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testNonAnalyticFunctionInAnalyticContext() throws Exception {
+    public void testNonWindowFunctionInWindowContext() throws Exception {
         assertException(
-                "select avg(price) over (partition by symbol) from trades",
+                "select max(price) over (partition by symbol) from trades",
                 "create table trades " +
                         "(" +
                         " price double," +
@@ -5340,7 +6230,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " ts timestamp" +
                         ") timestamp(ts) partition by day",
                 7,
-                "non-analytic function called in analytic context"
+                "non-window function called in window context"
         );
     }
 
@@ -5420,9 +6310,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testOneAnalyticColumn() throws Exception {
+    public void testOneWindowColumn() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-window a, b, f(c) f over (partition by b order by ts) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -5433,9 +6323,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testOneAnalyticColumnAndLimit() throws Exception {
+    public void testOneWindowColumnAndLimit() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c, ts] from xyz timestamp (ts)) limit 200",
+                "select-window a, b, f(c) f over (partition by b order by ts) " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts))) limit 200",
                 "select a,b, f(c) over (partition by b order by ts) from xyz limit 200",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -5446,10 +6337,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testOneAnalyticColumnPrefixed() throws Exception {
+    public void testOneWindowColumnPrefixed() throws Exception {
         // extra model in the middle is because we reference "b" as both "b" and "z.b"
         assertQuery(
-                "select-analytic a, b, row_number() row_number over (partition by b1 order by ts) from (select-choose [a, b, b b1, ts] a, b, b b1, ts from (select [a, b, ts] from xyz z timestamp (ts)) z) z",
+                "select-window a, b, row_number() row_number over (partition by b1 order by ts) from (select-choose [a, b, b b1, ts] a, b, b b1, ts from (select [a, b, ts] from xyz z timestamp (ts)) z) z",
                 "select a,b, row_number() over (partition by z.b order by z.ts) from xyz z",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -6882,16 +7773,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectAnalyticOperator() throws Exception {
-        assertSyntaxError(
-                "select sum(x), 2*x over() from tab",
-                16,
-                "Analytic function expected",
-                modelOf("tab").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
     public void testSelectAsAliasQuoted() throws SqlException {
         assertQuery(
                 "select-choose a 'y y' from (select [a] from tab)",
@@ -6953,29 +7834,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectContainsDuplicateColumnAliases() throws Exception {
-        assertSyntaxError(
-                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;",
-                28,
-                "Duplicate column [name=ts1]",
-                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
-                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
+        ddl(
+                "CREATE TABLE t1 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY"
         );
+        ddl(
+                "CREATE TABLE t2 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY"
+        );
+        insert("INSERT INTO t1(ts, x) VALUES (1, 1)");
+        insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
+        engine.releaseInactive();
 
-        assertSyntaxError(
-                "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;",
-                10,
-                "Duplicate column [name=TS1]",
-                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
-                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
-        );
-
-        assertSyntaxError(
-                "select t1.*, t2.ts from t1 asof join (select * from t2) t2;",
-                13,
-                "Duplicate column [name=ts]",
-                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
-                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
-        );
+        assertSql("TS\tts1\tx\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+        assertSql("ts\tx\tts1\tx1\tts2\n" +
+                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z\n", "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;");
+        assertSql("ts\tx\tts1\n" +
+                "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t1.*, t2.ts from t1 asof join (select * from t2) t2;");
 
         assertSyntaxError(
                 "SELECT " +
@@ -7135,6 +8015,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectFromNoColumns() throws Exception {
+        assertSyntaxError(
+                "select from",
+                7,
+                "column expression expected"
+        );
+    }
+
+    @Test
     public void testSelectFromNonCursorFunction() throws Exception {
         assertSyntaxError("select * from length('hello')", 14, "function must return CURSOR");
     }
@@ -7143,7 +8032,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectFromSelectWildcardAndExpr() throws SqlException {
         assertQuery(
                 "select-virtual column + x column from (select-virtual [x, x + y column] x, y, x1, z, x + y column from (select-choose [tab1.x x, tab1.y y] tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x] from tab2 on tab2.x = tab1.x)))",
-                "select column + x from (select *, tab1.x + y from tab1 join tab2 on (x))",
+                "select \"column\" + x from (select *, tab1.x + y from tab1 join tab2 on (x))",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -7161,11 +8050,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectGroupByAndAnalytic() throws Exception {
+    public void testSelectGroupByAndWindow() throws Exception {
         assertSyntaxError(
                 "select sum(x), count() over() from tab",
                 0,
-                "Analytic function is not allowed",
+                "Window function is not allowed",
                 modelOf("tab").col("x", ColumnType.INT)
         );
     }
@@ -7239,20 +8128,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectMissing() throws Exception {
+        assertSyntaxError("from x 'a b' where x > 1", 0, "Did you mean 'select * from'?");
+    }
+
+    @Test
     public void testSelectMissingExpression() throws Exception {
         assertSyntaxError(
                 "select ,a from tab",
                 7,
                 "missing expression"
-        );
-    }
-
-    @Test
-    public void testSelectMissingExpression2() throws Exception {
-        assertSyntaxError(
-                "select a, from tab",
-                15,
-                "column name expected"
         );
     }
 
@@ -7314,6 +8199,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectSingleTimestampColumn() throws SqlException {
+        assertQuery(
+                "select-choose t3 from (select-choose [t3] t, tt, t3 from (select [t3] from x timestamp (t3)) order by t3 desc limit 1)",
+                "select t3 from x limit -1",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP).timestamp("t3")
+        );
+    }
+
+    @Test
     public void testSelectSumFromSubQueryLimit() throws SqlException {
         assertQuery(
                 "select-group-by sum(tip_amount) sum from (select-choose [tip_amount] a, b, c, d, tip_amount, e from (select [tip_amount] from trips) limit 100000000)",
@@ -7330,10 +8224,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectSumSquared() throws Exception {
-        assertSyntaxError(
-                "select x, sum(x)*sum(x) x from long_sequence(2)",
-                24,
-                "Duplicate column [name=x]"
+        assertSql("x1\tx\n" +
+                "1\t1\n" +
+                "2\t4\n", "select x, sum(x)*sum(x) x from long_sequence(2)");
+    }
+
+    @Test
+    public void testSelectTrailingComma() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, d from (select [a, b, c, d] from tab)",
+                "select " +
+                        "a," +
+                        "b," +
+                        "c," +
+                        "d," +
+                        "from tab",
+                modelOf("tab")
+                        .col("a", ColumnType.SYMBOL)
+                        .col("b", ColumnType.SYMBOL)
+                        .col("c", ColumnType.SYMBOL)
+                        .col("d", ColumnType.SYMBOL)
         );
     }
 
@@ -7359,6 +8269,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x, z] from tab2 on tab2.x = tab1.x)",
                 "select * from tab1 join tab2 on (x)",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardAlias() throws Exception {
+        assertSyntaxError(
+                "select tab2.* x, b.* from tab1 a join tab2 on (x)",
+                14,
+                "wildcard cannot have alias",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -7395,12 +8316,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWildcardDetachedStar() throws Exception {
-        assertSyntaxError(
-                "select tab2.*, bxx.  * from tab1 a join tab2 on (x)",
-                33,
-                "',', 'from' or 'over' expected",
+        assertQuery(
+                "select-choose tab2.x x, tab2.z z, a.x x1, a.y y from (select [x, y] from tab1 a join select [x, z] from tab2 on tab2.x = a.x) a",
+                "select tab2.*, a.  * from tab1 a join tab2 on (x)",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardInterpretation() throws Exception {
+        // multiplication * must not be confused with wildcard
+        assertQuery(
+                "select-virtual 2 * 1 x, x1, y from (select-choose [x x1, y] x x1, y from (select [x, y] from tab1 b) b) b",
+                "select 2*1 x, b.* from tab1 b",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
     }
 
@@ -7462,7 +8392,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select * tab",
                 "create table tab (seq long)",
                 9,
-                "'from' expected"
+                "wildcard cannot have alias"
+        );
+    }
+
+    @Test
+    public void testSelectWindowOperator() throws Exception {
+        assertSyntaxError(
+                "select sum(x), 2*x over() from tab",
+                16,
+                "Window function expected",
+                modelOf("tab").col("x", ColumnType.INT)
         );
     }
 
@@ -7715,7 +8655,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -7756,7 +8696,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         TableModel tableModel = tableModels[i];
                         TableToken tableToken = engine.verifyTableName(tableModel.getName());
                         Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
+                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
                 }
@@ -7777,8 +8717,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false);
-            CharSequence lockedReason = engine.lock(tableToken, "testing");
+            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false, false);
+            CharSequence lockedReason = engine.lockAll(tableToken, "testing", true);
             Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
@@ -7903,7 +8843,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testTooManyArgumentsInAnalyticFunction() throws Exception {
+    public void testTooManyArgumentsInWindowFunction() throws Exception {
         assertException(
                 "select row_number(1,2,3) over (partition by symbol) from trades",
                 "create table trades " +
@@ -7959,9 +8899,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testTwoAnalyticColumns() throws Exception {
+    public void testTwoWindowColumns() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) my over (partition by b order by ts), d(c) d over () from (select [a, b, c, ts] from xyz timestamp (ts))",
+                "select-window a, b, f(c) my over (partition by b order by ts), d(c) d over () " +
+                        "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts) my, d(c) over() from xyz",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)
@@ -7995,7 +8936,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUnexpectedTokenInAnalyticFunction() throws Exception {
+    public void testUnexpectedTokenInWindowFunction() throws Exception {
         assertSyntaxError("select a,b, f(c) over (by b order by ts) from xyz", 23, "expected");
     }
 
@@ -8262,6 +9203,61 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionReferencesSameColumnAsVirtual() throws Exception {
+        assertQuery(
+                "select-window a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts) from xyz k",
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowLiteralAfterFunction() throws Exception {
+        assertQuery(
+                "select-window a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts, b] a, concat(b,'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowOrderDirection() throws Exception {
+        assertQuery(
+                "select-window a, b, f(c) my over (partition by b order by ts desc, x, y) from (select-choose [a, b, c, ts, x, y] a, b, c, ts, x, y from (select [a, b, c, ts, x, y] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b order by ts desc, x asc, y) my from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowPartitionByMultiple() throws Exception {
+        assertQuery(
+                "select-window a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select a,b, f(c) over (partition by b, a order by ts) my, d(c) over() from xyz",
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWithDuplicateName() throws Exception {
         assertSyntaxError(
                 "with x as (tab), x as (tab2) x",
@@ -8388,7 +9384,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     private void assertPartitionByOverOrderByAcceptsDirection(String orderInQuery, String orderInModel) throws SqlException {
         assertQuery(
                 "select-choose ts, temperature from " +
-                        "(select-analytic [ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ")] ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ") " +
+                        "(select-window [ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ")] ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ") " +
                         "from (select [ts, temperature] from weather) where rid = 0) inq order by ts",
                 "select ts, temperature from \n" +
                         "( \n" +
@@ -8399,6 +9395,50 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "where rid = 0 \n" +
                         "order by ts\n",
                 modelOf("weather").col("ts", ColumnType.TIMESTAMP).col("temperature", ColumnType.FLOAT)
+        );
+    }
+
+    private void assertWindowSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
+        try {
+            refreshTablesInBaseEngine();
+            assertMemoryLeak(() -> {
+                for (int i = 0, n = tableModels.length; i < n; i++) {
+                    CreateTableTestUtils.create(tableModels[i]);
+                }
+                for (String frameType : frameTypes) {
+                    assertException(query.replace("#FRAME", frameType), position, contains, false);
+                }
+            });
+        } finally {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                configuration.getFilesFacade().rmdir(path);
+                tableModel.close();
+            }
+        }
+    }
+
+    protected void assertWindowQuery(String expectedTemplate, String query, TableModel... tableModels) throws SqlException {
+        createModelsAndRun(
+                () -> {
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        for (String frameType : frameTypes) {
+                            ExecutionModel model = compiler.testCompileModel(query.replace("#FRAME", frameType), sqlExecutionContext);
+                            Assert.assertEquals(model.getModelType(), ExecutionModel.QUERY);
+                            sink.clear();
+                            ((Sinkable) model).toSink(sink);
+                            String expected = expectedTemplate.replace("#FRAME", frameType.trim())
+                                    .replace("#UNIT ", "range ".equals(frameType) ? "microsecond " : "");
+                            TestUtils.assertEquals(expected, sink);
+                            if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
+                                validateTopDownColumns((QueryModel) model);
+                            }
+                        }
+                    }
+                },
+                tableModels
         );
     }
 

@@ -74,7 +74,7 @@ public class TelemetryConfigLogger implements Closeable {
             LOG.info()
                     .$("new instance [id=").$256(a, b, 0, 0)
                     .$(", enabled=").$(enabled)
-                    .$(']').$();
+                    .I$();
         } else {
             row.putLong256(0, id);
         }
@@ -106,10 +106,7 @@ public class TelemetryConfigLogger implements Closeable {
             SqlExecutionContextImpl sqlExecutionContext,
             TableToken tableToken
     ) throws SqlException {
-        final TableWriter configWriter = engine.getWriter(
-                tableToken,
-                "telemetryConfig"
-        );
+        final TableWriter configWriter = engine.getWriter(tableToken, "telemetryConfig");
         final CompiledQuery cc = compiler.query().$(TELEMETRY_CONFIG_TABLE_NAME).$(" LIMIT -1").compile(sqlExecutionContext);
         try (
                 final RecordCursorFactory factory = cc.getRecordCursorFactory();
@@ -129,12 +126,12 @@ public class TelemetryConfigLogger implements Closeable {
                     LOG.advisory()
                             .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
-                            .$(']').$();
+                            .I$();
                 } else {
                     LOG.advisory()
                             .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
-                            .$(']').$();
+                            .I$();
                 }
             } else {
                 // if there are no record for telemetry id we need to create one using clocks
@@ -165,7 +162,7 @@ public class TelemetryConfigLogger implements Closeable {
                     .$("could not open [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
                     .$("`, ex=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
-                    .$(']').$();
+                    .I$();
         }
     }
 }
