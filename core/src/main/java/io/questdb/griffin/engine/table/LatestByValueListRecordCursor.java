@@ -135,7 +135,9 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 distinctSymbols++;
             }
             distinctSymbols = Math.max(0, distinctSymbols - excludedSymbolKeys.size());
-            rowIds.setCapacity(distinctSymbols);
+            if (distinctSymbols > 0) {
+                rowIds.setCapacity(distinctSymbols);
+            }
         } else {
             // Find latest by all distinct symbol values
             StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
@@ -143,7 +145,9 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             if (symbolTable.containsNullValue()) {
                 distinctSymbols++;
             }
-            rowIds.setCapacity(distinctSymbols);
+            if (distinctSymbols > 0) {
+                rowIds.setCapacity(distinctSymbols);
+            }
         }
         areRecordsFound = false;
     }

@@ -55,7 +55,6 @@ public final class Timestamps {
     public static final int STATE_SIGN = 7;
     public static final int STATE_UTC = 1;
     public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
-    public static final long YEAR_SECONDS = 31536000;
     private static final char AFTER_NINE = '9' + 1;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;

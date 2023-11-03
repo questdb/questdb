@@ -172,8 +172,6 @@ public class SqlUtil {
                     return interval * Timestamps.HOUR_SECONDS;
                 case 'd': // days
                     return interval * Timestamps.DAY_SECONDS;
-                case 'y': // years
-                    return interval * Timestamps.YEAR_SECONDS;
                 default:
                     break;
             }

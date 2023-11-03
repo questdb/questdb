@@ -181,8 +181,6 @@ public class SqlUtilTest {
         Assert.assertEquals(120, SqlUtil.expectSeconds("2m", 12));
         Assert.assertEquals(10800, SqlUtil.expectSeconds("3h", 12));
         Assert.assertEquals(345600, SqlUtil.expectSeconds("4d", 12));
-        Assert.assertEquals(157680000, SqlUtil.expectSeconds("5y", 12));
-        Assert.assertEquals(315360000, SqlUtil.expectSeconds("10y", 12));
     }
 
     @Test
