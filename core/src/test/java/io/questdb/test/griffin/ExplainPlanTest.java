@@ -3978,6 +3978,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLikeFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (s1 string, s2 string, s3 string, s4 string, s5 string, s6 string);");
+
+            assertPlan(
+                    "select * from tab " +
+                            "where s1 like '%a'  and s2 ilike '%a' " +
+                            "  and s3 like 'a%'  and s4 ilike 'a%' " +
+                            "  and s5 like '%a%' and s6 ilike '%a%';",
+                    "Async Filter workers: 1\n" +
+                            "  filter: (((((s1 like %a and s2 ilike %a) and s3 like a%) and s4 ilike a%) and s5 like %a%) and s6 ilike %a%)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
     public void testLtJoin0() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
