@@ -48,7 +48,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
-    public void testApproxPercentileDoubleColumn() throws Exception {
+    public void testDoubleColumn() throws Exception {
         compile("create table test (col double)");
         insert("insert into test values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)");
         assertMemoryLeak(() -> assertSql("approx_percentile\n" +
@@ -57,7 +57,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
-    public void testApproxPercentileDoubleNullColumns() throws Exception {
+    public void testDoubleNullColumns() throws Exception {
         compile("create table test (col long)");
         insert("insert into test values (null), (null), (null)");
         assertMemoryLeak(() -> assertSql("approx_percentile\n" +
@@ -66,7 +66,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
-    public void testApproxPercentileDoubleColumnWithNull() throws Exception {
+    public void testDoubleColumnWithNull() throws Exception {
         compile("create table test (col long)");
         insert("insert into test values (1.0), (null), (1.0), (1.0)");
         assertMemoryLeak(() -> assertSql("approx_percentile\n" +
