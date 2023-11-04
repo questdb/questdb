@@ -1776,6 +1776,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
         );
     }
 
+    /* rank() function tests 
+     *
+     *   testRankFailsIsNowWindowContext
+     *   testRankWithNoPartitionByAndNoOrderByWildcardLast
+     *   testRankWithNoPartitionByAndOrderBySymbolWildcardLast
+     *   testRankWithPartitionAndOrderByNonSymbol
+     *   testRankWithPartitionAndOrderBySymbolNoWildcard
+     *   testRankWithPartitionAndOrdereBySymbolWildcardFirst
+     *   testRankWithPartitionAndOrderBySymbolWildcardLast
+     *   testRankWithPartitionBySymbolAndMultiOrderWildcardLast
+     *   testRankWithPartitionBySymbolAndNoOrderWildcardLast
+     *   testRankWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast
+     *   testRankWithPartitionBySymbolAndOrderByIntPriceWildcardLast
+     *   testRankWithPartitionBySymbolAndOrderByPriceWildcardLast
+     *   testRowNumberFailsInNonWindowContext
+     * 
+     */
+    @Test
+    public void 
+
     @Test
     public void testWindowBufferExceedsLimit() throws Exception {
         configOverrideSqlWindowStorePageSize(4096);
