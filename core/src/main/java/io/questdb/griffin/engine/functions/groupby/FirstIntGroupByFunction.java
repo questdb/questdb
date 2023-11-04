@@ -36,8 +36,8 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+    protected final Function arg;
+    protected int valueIndex;
 
     public FirstIntGroupByFunction(@NotNull Function arg) {
         super();

@@ -26,7 +26,6 @@ package io.questdb.std;
 
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
-import io.questdb.std.str.CharSequenceZ;
 import io.questdb.std.str.Path;
 
 import java.io.File;
@@ -65,7 +64,7 @@ public final class Os {
             try {
                 long p = argv;
                 for (int i = 0; i < n; i++) {
-                    Unsafe.getUnsafe().putLong(p, paths.getQuick(i).address());
+                    Unsafe.getUnsafe().putLong(p, paths.getQuick(i).ptr());
                     p += 8;
                 }
                 Unsafe.getUnsafe().putLong(p, 0);
@@ -93,12 +92,12 @@ public final class Os {
     }
 
     public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
-        try (CharSequenceZ cs = new CharSequenceZ(spn)) {
-            final long struct = generateKrbToken(cs.address());
+        // We use Path as a LPSZ sink here.
+        try (Path sink = new Path().of(spn).$()) {
+            final long struct = generateKrbToken(sink.ptr());
             int status = Unsafe.getUnsafe().getInt(struct);
             int bufLen = Unsafe.getUnsafe().getInt(struct + 4);
             long ptoken = Unsafe.getUnsafe().getLong(struct + 8);
-
 
             if (status != 0) {
                 freeKrbToken(struct);

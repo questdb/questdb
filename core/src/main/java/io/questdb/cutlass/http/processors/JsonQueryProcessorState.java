@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -42,11 +41,13 @@ import io.questdb.mp.SCSequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
+
+import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
@@ -164,21 +165,23 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void configure(
             HttpRequestHeader request,
-            DirectByteCharSequence query,
+            DirectUtf8Sequence query,
             long skip,
             long stop
     ) throws Utf8Exception {
         this.query.clear();
-        TextUtil.utf8ToUtf16(query.getLo(), query.getHi(), this.query);
+        if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), this.query)) {
+            throw Utf8Exception.INSTANCE;
+        }
         this.skip = skip;
         this.stop = stop;
         count = 0L;
-        noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
-        countRows = Chars.equalsNc("true", request.getUrlParam("count"));
-        timings = Chars.equalsNc("true", request.getUrlParam("timings"));
-        explain = Chars.equalsNc("true", request.getUrlParam("explain"));
-        quoteLargeNum = Chars.equalsNc("true", request.getUrlParam("quoteLargeNum"))
-                || Chars.equalsNc("con", request.getUrlParam("src"));
+        noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
+        countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
+        timings = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_TIMINGS));
+        explain = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_EXPLAIN));
+        quoteLargeNum = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_QUOTE_LARGE_NUM))
+                || Utf8s.equalsNcAscii("con", request.getUrlParam(URL_PARAM_SRC));
     }
 
     public LogRecord critical() {
@@ -299,25 +302,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putByteValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put(rec.getByte(col));
+        socket.put((int) rec.getByte(col));
     }
 
     private static void putCharValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         char c = rec.getChar(col);
         if (c == 0) {
-            socket.put("\"\"");
+            socket.putAscii("\"\"");
         } else {
-            socket.put('"').putUtf8(c).put('"');
+            socket.putAscii('"').put(c).putAscii('"');
         }
     }
 
     private static void putDateValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long d = rec.getDate(col);
         if (d == Long.MIN_VALUE) {
-            socket.put("null");
+            socket.putAscii("null");
             return;
         }
-        socket.put('"').putISODateMillis(d).put('"');
+        socket.putAscii('"').putISODateMillis(d).putAscii('"');
     }
 
     private static void putGeoHashStringByteValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
@@ -343,35 +346,35 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private static void putIPv4Value(HttpChunkedResponseSocket socket, Record rec, int col) {
         final int i = rec.getIPv4(col);
         if (i == Numbers.IPv4_NULL) {
-            socket.put("null");
+            socket.putAscii("null");
         } else {
-            socket.put('"');
+            socket.putAscii('"');
             Numbers.intToIPv4Sink(socket, i);
-            socket.put('"');
+            socket.putAscii('"');
         }
     }
 
     private static void putIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final int i = rec.getInt(col);
         if (i == Integer.MIN_VALUE) {
-            socket.put("null");
+            socket.putAscii("null");
         } else {
-            Numbers.append(socket, i);
+            socket.put(i);
         }
     }
 
     private static void putLong256Value(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put('"');
+        socket.putAscii('"');
         rec.getLong256(col, socket);
-        socket.put('"');
+        socket.putAscii('"');
     }
 
     private static void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col, boolean quoteLargeNum) {
         final long l = rec.getLong(col);
         if (l == Long.MIN_VALUE) {
-            socket.put("null");
+            socket.putAscii("null");
         } else if (quoteLargeNum) {
-            socket.put('"').put(l).put('"');
+            socket.putAscii('"').put(l).putAscii('"');
         } else {
             socket.put(l);
         }
@@ -389,11 +392,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         putStringOrNull(socket, rec.getStr(col));
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
+    private static void putStringOrNull(HttpChunkedResponseSocket socket, CharSequence str) {
         if (str == null) {
-            r.put("null");
+            socket.putAscii("null");
         } else {
-            r.encodeUtf8AndQuote(str);
+            socket.putQuoted(str);
         }
     }
 
@@ -404,22 +407,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private static void putTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
-            socket.put("null");
+            socket.putAscii("null");
             return;
         }
-        socket.put('"').putISODate(t).put('"');
+        socket.putAscii('"').putISODate(t).putAscii('"');
     }
 
     private static void putUuidValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         long lo = rec.getLong128Lo(col);
         long hi = rec.getLong128Hi(col);
         if (Uuid.isNull(lo, hi)) {
-            socket.put("null");
+            socket.putAscii("null");
             return;
         }
-        socket.put('"');
+        socket.putAscii('"');
         Numbers.appendUuid(lo, hi, socket);
-        socket.put('"');
+        socket.putAscii('"');
     }
 
     private boolean addColumnToOutput(
@@ -431,11 +434,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (start == hi) {
             info().$("empty column in list '").$(columnNames).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "", 400);
-            socket.put('{')
-                    .putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',')
-                    .putQuoted("error").put(':').putQuoted("empty column in list")
-                    .put('}');
+            JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
+            socket.putAscii('{')
+                    .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                    .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty column in list")
+                    .putAscii('}');
             socket.sendChunk(true);
             return true;
         }
@@ -444,11 +447,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
             info().$("invalid column in list: '").$(columnNames, start, hi).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "", 400);
-            socket.put('{')
-                    .putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',')
-                    .putQuoted("error").put(':').put('\'').put("invalid column in list: ").put(columnNames, start, hi).put('\'')
-                    .put('}');
+            JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
+            socket.putAscii('{')
+                    .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                    .putAsciiQuoted("error").putAscii(':').putAscii('\'').putAscii("invalid column in list: ").put(columnNames, start, hi).putAscii('\'')
+                    .putAscii('}');
             socket.sendChunk(true);
             return true;
         }
@@ -493,22 +496,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         for (; columnIndex < columnCount; columnIndex++) {
             socket.bookmark();
             if (columnIndex > 0) {
-                socket.put(',');
+                socket.putAscii(',');
             }
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
-            socket.put('{')
-                    .putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex))
-                    .put(',')
-                    .putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType))
-                    .put('}');
+            socket.putAscii('{')
+                    .putAsciiQuoted("name").putAscii(':').putQuoted(columnNames.getQuick(columnIndex))
+                    .putAscii(',')
+                    .putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType))
+                    .putAscii('}');
         }
     }
 
     private void doQueryMetadataSuffix(HttpChunkedResponseSocket socket) {
         queryState = QUERY_METADATA_SUFFIX;
         socket.bookmark();
-        socket.put("],\"timestamp\":").put(queryTimestampIndex);
-        socket.put(",\"dataset\":[");
+        socket.putAscii("],\"timestamp\":").put(queryTimestampIndex);
+        socket.putAscii(",\"dataset\":[");
     }
 
     private boolean doQueryNextRecord() {
@@ -525,13 +528,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean doQueryPrefix(HttpChunkedResponseSocket socket) {
         if (noMeta) {
             socket.bookmark();
-            socket.put('{').putQuoted("dataset").put(":[");
+            socket.putAscii('{').putAsciiQuoted("dataset").putAscii(":[");
             return false;
         }
         socket.bookmark();
-        socket.put('{')
-                .putQuoted("query").put(':').encodeUtf8AndQuote(query)
-                .put(',').putQuoted("columns").put(':').put('[');
+        socket.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                .putAsciiQuoted("columns").putAscii(':').putAscii('[');
         columnIndex = 0;
         return true;
     }
@@ -541,7 +544,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         for (; columnIndex < columnCount; columnIndex++) {
             socket.bookmark();
             if (columnIndex > 0) {
-                socket.put(',');
+                socket.putAscii(',');
             }
 
             int columnIdx = columnSkewList.size() > 0 ? columnSkewList.getQuick(columnIndex) : columnIndex;
@@ -605,7 +608,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putRecValue(socket);
                     break;
                 case ColumnType.NULL:
-                    socket.put("null");
+                    socket.putAscii("null");
                     break;
                 case ColumnType.LONG128:
                     throw new UnsupportedOperationException();
@@ -617,7 +620,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
-                    socket.put("null"); // To make JSON valid
+                    socket.putAscii("null"); // To make JSON valid
                     break;
             }
         }
@@ -627,9 +630,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_RECORD_PREFIX;
         socket.bookmark();
         if (count > skip) {
-            socket.put(',');
+            socket.putAscii(',');
         }
-        socket.put('[');
+        socket.putAscii('[');
         columnIndex = 0;
         count++;
     }
@@ -637,7 +640,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private void doQueryRecordSuffix(HttpChunkedResponseSocket socket) {
         queryState = QUERY_RECORD_SUFFIX;
         socket.bookmark();
-        socket.put(']');
+        socket.putAscii(']');
     }
 
     private void doQuerySuffix(
@@ -652,23 +655,23 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (count > -1) {
             logTimings();
             socket.bookmark();
-            socket.put(']');
-            socket.put(',').putQuoted("count").put(':').put(count);
+            socket.putAscii(']');
+            socket.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
             if (timings) {
-                socket.put(',').putQuoted("timings").put(':')
-                        .put('{')
-                        .putQuoted("compiler").put(':').put(compilerNanos).put(',')
-                        .putQuoted("execute").put(':').put(nanosecondClock.getTicks() - executeStartNanos).put(',')
-                        .putQuoted("count").put(':').put(recordCountNanos)
-                        .put('}');
+                socket.putAscii(',').putAsciiQuoted("timings").putAscii(':')
+                        .putAscii('{')
+                        .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
+                        .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
+                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
+                        .putAscii('}');
             }
             if (explain) {
-                socket.put(',').putQuoted("explain").put(':')
-                        .put('{')
-                        .putQuoted("jitCompiled").put(':').put(queryJitCompiled ? "true" : "false")
-                        .put('}');
+                socket.putAscii(',').putAsciiQuoted("explain").putAscii(':')
+                        .putAscii('{')
+                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
+                        .putAscii('}');
             }
-            socket.put('}');
+            socket.putAscii('}');
             count = -1;
             socket.sendChunk(true);
             return;
@@ -781,8 +784,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void putBinValue(HttpChunkedResponseSocket socket) {
-        socket.put('[');
-        socket.put(']');
+        socket.putAscii('[');
+        socket.putAscii(']');
     }
 
     private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
@@ -799,11 +802,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             CharSequence message,
             CharSequence query
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.put('{')
-                .putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',')
-                .putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',')
-                .putQuoted("position").put(':').put(position)
-                .put('}');
+        socket.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(position)
+                .putAscii('}');
+        socket.sendChunk(true);
+    }
+
+    static void prepareExceptionJson(
+            HttpChunkedResponseSocket socket,
+            int position,
+            CharSequence message,
+            DirectUtf8Sequence query
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(position)
+                .putAscii('}');
         socket.sendChunk(true);
     }
 
@@ -829,20 +846,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
-        DirectByteCharSequence columnNames = header.getUrlParam("cols");
+        DirectUtf8Sequence columnNames = header.getUrlParam(URL_PARAM_COLS);
         int columnCount;
         columnSkewList.clear();
         if (columnNames != null) {
             columnsQueryParameter.clear();
-            try {
-                TextUtil.utf8ToUtf16(columnNames.getLo(), columnNames.getHi(), columnsQueryParameter);
-            } catch (Utf8Exception e) {
+            if (!Utf8s.utf8ToUtf16(columnNames.lo(), columnNames.hi(), columnsQueryParameter)) {
                 info().$("utf8 error when decoding column list '").$(columnNames).$('\'').$();
                 HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-                JsonQueryProcessor.header(socket, "", 400);
-                socket.put('{')
-                        .putQuoted("error").put(':').putQuoted("utf8 error in column list")
-                        .put('}');
+                JsonQueryProcessor.header(socket, getHttpConnectionContext(), "", 400);
+                socket.putAscii('{')
+                        .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("utf8 error in column list")
+                        .putAscii('}');
                 socket.sendChunk(true);
                 return false;
             }

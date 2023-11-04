@@ -27,7 +27,7 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
@@ -47,15 +47,13 @@ public final class Net {
     public static final long MMSGHDR_BUFFER_LENGTH_OFFSET;
     public static final long MMSGHDR_SIZE;
     public static final int SHUT_WR = 1;
+    private static final AtomicInteger ADDR_INFO_COUNTER = new AtomicInteger();
+    private static final Log LOG = LogFactory.getLog(Net.class);
+    private static final AtomicInteger SOCK_ADDR_COUNTER = new AtomicInteger();
     // TCP KeepAlive not meant to be configurable. It's a last resort measure to disable/change keepalive if the default
     // value causes problems in some environments. If it does not cause problems then this option should be removed after a few releases.
     // It's not exposed as PropertyKey, because it would become a supported and hard to remove API.
     private static final int TCP_KEEPALIVE_SECONDS = Integer.getInteger("questdb.unsupported.tcp.keepalive.seconds", 30);
-
-    private static final AtomicInteger ADDR_INFO_COUNTER = new AtomicInteger();
-    private static final AtomicInteger SOCK_ADDR_COUNTER = new AtomicInteger();
-
-    private static final Log LOG = LogFactory.getLog(Net.class);
 
     private Net() {
     }
@@ -78,10 +76,10 @@ public final class Net {
         return Files.bumpFileCount(accept0(serverFd));
     }
 
-    public static void appendIP4(CharSink sink, long ip) {
-        sink.put((ip >> 24) & 0xff).put('.')
-                .put((ip >> 16) & 0xff).put('.')
-                .put((ip >> 8) & 0xff).put('.')
+    public static void appendIP4(CharSinkBase<?> sink, long ip) {
+        sink.put((ip >> 24) & 0xff).putAscii('.')
+                .put((ip >> 16) & 0xff).putAscii('.')
+                .put((ip >> 8) & 0xff).putAscii('.')
                 .put(ip & 0xff);
     }
 
@@ -99,6 +97,16 @@ public final class Net {
 
     public static int close(int fd) {
         return Files.close(fd);
+    }
+
+    public static void configureKeepAlive(int fd) {
+        if (TCP_KEEPALIVE_SECONDS < 0 || fd < 0) {
+            return;
+        }
+        if (setKeepAlive0(fd, TCP_KEEPALIVE_SECONDS) < 0) {
+            int errno = Os.errno();
+            LOG.error().$("could not set tcp keepalive [fd=").$(fd).$(", errno=").$(errno).I$();
+        }
     }
 
     public native static int configureLinger(int fd, int seconds);
@@ -161,7 +169,7 @@ public final class Net {
     }
 
     public static long getAddrInfo(LPSZ host, int port) {
-        return getAddrInfo(host.address(), port);
+        return getAddrInfo(host.ptr(), port);
     }
 
     public static long getAddrInfo(CharSequence host, int port) {
@@ -287,22 +295,8 @@ public final class Net {
     }
 
     public static int socketTcp(boolean blocking) {
-        int fd = Files.bumpFileCount(socketTcp0(blocking));
-        configureKeepAlive(fd);
-        return fd;
+        return Files.bumpFileCount(socketTcp0(blocking));
     }
-
-    private static void configureKeepAlive(int fd) {
-        if (TCP_KEEPALIVE_SECONDS < 0 || fd < 0) {
-            return;
-        }
-        if (setKeepAlive0(fd, TCP_KEEPALIVE_SECONDS) < 0) {
-            int errno = Os.errno();
-            LOG.error().$("could not set tcp keepalive [fd=").$(fd).$(", errno=").$(errno).I$();
-        }
-    }
-
-    private static native int setKeepAlive0(int fd, int seconds);
 
     public static int socketUdp() {
         return Files.bumpFileCount(socketUdp0());
@@ -323,6 +317,8 @@ public final class Net {
     private static native long getMsgHeaderBufferLengthOffset();
 
     private static native long getMsgHeaderSize();
+
+    private static native int setKeepAlive0(int fd, int seconds);
 
     private native static long sockaddr0(int ipv4address, int port);
 

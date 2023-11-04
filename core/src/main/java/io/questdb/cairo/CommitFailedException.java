@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 
@@ -37,7 +38,11 @@ public class CommitFailedException extends Exception {
         assert (ex = new CommitFailedException()) != null;
         ex.message.clear();
         if (!tableDropped) {
-            ex.message.put(reason);
+            if (reason instanceof FlyweightMessageContainer) {
+                ex.message.put(((FlyweightMessageContainer) reason).getFlyweightMessage());
+            } else {
+                ex.message.put(reason.getMessage());
+            }
         } else {
             ex.message.put("table dropped");
         }

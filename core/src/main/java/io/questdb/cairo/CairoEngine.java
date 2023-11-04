@@ -65,8 +65,8 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_READER = "busyReader";
     public static final String REASON_SNAPSHOT_IN_PROGRESS = "snapshotInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
-    private final CairoConfiguration configuration;
     private final CopyContext copyContext;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
@@ -87,7 +87,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
-    private @NotNull WalInitializer walInitializer = DefaultWalInitializer.INSTANCE;
+    private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
@@ -232,6 +232,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
+        if (token.isWal()) {
+            tableSequencerAPI.applyRename(updatedTableToken);
+        }
     }
 
     @TestOnly
@@ -286,7 +289,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        return createTableInsecure(securityContext, mem, path, ifNotExists, struct, keepLock, false);
+        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, false);
     }
 
     public @NotNull TableToken createTableInVolume(
@@ -298,10 +301,10 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock
     ) {
         securityContext.authorizeTableCreate();
-        return createTableInsecure(securityContext, mem, path, ifNotExists, struct, keepLock, true);
+        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, true);
     }
 
-    public @NotNull TableToken createTableInsecure(
+    private @NotNull TableToken createTableUnsecure(
             SecurityContext securityContext,
             MemoryMARW mem,
             Path path,
@@ -635,7 +638,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         sink.put(tableName, lo, hi);
         return tableNameRegistry.getTableToken(sink);
     }
@@ -674,8 +677,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
     }
 
-    public @NotNull WalInitializer getWalInitializer() {
-        return walInitializer;
+    public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
+        return walDirectoryPolicy;
     }
 
     public @NotNull WalListener getWalListener() {
@@ -784,7 +787,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken lockTableName(CharSequence tableName, boolean isWal) {
-        validNameOrThrow(tableName);
         int tableId = (int) getTableIdGenerator().getNextId();
         return lockTableName(tableName, tableId, isWal);
     }
@@ -793,12 +795,13 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal) {
         String tableNameStr = Chars.toString(tableName);
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
-        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
+        return lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
     @SuppressWarnings("unused")
     @Nullable
     public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
+        validNameOrThrow(tableName);
         String tableNameStr = Chars.toString(tableName);
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }
@@ -1029,8 +1032,8 @@ public class CairoEngine implements Closeable, WriterSource {
     public void setUp() {
     }
 
-    public void setWalInitializer(@NotNull WalInitializer walInitializer) {
-        this.walInitializer = walInitializer;
+    public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
+        this.walDirectoryPolicy = walDirectoryPolicy;
     }
 
     public void setWalListener(@NotNull WalListener walListener) {
@@ -1073,7 +1076,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken verifyTableName(final CharSequence tableName, int lo, int hi) {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         sink.put(tableName, lo, hi);
         return verifyTableName(sink);
     }
@@ -1162,8 +1165,8 @@ public class CairoEngine implements Closeable, WriterSource {
             if (ff.rename(fromPath, toPath) != Files.FILES_RENAME_OK) {
                 final int error = ff.errno();
                 LOG.error()
-                        .$("could not rename [from='").utf8(fromPath)
-                        .$("', to='").utf8(toPath)
+                        .$("could not rename [from='").$(fromPath)
+                        .$("', to='").$(toPath)
                         .$("', error=").$(error)
                         .I$();
                 throw CairoException.critical(error)

@@ -95,8 +95,6 @@ public interface ConfigurationOverrides {
 
     long getPartitionO3SplitThreshold();
 
-    int getQueryCacheEventQueueCapacity();
-
     int getRecreateDistressedSequencerAttempts();
 
     int getRepeatMigrationsFromVersion();
@@ -108,6 +106,8 @@ public interface ConfigurationOverrides {
     RostiAllocFacade getRostiAllocFacade();
 
     int getSampleByIndexSearchPageSize();
+
+    boolean getSimulateCrashEnabled();
 
     String getSnapshotInstanceId();
 
@@ -121,6 +121,10 @@ public interface ConfigurationOverrides {
 
     int getSqlJoinMetadataPageSize();
 
+    int getSqlWindowStoreMaxPages();
+
+    int getSqlWindowStorePageSize();
+
     int getTableRegistryCompactionThreshold();
 
     MicrosecondClock getTestMicrosClock();
@@ -132,6 +136,8 @@ public interface ConfigurationOverrides {
     long getWalPurgeInterval();
 
     long getWalSegmentRolloverRowCount();
+
+    long getWalSegmentRolloverSize();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -191,6 +197,8 @@ public interface ConfigurationOverrides {
 
     void setFactoryProvider(FactoryProvider factoryProvider);
 
+    void setSimulateCrashEnabled(boolean enabled);
+
     void setFilesFacade(FilesFacade ff);
 
     void setHideTelemetryTable(boolean hideTelemetryTable);
@@ -233,8 +241,6 @@ public interface ConfigurationOverrides {
 
     void setPartitionO3SplitThreshold(long value);
 
-    void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity);
-
     void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts);
 
     void setRegistryCompactionThreshold(int value);
@@ -261,6 +267,10 @@ public interface ConfigurationOverrides {
 
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
+    void setSqlWindowStoreMaxPages(int windowStoreMaxPages);
+
+    void setSqlWindowStorePageSize(int windowStorePageSize);
+
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
 
     void setWalApplyTableTimeQuota(long walApplyTableTimeQuota);
@@ -270,6 +280,8 @@ public interface ConfigurationOverrides {
     void setWalPurgeInterval(long walPurgeInterval);
 
     void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount);
+
+    void setWalSegmentRolloverSize(long walSegmentRolloverSize);
 
     void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity);
 

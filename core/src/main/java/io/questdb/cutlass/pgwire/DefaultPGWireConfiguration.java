@@ -77,7 +77,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
+        return DateFormatUtils.EN_LOCALE;
     }
 
     @Override

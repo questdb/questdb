@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -47,16 +47,12 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void clearAnalyticContext() {
+    public void clearWindowContext() {
     }
 
     @Override
-    public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, boolean baseSupportsRandomAccess) {
-    }
+    public void configureWindowContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, int orderByDirection, int orderByPos, boolean baseSupportsRandomAccess, int framingMode, long rowsLo, int rowsLoExprPos, long rowsHi, int rowsHiExprPos, int exclusionKind, int exclusionKindPos, int timestampIndex) {
 
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return null;
     }
 
     @Override
@@ -105,13 +101,18 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public long getRequestFd() {
-        return 0L;
+    public int getRequestFd() {
+        return 0;
     }
 
     @Override
     public @NotNull SecurityContext getSecurityContext() {
         return engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext();
+    }
+
+    @Override
+    public WindowContext getWindowContext() {
+        return null;
     }
 
     @Override

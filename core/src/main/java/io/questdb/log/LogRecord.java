@@ -24,17 +24,26 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 
-public interface LogRecord extends CharSinkBase {
+public interface LogRecord extends CharSinkBase<LogRecord> {
+
     void $();
 
-    LogRecord $(CharSequence sequence);
+    LogRecord $(@Nullable CharSequence sequence);
 
-    LogRecord $(CharSequence sequence, int lo, int hi);
+    LogRecord $(@Nullable Utf8Sequence sequence);
+
+    LogRecord $(@Nullable DirectUtf8Sequence sequence);
+
+    LogRecord $(@NotNull CharSequence sequence, int lo, int hi);
 
     LogRecord $(int x);
 
@@ -46,13 +55,13 @@ public interface LogRecord extends CharSinkBase {
 
     LogRecord $(char c);
 
-    LogRecord $(Throwable e);
+    LogRecord $(@Nullable Throwable e);
 
-    LogRecord $(File x);
+    LogRecord $(@Nullable File x);
 
-    LogRecord $(Object x);
+    LogRecord $(@Nullable Object x);
 
-    LogRecord $(Sinkable x);
+    LogRecord $(@Nullable Sinkable x);
 
     LogRecord $256(long a, long b, long c, long d);
 
@@ -76,5 +85,5 @@ public interface LogRecord extends CharSinkBase {
 
     LogRecord ts();
 
-    LogRecord utf8(CharSequence sequence);
+    LogRecord utf8(@Nullable CharSequence sequence);
 }

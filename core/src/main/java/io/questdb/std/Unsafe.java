@@ -196,6 +196,18 @@ public final class Unsafe {
         return UNSAFE;
     }
 
+    public static void incrFreeCount() {
+        FREE_COUNT.incrementAndGet();
+    }
+
+    public static void incrMallocCount() {
+        MALLOC_COUNT.incrementAndGet();
+    }
+
+    public static void incrReallocCount() {
+        REALLOC_COUNT.incrementAndGet();
+    }
+
     //#if jdk.version!=8
 
     /**

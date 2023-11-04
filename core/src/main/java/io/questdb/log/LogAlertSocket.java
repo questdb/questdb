@@ -28,6 +28,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -120,6 +121,7 @@ public class LogAlertSocket implements Closeable {
             logNetworkConnectError("Could not create addr info with");
         } else {
             socketFd = nf.socketTcp(true);
+            nf.configureKeepAlive(socketFd);
             if (socketFd > -1) {
                 if (nf.connectAddrInfo(socketFd, addressInfoAddr) != 0) {
                     logNetworkConnectError("Could not connect with");
@@ -181,7 +183,7 @@ public class LogAlertSocket implements Closeable {
     @TestOnly
     public void logResponse(int len) {
         responseSink.clear();
-        Chars.utf8toUtf16(inBufferPtr, inBufferPtr + len, responseSink);
+        Utf8s.utf8ToUtf16(inBufferPtr, inBufferPtr + len, responseSink);
         final int responseLen = responseSink.length();
         int contentLength = 0;
         int lineStart = 0;

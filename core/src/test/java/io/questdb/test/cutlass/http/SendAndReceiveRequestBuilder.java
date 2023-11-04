@@ -29,7 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
-import io.questdb.std.str.ByteSequence;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
@@ -124,7 +124,7 @@ public class SendAndReceiveRequestBuilder {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
-        Chars.asciiStrCpy(request, reqLen, ptr);
+        Utf8s.strCpyAscii(request, reqLen, ptr);
         while (sent < reqLen) {
             int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
             if (n < 0 && expectSendDisconnect) {
@@ -179,22 +179,15 @@ public class SendAndReceiveRequestBuilder {
         }
 
         if (!printOnly) {
-            if (expectedResponse instanceof ByteSequence) {
-                Assert.assertEquals(expectedResponse.length(), receivedBytes.length);
-                for (int n = 0; n < receivedBytes.length; n++) {
-                    Assert.assertEquals(receivedBytes[n], ((ByteSequence) expectedResponse).byteAt(n));
-                }
-            } else {
-                String actual = new String(receivedBytes, Files.UTF_8);
-                String expected = expectedResponse.toString();
-                if (compareLength > 0) {
-                    expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
-                    actual = !actual.isEmpty() ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
-                }
-                if (!expectSendDisconnect) {
-                    // expectSendDisconnect means that test expect disconnect during send or straight after
-                    TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
-                }
+            String actual = new String(receivedBytes, Files.UTF_8);
+            String expected = expectedResponse.toString();
+            if (compareLength > 0) {
+                expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
+                actual = !actual.isEmpty() ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
+            }
+            if (!expectSendDisconnect) {
+                // expectSendDisconnect means that test expect disconnect during send or straight after
+                TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
             }
         } else {
             LOG.info().$("received: ").$(new String(receivedBytes, Files.UTF_8)).$();
@@ -253,7 +246,7 @@ public class SendAndReceiveRequestBuilder {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
-        Chars.asciiStrCpy(request, reqLen, ptr);
+        Utf8s.strCpyAscii(request, reqLen, ptr);
         while (sent < reqLen) {
             int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
             Assert.assertTrue(n > -1);

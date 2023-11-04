@@ -35,17 +35,22 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
 import static io.questdb.network.IODispatcher.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpAuthenticator authenticator;
     private final HttpContextConfiguration configuration;
-    private final ObjectPool<DirectByteCharSequence> csPool;
+    private final HttpCookieHandler cookieHandler;
+    private final ObjectPool<DirectUtf8String> csPool;
     private final boolean dumpNetworkTraffic;
     private final HttpHeaderParser headerParser;
     private final LocalValueMap localValueMap = new LocalValueMap();
@@ -59,7 +64,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
     private final RescheduleContext retryRescheduleContext = retry -> {
-        LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
+        LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).I$();
         throw RetryOperationException.INSTANCE;
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
@@ -72,7 +77,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
 
+    @TestOnly
     public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
+        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE);
+    }
+
+    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler) {
         super(
                 socketFactory,
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
@@ -81,8 +91,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         );
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.configuration = contextConfiguration;
+        this.cookieHandler = cookieHandler;
         this.nf = contextConfiguration.getNetworkFacade();
-        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
+        this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
@@ -169,6 +180,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public HttpChunkedResponseSocket getChunkedResponseSocket() {
         return responseSink.getChunkedSocket();
+    }
+
+    public HttpCookieHandler getCookieHandler() {
+        return cookieHandler;
     }
 
     public long getLastRequestBytesSent() {
@@ -271,6 +286,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         responseSink.of(socket);
         return this;
+    }
+
+    public boolean rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        reset();
+        LOG.error().$(userMessage).$(" [code=").$(code).I$();
+        simpleResponse().sendStatusWithCookie(code, userMessage, cookieName, cookieValue);
+        dispatcher.registerChannel(this, IOOperation.READ);
+        return false;
     }
 
     public void reset() {
@@ -395,6 +418,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     authenticator.getPrincipal(),
                     SecurityContextFactory.HTTP
             );
+            securityContext.authorizeHTTP();
         }
         return true;
     }
@@ -582,7 +606,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor;
-        final CharSequence url = headerParser.getUrl();
+        final DirectUtf8Sequence url = headerParser.getUrl();
         processor = selector.select(url);
         if (processor == null) {
             return selector.getDefaultProcessor();
@@ -624,22 +648,28 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
             }
 
-            final CharSequence url = headerParser.getUrl();
+            final DirectUtf8Sequence url = headerParser.getUrl();
             if (url == null) {
                 throw HttpException.instance("missing URL");
             }
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
 
-            final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
+            final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
-            if (configuration.allowDeflateBeforeSend() && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
+            if (configuration.allowDeflateBeforeSend() && Utf8s.containsAscii(headerParser.getHeader(HEADER_CONTENT_ACCEPT_ENCODING), "gzip")) {
                 responseSink.setDeflateBeforeSend(true);
             }
 
             try {
                 if (newRequest && processor.requiresAuthentication() && !configureSecurityContext()) {
                     return rejectUnauthenticatedRequest();
+                }
+
+                if (configuration.areCookiesEnabled()) {
+                    if (!cookieHandler.processCookies(this, securityContext)) {
+                        return false;
+                    }
                 }
 
                 if (multipartRequest && !multipartProcessor) {
@@ -761,11 +791,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        reset();
-        LOG.error().$(userMessage).$();
-        simpleResponse().sendStatus(404, userMessage);
-        dispatcher.registerChannel(this, IOOperation.READ);
-        return false;
+        return rejectRequest(404, userMessage, null, null);
     }
 
     private boolean rejectUnauthenticatedRequest() throws PeerDisconnectedException, PeerIsSlowToReadException {

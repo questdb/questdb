@@ -60,6 +60,11 @@ public class GcUtf8String implements DirectUtf8Sequence {
     }
 
     @Override
+    public @NotNull CharSequence asAsciiCharSequence() {
+        return original;
+    }
+
+    @Override
     public boolean equals(Object o) {
         if (this == o) {
             return true;

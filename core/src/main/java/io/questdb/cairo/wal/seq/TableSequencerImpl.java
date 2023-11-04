@@ -25,7 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.wal.WalInitializer;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
@@ -57,8 +57,8 @@ public class TableSequencerImpl implements TableSequencer {
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final SeqTxnTracker seqTxnTracker;
     private final TableTransactionLog tableTransactionLog;
+    private final WalDirectoryPolicy walDirectoryPolicy;
     private final IDGenerator walIdGenerator;
-    private final WalInitializer walInitializer;
     private volatile boolean closed = false;
     private boolean distressed;
     private TableToken tableToken;
@@ -69,13 +69,13 @@ public class TableSequencerImpl implements TableSequencer {
         this.seqTxnTracker = txnTracker;
 
         final CairoConfiguration configuration = engine.getConfiguration();
-        this.walInitializer = engine.getWalInitializer();
+        this.walDirectoryPolicy = engine.getWalDirectoryPolicy();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
             path.of(configuration.getRoot());
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
-            rootLen = path.length();
+            rootLen = path.size();
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();
 
@@ -127,6 +127,13 @@ public class TableSequencerImpl implements TableSequencer {
             // Nothing to do.
             return EmptyOperationCursor.INSTANCE;
         }
+        return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
+    }
+
+    @Override
+    public TableMetadataChangeLog getMetadataChangeLogSlow(long structureVersionLo) {
+        checkDropped();
+        // Do not check cached metadata version.
         return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
     }
 
@@ -297,6 +304,11 @@ public class TableSequencerImpl implements TableSequencer {
         return txn;
     }
 
+    public void notifyRename(TableToken tableToken) {
+        this.tableToken = tableToken;
+        this.metadata.notifyRenameTable(tableToken);
+    }
+
     @Override
     public TableToken reload() {
         tableTransactionLog.reload(path);
@@ -315,6 +327,9 @@ public class TableSequencerImpl implements TableSequencer {
                 metadata.syncToMetaFile();
             }
         }
+        long lastTxn = tableTransactionLog.lastTxn();
+        LOG.info().$("reloaded table sequencer [name=").utf8(tableToken.getDirName()).$(", lastTxn=").$(lastTxn).I$();
+        seqTxnTracker.notifyOnCommit(lastTxn);
         return tableToken = metadata.getTableToken();
     }
 
@@ -364,7 +379,7 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw e;
         }
-        walInitializer.initDirectory(path);
+        walDirectoryPolicy.initDirectory(path);
         path.trimTo(rootLen);
     }
 
@@ -375,6 +390,19 @@ public class TableSequencerImpl implements TableSequencer {
     private void notifyTxnCommitted(long txn) {
         if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
+        }
+    }
+
+    void create(int tableId, TableStructure tableStruct) {
+        schemaLock.writeLock().lock();
+        try {
+            createSequencerDir(ff, mkDirMode);
+            final long timestamp = microClock.getTicks();
+            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
+            tableTransactionLog.create(path, timestamp);
+            engine.getWalListener().tableCreated(tableToken, timestamp);
+        } finally {
+            schemaLock.writeLock().unlock();
         }
     }
 
@@ -407,19 +435,6 @@ public class TableSequencerImpl implements TableSequencer {
                     .I$();
             closeLocked();
             throw th;
-        }
-    }
-
-    void create(int tableId, TableStructure tableStruct) {
-        schemaLock.writeLock().lock();
-        try {
-            createSequencerDir(ff, mkDirMode);
-            final long timestamp = microClock.getTicks();
-            metadata.create(tableStruct, tableToken, path, rootLen, tableId);
-            tableTransactionLog.create(path, timestamp);
-            engine.getWalListener().tableCreated(tableToken, timestamp);
-        } finally {
-            schemaLock.writeLock().unlock();
         }
     }
 

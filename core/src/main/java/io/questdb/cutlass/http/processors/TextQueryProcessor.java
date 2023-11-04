@@ -25,14 +25,13 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
+import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.*;
-import io.questdb.cutlass.text.TextUtil;
-import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -43,11 +42,14 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+
+import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
@@ -64,6 +66,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final CairoEngine engine;
     private final int floatScale;
     private final Metrics metrics;
+    private final QueryLogger queryLogger;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
     @TestOnly
@@ -89,6 +92,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
+        queryLogger = engine.getConfiguration().getQueryLogger();
     }
 
     @Override
@@ -121,15 +125,15 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     } else if (isExpRequest) {
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
-                    info(state).$("execute-new [q=`").utf8(state.query)
-                            .$("`, skip: ").$(state.skip)
+                    queryLogger.logQuery(LOG, context.getFd(), state.query, context.getSecurityContext(), "execute-new")
+                            .$(", skip: ").$(state.skip)
                             .$(", stop: ").$(state.stop)
                             .I$();
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
                 }
             } else {
-                info(state).$("execute-cached [q=`").utf8(state.query)
-                        .$("`, skip: ").$(state.skip)
+                queryLogger.logQuery(LOG, context.getFd(), state.query, context.getSecurityContext(), "execute-cached")
+                        .$(", skip: ").$(state.skip)
                         .$(", stop: ").$(state.stop)
                         .I$();
                 sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
@@ -225,30 +229,30 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static boolean isExpUrl(CharSequence tok) {
-        if (tok.length() != 4) {
+    private static boolean isExpUrl(Utf8Sequence tok) {
+        if (tok.size() != 4) {
             return false;
         }
 
         int i = 0;
-        return (tok.charAt(i++) | 32) == '/'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'x'
-                && (tok.charAt(i) | 32) == 'p';
+        return (tok.byteAt(i++) | 32) == '/'
+                && (tok.byteAt(i++) | 32) == 'e'
+                && (tok.byteAt(i++) | 32) == 'x'
+                && (tok.byteAt(i) | 32) == 'p';
     }
 
     private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
         if (value == GeoHashes.NULL) {
-            socket.put("null");
+            socket.putAscii("null");
         } else {
             int bitFlags = GeoHashes.getBitFlags(type);
-            socket.put('\"');
+            socket.putAscii('\"');
             if (bitFlags < 0) {
                 GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
             } else {
                 GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
             }
-            socket.put('\"');
+            socket.putAscii('\"');
         }
     }
 
@@ -259,9 +263,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
+    private static void putStringOrNull(HttpChunkedResponseSocket r, CharSequence str) {
         if (str != null) {
-            r.encodeUtf8AndQuote(str);
+            r.putQuoted(str);
         }
     }
 
@@ -315,13 +319,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         state.queryState = JsonQueryProcessorState.QUERY_METADATA;
                         while (state.columnIndex < columnCount) {
                             if (state.columnIndex > 0) {
-                                socket.put(state.delimiter);
+                                socket.putAscii(state.delimiter);
                             }
                             socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
                             state.columnIndex++;
                             socket.bookmark();
                         }
-                        socket.put(Misc.EOL);
+                        socket.putEOL();
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
                         socket.bookmark();
                         // fall through
@@ -359,7 +363,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     case JsonQueryProcessorState.QUERY_RECORD:
                         while (state.columnIndex < columnCount) {
                             if (state.columnIndex > 0) {
-                                socket.put(state.delimiter);
+                                socket.putAscii(state.delimiter);
                             }
                             putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                             state.columnIndex++;
@@ -369,7 +373,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_SUFFIX;
                         // fall through
                     case JsonQueryProcessorState.QUERY_RECORD_SUFFIX:
-                        socket.put(Misc.EOL);
+                        socket.putEOL();
                         state.record = null;
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
                         socket.bookmark();
@@ -463,8 +467,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Query text.
-        final DirectByteCharSequence query = request.getUrlParam("query");
-        if (query == null || query.length() == 0) {
+        final DirectUtf8Sequence query = request.getUrlParam(URL_PARAM_QUERY);
+        if (query == null || query.size() == 0) {
             info(state).$("Empty query request received. Sending empty reply.").$();
             sendException(socket, 0, "No query text", state);
             return false;
@@ -474,14 +478,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         long skip = 0;
         long stop = Long.MAX_VALUE;
 
-        CharSequence limit = request.getUrlParam("limit");
+        DirectUtf8Sequence limit = request.getUrlParam(URL_PARAM_LIMIT);
         if (limit != null) {
-            int sepPos = Chars.indexOf(limit, ',');
+            int sepPos = Utf8s.indexOfAscii(limit, ',');
             try {
                 if (sepPos > 0) {
                     skip = Numbers.parseLong(limit, 0, sepPos);
-                    if (sepPos + 1 < limit.length()) {
-                        stop = Numbers.parseLong(limit, sepPos + 1, limit.length());
+                    if (sepPos + 1 < limit.size()) {
+                        stop = Numbers.parseLong(limit, sepPos + 1, limit.size());
                     }
                 } else {
                     stop = Numbers.parseLong(limit);
@@ -503,31 +507,29 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         state.query.clear();
-        try {
-            TextUtil.utf8ToUtf16(query.getLo(), query.getHi(), state.query);
-        } catch (Utf8Exception e) {
+        if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), state.query)) {
             info(state).$("Bad UTF8 encoding").$();
             sendException(socket, 0, "Bad UTF8 encoding in query text", state);
             return false;
         }
-        CharSequence fileName = request.getUrlParam("filename");
+        DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
         state.fileName = null;
-        if (fileName != null && fileName.length() > 0) {
+        if (fileName != null && fileName.size() > 0) {
             state.fileName = fileName.toString();
         }
 
-        DirectByteCharSequence delimiter = request.getUrlParam("delimiter");
+        DirectUtf8Sequence delimiter = request.getUrlParam(URL_PARAM_DELIMITER);
         state.delimiter = ',';
 
-        if (delimiter != null && delimiter.length() == 1) {
-            state.delimiter = delimiter.charAt(0);
+        if (delimiter != null && delimiter.size() == 1) {
+            state.delimiter = (char) delimiter.byteAt(0);
         }
 
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
-        state.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
-        state.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
+        state.noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
+        state.countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
         return true;
     }
 
@@ -538,7 +540,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 socket.put(rec.getBool(col));
                 break;
             case ColumnType.BYTE:
-                socket.put(rec.getByte(col));
+                socket.put((int) rec.getByte(col));
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(col);
@@ -555,7 +557,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.INT:
                 final int i = rec.getInt(col);
                 if (i > Integer.MIN_VALUE) {
-                    Numbers.append(socket, i);
+                    socket.put(i);
                 }
                 break;
             case ColumnType.LONG:
@@ -567,13 +569,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.DATE:
                 l = rec.getDate(col);
                 if (l > Long.MIN_VALUE) {
-                    socket.put('"').putISODateMillis(l).put('"');
+                    socket.putAscii('"').putISODateMillis(l).putAscii('"');
                 }
                 break;
             case ColumnType.TIMESTAMP:
                 l = rec.getTimestamp(col);
                 if (l > Long.MIN_VALUE) {
-                    socket.put('"').putISODate(l).put('"');
+                    socket.putAscii('"').putISODate(l).putAscii('"');
                 }
                 break;
             case ColumnType.SHORT:
@@ -624,7 +626,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.put("DDL Success\n");
+        socket.putAscii("DDL Success\n");
         socket.sendChunk(true);
     }
 
@@ -666,24 +668,24 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(statusCode, "text/csv; charset=utf-8");
-        if (state.fileName != null && state.fileName.length() > 0) {
-            socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
+        socket.status(statusCode, CONTENT_TYPE_CSV);
+        if (state.fileName != null && !state.fileName.isEmpty()) {
+            socket.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(".csv\"").putEOL();
         } else {
-            socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
+            socket.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(".csv\"").putEOL();
         }
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }
 
     protected void headerJsonError(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(400, "application/json; charset=utf-8");
+        socket.status(400, CONTENT_TYPE_JSON);
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }
 
     protected void headerNoContentDisposition(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(200, "text/csv; charset=utf-8");
+        socket.status(200, CONTENT_TYPE_CSV);
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }

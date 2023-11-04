@@ -31,17 +31,19 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.griffin.AlterTableSetTypeTest.NON_WAL;
 import static org.junit.Assert.assertFalse;
@@ -60,14 +62,14 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
-                private int attempt = 0;
+                private final AtomicInteger attempt = new AtomicInteger();
 
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    if (Utf8s.containsAscii(name, "x.d.1") && attempt.getAndIncrement() == 0) {
                         return -1;
                     }
-                    return Files.openRW(name, opts);
+                    return super.openRW(name, opts);
                 }
             };
 

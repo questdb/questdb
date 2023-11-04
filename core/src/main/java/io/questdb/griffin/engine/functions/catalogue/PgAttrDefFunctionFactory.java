@@ -82,7 +82,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
-            this.plimit = this.path.length();
+            this.plimit = path.size();
             this.tempMem = tempMem;
         }
 
@@ -144,7 +144,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                                     }
                                     ff.close(fd);
                                 } else {
-                                    LOG.error().$("could not read metadata [file=").utf8(path).I$();
+                                    LOG.error().$("could not read metadata [file=").$(path).I$();
                                 }
                             }
                         }

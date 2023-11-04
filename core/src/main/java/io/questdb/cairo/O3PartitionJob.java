@@ -107,8 +107,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             if (!last) {
                 try {
-                    LOG.debug().$("would create [path=").utf8(path.slash$()).I$();
-                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, txn - 1);
+                    LOG.debug().$("would create [path=").$(path.slash$()).I$();
+                    TableUtils.setPathForPartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn - 1);
                     createDirsOrFail(ff, path.slash$(), tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
@@ -196,7 +196,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                     // and "high" being newest
 
-                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, srcNameTxn);
+                    TableUtils.setPathForPartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, srcNameTxn);
                     dFile(path, metadata.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE);
 
                     // also track the fd that we need to eventually close
@@ -580,7 +580,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // existing the one.
                     openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
-                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, txn);
+                    TableUtils.setPathForPartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn);
                     createDirsOrFail(ff, path.slash$(), tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
@@ -800,7 +800,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 .I$();
         TableRecordMetadata metadata = tableWriter.getMetadata();
         int dedupColumnIndex = 0;
-        int tableRootPathLen = tableRootPath.length();
+        int tableRootPathLen = tableRootPath.size();
         FilesFacade ff = tableWriter.getFilesFacade();
 
         int mapMemTag = MemoryTag.MMAP_O3;

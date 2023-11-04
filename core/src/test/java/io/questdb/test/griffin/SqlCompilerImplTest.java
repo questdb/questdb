@@ -38,6 +38,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -2413,7 +2414,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             @Override
             public int openRO(LPSZ name) {
                 int fd = super.openRO(name);
-                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
                     metaFd = fd;
                 }
                 return fd;
@@ -2422,7 +2423,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                     txnFd = fd;
                 }
                 return fd;
@@ -2433,7 +2434,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 ff,
                 sql,
                 "Could not create table. See log for details"
-
         );
     }
 
@@ -2474,14 +2474,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         AbstractCairoTest.ff = new TestFilesFacadeImpl() {
             @Override
             public boolean isDirOrSoftLinkDir(LPSZ path) {
-                if (Chars.equals(path, target)) {
+                if (Utf8s.equalsAscii(target, path)) {
                     return false;
                 }
                 return super.exists(path);
             }
 
             @Override
-            public boolean rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 Assert.assertEquals(target + Files.SEPARATOR, name.toString());
                 return false;
             }
@@ -3119,7 +3119,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralBinLength() throws Exception {
         assertMemoryLeak(() -> {
-            StringSink bitString = Misc.getThreadLocalBuilder();
+            StringSink bitString = Misc.getThreadLocalSink();
             bitString.put(Chars.repeat("0", 59)).put('1');
             assertSql("geobits\n" +
                     "000000000001\n", "select ##" + bitString + " as geobits");
@@ -3223,6 +3223,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInLongTypeMismatch() throws Exception {
         assertFailure(43, "cannot compare LONG with type DOUBLE", "select 1 from long_sequence(1) where x in (123.456)");
+    }
+
+    @Test
+    public void testInShortByteIntLong() throws Exception {
+        ddl("CREATE table abc (aa long, a int, b short, c byte)");
+        insert("insert into abc values(1, 1, 1, 1)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where aa in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where a in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where b in (1, 2)");
+        assertSql("aa\ta\tb\tc\n" +
+                "1\t1\t1\t1\n", "select * from abc where c in (1, 2)");
     }
 
     @Test

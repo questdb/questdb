@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.std.FilesFacade;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.util.Map;
 
@@ -35,6 +36,8 @@ public interface BootstrapConfiguration {
     Map<String, String> getEnv();
 
     FilesFacade getFilesFacade();
+
+    MicrosecondClock getMicrosecondClock();
 
     ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception;
 

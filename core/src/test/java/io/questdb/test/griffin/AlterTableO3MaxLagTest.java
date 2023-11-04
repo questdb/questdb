@@ -26,10 +26,10 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -50,7 +50,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
                 ddl(alterCommand, sqlExecutionContext);
 
-                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'"
+                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = '" + tableName + "'"
                 );
                 rdr.reload();
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
@@ -73,7 +73,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ddl(alterCommand, sqlExecutionContext);
 
                 assertSql("maxUncommittedRows\to3MaxLag\n" +
-                        "11111\t1000000\n", "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE name = '" + tableName + "'"
+                        "11111\t1000000\n", "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE table_name = '" + tableName + "'"
                 );
                 rdr.reload();
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
@@ -92,7 +92,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ddl(alterCommand2, sqlExecutionContext);
 
                 assertSql("maxUncommittedRows\to3MaxLag\n" +
-                        "0\t0\n", "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE name = '" + tableName + "'"
+                        "0\t0\n", "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE table_name = '" + tableName + "'"
                 );
                 rdr.reload();
                 Assert.assertEquals(0, rdr.getMetadata().getMaxUncommittedRows());
@@ -117,7 +117,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
                 @Override
                 public int openRO(LPSZ path) {
-                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
+                    if (Utf8s.endsWithAscii(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
                         return -1;
                     }
                     return super.openRO(path);
@@ -163,7 +163,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
-                        if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && attempt++ == 0) {
+                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && attempt++ == 0) {
                             return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
@@ -185,7 +185,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 // Now try with success.
                 ff = new TestFilesFacadeImpl();
                 ddl(alterCommand, sqlExecutionContext);
-                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE name = 'X'");
+                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = 'X'");
             }
         });
     }
@@ -202,7 +202,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
-                        if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
+                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
                             return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
@@ -227,7 +227,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 engine.clear();
                 ff = new TestFilesFacadeImpl();
                 ddl(alterCommand, sqlExecutionContext);
-                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE name = 'X'");
+                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = 'X'");
             }
         });
     }
@@ -244,7 +244,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
-                        if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
+                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
                             return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
@@ -271,7 +271,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public int openRO(LPSZ from) {
-                        if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {
+                        if (Utf8s.endsWithAscii(from, TableUtils.META_FILE_NAME)) {
                             return -1;
                         }
                         return super.openRO(from);
@@ -314,7 +314,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 111s";
                 ddl(alterCommand, sqlExecutionContext);
 
-                assertSql("o3MaxLag\n111000000\n", "SELECT o3MaxLag FROM tables() WHERE name = '" + tableName + "'"
+                assertSql("o3MaxLag\n111000000\n", "SELECT o3MaxLag FROM tables() WHERE table_name = '" + tableName + "'"
                 );
                 rdr.reload();
                 Assert.assertEquals(111000000L, rdr.getMetadata().getO3MaxLag());
@@ -405,8 +405,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                     ddl("create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY");
                     ddl("alter table x1 set param maxUncommittedRows = 150", sqlExecutionContext);
                     assertSql(
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    "1\tx1\tts\tDAY\t150\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'"
+                            "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                                    "1\tx1\tts\tDAY\t150\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'x1'"
                     );
 
                     // test open table writer
@@ -415,8 +415,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                     getWriter("x1").close();
 
                     assertSql(
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    "1\tx1\tts\tDAY\t150\t300000000\n", "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'"
+                            "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                                    "1\tx1\tts\tDAY\t150\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'x1'"
                     );
                 }
         );
@@ -428,8 +428,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                     ddl("create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY");
                     ddl(sql, sqlExecutionContext);
                     assertSql(
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    expected, "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'"
+                            "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                                    expected, "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'x1'"
                     );
 
                     // test open table writer
@@ -438,8 +438,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                     getWriter("x1").close();
 
                     assertSql(
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    expected, "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'x1'"
+                            "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                                    expected, "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'x1'"
                     );
                 }
         );

@@ -30,7 +30,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 public class GeoHashes {
 
@@ -86,48 +86,48 @@ public class GeoHashes {
         prefixes.add(mask);
     }
 
-    public static void append(long hash, int bits, CharSink sink) {
+    public static void append(long hash, int bits, CharSinkBase<?> sink) {
         if (hash == GeoHashes.NULL) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\"');
+            sink.putAscii('\"');
             if (bits < 0) {
                 GeoHashes.appendCharsUnsafe(hash, -bits, sink);
             } else {
                 GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
             }
-            sink.put('\"');
+            sink.putAscii('\"');
         }
     }
 
 
-    public static void appendBinary(long hash, int bits, CharSink sink) {
+    public static void appendBinary(long hash, int bits, CharSinkBase<?> sink) {
         if (hash != NULL) {
             appendBinaryStringUnsafe(hash, bits, sink);
         }
     }
 
-    public static void appendBinaryStringUnsafe(long hash, int bits, CharSink sink) {
+    public static void appendBinaryStringUnsafe(long hash, int bits, CharSinkBase<?> sink) {
         // Below assertion can happen if there is corrupt metadata
         // which should not happen in production code since reader and writer check table metadata
-        assert bits > 0 && bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH;
+        assert bits > 0 && bits <= ColumnType.GEOLONG_MAX_BITS;
         for (int i = bits - 1; i >= 0; --i) {
-            sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
+            sink.putAscii(((hash >> i) & 1) == 1 ? '1' : '0');
         }
     }
 
-    public static void appendChars(long hash, int chars, CharSink sink) {
+    public static void appendChars(long hash, int chars, CharSinkBase<?> sink) {
         if (hash != NULL) {
             appendCharsUnsafe(hash, chars, sink);
         }
     }
 
-    public static void appendCharsUnsafe(long hash, int chars, CharSink sink) {
+    public static void appendCharsUnsafe(long hash, int chars, CharSinkBase<?> sink) {
         // Below assertion can happen if there is corrupt metadata
         // which should not happen in production code since reader and writer check table metadata
         assert chars > 0 && chars <= MAX_STRING_LENGTH;
         for (int i = chars - 1; i >= 0; --i) {
-            sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
+            sink.putAscii(base32[(int) ((hash >> i * 5) & 0x1F)]);
         }
     }
 
@@ -142,7 +142,7 @@ public class GeoHashes {
     }
 
     public static long fromBitString(CharSequence bits, int start) throws NumericException {
-        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEOLONG_MAX_BITS + start));
     }
 
     public static long fromBitStringNl(CharSequence bits, int start) throws NumericException {
@@ -150,7 +150,7 @@ public class GeoHashes {
         if (len - start <= 0) {
             return NULL;
         }
-        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEOLONG_MAX_BITS + start));
     }
 
     public static long fromCoordinatesDeg(double lat, double lon, int bits) throws NumericException {
@@ -160,7 +160,7 @@ public class GeoHashes {
         if (lon < -180.0 || lon > 180.0) {
             throw NumericException.INSTANCE;
         }
-        if (bits < 0 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+        if (bits < 0 || bits > ColumnType.GEOLONG_MAX_BITS) {
             throw NumericException.INSTANCE;
         }
         return fromCoordinatesDegUnsafe(lat, lon, bits);

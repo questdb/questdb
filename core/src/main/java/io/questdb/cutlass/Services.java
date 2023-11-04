@@ -69,7 +69,7 @@ public final class Services {
         return createHttpServer(
                 configuration,
                 cairoEngine,
-                workerPoolManager.getInstance(configuration, metrics.health(), Requester.HTTP_SERVER),
+                workerPoolManager.getInstance(configuration, metrics, Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
                 metrics
         );
@@ -87,7 +87,10 @@ public final class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, configuration.getFactoryProvider().getHttpSocketFactory());
+        final HttpCookieHandler cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
+        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool,
+                configuration.getFactoryProvider().getHttpSocketFactory(), cookieHandler
+        );
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
@@ -130,12 +133,12 @@ public final class Services {
 
         final WorkerPool ioPool = workerPoolManager.getInstance(
                 config.getIOWorkerPoolConfiguration(),
-                metrics.health(),
+                metrics,
                 Requester.LINE_TCP_IO
         );
         final WorkerPool writerPool = workerPoolManager.getInstance(
                 config.getWriterWorkerPoolConfiguration(),
-                metrics.health(),
+                metrics,
                 Requester.LINE_TCP_WRITER
         );
         return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
@@ -175,7 +178,7 @@ public final class Services {
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics.health(),
+                metrics,
                 Requester.HTTP_MIN_SERVER
         );
         return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
@@ -205,6 +208,10 @@ public final class Services {
             }
         }, true);
         if (metrics.isEnabled()) {
+            final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
+                    configuration.getWorkerCount()
+            );
+            server.registerClosable(pool);
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
@@ -213,7 +220,7 @@ public final class Services {
 
                 @Override
                 public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics, configuration);
+                    return new PrometheusMetricsProcessor(metrics, configuration, pool);
                 }
             });
         }
@@ -236,7 +243,7 @@ public final class Services {
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics.health(),
+                metrics,
                 Requester.PG_WIRE_SERVER
         );
 
