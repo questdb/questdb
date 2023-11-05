@@ -1783,7 +1783,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
  * 3.  testDenseRankWithNoPartitionByAndOrderBySymbolWildcardLast
  * 4.  testDenseRankWithPartitionAndOrderByNonSymbol
  * 5.  testDenseRankWithPartitionAndOrderBySymbolNoWildcard
- * TODO:
  * 6.  testDenseRankWithPartitionAndOrderBySymbolWildcardFirst
  * 7.  testDenseRankWithPartitionAndOrderBySymbolWildcardLast
  * 8.  testDenseRankWithPartitionBySymbolAndMultiOrderWildcardLast
