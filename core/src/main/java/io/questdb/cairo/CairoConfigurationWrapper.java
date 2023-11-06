@@ -482,6 +482,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSecurityContextPoolMaxSegments() {
+        return delegate.getSecurityContextPoolMaxSegments();
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return delegate.getSimulateCrashEnabled();
     }
@@ -519,6 +524,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public double getSqlCompactMapLoadFactor() {
         return delegate.getSqlCompactMapLoadFactor();
+    }
+
+    @Override
+    public int getSqlCompilerPoolMaxSegments() {
+        return delegate.getSqlCompilerPoolMaxSegments();
     }
 
     @Override
@@ -864,6 +874,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalTxnNotificationQueueCapacity() {
         return delegate.getWalTxnNotificationQueueCapacity();
+    }
+
+    @Override
+    public int getWalWriterPoolMaxSegments() {
+        return delegate.getWalWriterPoolMaxSegments();
     }
 
     @Override

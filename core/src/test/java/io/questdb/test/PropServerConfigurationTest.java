@@ -177,6 +177,9 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
+        Assert.assertEquals(5, configuration.getCairoConfiguration().getWalWriterPoolMaxSegments());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlCompilerPoolMaxSegments());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getSecurityContextPoolMaxSegments());
         Assert.assertEquals(1_000, configuration.getCairoConfiguration().getSpinLockTimeout());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
@@ -1001,6 +1004,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
+            Assert.assertEquals(10, configuration.getCairoConfiguration().getWalWriterPoolMaxSegments());
+            Assert.assertEquals(32, configuration.getCairoConfiguration().getSqlCompilerPoolMaxSegments());
+            Assert.assertEquals(32, configuration.getCairoConfiguration().getSecurityContextPoolMaxSegments());
             Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeout());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());

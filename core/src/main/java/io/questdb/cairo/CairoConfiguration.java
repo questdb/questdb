@@ -301,6 +301,8 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    int getSecurityContextPoolMaxSegments();
+
     boolean getSimulateCrashEnabled();
 
     /**
@@ -325,6 +327,8 @@ public interface CairoConfiguration {
     int getSqlColumnPoolCapacity();
 
     double getSqlCompactMapLoadFactor();
+
+    int getSqlCompilerPoolMaxSegments();
 
     int getSqlCopyBufferSize();
 
@@ -487,6 +491,8 @@ public interface CairoConfiguration {
     double getWalSquashUncommittedRowsMultiplier();
 
     int getWalTxnNotificationQueueCapacity();
+
+    int getWalWriterPoolMaxSegments();
 
     int getWindowColumnPoolCapacity();
 

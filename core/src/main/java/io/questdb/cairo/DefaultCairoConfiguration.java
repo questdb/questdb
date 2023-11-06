@@ -490,6 +490,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSecurityContextPoolMaxSegments() {
+        return 64;
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return false;
     }
@@ -529,6 +534,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public double getSqlCompactMapLoadFactor() {
         return 0.8;
+    }
+
+    @Override
+    public int getSqlCompilerPoolMaxSegments() {
+        return 64;
     }
 
     @Override
@@ -869,6 +879,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalTxnNotificationQueueCapacity() {
         return 4096;
+    }
+
+    @Override
+    public int getWalWriterPoolMaxSegments() {
+        return 5;
     }
 
     @Override

@@ -227,6 +227,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferSize;
     private final String root;
     private final int sampleByIndexSearchPageSize;
+    private final int securityContextPoolMaxSegments;
     private final int sendBufferSize;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
@@ -246,6 +247,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlColumnCastModelPoolCapacity;
     private final int sqlColumnPoolCapacity;
     private final double sqlCompactMapLoadFactor;
+    private final int sqlCompilerPoolMaxSegments;
     private final int sqlCopyBufferSize;
     private final int sqlCopyModelPoolCapacity;
     private final int sqlCreateTableModelPoolCapacity;
@@ -343,6 +345,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
     private final long walWriterDataAppendPageSize;
+    private final int walWriterPoolMaxSegments;
     private final long workStealTimeoutNanos;
     private final long writerAsyncCommandBusyWaitTimeout;
     private final long writerAsyncCommandMaxWaitTimeout;
@@ -836,6 +839,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 5);
+            this.walWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS, 5);
+            this.sqlCompilerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILER_POOL_MAX_SEGMENTS, 64);
+            this.securityContextPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_SECURITY_CONTEXT_POOL_MAX_SEGMENTS, 64);
             this.spinLockTimeout = getLong(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 4);
@@ -1622,25 +1628,32 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY,
-                    PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY);
+                    PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES);
+                    PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES);
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE,
-                    PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE);
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE
+            );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES);
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES
+            );
 
         }
 
@@ -2206,6 +2219,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSecurityContextPoolMaxSegments() {
+            return securityContextPoolMaxSegments;
+        }
+
+        @Override
         public boolean getSimulateCrashEnabled() {
             return simulateCrashEnabled;
         }
@@ -2243,6 +2261,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlCompactMapLoadFactor() {
             return sqlCompactMapLoadFactor;
+        }
+
+        @Override
+        public int getSqlCompilerPoolMaxSegments() {
+            return sqlCompilerPoolMaxSegments;
         }
 
         @Override
@@ -2587,6 +2610,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWalTxnNotificationQueueCapacity() {
             return walTxnNotificationQueueCapacity;
+        }
+
+        @Override
+        public int getWalWriterPoolMaxSegments() {
+            return walWriterPoolMaxSegments;
         }
 
         @Override

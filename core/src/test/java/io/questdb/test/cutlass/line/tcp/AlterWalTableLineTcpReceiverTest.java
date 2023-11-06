@@ -745,15 +745,15 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         SOCountDownLatch releaseAllLatch = new SOCountDownLatch(countDownCount);
         SOCountDownLatch getFirstLatch = new SOCountDownLatch(1);
 
-        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (Chars.equalsNc("plug", name.getTableName())) {
+        engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+            if (Chars.equalsNc("plug", token.getTableName())) {
                 if (PoolListener.isWalOrWriter(factoryType)) {
                     if (event == PoolListener.EV_GET) {
-                        LOG.info().$("EV_GET ").$(name).$();
+                        LOG.info().$("EV_GET ").$(token).$();
                         getFirstLatch.countDown();
                     }
                     if (event == PoolListener.EV_RETURN) {
-                        LOG.info().$("EV_RETURN ").$(name).$();
+                        LOG.info().$("EV_RETURN ").$(token).$();
                         releaseAllLatch.countDown();
                     }
                 }
@@ -832,11 +832,11 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         sqlException = null;
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
 
-        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+        engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
             if (PoolListener.isWalOrWriter(factoryType)
                     && (event == PoolListener.EV_RETURN)
-                    && Chars.equalsNc("plug", name.getTableName())) {
-                LOG.info().$("EV_RETURN ").$(name).$();
+                    && Chars.equalsNc("plug", token.getTableName())) {
+                LOG.info().$("EV_RETURN ").$(token).$();
                 releaseLatch.countDown();
             }
         });

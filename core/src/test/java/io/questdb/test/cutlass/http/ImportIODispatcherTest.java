@@ -341,8 +341,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .run(engine -> {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name.getTableName())) {
+                    engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", token.getTableName())) {
                             waitForData.countDown();
                         }
                     });
@@ -595,8 +595,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine) -> {
                     AtomicBoolean locked = new AtomicBoolean(false);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
+                    engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(token.getTableName(), tableName)) {
                             try (Path path = new Path()) {
                                 TableToken tt = engine.getTableTokenIfExists(tableName);
                                 if (engine.getTableStatus(path, tt) == TableUtils.TABLE_RESERVED) {
@@ -646,8 +646,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .run(engine -> {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name.getTableName())) {
+                    engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", token.getTableName())) {
                             waitForData.countDown();
                         }
                     });

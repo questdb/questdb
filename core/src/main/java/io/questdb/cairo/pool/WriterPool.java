@@ -372,13 +372,13 @@ public class WriterPool extends AbstractPool {
     private void closeWriter(long thread, Entry e, short ev, int reason) {
         TableWriter w = e.writer;
         if (w != null) {
-            TableToken name = e.writer.getTableToken();
+            TableToken token = e.writer.getTableToken();
             w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
             w.close();
             e.writer = null;
             e.ownershipReason = OWNERSHIP_REASON_RELEASED;
-            LOG.info().$("closed [table=`").utf8(name.getDirName()).$("`, reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
-            notifyListener(thread, name, ev);
+            LOG.info().$("closed [table=`").utf8(token.getDirName()).$("`, reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
+            notifyListener(thread, token, ev);
         }
     }
 

@@ -154,8 +154,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // WAL ILP will create 2 WAL writer, because of different casing. In case of WAL need to wait for 2 writer releases.
             CountDownLatch released = new CountDownLatch(walEnabled ? 2 : 1);
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (name != null && Chars.equalsNc(name.getTableName(), tableName)) {
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                if (token != null && Chars.equalsNc(token.getTableName(), tableName)) {
                     if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                         released.countDown();
                     }
@@ -192,10 +192,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         final AtomicInteger sendFailureCounter = new AtomicInteger();
 
         runInContext(receiver -> {
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
-                    if (Chars.equalsNc(name.getTableName(), tableName)
-                            && name.equals(engine.verifyTableName(tableName))) {
+                    if (Chars.equalsNc(token.getTableName(), tableName)
+                            && token.equals(engine.verifyTableName(tableName))) {
                         dataConsumed.countDown();
                     }
                 }
@@ -566,10 +566,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         // We set the minIdleMsBeforeWriterRelease interval to a rather large value
         // (1 sec) to prevent false positive WAL writer releases.
         runInContext(receiver -> {
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
-                    if (Chars.equalsNc(name.getTableName(), tableName)
-                            && name.equals(engine.verifyTableName(tableName))) {
+                    if (Chars.equalsNc(token.getTableName(), tableName)
+                            && token.equals(engine.verifyTableName(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -1859,9 +1859,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void sendWaitWalReleaseCount(String lineData, int walReleaseCount) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(walReleaseCount);
-        engine.setPoolListener((factoryType, thread, tableName1, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && tableName1 != null) {
-                LOG.info().$("=== released WAL writer === ").$(tableName1.getDirName()).$(":").$(tableName1.getTableName()).$();
+        engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && token != null) {
+                LOG.info().$("=== released WAL writer === ").$(token.getDirName()).$(":").$(token.getTableName()).$();
                 releaseLatch.countDown();
             }
         });

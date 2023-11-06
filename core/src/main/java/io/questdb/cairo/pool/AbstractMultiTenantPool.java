@@ -39,7 +39,7 @@ import io.questdb.std.Unsafe;
 import java.util.Arrays;
 import java.util.Map;
 
-public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
+public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
     public final static String NO_LOCK_REASON = "unknown";
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
@@ -53,7 +53,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     private final int maxEntries;
     private final int maxSegments;
 
-    public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
+    AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
         this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
@@ -272,10 +272,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         return e;
     }
 
-    private void notifyListener(long thread, TableToken name, short event, int segment, int position) {
+    private void notifyListener(long thread, TableToken token, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
-            listener.onEvent(getListenerSrc(), thread, name, event, (short) segment, (short) position);
+            listener.onEvent(getListenerSrc(), thread, token, event, (short) segment, (short) position);
         }
     }
 
