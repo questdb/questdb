@@ -33,7 +33,7 @@ public interface PoolTenant<T> extends QuietCloseable {
      * Pool tenant must keep track of the Entry it belongs to and provide this entry when requested. Entry is
      * usually assigned to the tenant in the constructor.
      *
-     * @return entry instance, <T> typically type of the subclass
+     * @return entry instance, T typically type of the subclass
      */
     AbstractMultiTenantPool.Entry<T> getEntry();
 
