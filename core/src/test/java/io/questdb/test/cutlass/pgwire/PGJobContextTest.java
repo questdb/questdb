@@ -1893,6 +1893,36 @@ if __name__ == "__main__":
 
     @Test
     public void testBindVariableDropLastPartitionListWithWeekPrecision() throws Exception {
+        final ConnectionAwareRunnable runnable = (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+            connection.commit();
+            mayDrainWalQueue();
+            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST ? ;")) {
+                dropPartition.setString(1, "2023-02-06T09");
+                Assert.assertFalse(dropPartition.execute());
+            }
+            mayDrainWalQueue();
+            try (
+                    PreparedStatement select = connection.prepareStatement("x");
+                    ResultSet rs = select.executeQuery()
+            ) {
+                sink.clear();
+                assertResultSet(
+                        "l[BIGINT],ts[TIMESTAMP],date[TIMESTAMP]\n" +
+                                "14,2023-03-21 03:52:00.999999,2023-03-21 00:00:00.0\n",
+                        sink,
+                        rs
+                );
+            }
+        };
+        assertWithPgServer(Mode.SIMPLE, true, runnable, -2, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, false, runnable, -1, Long.MAX_VALUE);
     }
 
     @Test
