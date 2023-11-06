@@ -66,7 +66,8 @@ public class SecurityContextTest {
                             method.invoke(sc, new ObjHashSet<CharSequence>());
                         } else if (name.startsWith("authorizeShow")
                                 || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
+                                || name.equals("authorizeCreateJwkToken") || name.equals("authorizeDropJwkToken")
+                                || name.equals("authorizeCreateRestToken") || name.equals("authorizeDropRestToken")
                                 || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
                             method.invoke(sc, "userName");
                         } else {
@@ -106,7 +107,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
                             } else if (name.startsWith("authorizeShow")
                                     || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
+                                    || name.equals("authorizeCreateJwkToken") || name.equals("authorizeDropJwkToken")
+                                    || name.equals("authorizeCreateRestToken") || name.equals("authorizeDropRestToken")
                                     || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
                                 method.invoke(sc, "userName");
                             } else {
@@ -158,7 +160,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
                             } else if (name.startsWith("authorizeShow")
                                     || name.equals("authorizeAddPassword") || name.equals("authorizeRemovePassword")
-                                    || name.equals("authorizeCreateJwk") || name.equals("authorizeDropJwk")
+                                    || name.equals("authorizeCreateJwkToken") || name.equals("authorizeDropJwkToken")
+                                    || name.equals("authorizeCreateRestToken") || name.equals("authorizeDropRestToken")
                                     || name.equals("authorizeAssignServiceAccount") || name.equals("authorizeUnassignServiceAccount")) {
                                 method.invoke(sc, "userName");
                             } else {
