@@ -4052,6 +4052,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (!ColumnType.isVariableLength(type)) {
                         MemoryCMOR primary = walColumnMemoryPool.pop();
                         walMappedColumns.add(primary);
+                        walMappedColumns.add(null);
 
                         dFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         primary.ofOffset(
@@ -4063,10 +4064,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 CairoConfiguration.O_NONE
                         );
                         walPath.trimTo(walPathLen);
-                        walMappedColumns.add(null);
                     } else {
                         sizeBitsPow2 = 3;
                         MemoryCMOR fixed = walColumnMemoryPool.pop();
+                        MemoryCMOR var = walColumnMemoryPool.pop();
+
+                        walMappedColumns.add(var);
                         walMappedColumns.add(fixed);
 
                         iFile(walPath, metadata.getColumnName(columnIndex), -1L);
@@ -4078,12 +4081,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 MemoryTag.MMAP_TABLE_WRITER,
                                 CairoConfiguration.O_NONE
                         );
+                        walPath.trimTo(walPathLen);
 
                         long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
                         long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
                         dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                        MemoryCMOR var = walColumnMemoryPool.pop();
-                        walMappedColumns.add(var);
                         var.ofOffset(
                                 configuration.getFilesFacade(),
                                 walPath,
