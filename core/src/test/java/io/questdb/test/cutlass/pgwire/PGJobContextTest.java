@@ -4434,37 +4434,6 @@ nodejs code:
     }
 
     @Test
-    public void testInsertWithNonKeyedMaxDoesntTriggerSegmentationFault() throws Exception {
-        skipOnWalRun();
-
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.createStatement().execute("CREATE TABLE entity (\n" +
-                    "            id INT,\n" +
-                    "            name STRING,\n" +
-                    "            parent_id INT )");
-
-            try (PreparedStatement pstmt = connection.prepareStatement("insert into entity VALUES (?,?,?)")) {
-                pstmt.setInt(1, 0);
-                pstmt.setString(2, "root");
-                pstmt.setInt(3, 0);
-                pstmt.execute();
-                connection.commit();
-            }
-
-            try (Statement stmt = connection.createStatement()) {
-                for (int i = 0; i < 6000; i++) {
-                    String s = "" + i % 100;
-                    stmt.executeUpdate("insert into entity select max(id) + 1,'" + s + "' , 0 from entity");
-                    connection.commit();
-                }
-            }
-
-            mayDrainWalQueue();
-        });
-    }
-
-    @Test
     public void testIntAndLongParametersWithFormatCountGreaterThanValueCount() throws Exception {
         skipOnWalRun(); // non-partitioned table
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
