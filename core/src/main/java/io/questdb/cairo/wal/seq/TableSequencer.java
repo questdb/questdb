@@ -32,7 +32,12 @@ public interface TableSequencer extends QuietCloseable {
 
     void dropTable();
 
+    // This method can return empty cursor if the structureVersionLo
+    // equals to the sequencer metadata structure version.
     TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo);
+
+    // This method will always read files to get the metadata change cursor.
+    TableMetadataChangeLog getMetadataChangeLogSlow(long structureVersionLo);
 
     int getNextWalId();
 

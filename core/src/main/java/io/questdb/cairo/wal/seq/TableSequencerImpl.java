@@ -131,6 +131,13 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
+    public TableMetadataChangeLog getMetadataChangeLogSlow(long structureVersionLo) {
+        checkDropped();
+        // Do not check cached metadata version.
+        return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
+    }
+
+    @Override
     public int getNextWalId() {
         return (int) walIdGenerator.getNextId();
     }
