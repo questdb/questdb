@@ -6544,6 +6544,34 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOnTimestampOverriddenByOtherColumnAlias() throws Exception {
+        assertQuery(
+                "min\ttimestamp\n" +
+                        "1\tA\n" +
+                        "3\tB\n" +
+                        "16\tA\n" +
+                        "18\tB\n",
+                "select min(x), sym timestamp from test sample by 15s",
+                "create table test as (" +
+                        "select rnd_symbol('A', 'B') sym, x, timestamp_sequence('2023-07-20', 1000000) timestamp " +
+                        "from long_sequence(20)) " +
+                        "timestamp(timestamp)",
+                null,
+                false,
+                false
+        );
+
+        assertPlan("select min(x), sym timestamp  from test sample by 15s",
+                "SampleBy\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [min(x)]\n" +
+                        "    SelectedRecord\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: test\n");
+    }
+
+    @Test
     public void testSelectColumns() throws Exception {
         assertQuery(
                 "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
