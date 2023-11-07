@@ -112,10 +112,10 @@ public class HttpQueryTestBuilder {
                     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                         return new DefaultSqlExecutionCircuitBreakerConfiguration() {
                             @Override
-                            public long getTimeout() {
+                            public long getQueryTimeout() {
                                 return queryTimeout > 0 || queryTimeout == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK
                                         ? queryTimeout
-                                        : super.getTimeout();
+                                        : super.getQueryTimeout();
                             }
                         };
                     }

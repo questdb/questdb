@@ -34,6 +34,8 @@ public final class Vect {
 
     public static native double avgLongAcc(long pInt, long count, long pCount);
 
+    public static native double avgShortAcc(long pInt, long count, long pCount);
+
     // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
@@ -144,6 +146,8 @@ public final class Vect {
 
     public static native long maxLong(long pLong, long count);
 
+    public static native long maxShort(long pLong, long count);
+
     public static void memcpy(long dst, long src, long len) {
         // the split length was determined experimentally
         // using 'MemCopyBenchmark' bench
@@ -217,6 +221,8 @@ public final class Vect {
     public static native int minInt(long pInt, long count);
 
     public static native long minLong(long pLong, long count);
+
+    public static native long minShort(long pLong, long count);
 
     public static native void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr);
 
@@ -304,6 +310,8 @@ public final class Vect {
     public static native long sumInt(long pInt, long count);
 
     public static native long sumLong(long pLong, long count);
+
+    public static native long sumShort(long pLong, long count);
 
     private static native int memcmp(long src, long dst, long len);
 
