@@ -476,6 +476,36 @@ public class CompiledFilterTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSymbolComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (s symbol)");
+            insert("insert into test values ('C'), ('B'), ('A')");
+
+            assertSql("s\nB\nA\n", "select s from test where s <  'C'");
+            assertSql("s\nC\nB\nA\n", "select s from test where s <= 'C'");
+            assertSql("s\n", "select s from test where s >  'C'");
+            assertSql("s\nC\n", "select s from test where s >= 'C'");
+
+            assertSql("s\nA\n", "select s from test where s <  'B'");
+            assertSql("s\nB\nA\n", "select s from test where s <= 'B'");
+            assertSql("s\nC\n", "select s from test where s >  'B'");
+            assertSql("s\nC\nB\n", "select s from test where s >= 'B'");
+
+            assertSql("s\n", "select s from test where s <  'A'");
+            assertSql("s\nA\n", "select s from test where s <= 'A'");
+            assertSql("s\nC\nB\n", "select s from test where s >  'A'");
+            assertSql("s\nC\nB\nA\n", "select s from test where s >= 'A'");
+
+            assertSql("s\nC\nB\nA\n", "select s from test where s <  'Z'");
+            assertSql("s\nC\nB\nA\n", "select s from test where s <= 'Z'");
+            assertSql("s\n", "select s from test where s >  'Z'");
+            assertSql("s\n", "select s from test where s >= 'Z'");
+
+            assertSql("s\n", "select s from test where s <  null");
+        });
+    }
+
     private void indexBindVariableReplacedContext(boolean jit) throws SqlException {
 
         bindVariableService.clear();
