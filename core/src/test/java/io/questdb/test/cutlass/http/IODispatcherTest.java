@@ -145,6 +145,12 @@ public class IODispatcherTest extends AbstractTest {
         testHttpClient.setKeepConnection(false);
     }
 
+    @Override
+    public void tearDown() throws Exception {
+        super.tearDown();
+        TestDataUnavailableFunctionFactory.eventCallback = null;
+    }
+
     @Test
     public void testBiasWrite() throws Exception {
         LOG.info().$("started testBiasWrite").$();
@@ -6818,6 +6824,11 @@ public class IODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
                 .withTelemetry(false)
                 .run((engine) -> {
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                    };
+
                     final String select = "select * from test_data_unavailable(32, 10)";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
                             "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
