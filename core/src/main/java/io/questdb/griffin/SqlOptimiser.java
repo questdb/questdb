@@ -2358,7 +2358,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
-        if (model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT) {
+        if (model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT &&
+                // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
+                model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW) {
             model.getParsedWhere().clear();
             final ObjList<ExpressionNode> nodes = model.parseWhereClause();
             model.setWhereClause(null);

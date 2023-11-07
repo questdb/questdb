@@ -66,6 +66,7 @@ import org.junit.runner.Description;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Map;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1157,6 +1158,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
         node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
+    }
+
+    protected static void configOverrideEnv(Map<String, String> env) {
+        node1.getConfigurationOverrides().setEnv(env);
     }
 
     protected static void configOverrideO3ColumnMemorySize(int size) {

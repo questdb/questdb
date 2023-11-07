@@ -31,6 +31,8 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
+import java.util.Map;
+
 @SuppressWarnings("unused")
 public interface ConfigurationOverrides {
     String getAttachableDirSuffix();
@@ -60,6 +62,8 @@ public interface ConfigurationOverrides {
     CharSequence getDefaultMapType();
 
     int getDefaultTableWriteMode();
+
+    Map<String, String> getEnv();
 
     FactoryProvider getFactoryProvider();
 
@@ -195,9 +199,9 @@ public interface ConfigurationOverrides {
 
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 
-    void setFactoryProvider(FactoryProvider factoryProvider);
+    void setEnv(Map<String, String> env);
 
-    void setSimulateCrashEnabled(boolean enabled);
+    void setFactoryProvider(FactoryProvider factoryProvider);
 
     void setFilesFacade(FilesFacade ff);
 
@@ -254,6 +258,8 @@ public interface ConfigurationOverrides {
     void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade);
 
     void setSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize);
+
+    void setSimulateCrashEnabled(boolean enabled);
 
     void setSnapshotInstanceId(String snapshotInstanceId);
 
