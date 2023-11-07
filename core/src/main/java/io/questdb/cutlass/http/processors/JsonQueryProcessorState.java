@@ -51,7 +51,6 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
-    static final int QUERY_SETUP_FIRST_RECORD = 0;
     static final int QUERY_METADATA = 2;
     static final int QUERY_METADATA_SUFFIX = 3;
     static final int QUERY_PREFIX = 1;
@@ -60,6 +59,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_RECORD_START = 4;
     static final int QUERY_RECORD_SUFFIX = 6;
     static final int QUERY_SEND_RECORDS_LOOP = 8;
+    static final int QUERY_SETUP_FIRST_RECORD = 0;
     static final int QUERY_SUFFIX = 7;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
@@ -474,34 +474,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.columnNames.add(metadata.getColumnName(i));
     }
 
-    private void onSetupFirstRecord(HttpChunkedResponseSocket socket, int columnCount) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        // If there is an exception in the first record setup then upper layers will handle it:
-        // Either they will send error or pause execution on DataUnavailableException
-        setupFirstRecord();
-        // If we make it past setup then we optimistically send HTTP 200 header.
-        // There is still a risk of exception while iterating over cursor, but there is not much we can do about it.
-        // Trying to access the first record before sending HTTP headers will already catch many errors.
-        // So we can send an appropriate HTTP error code. If there is an error past the first record then
-        // we have no choice but to disconnect :( - because we have already sent HTTP 200 header.
-
-        // We assume HTTP headers will always fit into our buffer => a state transition to the QUERY_PREFIX
-        // before actually sending HTTP headers. Otherwise, we would have to make JsonQueryProcessor.header() idempotent
-        queryState = QUERY_PREFIX;
-        JsonQueryProcessor.header(socket, getHttpConnectionContext(), keepAliveHeader, 200);
-        onQueryPrefix(socket, columnCount);
-    }
-
-    private void onSendRecordsLoop(
-            HttpChunkedResponseSocket socket,
-            int columnCount
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (cursorHasRows) {
-            doRecordFetchLoop(socket, columnCount);
-        } else {
-            doQuerySuffix(socket, columnCount);
-        }
-    }
-
     private void doNextRecordLoop(
             HttpChunkedResponseSocket socket,
             int columnCount
@@ -783,6 +755,47 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         doNextRecordLoop(socket, columnCount);
     }
 
+    private void onSendRecordsLoop(
+            HttpChunkedResponseSocket socket,
+            int columnCount
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (cursorHasRows) {
+            doRecordFetchLoop(socket, columnCount);
+        } else {
+            doQuerySuffix(socket, columnCount);
+        }
+    }
+
+    private void onSetupFirstRecord(HttpChunkedResponseSocket socket, int columnCount) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        // If there is an exception in the first record setup then upper layers will handle it:
+        // Either they will send error or pause execution on DataUnavailableException
+        setupFirstRecord();
+        // If we make it past setup then we optimistically send HTTP 200 header.
+        // There is still a risk of exception while iterating over cursor, but there is not much we can do about it.
+        // Trying to access the first record before sending HTTP headers will already catch many errors.
+        // So we can send an appropriate HTTP error code. If there is an error past the first record then
+        // we have no choice but to disconnect :( - because we have already sent HTTP 200 header.
+
+        // We assume HTTP headers will always fit into our buffer => a state transition to the QUERY_PREFIX
+        // before actually sending HTTP headers. Otherwise, we would have to make JsonQueryProcessor.header() idempotent
+        queryState = QUERY_PREFIX;
+        JsonQueryProcessor.header(socket, getHttpConnectionContext(), keepAliveHeader, 200);
+        onQueryPrefix(socket, columnCount);
+    }
+
+    private void putBinValue(HttpChunkedResponseSocket socket) {
+        socket.putAscii('[');
+        socket.putAscii(']');
+    }
+
+    private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getDouble(col), doubleScale);
+    }
+
+    private void putFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getFloat(col), floatScale);
+    }
+
     private void setupFirstRecord() {
         if (skip > 0) {
             final RecordCursor cursor = this.cursor;
@@ -805,19 +818,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnIndex = 0;
         record = cursor.getRecord();
         cursorHasRows = true;
-    }
-
-    private void putBinValue(HttpChunkedResponseSocket socket) {
-        socket.putAscii('[');
-        socket.putAscii(']');
-    }
-
-    private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put(rec.getDouble(col), doubleScale);
-    }
-
-    private void putFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put(rec.getFloat(col), floatScale);
     }
 
     static void prepareExceptionJson(
