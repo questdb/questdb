@@ -84,7 +84,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     FactoryProviderFactoryImpl.INSTANCE
                             ) {
                                 @Override
-                                public boolean isIlpEnabled() {
+                                public boolean isLineTcpEnabled() {
                                     return ilpEnabled.get();
                                 }
                             };

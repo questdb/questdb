@@ -50,7 +50,7 @@ public class StaticChallengeResponseMatcher implements ChallengeResponseMatcher 
     }
 
     @Override
-    public boolean verifyLineToken(CharSequence username, long challengePtr, int challengeLen, long signaturePtr, int signatureLen) {
+    public boolean verifyJwk(CharSequence username, long challengePtr, int challengeLen, long signaturePtr, int signatureLen) {
         assert challengeLen == AuthUtils.CHALLENGE_LEN;
         PublicKey publicKey = getPublicKey(username);
         if (publicKey == null) {
