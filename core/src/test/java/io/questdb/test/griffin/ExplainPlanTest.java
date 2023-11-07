@@ -4638,6 +4638,39 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPostJoinConditionColumnsAreResolved() throws Exception {
+        assertMemoryLeak(() -> {
+            String query = "SELECT count(*)\n" +
+                    "FROM test as T1\n" +
+                    "JOIN ( SELECT * FROM test ) as T2 ON T1.event < T2.event\n" +
+                    "JOIN test as T3 ON T2.created = T3.created";
+
+            ddl("create table test (event int, created timestamp)");
+            insert("insert into test values (1, 1), (2, 2)");
+
+            assertPlan(query,
+                    "Count\n" +
+                            "    Filter filter: T1.event<T2.event\n" +
+                            "        Cross Join\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: T3.created=T2.created\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: test\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: test\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: test\n"
+            );
+
+            assertSql("count\n1\n", query);
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithAddition() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE tab ( x int );");
