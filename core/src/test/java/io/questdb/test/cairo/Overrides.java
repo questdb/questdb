@@ -34,6 +34,8 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
+import java.util.Map;
+
 public class Overrides implements ConfigurationOverrides {
     private String attachableDirSuffix = null;
     private CharSequence backupDir;
@@ -52,6 +54,7 @@ public class Overrides implements ConfigurationOverrides {
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
+    private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
     private boolean hideTelemetryTable = false;
@@ -170,6 +173,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getDefaultTableWriteMode() {
         return defaultTableWriteMode;
+    }
+
+    @Override
+    public Map<String, String> getEnv() {
+        return env != null ? env : System.getenv();
     }
 
     @Override
@@ -474,6 +482,7 @@ public class Overrides implements ConfigurationOverrides {
         repeatMigrationsFromVersion = -1;
         factoryProvider = null;
         simulateCrashEnabled = false;
+        env = null;
     }
 
     @Override
@@ -551,14 +560,13 @@ public class Overrides implements ConfigurationOverrides {
         this.defaultTableWriteMode = defaultTableWriteMode;
     }
 
-    @Override
-    public void setFactoryProvider(FactoryProvider factoryProvider) {
-        this.factoryProvider = factoryProvider;
+    public void setEnv(Map<String, String> env) {
+        this.env = env;
     }
 
     @Override
-    public void setSimulateCrashEnabled(boolean enabled) {
-        this.simulateCrashEnabled = enabled;
+    public void setFactoryProvider(FactoryProvider factoryProvider) {
+        this.factoryProvider = factoryProvider;
     }
 
     @Override
@@ -699,6 +707,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
         this.sampleByIndexSearchPageSize = sampleByIndexSearchPageSize;
+    }
+
+    @Override
+    public void setSimulateCrashEnabled(boolean enabled) {
+        this.simulateCrashEnabled = enabled;
     }
 
     @Override
