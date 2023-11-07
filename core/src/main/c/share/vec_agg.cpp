@@ -360,7 +360,7 @@ int32_t MAX_INT(int32_t *pi, int64_t count) {
     Vec16i vec;
     Vec16i vecMax = I_MIN;
     int i;
-    for (i = 0; i < count - 7; i += step) {
+    for (i = 0; i < count - 15; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
         vecMax = max(vecMax, vec);
