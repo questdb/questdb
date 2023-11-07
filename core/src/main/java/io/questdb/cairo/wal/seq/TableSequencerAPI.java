@@ -205,6 +205,18 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public TableMetadataChangeLog getMetadataChangeLogSlow(final TableToken tableToken, long structureVersionLo) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            TableMetadataChangeLog metadataChangeLog;
+            try {
+                metadataChangeLog = tableSequencer.getMetadataChangeLogSlow(structureVersionLo);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return metadataChangeLog;
+        }
+    }
+
     public int getNextWalId(final TableToken tableToken) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             int walId;
