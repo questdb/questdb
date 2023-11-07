@@ -198,6 +198,19 @@ int64_t sumLong_Vanilla(int64_t *pl, int64_t count) {
     return hasData ? sum : L_MIN;
 }
 
+int64_t sumShort_Vanilla(int16_t *pl, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
+    const int16_t *lim = pl + count;
+    int64_t sum = 0;
+    for (; pl < lim; pl++) {
+        const int64_t l = *pl;
+        sum += l;
+    }
+    return sum;
+}
+
 int64_t minLong_Vanilla(int64_t *pl, int64_t count) {
     const int64_t *lim = pl + count;
     int64_t min = L_MIN;
@@ -208,6 +221,36 @@ int64_t minLong_Vanilla(int64_t *pl, int64_t count) {
         }
     }
     return min;
+}
+
+int32_t minShort_Vanilla(int16_t *pl, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
+    const int16_t *lim = pl + count;
+    int32_t min = I_MAX;
+    for (; pl < lim; pl++) {
+        const int16_t val = *pl;
+        if (val < min) {
+            min = val;
+        }
+    }
+    return min;
+}
+
+int32_t maxShort_Vanilla(int16_t *pl, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
+    const int16_t *lim = pl + count;
+    int32_t max = I_MIN;
+    for (; pl < lim; pl++) {
+        const int16_t val = *pl;
+        if (val > max) {
+            max = val;
+        }
+    }
+    return max;
 }
 
 int64_t maxLong_Vanilla(int64_t *pl, int64_t count) {
@@ -259,9 +302,23 @@ Java_io_questdb_std_Vect_avgLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong coun
     for (uint32_t i = 0; i < count; i++) {
         int64_t v = ppi[i];
         if (v != L_MIN) {
-            avg += (v - avg) / c;
+            avg += ((double_t) v - avg) / c;
             ++c;
         }
+    }
+    *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
+    return avg;
+}
+
+JNIEXPORT jdouble JNICALL
+Java_io_questdb_std_Vect_avgShortAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
+    auto *ppi = reinterpret_cast<int16_t *>(pi);
+    double_t avg = 0;
+    double_t c = 1;
+    for (uint32_t i = 0; i < count; i++) {
+        int16_t v = ppi[i];
+        avg += ((double_t) v - avg) / c;
+        ++c;
     }
     *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
     return avg;

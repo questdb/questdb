@@ -37,7 +37,7 @@ public class QueryPausedException extends Exception {
         QueryPausedException ex = tlException.get();
         SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = circuitBreaker.getConfiguration();
         if (circuitBreakerConfiguration != null) {
-            long timeout = circuitBreakerConfiguration.getTimeout();
+            long timeout = circuitBreakerConfiguration.getQueryTimeout();
             if (timeout != Long.MAX_VALUE) {
                 long deadline = circuitBreakerConfiguration.getClock().getTicks() + timeout;
                 event.setDeadline(deadline);

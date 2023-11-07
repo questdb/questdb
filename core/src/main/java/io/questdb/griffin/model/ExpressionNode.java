@@ -55,8 +55,8 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int position;
     public int precedence;
     public QueryModel queryModel;
-    public @Nullable ExpressionNode rhs;
-    public @Nullable CharSequence token;
+    public ExpressionNode rhs;
+    public CharSequence token;
     public int type;
 
     // IMPORTANT: update deepClone method after adding a new field
