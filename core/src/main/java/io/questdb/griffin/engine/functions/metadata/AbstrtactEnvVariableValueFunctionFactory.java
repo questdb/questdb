@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.metadata;
 
-import io.questdb.BuildInformation;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
@@ -35,13 +34,8 @@ import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicReference;
 
-public class BuildFunctionFactory implements FunctionFactory {
+public abstract class AbstrtactEnvVariableValueFunctionFactory implements FunctionFactory {
     private final AtomicReference<StrConstant> functionRef = new AtomicReference<>();
-
-    @Override
-    public String getSignature() {
-        return "build()";
-    }
 
     @Override
     public boolean isRuntimeConstant() {
@@ -58,18 +52,10 @@ public class BuildFunctionFactory implements FunctionFactory {
     ) {
         StrConstant that = functionRef.get();
         if (that == null) {
-            // we are assuming build information is constant for the instance runtime
-            final BuildInformation buildInformation = configuration.getBuildInformation();
-            final CharSequence information = "Build Information: " +
-                    buildInformation.getSwName() + " " +
-                    buildInformation.getSwVersion() +
-                    ", JDK " +
-                    buildInformation.getJdkVersion() +
-                    ", Commit Hash " +
-                    buildInformation.getCommitHash();
-
-            functionRef.set(that = new StrConstant(information));
+            functionRef.set(that = new StrConstant(configuration.getEnv().get(getEnvVariableName())));
         }
         return that;
     }
+
+    abstract protected String getEnvVariableName();
 }

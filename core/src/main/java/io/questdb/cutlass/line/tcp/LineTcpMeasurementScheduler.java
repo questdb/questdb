@@ -34,6 +34,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -280,8 +281,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             LOG.info().$("could not get table writer [tableName=").$(measurementName)
                     .$(", ex=`")
                     .$(ex.getFlyweightMessage())
-                    .$("`]")
-                    .$();
+                    .$("`]").$();
             return true;
         } catch (CairoException ex) {
             // Table could not be created
@@ -289,8 +289,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     .$(", errno=").$(ex.getErrno())
                     .$(", ex=`")
                     .$(ex.getFlyweightMessage())
-                    .$("`]")
-                    .I$();
+                    .$("`]").$();
             // More details will be logged by catching thread
             throw ex;
         }
@@ -330,11 +329,16 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
     private static void handleAppendException(DirectUtf8Sequence measurementName, TableUpdateDetails tud, Throwable ex) {
         tud.setWriterInError();
-        LOG.critical().$("closing writer because of error [table=").$(tud.getTableNameUtf16())
-                .$(",ex=")
-                .$(ex)
+        LogRecord logRecord;
+        if (ex instanceof CairoException && !((CairoException) ex).isCritical()) {
+            logRecord = LOG.error();
+        } else {
+            logRecord = LOG.critical();
+        }
+        logRecord.$("closing writer because of error [table=").$(tud.getTableNameUtf16())
+                .$(", ex=").$(ex)
                 .I$();
-        throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
+        throw CairoException.critical(0).put("could not write ILP message to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
     }
 
     private void appendToWal(

@@ -37,6 +37,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
 
 import java.lang.ThreadLocal;
+import java.util.Map;
 import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
@@ -139,6 +140,10 @@ public interface CairoConfiguration {
     int getDetachedMkDirMode();
 
     int getDoubleToStrCastScale();
+
+    default Map<String, String> getEnv() {
+        return System.getenv();
+    }
 
     int getExplainPoolCapacity();
 

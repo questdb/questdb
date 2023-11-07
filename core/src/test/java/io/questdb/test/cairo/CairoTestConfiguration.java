@@ -36,6 +36,8 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Map;
+
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
     private final TelemetryConfiguration telemetryConfiguration;
@@ -202,6 +204,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean getSimulateCrashEnabled() {
         return overrides.getSimulateCrashEnabled();
+    }
+
+    @Override
+    public Map<String, String> getEnv() {
+        return overrides.getEnv();
     }
 
     @Override
