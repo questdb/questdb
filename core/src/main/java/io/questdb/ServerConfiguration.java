@@ -59,7 +59,7 @@ public interface ServerConfiguration {
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
     }
 
-    default boolean isIlpEnabled() {
+    default boolean isLineTcpEnabled() {
         return true;
     }
 }
