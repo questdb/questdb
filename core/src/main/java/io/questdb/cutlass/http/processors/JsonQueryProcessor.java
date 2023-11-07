@@ -284,10 +284,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 doResumeSend(state, context, sqlExecutionContext);
             } catch (CairoError | CairoException e) {
-                // this is something we didn't expect
-                // log the exception and disconnect
-                logInternalError(e, state, context.getMetrics());
-                throw ServerDisconnectException.INSTANCE;
+                internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
+                        400, e, state, context.getMetrics());
             }
         }
     }

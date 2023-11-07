@@ -3520,6 +3520,9 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryErrorOnDataUnavailableEventNeverFired() throws Exception {
+        TestDataUnavailableFunctionFactory.eventCallback = event -> {
+            event.close();
+        };
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(1)
