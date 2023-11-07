@@ -146,7 +146,7 @@ public final class Vect {
 
     public static native long maxLong(long pLong, long count);
 
-    public static native long maxShort(long pLong, long count);
+    public static native int maxShort(long pLong, long count);
 
     public static void memcpy(long dst, long src, long len) {
         // the split length was determined experimentally
@@ -222,7 +222,7 @@ public final class Vect {
 
     public static native long minLong(long pLong, long count);
 
-    public static native long minShort(long pLong, long count);
+    public static native int minShort(long pLong, long count);
 
     public static native void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr);
 

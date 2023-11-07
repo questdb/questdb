@@ -27,7 +27,8 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -37,14 +38,14 @@ import java.util.function.LongBinaryOperator;
 
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
-public class MaxShortVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
+public class MaxShortVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MAX = Math::max;
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
-    private final LongAccumulator max = new LongAccumulator(
-            MAX, Long.MIN_VALUE
+    private final LongAccumulator accumulator = new LongAccumulator(
+            MAX, Numbers.INT_NaN
     );
     private int valueOffset;
 
@@ -63,7 +64,10 @@ public class MaxShortVectorAggregateFunction extends LongFunction implements Vec
     @Override
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
-            max.accumulate(Vect.maxShort(address, addressSize / Short.BYTES));
+            final long value = Vect.maxShort(address, addressSize / Short.BYTES);
+            if (value != Numbers.INT_NaN) {
+                accumulator.accumulate(value);
+            }
         }
     }
 
@@ -78,7 +82,7 @@ public class MaxShortVectorAggregateFunction extends LongFunction implements Vec
 
     @Override
     public void clear() {
-        max.reset();
+        accumulator.reset();
     }
 
     @Override
@@ -87,8 +91,8 @@ public class MaxShortVectorAggregateFunction extends LongFunction implements Vec
     }
 
     @Override
-    public long getLong(Record rec) {
-        return max.longValue();
+    public int getInt(Record rec) {
+        return accumulator.intValue();
     }
 
     @Override
@@ -119,6 +123,6 @@ public class MaxShortVectorAggregateFunction extends LongFunction implements Vec
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
+        return Rosti.keyedIntMaxShortWrapUp(pRosti, valueOffset, accumulator.intValue());
     }
 }

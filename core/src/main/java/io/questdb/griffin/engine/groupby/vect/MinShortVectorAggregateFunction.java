@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
@@ -38,19 +38,19 @@ import java.util.function.LongBinaryOperator;
 
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
-public class MinShortVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
+public class MinShortVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MIN = (long l1, long l2) -> {
-        if (l1 == Numbers.LONG_NaN) {
+        if (l1 == Numbers.INT_NaN) {
             return l2;
         }
-        if (l2 == Numbers.LONG_NaN) {
+        if (l2 == Numbers.INT_NaN) {
             return l1;
         }
         return Math.min(l1, l2);
     };
     private final LongAccumulator accumulator = new LongAccumulator(
-            MIN, Numbers.LONG_NaN
+            MIN, Numbers.INT_NaN
     );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -73,7 +73,7 @@ public class MinShortVectorAggregateFunction extends LongFunction implements Vec
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final long value = Vect.minShort(address, addressSize / Short.BYTES);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.INT_NaN) {
                 accumulator.accumulate(value);
             }
         }
@@ -99,8 +99,8 @@ public class MinShortVectorAggregateFunction extends LongFunction implements Vec
     }
 
     @Override
-    public long getLong(Record rec) {
-        return accumulator.longValue();
+    public int getInt(Record rec) {
+        return accumulator.intValue();
     }
 
     @Override
@@ -131,6 +131,6 @@ public class MinShortVectorAggregateFunction extends LongFunction implements Vec
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
+        return Rosti.keyedIntMinShortWrapUp(pRosti, valueOffset, accumulator.intValue());
     }
 }

@@ -198,6 +198,8 @@ public final class Rosti {
 
     public static native boolean keyedIntMaxLongWrapUp(long pRosti, int valueOffset, long valueAtNull);
 
+    public static native boolean keyedIntMaxShortWrapUp(long pRosti, int valueOffset, int accumulatedValue);
+
     // min double
     public static native boolean keyedIntMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
@@ -228,6 +230,8 @@ public final class Rosti {
     public static native boolean keyedIntMinLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static native boolean keyedIntMinLongWrapUp(long pRosti, int valueOffset, long valueAtNull);
+
+    public static native boolean keyedIntMinShortWrapUp(long pRosti, int valueOffset, long accumulatedValue);
 
     // nsum double
     public static native boolean keyedIntNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);

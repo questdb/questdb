@@ -1861,7 +1861,7 @@ Java_io_questdb_std_Rosti_keyedIntSumShortLong(JNIEnv *env, jclass cl, jlong pRo
 
 JNIEXPORT jboolean JNICALL
 Java_io_questdb_std_Rosti_keyedHourSumShortLong(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
-                                               jlong count, jint valueOffset) {
+                                                jlong count, jint valueOffset) {
     return kIntSumShort<accumulator_t>(int64_to_hour, pRosti, pKeys, pLong, count, valueOffset);
 }
 
@@ -2031,8 +2031,37 @@ Java_io_questdb_std_Rosti_keyedIntMinLongWrapUp(JNIEnv *env, jclass cl, jlong pR
 }
 
 JNIEXPORT jboolean JNICALL
-Java_io_questdb_std_Rosti_keyedIntMaxLongWrapUp(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset,
-                                                jlong valueAtNull) {
+Java_io_questdb_std_Rosti_keyedIntMinShortWrapUp(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset,
+                                                 jint accumulatedValue) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto slots = map->slots_;
+
+    // populate null value
+    if (accumulatedValue > I_MIN) {
+        auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
+        auto res = find(map, nullKey);
+        // maps must have identical structure to use "shift" from map B on map A
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = nullKey;
+            *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
+        } else {
+            const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
+            if (accumulatedValue > old) {
+                *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
+            }
+        }
+    }
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntMaxLongWrapUp(
+        JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset, jlong valueAtNull) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
 
@@ -2052,6 +2081,34 @@ Java_io_questdb_std_Rosti_keyedIntMaxLongWrapUp(JNIEnv *env, jclass cl, jlong pR
             *reinterpret_cast<jlong *>(dest + value_offset) = MAX(
                     valueAtNull,
                     *reinterpret_cast<jlong *>(dest + value_offset)
+            );
+        }
+    }
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntMaxShortWrapUp(
+        JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset, jint accumulatedValue) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto value_offset = map->value_offsets_[valueOffset];
+
+    // populate null value
+    if (accumulatedValue > I_MIN) {
+        auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
+        auto res = find(map, nullKey);
+        // maps must have identical structure to use "shift" from map B on map A
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = nullKey;
+            *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
+        } else {
+            *reinterpret_cast<jlong *>(dest + value_offset) = MAX(
+                    (jshort) accumulatedValue,
+                    *reinterpret_cast<jshort *>(dest + value_offset)
             );
         }
     }
