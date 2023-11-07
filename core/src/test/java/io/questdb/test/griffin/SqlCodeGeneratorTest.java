@@ -6544,6 +6544,53 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOnTimestampOverriddenByOtherColumnAlias() throws Exception {
+        assertQuery(
+                "min\ttimestamp\n" +
+                        "1\tA\n" +
+                        "3\tB\n" +
+                        "16\tA\n" +
+                        "18\tB\n",
+                "select min(x), sym timestamp from test1 sample by 15s",
+                "create table test1 as (" +
+                        "select rnd_symbol('A', 'B') sym, x, timestamp_sequence('2023-07-20', 1000000) timestamp " +
+                        "from long_sequence(20)) " +
+                        "timestamp(timestamp)",
+                null,
+                false,
+                false
+        );
+
+        assertPlan("select min(x), sym timestamp  from test1 sample by 15s",
+                "SampleBy\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [min(x)]\n" +
+                        "    SelectedRecord\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: test1\n");
+
+        assertQuery(
+                "min\ttimestamp\ttimestamp0\n" +
+                        "1\tB\tB\n" +
+                        "2\tA\tB\n" +
+                        "16\tA\tB\n" +
+                        "17\tB\tB\n",
+                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s",
+                "create table test2 as (" +
+                        "select rnd_symbol('A', 'B') sym1, " +
+                        "       rnd_symbol('B') sym2, " +
+                        "       x, " +
+                        "       timestamp_sequence('2023-07-20', 1000000) timestamp " +
+                        "from long_sequence(20)) " +
+                        "timestamp(timestamp)",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testSelectColumns() throws Exception {
         assertQuery(
                 "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
