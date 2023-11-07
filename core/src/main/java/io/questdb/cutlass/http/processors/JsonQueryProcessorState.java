@@ -58,7 +58,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_RECORD_PREFIX = 9;
     static final int QUERY_RECORD_START = 4;
     static final int QUERY_RECORD_SUFFIX = 6;
-    static final int QUERY_SETUP_FIRST_RECORD = 8;
+    static final int QUERY_SEND_RECORDS_LOOP = 8;
+    static final int QUERY_SETUP_FIRST_RECORD = 0;
     static final int QUERY_SUFFIX = 7;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
@@ -69,6 +70,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final SCSequence eventSubSequence = new SCSequence();
     private final int floatScale;
     private final HttpConnectionContext httpConnectionContext;
+    private final CharSequence keepAliveHeader;
     private final NanosecondClock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
@@ -80,6 +82,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long count;
     private boolean countRows = false;
     private RecordCursor cursor;
+    private boolean cursorHasRows;
     private long executeStartNanos;
     private boolean explain = false;
     private boolean noMeta = false;
@@ -87,7 +90,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean pausedQuery = false;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
-    private int queryState = QUERY_PREFIX;
+    private int queryState = QUERY_SETUP_FIRST_RECORD;
     private int queryTimestampIndex;
     private short queryType;
     private boolean quoteLargeNum = false;
@@ -103,13 +106,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpConnectionContext httpConnectionContext,
             NanosecondClock nanosecondClock,
             int floatScale,
-            int doubleScale
-    ) {
+            int doubleScale,
+            CharSequence keepAliveHeader) {
         this.httpConnectionContext = httpConnectionContext;
+        resumeActions.extendAndSet(QUERY_SETUP_FIRST_RECORD, this::onSetupFirstRecord);
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
         resumeActions.extendAndSet(QUERY_METADATA, this::onQueryMetadata);
         resumeActions.extendAndSet(QUERY_METADATA_SUFFIX, this::onQueryMetadataSuffix);
-        resumeActions.extendAndSet(QUERY_SETUP_FIRST_RECORD, this::doFirstRecordLoop);
+        resumeActions.extendAndSet(QUERY_SEND_RECORDS_LOOP, this::onSendRecordsLoop);
         resumeActions.extendAndSet(QUERY_RECORD_PREFIX, this::onQueryRecordPrefix);
         resumeActions.extendAndSet(QUERY_RECORD, this::onQueryRecord);
         resumeActions.extendAndSet(QUERY_RECORD_SUFFIX, this::onQueryRecordSuffix);
@@ -119,6 +123,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
+        this.keepAliveHeader = keepAliveHeader;
     }
 
     @Override
@@ -140,7 +145,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         query.clear();
         columnsQueryParameter.clear();
-        queryState = QUERY_PREFIX;
+        queryState = QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         countRows = false;
         explain = false;
@@ -469,17 +474,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.columnNames.add(metadata.getColumnName(i));
     }
 
-    private void doFirstRecordLoop(
-            HttpChunkedResponseSocket socket,
-            int columnCount
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (onQuerySetupFirstRecord()) {
-            doRecordFetchLoop(socket, columnCount);
-        } else {
-            doQuerySuffix(socket, columnCount);
-        }
-    }
-
     private void doNextRecordLoop(
             HttpChunkedResponseSocket socket,
             int columnCount
@@ -729,7 +723,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadataSuffix(socket);
-        doFirstRecordLoop(socket, columnCount);
+        onSendRecordsLoop(socket, columnCount);
     }
 
     private void onQueryPrefix(HttpChunkedResponseSocket socket, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -737,7 +731,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             doQueryMetadata(socket, columnCount);
             doQueryMetadataSuffix(socket);
         }
-        doFirstRecordLoop(socket, columnCount);
+        onSendRecordsLoop(socket, columnCount);
     }
 
     private void onQueryRecord(HttpChunkedResponseSocket socket, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -761,26 +755,32 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         doNextRecordLoop(socket, columnCount);
     }
 
-    private boolean onQuerySetupFirstRecord() {
-        if (skip > 0) {
-            final RecordCursor cursor = this.cursor;
-            long target = skip + 1;
-            while (target > 0 && cursor.hasNext()) {
-                target--;
-            }
-            if (target > 0) {
-                return false;
-            }
-            count = skip;
+    private void onSendRecordsLoop(
+            HttpChunkedResponseSocket socket,
+            int columnCount
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (cursorHasRows) {
+            doRecordFetchLoop(socket, columnCount);
         } else {
-            if (!cursor.hasNext()) {
-                return false;
-            }
+            doQuerySuffix(socket, columnCount);
         }
+    }
 
-        columnIndex = 0;
-        record = cursor.getRecord();
-        return true;
+    private void onSetupFirstRecord(HttpChunkedResponseSocket socket, int columnCount) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        // If there is an exception in the first record setup then upper layers will handle it:
+        // Either they will send error or pause execution on DataUnavailableException
+        setupFirstRecord();
+        // If we make it past setup then we optimistically send HTTP 200 header.
+        // There is still a risk of exception while iterating over cursor, but there is not much we can do about it.
+        // Trying to access the first record before sending HTTP headers will already catch many errors.
+        // So we can send an appropriate HTTP error code. If there is an error past the first record then
+        // we have no choice but to disconnect :( - because we have already sent HTTP 200 header.
+
+        // We assume HTTP headers will always fit into our buffer => a state transition to the QUERY_PREFIX
+        // before actually sending HTTP headers. Otherwise, we would have to make JsonQueryProcessor.header() idempotent
+        queryState = QUERY_PREFIX;
+        JsonQueryProcessor.header(socket, getHttpConnectionContext(), keepAliveHeader, 200);
+        onQueryPrefix(socket, columnCount);
     }
 
     private void putBinValue(HttpChunkedResponseSocket socket) {
@@ -794,6 +794,30 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void putFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         socket.put(rec.getFloat(col), floatScale);
+    }
+
+    private void setupFirstRecord() {
+        if (skip > 0) {
+            final RecordCursor cursor = this.cursor;
+            long target = skip + 1;
+            while (target > 0 && cursor.hasNext()) {
+                target--;
+            }
+            if (target > 0) {
+                cursorHasRows = false;
+                return;
+            }
+            count = skip;
+        } else {
+            if (!cursor.hasNext()) {
+                cursorHasRows = false;
+                return;
+            }
+        }
+
+        columnIndex = 0;
+        record = cursor.getRecord();
+        cursorHasRows = true;
     }
 
     static void prepareExceptionJson(
