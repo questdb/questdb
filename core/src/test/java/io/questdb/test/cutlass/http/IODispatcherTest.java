@@ -3519,11 +3519,22 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryDisconnectOnDataUnavailableEventNeverFired() throws Exception {
-        testDisconnectOnDataUnavailableEventNeverFired(
-                "GET /query?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
-                        + SendAndReceiveRequestBuilder.RequestHeaders
-        );
+    public void testJsonQueryErrorOnDataUnavailableEventNeverFired() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(100)
+                .run((engine) -> {
+                    testHttpClient.assertGetRegexp(
+                            "/query",
+                            "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                            "select * from test_data_unavailable(1, 10)",
+                            null, null,
+                            "400"
+                    );
+                });
     }
 
     @Test

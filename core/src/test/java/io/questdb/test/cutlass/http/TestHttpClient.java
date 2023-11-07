@@ -34,10 +34,11 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.cutlass.RegexpMatcher;
 import io.questdb.test.tools.TestUtils;
-import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
+
+import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
     private final HttpClient httpClient = HttpClientFactory.newInstance();
@@ -137,8 +138,9 @@ public class TestHttpClient implements QuietCloseable {
         try {
             sink.clear();
             toSink0(url, sql, sink, username, password, expectedStatus);
-            RegexpMatcher<CharSequence> matcher = new RegexpMatcher<>(expectedResponseRegexp);
-            MatcherAssert.assertThat(sink, matcher);
+            Pattern pattern = Pattern.compile(expectedResponseRegexp);
+            String message = "Expected response to match regexp " + expectedResponseRegexp + " but got " + sink + " which does not match";
+            Assert.assertTrue(message, pattern.matcher(sink).matches());
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
