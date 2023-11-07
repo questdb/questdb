@@ -57,8 +57,8 @@ bool hasNull_Vanilla(int32_t *pi, int64_t count);
 
 int64_t sumShort_Vanilla(int16_t *pl, int64_t count);
 
-int64_t minShort_Vanilla(int16_t *pl, int64_t count);
+int32_t minShort_Vanilla(int16_t *pl, int64_t count);
 
-int64_t maxShort_Vanilla(int16_t *pl, int64_t count);
+int32_t maxShort_Vanilla(int16_t *pl, int64_t count);
 
 #endif //VECT_VANILLA_H

@@ -69,7 +69,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                         continue;
                     }
 
-                    boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE;
+                    boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || t == SHORT;
 
                     planSink.clear();
                     planSink.put("GroupBy vectorized: ").put(vectorized).put("\n")
@@ -121,7 +121,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                         continue;
                     }
 
-                    boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE;
+                    boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || t == SHORT;
 
                     planSink.clear();
                     planSink.put("GroupBy vectorized: ").put(vectorized).put(vectorized ? " workers: 1" : "").put("\n")

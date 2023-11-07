@@ -223,9 +223,9 @@ int64_t minLong_Vanilla(int64_t *pl, int64_t count) {
     return min;
 }
 
-int64_t minShort_Vanilla(int16_t *pl, int64_t count) {
+int32_t minShort_Vanilla(int16_t *pl, int64_t count) {
     if (count == 0) {
-        return L_MIN;
+        return I_MIN;
     }
     const int16_t *lim = pl + count;
     int32_t min = I_MAX;
@@ -238,9 +238,9 @@ int64_t minShort_Vanilla(int16_t *pl, int64_t count) {
     return min;
 }
 
-int64_t maxShort_Vanilla(int16_t *pl, int64_t count) {
+int32_t maxShort_Vanilla(int16_t *pl, int64_t count) {
     if (count == 0) {
-        return L_MIN;
+        return I_MIN;
     }
     const int16_t *lim = pl + count;
     int32_t max = I_MIN;
