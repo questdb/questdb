@@ -83,8 +83,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
-        Assert.assertEquals(0, Files.rmdir(auxPath.of(otherVolume).$()));
+    public static void tearDownStatic() {
+        Assert.assertTrue(Files.rmdir(auxPath.of(otherVolume).$(), true));
         AbstractBootstrapTest.tearDownStatic();
     }
 
@@ -211,7 +211,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
                 String tablePathStr = dbPath.toString();
                 String foreignPathStr = foreignPath.toString();
-                Assert.assertEquals(0, Files.rmdir(auxPath.of(tablePathStr).$()));
+                Assert.assertTrue(Files.rmdir(auxPath.of(tablePathStr).$(), true));
                 Assert.assertFalse(Files.exists(dbPath));
                 createSoftLink(foreignPathStr, tablePathStr);
                 Assert.assertTrue(Files.exists(dbPath));
@@ -604,7 +604,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             boolean inVolume,
             boolean addIfNotExists
     ) throws Exception {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         sink.put("CREATE TABLE ");
         if (addIfNotExists) {
             sink.put("IF NOT EXISTS ");

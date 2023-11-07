@@ -32,8 +32,11 @@ public class CountTest extends AbstractCairoTest {
 
     @Test
     public void testColumnAlias() throws Exception {
-        assertQuery("cnt\n" +
-                        "20\n", "select count() cnt from x", "create table x as " +
+        assertQuery(
+                "cnt\n" +
+                        "20\n",
+                "select count() cnt from x",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -46,7 +49,9 @@ public class CountTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                "insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
@@ -58,13 +63,19 @@ public class CountTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)", "cnt\n" +
-                        "25\n", false, true, false);
+                        ") timestamp(k)",
+                "cnt\n" +
+                        "25\n",
+                false,
+                true,
+                false
+        );
     }
 
     @Test(expected = SqlException.class)
     public void testConstNullThrows() throws Exception {
-        assertQuery("cnt_1\tcnt_42\n" +
+        assertQuery(
+                "cnt_1\tcnt_42\n" +
                         "20\t20\n",
                 "select count(NULL) from x",
                 "create table x as " +
@@ -85,7 +96,8 @@ public class CountTest extends AbstractCairoTest {
 
     @Test(expected = SqlException.class)
     public void testCountOverCursorThrows() throws Exception {
-        assertQuery("cnt_1\tcnt_42\n" +
+        assertQuery(
+                "cnt_1\tcnt_42\n" +
                         "20\t20\n",
                 "count(select distinct s from x where right(s, 1)='/')",
                 "create table x (s string, ts timestamp) timestamp(ts) partition by day",
@@ -97,8 +109,11 @@ public class CountTest extends AbstractCairoTest {
 
     @Test
     public void testKnownSize() throws Exception {
-        assertQuery("count\n" +
-                        "20\n", "select count() from x", "create table x as " +
+        assertQuery(
+                "count\n" +
+                        "20\n",
+                "select count() from x",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -111,7 +126,9 @@ public class CountTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                "insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
@@ -123,14 +140,22 @@ public class CountTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)", "count\n" +
-                        "25\n", false, true, false);
+                        ") timestamp(k)",
+                "count\n" +
+                        "25\n",
+                false,
+                true,
+                false
+        );
     }
 
     @Test
     public void testLongConst() throws Exception {
-        assertQuery("cnt_1\tcnt_42\n" +
-                        "20\t20\n", "select count(1) cnt_1, count(42) cnt_42 from x", "create table x as " +
+        assertQuery(
+                "cnt_1\tcnt_42\n" +
+                        "20\t20\n",
+                "select count(1) cnt_1, count(42) cnt_42 from x",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -139,7 +164,9 @@ public class CountTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                "insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
@@ -147,14 +174,22 @@ public class CountTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)", "cnt_1\tcnt_42\n" +
-                        "25\t25\n", false, true, false);
+                        ") timestamp(k)",
+                "cnt_1\tcnt_42\n" +
+                        "25\t25\n",
+                false,
+                true,
+                false
+        );
     }
 
     @Test
     public void testUnknownSize() throws Exception {
-        assertQuery("count\n" +
-                        "4919\n", "select count() from x where g > 0", "create table x as " +
+        assertQuery(
+                "count\n" +
+                        "4919\n",
+                "select count() from x where g > 0",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -167,7 +202,9 @@ public class CountTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(10000)" +
-                        ") timestamp(k) partition by NONE", null, "insert into x select * from (" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                "insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
@@ -179,7 +216,12 @@ public class CountTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(800)" +
-                        ") timestamp(k)", "count\n" +
-                        "5319\n", false, true, false);
+                        ") timestamp(k)",
+                "count\n" +
+                        "5319\n",
+                false,
+                true,
+                false
+        );
     }
 }

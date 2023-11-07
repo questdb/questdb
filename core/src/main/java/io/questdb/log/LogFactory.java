@@ -29,8 +29,11 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -65,6 +68,7 @@ public class LogFactory implements Closeable {
     private final MicrosecondClock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
+    private final ObjList<CharSequence> guaranteedLoggers = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final AtomicBoolean running = new AtomicBoolean();
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
@@ -96,7 +100,7 @@ public class LogFactory implements Closeable {
             public boolean isDaemonPool() {
                 return true;
             }
-        }, Metrics.disabled().health());
+        }, Metrics.disabled());
     }
 
     public static synchronized void closeInstance() {
@@ -261,34 +265,46 @@ public class LogFactory implements Closeable {
         final Holder cri = scopeConfiguration.getHolder(Numbers.msb(LogLevel.CRITICAL));
         final Holder adv = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ADVISORY));
         if (!overwriteWithSyncLogging) {
-            return new Logger(
-                    clock,
-                    compressScope(key, sink),
-                    dbg == null ? null : dbg.ring,
-                    dbg == null ? null : dbg.lSeq,
-                    inf == null ? null : inf.ring,
-                    inf == null ? null : inf.lSeq,
-                    err == null ? null : err.ring,
-                    err == null ? null : err.lSeq,
-                    cri == null ? null : cri.ring,
-                    cri == null ? null : cri.lSeq,
-                    adv == null ? null : adv.ring,
-                    adv == null ? null : adv.lSeq
-            );
+            if (!guaranteedLoggers.contains(key)) {
+                return new Logger(
+                        clock,
+                        compressScope(key, sink),
+                        dbg == null ? null : dbg.ring,
+                        dbg == null ? null : dbg.lSeq,
+                        inf == null ? null : inf.ring,
+                        inf == null ? null : inf.lSeq,
+                        err == null ? null : err.ring,
+                        err == null ? null : err.lSeq,
+                        cri == null ? null : cri.ring,
+                        cri == null ? null : cri.lSeq,
+                        adv == null ? null : adv.ring,
+                        adv == null ? null : adv.lSeq
+                );
+            } else {
+                return new GuaranteedLogger(
+                        clock,
+                        compressScope(key, sink),
+                        dbg == null ? null : dbg.ring,
+                        dbg == null ? null : dbg.lSeq,
+                        inf == null ? null : inf.ring,
+                        inf == null ? null : inf.lSeq,
+                        err == null ? null : err.ring,
+                        err == null ? null : err.lSeq,
+                        cri == null ? null : cri.ring,
+                        cri == null ? null : cri.lSeq,
+                        adv == null ? null : adv.ring,
+                        adv == null ? null : adv.lSeq
+                );
+            }
         }
 
         return new SyncLogger(
                 clock,
                 compressScope(key, sink),
-                dbg == null ? null : dbg.ring,
                 dbg == null ? null : dbg.lSeq,
-                inf == null ? null : inf.ring,
                 inf == null ? null : inf.lSeq,
-                err == null ? null : err.ring,
                 err == null ? null : err.lSeq,
-                cri == null ? null : cri.ring,
                 cri == null ? null : cri.lSeq,
-                adv == null ? null : adv.ring,
                 adv == null ? null : adv.lSeq
         );
     }
@@ -570,7 +586,7 @@ public class LogFactory implements Closeable {
         }
 
         String s = getProperty(properties, "queueDepth");
-        if (s != null && s.length() > 0) {
+        if (s != null && !s.isEmpty()) {
             try {
                 setQueueDepth(Numbers.parseInt(s));
             } catch (NumericException e) {
@@ -579,7 +595,7 @@ public class LogFactory implements Closeable {
         }
 
         s = getProperty(properties, "recordLength");
-        if (s != null && s.length() > 0) {
+        if (s != null && !s.isEmpty()) {
             try {
                 setRecordLength(Numbers.parseInt(s));
             } catch (NumericException e) {
@@ -591,6 +607,15 @@ public class LogFactory implements Closeable {
             LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
             if (conf != null) {
                 add(conf);
+            }
+        }
+
+        String syncLoggers = getProperty(properties, "guaranteedLoggers");
+        if (syncLoggers != null && !syncLoggers.isEmpty()) {
+            for (String gl : syncLoggers.split(",")) {
+                if (gl != null && !gl.isEmpty()) {
+                    guaranteedLoggers.add(gl.trim());
+                }
             }
         }
 
@@ -668,14 +693,6 @@ public class LogFactory implements Closeable {
         public LogRecord critical() {
             if (delegate != null) {
                 return delegate.critical();
-            }
-            return noOpRecord;
-        }
-
-        @Override
-        public LogRecord criticalW() {
-            if (delegate != null) {
-                return delegate.criticalW();
             }
             return noOpRecord;
         }
@@ -834,12 +851,22 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $(CharSequence sequence) {
+        public LogRecord $(@Nullable CharSequence sequence) {
             return this;
         }
 
         @Override
-        public LogRecord $(CharSequence sequence, int lo, int hi) {
+        public LogRecord $(@Nullable Utf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
             return this;
         }
 
@@ -869,22 +896,22 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $(Throwable e) {
+        public LogRecord $(@Nullable Throwable e) {
             return this;
         }
 
         @Override
-        public LogRecord $(File x) {
+        public LogRecord $(@Nullable File x) {
             return this;
         }
 
         @Override
-        public LogRecord $(Object x) {
+        public LogRecord $(@Nullable Object x) {
             return this;
         }
 
         @Override
-        public LogRecord $(Sinkable x) {
+        public LogRecord $(@Nullable Sinkable x) {
             return this;
         }
 
@@ -929,7 +956,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public CharSinkBase put(char c) {
+        public LogRecord put(char c) {
             return this;
         }
 
@@ -939,7 +966,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord utf8(CharSequence sequence) {
+        public LogRecord utf8(@Nullable CharSequence sequence) {
             return this;
         }
     }

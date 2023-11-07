@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.network.NetworkFacade;
 
 public interface LineUdpReceiverConfiguration {
@@ -59,7 +59,7 @@ public interface LineUdpReceiverConfiguration {
 
     int getReceiveBufferSize();
 
-    LineProtoTimestampAdapter getTimestampAdapter();
+    LineTimestampAdapter getTimestampAdapter();
 
     boolean isEnabled();
 

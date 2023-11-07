@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,34 +41,11 @@ import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlKeywordsTest {
 
+    protected static final Map<String, String> specialCases = new HashMap<>();
+
     @Test
     public void testIs() throws Exception {
-        Map<String, String> specialCases = new HashMap<>();
-        specialCases.put("isColonColon", "::");
-        specialCases.put("isConcatOperator", "||");
-        specialCases.put("isMaxIdentifierLength", "max_identifier_length");
-        specialCases.put("isQuote", "'");
-        specialCases.put("isSearchPath", "search_path");
-        specialCases.put("isSemicolon", ";");
-        specialCases.put("isStandardConformingStrings", "standard_conforming_strings");
-        specialCases.put("isTextArray", "text[]");
-        specialCases.put("isTransactionIsolation", "transaction_isolation");
-
-        Method[] methods = SqlKeywords.class.getMethods();
-        Arrays.sort(methods, Comparator.comparing(Method::getName));
-        for (Method method : methods) {
-            String name;
-            int m = method.getModifiers() & Modifier.methodModifiers();
-            if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
-                String keyword;
-                if (name.endsWith("Keyword")) {
-                    keyword = name.substring(2, name.length() - 7).toLowerCase();
-                } else {
-                    keyword = specialCases.get(name);
-                }
-                Assert.assertTrue((boolean) method.invoke(null, keyword));
-            }
-        }
+        testIs(SqlKeywords.class.getMethods());
     }
 
     @Test
@@ -196,5 +175,45 @@ public class SqlKeywordsTest {
         Assert.assertFalse(isPrevKeyword("pr12"));
         Assert.assertFalse(isPrevKeyword("pre1"));
         Assert.assertTrue(isPrevKeyword("prev"));
+    }
+
+    protected static void testIs(Method[] methods) throws Exception {
+        Arrays.sort(methods, Comparator.comparing(Method::getName));
+        for (Method method : methods) {
+            String name;
+            int m = method.getModifiers() & Modifier.methodModifiers();
+            if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
+                String methodParam = specialCases.get(name);
+                if (methodParam == null) {
+                    if (!name.endsWith("Keyword")) {
+                        Assert.fail("if method name does not end with 'Keyword', it has to be a special case: " + name);
+                    }
+                    methodParam = name.substring(2, name.length() - 7).toLowerCase();
+                }
+                Class<?>[] argTypes = method.getParameterTypes();
+                if (argTypes.length != 1) {
+                    Assert.fail("keyword method must have a single argument: " + name);
+                }
+                if (argTypes[0] == Utf8Sequence.class) {
+                    Assert.assertTrue(name, (boolean) method.invoke(null, new Utf8String(methodParam)));
+                } else {
+                    Assert.assertTrue(name, (boolean) method.invoke(null, methodParam));
+                }
+            }
+        }
+    }
+
+    static {
+        specialCases.put("isColonColon", "::");
+        specialCases.put("isConcatOperator", "||");
+        specialCases.put("isMaxIdentifierLength", "max_identifier_length");
+        specialCases.put("isQuote", "'");
+        specialCases.put("isSearchPath", "search_path");
+        specialCases.put("isSemicolon", ";");
+        specialCases.put("isStandardConformingStrings", "standard_conforming_strings");
+        specialCases.put("isTextArray", "text[]");
+        specialCases.put("isTransactionIsolation", "transaction_isolation");
+        specialCases.put("isEmptyAlias", "''");
+        specialCases.put("isKeyword", "select");
     }
 }

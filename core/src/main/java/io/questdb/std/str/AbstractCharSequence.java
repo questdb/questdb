@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractCharSequence implements CharSequence, CloneableMutable {
 
     public static String getString(CharSequence cs) {
-        final CharSink b = Misc.getThreadLocalBuilder();
+        final CharSink b = Misc.getThreadLocalSink();
         b.put(cs);
         return b.toString();
     }
@@ -53,7 +53,7 @@ public abstract class AbstractCharSequence implements CharSequence, CloneableMut
     }
 
     @Override
-    public final CharSequence subSequence(int start, int end) {
+    public final @NotNull CharSequence subSequence(int start, int end) {
         if (start == 0 && end == length()) {
             return this;
         }

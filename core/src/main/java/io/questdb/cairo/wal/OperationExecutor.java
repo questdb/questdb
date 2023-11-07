@@ -87,14 +87,14 @@ class OperationExecutor implements Closeable {
         }
     }
 
-    public void executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {
+    public long executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {
         final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
             final CompiledQuery compiledQuery = compiler.compile(updateSql, renameSupportExecutionContext);
             try (UpdateOperation updateOperation = compiledQuery.getUpdateOperation()) {
                 updateOperation.withContext(renameSupportExecutionContext);
-                tableWriter.apply(updateOperation, seqTxn);
+                return tableWriter.apply(updateOperation, seqTxn);
             }
         } catch (SqlException ex) {
             tableWriter.markSeqTxnCommitted(seqTxn);

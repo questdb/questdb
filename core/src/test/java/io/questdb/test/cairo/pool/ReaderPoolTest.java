@@ -33,6 +33,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -521,7 +522,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             @Override
             public int openRO(LPSZ name) {
                 count--;
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && locked.get() == 1) {
+                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && locked.get() == 1) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -707,7 +708,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             CyclicBarrier barrier = new CyclicBarrier(2);
             CountDownLatch stopLatch = new CountDownLatch(2);
 
-            TableToken xTableToken = new TableToken("x", "x", 123, false);
+            TableToken xTableToken = new TableToken("x", "x", 123, false, false);
 
             final Runnable runnable = () -> {
                 try {
@@ -909,7 +910,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testUnlockByAnotherThread() throws Exception {
         assertWithPool(pool -> {
-            TableToken tableToken = new TableToken("Ургант", "Ургант", 123, false);
+            TableToken tableToken = new TableToken("Ургант", "Ургант", 123, false, false);
             Assert.assertTrue(pool.lock(tableToken));
             AtomicInteger errors = new AtomicInteger();
 
@@ -952,7 +953,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 }
             });
 
-            TableToken tableToken = new TableToken("xyz", "xyz", 123, false);
+            TableToken tableToken = new TableToken("xyz", "xyz", 123, false, false);
             pool.unlock(tableToken);
             Assert.assertEquals(1, counter.get());
         });

@@ -157,10 +157,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         sum += record.getLong(i);
                         break;
                     case ColumnType.FLOAT:
-                        sum += record.getFloat(i);
+                        sum += (long) record.getFloat(i);
                         break;
                     case ColumnType.DOUBLE:
-                        sum += record.getDouble(i);
+                        sum += (long) record.getDouble(i);
                         break;
                     case ColumnType.LONG256:
                         Long256 l256 = record.getLong256A(i);

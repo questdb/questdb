@@ -30,8 +30,14 @@ import io.questdb.cutlass.http.HttpAuthenticator;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
+import org.jetbrains.annotations.NotNull;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -62,7 +68,7 @@ public class HttpSecurityTest extends AbstractTest {
     private static final HttpAuthenticatorFactory SINGLE_USER_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
-            return Chars.equalsNc(VALID_CREDENTIALS, headers.getHeader("Authorization"));
+            return Utf8s.equalsNcAscii(VALID_CREDENTIALS, headers.getHeader(new Utf8String("Authorization")));
         }
 
         @Override
@@ -71,297 +77,195 @@ public class HttpSecurityTest extends AbstractTest {
         }
     };
     private static final String VALID_CREDENTIALS_HEADER = "Authorization: " + VALID_CREDENTIALS;
-
+    private static TestHttpClient testHttpClient;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractTest.setUpStatic();
+        testHttpClient = Misc.free(testHttpClient);
+        testHttpClient = new TestHttpClient();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        testHttpClient = Misc.free(testHttpClient);
+        AbstractTest.tearDownStatic();
+    }
+
     @Test
     public void testChkAllowWithValidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /chk?f=json&j=x HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        VALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "1b\r\n" +
-                        "{\"status\":\"Does not exist\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/chk",
+                        "{\"status\":\"Does not exist\"}",
+                        new CharSequenceObjHashMap<String>() {{
+                            put("f", "json");
+                            put("j", "x");
+                        }},
+                        "foo",
+                        "bar"
+                )
+        );
     }
 
     @Test
     public void testChkDisallow() throws Exception {
-        testHttpEndpoint(DENY_ALL_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /chk?f=json&j=x HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                DENY_ALL_AUTH_FACTORY,
+                engine ->
+                        testHttpClient.assertGet(
+                                "/chk",
+                                "Unauthorized\r\n",
+                                new CharSequenceObjHashMap<String>() {{
+                                    put("f", "json");
+                                    put("j", "x");
+                                }},
+                                null,
+                                null
+                        )
+        );
     }
 
     @Test
     public void testChkDisallowWithInvalidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /chk?f=json&j=x HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        INVALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/chk",
+                        "Unauthorized\r\n",
+                        new CharSequenceObjHashMap<String>() {{
+                            put("f", "json");
+                            put("j", "x");
+                        }},
+                        "foo",
+                        "baz"
+                )
+        );
     }
 
     @Test
     public void testExecAllowWithValidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /exec?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        VALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "63\r\n" +
-                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"dataset\":[[1]],\"timestamp\":-1,\"count\":1}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/exec",
+                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                        "select 1",
+                        "foo",
+                        "bar"
+                )
+        );
     }
 
     @Test
     public void testExecDisallow() throws Exception {
-        testHttpEndpoint(DENY_ALL_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /exec?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                DENY_ALL_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/exec",
+                        "Unauthorized\r\n",
+                        "select 1",
+                        "foo",
+                        "baz"
+                ));
     }
 
     @Test
     public void testExecDisallowInvalidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /exec?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        INVALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/exec",
+                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                        "select 1",
+                        "foo",
+                        "bar"
+                )
+        );
     }
 
     @Test
     public void testExpAllowWithValidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /exp?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        VALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "08\r\n" +
+        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/exp",
                         "\"1\"\r\n" +
-                        "1\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        ));
+                                "1\r\n",
+                        "select 1",
+                        "foo",
+                        "bar"
+                )
+        );
     }
 
     @Test
     public void testExpDisallow() throws Exception {
-        testHttpEndpoint(DENY_ALL_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /exp?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                DENY_ALL_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet("Unauthorized\r\n", "select 1")
+        );
     }
 
     @Test
-    public void testExpDisallowWithInvalidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /exp?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        INVALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+    public void testExpDisallowWithInvalidCredentials2() throws Exception {
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/exp",
+                        "Unauthorized\r\n",
+                        "select 1",
+                        "foo",
+                        "baz"
+                )
+        );
     }
 
     @Test
     public void testHealthCheckAllowWithDisabledConfigProp() throws Exception {
-        testAdditionalUnprotectedHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /status HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain\r\n" +
-                        "\r\n" +
-                        "0f\r\n" +
-                        "Status: Healthy\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        ));
+        testAdditionalUnprotectedHttpEndpoint(
+                engine -> testHttpClient.assertGet(
+                        "/status",
+                        "Status: Healthy",
+                        (CharSequenceObjHashMap<String>) null,
+                        null,
+                        null
+                )
+        );
     }
 
     @Test
     public void testHealthCheckAllowWithValidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /status HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        VALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain\r\n" +
-                        "\r\n" +
-                        "0f\r\n" +
-                        "Status: Healthy\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine ->
+                        testHttpClient.assertGet(
+                                "/status",
+                                "Status: Healthy",
+                                (CharSequenceObjHashMap<String>) null,
+                                "foo",
+                                "bar"
+                        )
+        );
     }
 
     @Test
     public void testHealthCheckDisallow() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /status HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/status",
+                        "Unauthorized\r\n",
+                        (CharSequenceObjHashMap<String>) null,
+                        null,
+                        null
+                )
+        );
     }
 
     @Test
@@ -457,149 +361,81 @@ public class HttpSecurityTest extends AbstractTest {
 
     @Test
     public void testJsonQueryAllowWithValidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /query?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        VALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "63\r\n" +
-                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"dataset\":[[1]],\"timestamp\":-1,\"count\":1}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/query",
+                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                        "select 1",
+                        "foo",
+                        "bar"
+                )
+        );
     }
 
     @Test
     public void testJsonQueryDisallow() throws Exception {
-        testHttpEndpoint(DENY_ALL_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /query?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                DENY_ALL_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet("Unauthorized\r\n", "select 1")
+        );
     }
 
     @Test
     public void testJsonQueryDisallowWithInvalidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /query?query=" + HttpUtils.urlEncodeQuery("select 1") + "&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        INVALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine -> testHttpClient.assertGet(
+                        "/query",
+                        "Unauthorized\r\n",
+                        "select 1",
+                        "bar",
+                        "baz"
+                )
+        );
     }
 
     @Test
     public void testStaticContentAllowWithDisabledConfigProp() throws Exception {
-        testAdditionalUnprotectedHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /index.html HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 404 Not Found\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "0b\r\n" +
-                        "Not Found\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        ));
+        testAdditionalUnprotectedHttpEndpoint(
+                engine -> testHttpClient.assertGet(
+                        "/index.html",
+                        "Not Found\r\n",
+                        (CharSequenceObjHashMap<String>) null,
+                        null,
+                        null
+                )
+        );
     }
 
     @Test
     public void testStaticContentAllowWithValidCredentials() throws Exception {
-        testHttpEndpoint(SINGLE_USER_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /index.html HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        VALID_CREDENTIALS_HEADER + "\r\n" +
-                        "\r\n",
-                "HTTP/1.1 404 Not Found\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "0b\r\n" +
-                        "Not Found\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        ));
+        testHttpEndpoint(
+                SINGLE_USER_AUTH_FACTORY,
+                engine ->
+                        testHttpClient.assertGet(
+                                "/index.html",
+                                "Not Found\r\n",
+                                (CharSequenceObjHashMap<String>) null,
+                                "foo",
+                                "bar"
+                        )
+        );
     }
 
     @Test
     public void testStaticContentDisallow() throws Exception {
-        testHttpEndpoint(DENY_ALL_AUTH_FACTORY, engine -> sendAndReceive(
-                "GET /index.html HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                UNAUTHORIZED_RESPONSE
-        ));
+        testHttpEndpoint(
+                DENY_ALL_AUTH_FACTORY,
+                engine ->
+                        testHttpClient.assertGet(
+                                "/index.html",
+                                "Unauthorized\r\n",
+                                (CharSequenceObjHashMap<String>) null,
+                                null,
+                                null
+                        )
+        );
     }
 
     private static void sendAndReceive(String request, CharSequence response) {
@@ -608,8 +444,8 @@ public class HttpSecurityTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private void testAdditionalUnprotectedHttpEndpoint(HttpAuthenticatorFactory factory, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        testHttpEndpoint(factory, false, false, code);
+    private void testAdditionalUnprotectedHttpEndpoint(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
+        testHttpEndpoint(HttpSecurityTest.SINGLE_USER_AUTH_FACTORY, false, false, code);
     }
 
     private void testHttpEndpoint(
@@ -627,7 +463,7 @@ public class HttpSecurityTest extends AbstractTest {
     ) throws Exception {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
-            public HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
+            public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
                 return factory;
             }
         };

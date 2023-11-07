@@ -38,6 +38,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -50,7 +51,6 @@ import org.junit.Test;
 
 import java.io.File;
 import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -63,7 +63,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.openRW(name, opts);
@@ -92,7 +92,7 @@ public class O3FailureTest extends AbstractO3Test {
         @Override
         public int openRW(LPSZ name, long opts) {
             int fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
+            if (Utf8s.endsWithAscii(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
                 this.fd = fd;
             }
             return fd;
@@ -101,7 +101,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffMkDirFailure = new TestFilesFacadeImpl() {
         @Override
         public int mkdirs(Path path, int mode) {
-            if (!fixFailure.get() || (Chars.contains(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Utf8s.containsAscii(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -111,7 +111,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenRW = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -164,7 +164,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                if (this.fd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
+                if (this.fd >= 0 && fd > 0 && Utf8s.endsWithAscii(name, fileName)) {
                     this.fd = fd;
                     return fd;
                 }
@@ -216,7 +216,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                if (fd > 0 && Chars.endsWith(name, fileName)) {
+                if (fd > 0 && Utf8s.endsWithAscii(name, fileName)) {
                     this.fd = fd;
                     return fd;
                 }
@@ -262,7 +262,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -288,7 +288,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -324,7 +324,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -357,7 +357,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -407,7 +407,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -434,7 +434,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -460,7 +460,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -475,7 +475,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -490,7 +490,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(4, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -505,7 +505,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -592,16 +592,20 @@ public class O3FailureTest extends AbstractO3Test {
         int storageLength = 8;
         long records = 500;
 
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
 
                     Assume.assumeFalse(Os.isWindows());
                     Assert.assertTrue("mixed IO should be enabled non-windows", engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
-                    compiler.compile("create table " + tableName + " as ( " +
+                    compiler.compile(
+                            "create table " + tableName + " as ( " +
                                     "select " +
                                     "x, " +
                                     " timestamp_sequence('2022-02-24', 1000) ts" +
@@ -619,7 +623,8 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(compiler,
+                    TestUtils.assertSql(
+                            compiler,
                             sqlExecutionContext,
                             "select * from " + tableName + " limit -5,5",
                             sink,
@@ -672,7 +677,8 @@ public class O3FailureTest extends AbstractO3Test {
     public void testOOOFollowedByAnotherOOO() throws Exception {
         counter.set(1);
         final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
-        executeWithPool(0,
+        executeWithPool(
+                0,
                 (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
                 new TestFilesFacadeImpl() {
                     boolean armageddon = false;
@@ -706,14 +712,15 @@ public class O3FailureTest extends AbstractO3Test {
                     @Override
                     public int openRW(LPSZ name, long opts) {
                         int fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
+                        if (Utf8s.endsWithAscii(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
                             if (counter.decrementAndGet() == 0) {
                                 theFd = fd;
                             }
                         }
                         return fd;
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -792,7 +799,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -828,7 +835,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -842,7 +849,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -856,7 +863,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -882,7 +889,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -896,7 +903,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -933,10 +940,13 @@ public class O3FailureTest extends AbstractO3Test {
         int storageLength = getStorageLength(strColVal);
         long records = 500;
 
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
 
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
@@ -960,7 +970,8 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(compiler,
+                    TestUtils.assertSql(
+                            compiler,
                             sqlExecutionContext,
                             "select * from " + tableName + " limit -5,5",
                             sink,
@@ -1020,7 +1031,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-01.4" + Files.SEPARATOR + "g.d")) {
+                if (Utf8s.containsAscii(name, "1970-01-01.4" + Files.SEPARATOR + "g.d")) {
                     tooManyFiles = true;
                     return -1;
                 }
@@ -1047,12 +1058,9 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String resourceName
-    ) throws URISyntaxException, SqlException {
+    ) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "x");
-
-        URL url = O3FailureTest.class.getResource(resourceName);
-        Assert.assertNotNull(url);
-        TestUtils.assertEquals(new File(url.toURI()), sink);
+        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     private static void assertXCountAndMax(
@@ -1083,7 +1091,7 @@ public class O3FailureTest extends AbstractO3Test {
         return new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, fileName) && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -1956,7 +1964,6 @@ public class O3FailureTest extends AbstractO3Test {
                 null,
                 null
         );
-
     }
 
     private static void testColumnTopLastOOOPrefixFailRetry0(
@@ -2376,19 +2383,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-       engine.ddl("alter table x add column v double", sqlExecutionContext);
-       engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-       engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-       engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-       engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-       engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-       engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-       engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-       engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-       engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-       engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-       engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-       engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v double", sqlExecutionContext);
+        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
+        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
+        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
+        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
+        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
+        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
+        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
+        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
+        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -2623,7 +2630,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_long256(5) l256," +
                         " timestamp_sequence('2020-02-24',100L) ts" +
                         " from long_sequence(50000)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
@@ -2674,7 +2682,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_str(5,160,2) str," +
                         " timestamp_sequence('2020-02-24',100L) ts" +
                         " from long_sequence(50000)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
@@ -2727,7 +2736,8 @@ public class O3FailureTest extends AbstractO3Test {
                             " from long_sequence(500000)" +
                             "union all " +
                             "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                    executionContext);
+                    executionContext
+            );
             Assert.fail();
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "commit failed");
@@ -2737,7 +2747,8 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)" +
                         "union all select -2, -2, CAST('2020-02-25T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
         assertXCountAndMax(
                 engine,
@@ -2778,7 +2789,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " from long_sequence(500000)" +
                         "union all " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
         compiler.compile(
                 "insert into x " +
@@ -2789,7 +2801,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " from long_sequence(500000)" +
                         "union all " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
@@ -3577,7 +3590,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 final int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, fileName) && counter.decrementAndGet() == 0) {
                     targetFd.set(fd);
                 }
                 return fd;
@@ -3601,7 +3614,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, fileName)) {
+                if (Utf8s.endsWithAscii(name, fileName)) {
                     targetFd.set(fd);
                 }
                 return fd;

@@ -85,18 +85,18 @@ public interface NetworkFacade {
 
     int parseIPv4(CharSequence ipv4Address);
 
-    int peek(int fd, long buffer, int bufferLen);
+    int peekRaw(int fd, long buffer, int bufferLen);
 
-    int recv(int fd, long buffer, int bufferLen);
+    int recvRaw(int fd, long buffer, int bufferLen);
 
     @SuppressWarnings("SpellCheckingInspection")
-    int recvmmsg(int fd, long msgVec, int msgCount);
+    int recvmmsgRaw(int fd, long msgVec, int msgCount);
 
     int resolvePort(int fd);
 
-    int send(int fd, long buffer, int bufferLen);
+    int sendRaw(int fd, long buffer, int bufferLen);
 
-    int sendTo(int fd, long lo, int len, long socketAddress);
+    int sendToRaw(int fd, long lo, int len, long socketAddress);
 
     int setMulticastInterface(int fd, CharSequence address);
 
@@ -121,6 +121,8 @@ public interface NetworkFacade {
     long sockaddr(CharSequence address, int port);
 
     int socketTcp(boolean blocking);
+
+    void configureKeepAlive(int fd);
 
     int socketUdp();
 

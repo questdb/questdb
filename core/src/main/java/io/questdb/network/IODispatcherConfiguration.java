@@ -58,7 +58,9 @@ public interface IODispatcherConfiguration {
         return Numbers.ceilPow2(getLimit());
     }
 
-    int getInitialBias();
+    default int getInitialBias() {
+        return BIAS_READ;
+    }
 
     default int getInterestQueueCapacity() {
         return Numbers.ceilPow2(getLimit());

@@ -43,11 +43,15 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAddPassword() {
+    public void authorizeAddPassword(CharSequence userOrServiceAccountName) {
     }
 
     @Override
     public void authorizeAddUser() {
+    }
+
+    @Override
+    public void authorizeAdminAction() {
     }
 
     @Override
@@ -64,6 +68,14 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeAlterTableAttachPartition(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableDedupDisable(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableDedupEnable(TableToken tableToken) {
     }
 
     @Override
@@ -87,19 +99,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableSetDedup(TableToken tableToken) {
-    }
-
-    @Override
     public void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeAssignServiceAccount() {
-    }
-
-    @Override
-    public void authorizeCopy() {
+    public void authorizeAssignServiceAccount(CharSequence serviceAccountName) {
     }
 
     @Override
@@ -111,7 +115,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCreateJwk() {
+    public void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -135,7 +139,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDropJwk() {
+    public void authorizeDropJwk(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -155,23 +159,23 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    public void authorizeHTTP() {
     }
 
     @Override
-    public void authorizeLineAlterTableAddColumn(TableToken tableToken) {
+    public void authorizeILP() {
     }
 
     @Override
-    public void authorizeLineInsert(TableToken tableToken) {
+    public void authorizeInsert(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeLineTableCreate() {
+    public void authorizePGWIRE() {
     }
 
     @Override
-    public void authorizeRemovePassword() {
+    public void authorizeRemovePassword(CharSequence userOrServiceAccountName) {
     }
 
     @Override
@@ -179,7 +183,47 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeResumeWal(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeShowGroups() {
+    }
+
+    @Override
+    public void authorizeShowGroups(CharSequence userName) {
+    }
+
+    @Override
+    public void authorizeShowPermissions(CharSequence entityName) {
+    }
+
+    @Override
+    public void authorizeShowServiceAccount(CharSequence serviceAccountName) {
+    }
+
+    @Override
+    public void authorizeShowServiceAccounts() {
+    }
+
+    @Override
+    public void authorizeShowServiceAccounts(CharSequence userOrGroupName) {
+    }
+
+    @Override
+    public void authorizeShowUser(CharSequence userName) {
+    }
+
+    @Override
+    public void authorizeShowUsers() {
     }
 
     @Override
@@ -215,7 +259,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignServiceAccount() {
+    public void authorizeUnassignServiceAccount(CharSequence serviceAccountName) {
+    }
+
+    @Override
+    public void checkEntityEnabled() {
     }
 
     @Override

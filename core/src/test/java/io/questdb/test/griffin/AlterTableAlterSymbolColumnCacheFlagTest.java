@@ -258,15 +258,13 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
         @Override
         public void print(Record r, RecordMetadata m, CharSink sink) {
             TestUtils.printColumn(r, m, columnIndex, sink);
-            sink.put("\n");
-            sink.flush();
+            sink.putAscii("\n");
         }
 
         @Override
         public void printHeader(RecordMetadata metadata, CharSink sink) {
             sink.put(metadata.getColumnName(columnIndex));
-            sink.put('\n');
+            sink.putAscii('\n');
         }
-
     }
 }

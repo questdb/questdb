@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -48,7 +48,7 @@ public class TableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN;
     private static final RecordMetadata METADATA;
-    private static final int NAME_COLUMN;
+    private static final int TABLE_NAME_COLUMN;
     private static final int O3MAXLAG_COLUMN;
     private static final int PARTITION_BY_COLUMN;
     private static final int WAL_ENABLED_COLUMN;
@@ -201,7 +201,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStr(int col) {
-                    if (col == NAME_COLUMN) {
+                    if (col == TABLE_NAME_COLUMN) {
                         return tableToken.getTableName();
                     }
                     if (col == PARTITION_BY_COLUMN) {
@@ -238,7 +238,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         return false;
                     }
 
-                    int pathLen = path.length();
+                    int pathLen = path.size();
                     try {
                         path.concat(tableToken).$();
                         isSoftLink = Files.isSoftLink(path);
@@ -271,7 +271,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
     static {
         ID_COLUMN = 0;
-        NAME_COLUMN = 1;
+        TABLE_NAME_COLUMN = 1;
         DESIGNATED_TIMESTAMP_COLUMN = 2;
         PARTITION_BY_COLUMN = 3;
         MAX_UNCOMMITTED_ROWS_COLUMN = 4;
@@ -281,7 +281,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         DEDUP_NAME_COLUMN = 8;
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));

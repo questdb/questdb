@@ -29,6 +29,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakMutableObjectPool;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -52,17 +53,16 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         if (closed) {
             Misc.free(context);
         } else {
-            context.of(-1, null);
             contextPool.get().push(context);
         }
     }
 
     public void freeThreadLocal() {
         // helper call, it will free only thread-local instance and not others
-        Misc.free(this.contextPool);
+        Misc.free(contextPool);
     }
 
-    public C newInstance(int fd, IODispatcher<C> dispatcher) {
+    public C newInstance(int fd, @NotNull IODispatcher<C> dispatcher) {
         return contextPool.get().pop().of(fd, dispatcher);
     }
 

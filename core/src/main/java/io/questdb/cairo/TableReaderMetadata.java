@@ -53,7 +53,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.ff = configuration.getFilesFacade();
         this.tableToken = tableToken;
         this.path = new Path().of(configuration.getRoot()).concat(tableToken.getDirName());
-        this.plen = path.length();
+        this.plen = path.size();
         this.metaMem = Vm.getMRInstance();
     }
 

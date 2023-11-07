@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.auth;
 
+import io.questdb.network.Socket;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 
 public interface Authenticator extends QuietCloseable {
 
@@ -41,6 +43,10 @@ public interface Authenticator extends QuietCloseable {
     default void close() {
     }
 
+    default int denyAccess() throws AuthenticatorException {
+        throw new UnsupportedOperationException();
+    }
+
     CharSequence getPrincipal();
 
     long getRecvBufPos();
@@ -49,7 +55,11 @@ public interface Authenticator extends QuietCloseable {
 
     int handleIO() throws AuthenticatorException;
 
-    void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
+    void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
 
     boolean isAuthenticated();
+
+    default int loginOK() throws AuthenticatorException {
+        throw new UnsupportedOperationException();
+    }
 }

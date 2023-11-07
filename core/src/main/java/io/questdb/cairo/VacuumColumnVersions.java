@@ -30,15 +30,17 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.ColumnPurgeTask;
 
 import java.io.Closeable;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.Files.DT_DIR;
-import static io.questdb.std.Files.notDots;
 
 public class VacuumColumnVersions implements Closeable {
     private static final int COLUMN_VERSION_LIST_CAPACITY = 8;
@@ -46,7 +48,8 @@ public class VacuumColumnVersions implements Closeable {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final ColumnPurgeTask purgeTask = new ColumnPurgeTask();
-    private StringSink fileNameSink;
+    private StringSink columnNameSink;
+    private Utf8StringSink fileNameSink;
     private int partitionBy;
     private long partitionTimestamp;
     private Path path2;
@@ -72,14 +75,15 @@ public class VacuumColumnVersions implements Closeable {
 
     public void run(TableReader reader) {
         LOG.info().$("processing [dirName=").utf8(reader.getTableToken().getDirName()).I$();
-        fileNameSink = new StringSink();
+        fileNameSink = new Utf8StringSink();
+        columnNameSink = new StringSink();
 
         CairoConfiguration configuration = engine.getConfiguration();
 
         TableToken tableToken = reader.getTableToken();
         Path path = Path.getThreadLocal(configuration.getRoot());
         path.concat(tableToken);
-        tablePathLen = path.length();
+        tablePathLen = path.size();
         path2 = Path.getThreadLocal2(configuration.getRoot()).concat(tableToken);
 
         this.tableReader = reader;
@@ -190,26 +194,27 @@ public class VacuumColumnVersions implements Closeable {
     private void visitTableFiles(long pUtf8NameZ, int type) {
         if (type != DT_DIR) {
             fileNameSink.clear();
-            boolean validUtf8 = Chars.utf8ToUtf16Z(pUtf8NameZ, fileNameSink);
+            boolean validUtf8 = Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileNameSink);
             assert validUtf8 : "invalid UTF-8 in file name";
-            if (notDots(fileNameSink)) {
-                int dotIndex = Chars.indexOf(fileNameSink, '.');
+            if (Files.notDots(fileNameSink)) {
+                int dotIndex = Utf8s.indexOfAscii(fileNameSink, '.');
                 if (dotIndex > 0) {
                     long columnVersion = -1;
 
-                    CharSequence columnName = fileNameSink.subSequence(0, dotIndex);
-                    int name2Index = resolveName2Index(columnName, tableReader);
+                    columnNameSink.clear();
+                    Utf8s.utf8ToUtf16(fileNameSink, 0, dotIndex, columnNameSink);
+                    int name2Index = resolveName2Index(columnNameSink, tableReader);
                     if (name2Index < 0) {
                         // Unknown file. Log the problem
                         LOG.error().$("file does not belong to the table [name=").$(fileNameSink).$(", path=").$(path2).I$();
                         return;
                     }
 
-                    int secondDot = Chars.indexOf(fileNameSink, dotIndex + 1, '.');
+                    int secondDot = Utf8s.indexOfAscii(fileNameSink, dotIndex + 1, '.');
                     int lo = secondDot + 1;
-                    if (lo < fileNameSink.length()) {
+                    if (lo < fileNameSink.size()) {
                         try {
-                            columnVersion = Numbers.parseLong(fileNameSink, lo, fileNameSink.length());
+                            columnVersion = Numbers.parseLong(fileNameSink, lo, fileNameSink.size());
                         } catch (NumericException e) {
                             // leave -1, default version
                         }
@@ -227,13 +232,13 @@ public class VacuumColumnVersions implements Closeable {
         if (ff.isDirOrSoftLinkDirNoDots(path2, tablePathLen, pUtf8NameZ, type, fileNameSink)) {
             path2.trimTo(tablePathLen).$();
 
-            int dotIndex = Chars.indexOf(fileNameSink, '.');
+            int dotIndex = Utf8s.indexOfAscii(fileNameSink, '.');
             if (dotIndex < 0) {
-                dotIndex = fileNameSink.length();
+                dotIndex = fileNameSink.size();
             }
 
             try {
-                partitionTimestamp = getPartitionDirFormatMethod(partitionBy).parse(fileNameSink, 0, dotIndex, null);
+                partitionTimestamp = getPartitionDirFormatMethod(partitionBy).parse(fileNameSink.asAsciiCharSequence(), 0, dotIndex, DateFormatUtils.EN_LOCALE);
             } catch (NumericException ex) {
                 // Directory is invalid partition name, continue
                 LOG.error().$("skipping column version purge VACUUM, invalid partition directory name [name=").$(fileNameSink)
@@ -242,9 +247,9 @@ public class VacuumColumnVersions implements Closeable {
             }
 
             long partitionNameTxn = -1L;
-            if (dotIndex + 1 < fileNameSink.length()) {
+            if (dotIndex + 1 < fileNameSink.size()) {
                 try {
-                    partitionNameTxn = Numbers.parseLong(fileNameSink, dotIndex + 1, fileNameSink.length());
+                    partitionNameTxn = Numbers.parseLong(fileNameSink, dotIndex + 1, fileNameSink.size());
                 } catch (NumericException ex) {
                     // Invalid partition name txn
                     LOG.error().$("skipping column version purge VACUUM, invalid partition directory name [name=").$(fileNameSink)

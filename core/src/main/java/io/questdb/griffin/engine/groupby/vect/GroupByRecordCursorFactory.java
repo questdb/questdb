@@ -40,6 +40,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 
@@ -182,9 +183,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("GroupBy");
         sink.meta("vectorized").val(true);
+        sink.meta("workers").val(workerCount);
         sink.attr("keys").val("[").putBaseColumnNameNoRemap(keyColumnIndex).val("]");
         sink.optAttr("values", vafList, true);
-        sink.attr("workers").val(workerCount);
         sink.child(base);
     }
 
@@ -543,31 +544,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             private long pRow;
 
             @Override
-            public BinarySequence getBin(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public long getBinLen(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public boolean getBool(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public byte getByte(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public char getChar(int col) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public long getDate(int col) {
                 return getLong(col);
             }
@@ -618,7 +594,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public void getLong256(int col, CharSink sink) {
+            public void getLong256(int col, CharSinkBase<?> sink) {
                 Long256Impl v = (Long256Impl) getLong256A(col);
                 v.toSink(sink);
             }

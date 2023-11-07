@@ -55,6 +55,22 @@ public class DebugUtils {
         return true;
     }
 
+    public static boolean isSparseVarCol(long colRowCount, long iAddr, long dAddr, int colType) {
+        for (int row = 0; row < colRowCount; row++) {
+            long offset = Unsafe.getUnsafe().getLong(iAddr + (long) row * Long.BYTES);
+            long iLen = Unsafe.getUnsafe().getLong(iAddr + (long) (row + 1) * Long.BYTES) - offset;
+            long dLen = ColumnType.isString(colType) ? Unsafe.getUnsafe().getInt(dAddr + offset) : Unsafe.getUnsafe().getLong(dAddr + offset);
+            int lenLen = ColumnType.isString(colType) ? 4 : 8;
+            long dataLen = ColumnType.isString(colType) ? dLen * 2 : dLen;
+            long dStorageLen = dLen > 0 ? dataLen + lenLen : lenLen;
+            if (iLen != dStorageLen) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Useful debugging method
     public static boolean reconcileColumnTops(int partitionsSlotSize, LongList openPartitionInfo, ColumnVersionReader columnVersionReader, TableReader reader) {
         int partitionCount = reader.getPartitionCount();
@@ -67,7 +83,7 @@ public class DebugUtils {
                     long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
                     long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
                     if (columnTop != colTop) {
-                        LOG.criticalW().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
+                        LOG.critical().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
                                 .$(", column=").$(c)
                                 .$(", expected=").$(columnTop)
                                 .$(", actual=").$(colTop).$(']').

@@ -27,6 +27,10 @@ package io.questdb.cutlass.line;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 /**
  * LineTcpSender is for testing purposes only. It has error-prone API and comes with no API guarantees
@@ -75,9 +79,37 @@ public class LineTcpSender extends AbstractLineSender {
     }
 
     @Override
+    public final void at(long timestamp, ChronoUnit unit) {
+        // nanos
+        putAsciiInternal(' ').put(timestamp * unitToNanos(unit));
+        atNow();
+    }
+
+    @Override
+    public final void at(Instant timestamp) {
+        // nanos
+        putAsciiInternal(' ').put(timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano());
+        atNow();
+    }
+
+    @Override
     public void flush() {
         validateNotClosed();
         sendAll();
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
+        // micros
+        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000).put('t');
+        return this;
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+        // micros
+        writeFieldName(name).put(value * unitToNanos(unit) / 1000).put('t');
+        return this;
     }
 
     @Override

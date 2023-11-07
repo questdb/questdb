@@ -99,7 +99,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                         Vect.memcpy(dstAddress, srcAddress, length);
 
                         if (commitMode != CommitMode.NOSYNC) {
-                            ff.msync(dstAddress, length, commitMode == CommitMode.ASYNC);
+                            TableUtils.msync(ff, dstAddress, length, commitMode == CommitMode.ASYNC);
                         }
                     } finally {
                         if (srcAddress != 0) {
@@ -128,7 +128,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             try {
                 TableUtils.setNull(columnType, mappedAddress, count);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(mappedAddress, count << shl, commitMode == CommitMode.ASYNC);
+                    TableUtils.msync(ff, mappedAddress, count << shl, commitMode == CommitMode.ASYNC);
                 }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset << shl, count << shl, MEMORY_TAG);
@@ -182,7 +182,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         of(columnType, columnTop, columnIndex);
 
         if (!isEmpty) {
-            int plen = partitionPath.length();
+            int plen = partitionPath.size();
             try {
                 dFile(partitionPath, columnName, columnTxn);
                 this.fd = TableUtils.openRO(ff, partitionPath.$(), LOG);
@@ -198,7 +198,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         // Create it.
         of(columnType, columnTop, columnIndex);
 
-        int plen = partitionPath.length();
+        int plen = partitionPath.size();
         try {
             dFile(partitionPath, columnName, columnTxn);
             this.fd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);

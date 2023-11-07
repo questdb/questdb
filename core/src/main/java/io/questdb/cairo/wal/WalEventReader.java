@@ -60,9 +60,9 @@ public class WalEventReader implements Closeable {
     }
 
     public WalEventCursor of(Path path, int expectedVersion, long segmentTxn) {
-        int trimTo = path.length();
+        int trimTo = path.size();
         try {
-            final int pathLen = path.length();
+            final int pathLen = path.size();
 
             path.concat(EVENT_FILE_NAME).$();
             eventMem.of(
@@ -82,9 +82,17 @@ public class WalEventReader implements Closeable {
                     int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
                     long offset = ff.readNonNegativeLong(fdi, segmentTxn << 3);
                     long size = ff.readNonNegativeLong(fdi, (maxTxn + 1L) << 3);
+
+                    if (offset > -1 && size < WALE_HEADER_SIZE + Integer.BYTES) {
+                        // index file may not contain all records from data file, but it should contain
+                        // the transaction we need to read, e.g. segmentTxn
+                        size = ff.readNonNegativeLong(fdi, (segmentTxn + 1L) << 3);
+                    }
+
                     if (offset < 0 || size < WALE_HEADER_SIZE + Integer.BYTES || offset >= size) {
                         int errno = offset < 0 || size < 0 ? ff.errno() : 0;
                         long fileSize = ff.length(fdi);
+
                         throw CairoException.critical(errno).put("segment ")
                                 .put(path).put(" does not have txn with id ").put(segmentTxn)
                                 .put(", offset=").put(offset)

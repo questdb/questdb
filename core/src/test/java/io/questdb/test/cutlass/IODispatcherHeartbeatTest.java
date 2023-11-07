@@ -26,6 +26,7 @@ package io.questdb.test.cutlass;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.NullLongGauge;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -464,7 +465,6 @@ public class IODispatcherHeartbeatTest {
     private static class TestContext extends IOContext<TestContext> {
         private final long buffer = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         private final IODispatcher<TestContext> dispatcher;
-        private final int fd;
         private final long heartbeatInterval;
         boolean isPreviousEventHeartbeat = true;
         long previousHeartbeatTs;
@@ -472,7 +472,8 @@ public class IODispatcherHeartbeatTest {
         SuspendEvent suspendEvent;
 
         public TestContext(int fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
-            this.fd = fd;
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
+            socket.of(fd);
             this.dispatcher = dispatcher;
             this.heartbeatInterval = heartbeatInterval;
         }
@@ -508,17 +509,12 @@ public class IODispatcherHeartbeatTest {
         @Override
         public void close() {
             Unsafe.free(buffer, 4, MemoryTag.NATIVE_DEFAULT);
-            suspendEvent = Misc.free(suspendEvent);
+            super.close();
         }
 
         @Override
         public IODispatcher<TestContext> getDispatcher() {
             return dispatcher;
-        }
-
-        @Override
-        public int getFd() {
-            return fd;
         }
 
         @Override

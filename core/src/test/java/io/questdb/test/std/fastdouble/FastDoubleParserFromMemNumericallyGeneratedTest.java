@@ -24,11 +24,11 @@
 
 package io.questdb.test.std.fastdouble;
 
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.fastdouble.FastDoubleParser;
+import io.questdb.std.str.Utf8s;
 
 public class FastDoubleParserFromMemNumericallyGeneratedTest extends AbstractDoubleNumericallyGeneratedTest {
     @Override
@@ -36,7 +36,7 @@ public class FastDoubleParserFromMemNumericallyGeneratedTest extends AbstractDou
         int len = str.length();
         long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
-            Chars.asciiStrCpy(str, mem);
+            Utf8s.strCpyAscii(str, mem);
             return FastDoubleParser.parseDouble(mem, len, false);
         } finally {
             Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);

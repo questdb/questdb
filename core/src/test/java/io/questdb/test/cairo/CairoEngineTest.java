@@ -30,20 +30,23 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.mp.Job;
-import io.questdb.std.Chars;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
-
 
 import static org.junit.Assert.fail;
 
@@ -60,7 +63,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         otherPath = Misc.free(otherPath);
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
@@ -131,7 +134,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     @Override
                     public int openRW(LPSZ name, long opts) {
                         int fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
+                        if (Utf8s.endsWithAscii(name, TableUtils.TAB_INDEX_FILE_NAME)) {
                             this.fd = fd;
                         }
                         return fd;
@@ -210,7 +213,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 TableToken x = createX(engine);
                 try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
-                    Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(x, "testing"));
+                    Assert.assertEquals(CairoEngine.REASON_BUSY_READER, engine.lockAll(x, "testing", true));
                     assertReader(engine, x);
                     assertWriter(engine, x);
                 }
@@ -442,6 +445,32 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertReader(engine, y);
                 assertWriter(engine, y);
+            }
+        });
+    }
+
+    @Test
+    public void testTheMaintenanceJobDoesNotObstructTableLocking() throws Exception {
+        final String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            // the test relies on negative inactive writer TTL - we want the maintenance job to always close idle writers
+            assert engine.getConfiguration().getInactiveWriterTTL() < 0;
+
+            try (WorkerPool workerPool = new TestWorkerPool(1, metrics);
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                         .col("a", ColumnType.BYTE)
+                         .col("b", ColumnType.STRING)
+                         .timestamp("ts")) {
+                Job job = engine.getEngineMaintenanceJob();
+                workerPool.assign(job);
+                workerPool.start();
+
+                Rnd rnd = new Rnd();
+                for (int i = 0; i < 50; i++) {
+                    createTable(model);// create a table eligible for maintenance
+                    Os.sleep(rnd.nextInt(10)); // give the maintenance job a chance to run
+                    drop("drop table " + tableName); // drop the table. this should always pass. regardless of the maintenance job.
+                }
             }
         });
     }

@@ -35,7 +35,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
@@ -109,7 +108,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public @Nullable FactoryProvider getFactoryProvider() {
+    public @NotNull FactoryProvider getFactoryProvider() {
         return overrides.getFactoryProvider() == null ? super.getFactoryProvider() : overrides.getFactoryProvider();
     }
 
@@ -201,8 +200,8 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return overrides.getQueryCacheEventQueueCapacity() < 0 ? super.getQueryCacheEventQueueCapacity() : overrides.getQueryCacheEventQueueCapacity();
+    public boolean getSimulateCrashEnabled() {
+        return overrides.getSimulateCrashEnabled();
     }
 
     @Override
@@ -281,6 +280,16 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getSqlWindowStoreMaxPages() {
+        return overrides.getSqlWindowStoreMaxPages() > 0 ? overrides.getSqlWindowStoreMaxPages() : super.getSqlWindowStoreMaxPages();
+    }
+
+    @Override
+    public int getSqlWindowStorePageSize() {
+        return overrides.getSqlWindowStorePageSize() > 0 ? overrides.getSqlWindowStorePageSize() : super.getSqlWindowStorePageSize();
+    }
+
+    @Override
     public int getTableRegistryCompactionThreshold() {
         return overrides.getTableRegistryCompactionThreshold() > 0 ? overrides.getTableRegistryCompactionThreshold() : super.getTableRegistryCompactionThreshold();
     }
@@ -323,6 +332,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return overrides.getWalSegmentRolloverRowCount() < 0 ? super.getWalSegmentRolloverRowCount() : overrides.getWalSegmentRolloverRowCount();
+    }
+
+    @Override
+    public long getWalSegmentRolloverSize() {
+        return overrides.getWalSegmentRolloverSize() < 0 ? super.getWalSegmentRolloverSize() : overrides.getWalSegmentRolloverSize();
     }
 
     @Override
@@ -378,11 +392,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
-    }
-
-    @Override
-    public boolean isWalSupported() {
-        return true;
     }
 
     @Override

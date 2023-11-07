@@ -77,7 +77,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
+        return DateFormatUtils.EN_LOCALE;
     }
 
     @Override
@@ -101,6 +101,16 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public int getForceRecvFragmentationChunkSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getForceSendFragmentationChunkSize() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public int getInsertCacheBlockCount() {
         return 4;
     }
@@ -108,11 +118,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getInsertCacheRowCount() {
         return 4;
-    }
-
-    @Override
-    public int getInsertPoolCapacity() {
-        return 16;
     }
 
     @Override

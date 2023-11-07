@@ -44,6 +44,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.time.temporal.ChronoUnit;
+
 import static io.questdb.cairo.TableUtils.createTable;
 import static io.questdb.test.tools.TestUtils.*;
 
@@ -78,7 +80,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -109,7 +111,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -140,7 +142,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -171,7 +173,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -244,8 +246,9 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
-                        TABLE_START_CONTENT);
+                        Misc.getThreadLocalSink(),
+                        TABLE_START_CONTENT
+                );
 
                 // run the test
                 test.run();
@@ -285,7 +288,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                             compiler,
                             context,
                             "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                            Misc.getThreadLocalBuilder(),
+                            Misc.getThreadLocalSink(),
                             finallyExpected);
                 }
 

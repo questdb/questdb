@@ -134,7 +134,7 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLikeEscapeAtEnd() {
+    public void testLikeEscapeAtEndRegConstFunc() {
         String createTable = "CREATE TABLE myTable (name string)";
         String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
 
@@ -144,6 +144,21 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
         Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
 
         String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
+        String actualMessage = e.getMessage();
+        assertTrue(actualMessage.contains(expectedMessage));
+    }
+
+    @Test
+    public void testLikeEscapeAtEndRegExpFunc() {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE '_%docs\\';";
+        String expected1 = "name\n";
+        String expected2 = "";
+        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
+
+        String expectedMessage = "[6] found [tok='_%docs\\', len=7] LIKE pattern must not end with escape character";
         String actualMessage = e.getMessage();
         assertTrue(actualMessage.contains(expectedMessage));
     }
@@ -376,19 +391,24 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSingleCharacterLikeString() throws Exception {
+    public void testSimplePatternLikeString() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table x ( s string ) ");
-            compile("insert into x values ( 'v' ), ( 'vv' ) ");
+            compile("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
 
-            assertLike("s\nv\n", "select * from x where s like 'v'");
-            assertLike("s\nv\n", "select * from x where s like '_'");
-            assertLike("s\nv\nvv\n", "select * from x where s like '%'");
+            assertLike("s\nv\n", "select * from x where s like 'v'", false);
+            assertLike("s\nv\n", "select * from x where s like '_'", false);
+            assertLike("s\nv\nvv\n\n", "select * from x where s like '%'", true);
+            assertLike("s\nv\nvv\n", "select * from x where s like 'v%'", false);
+            assertLike("s\nv\nvv\n", "select * from x where s like '%v'", false);
+            assertLike("s\nv\nvv\n", "select * from x where s like '%v%'", false);
+            assertLike("s\n", "select * from x where s like 'w%'", false);
+            assertLike("s\n", "select * from x where s like '%w'", false);
         });
     }
 
-    private void assertLike(String expected, String query) throws SqlException {
-        assertQuery(expected, query, null, true, false);
-        assertQuery(expected, query.replace("like", "ilike"), null, true, false);
+    private void assertLike(String expected, String query, boolean expectSize) throws SqlException {
+        assertQuery(expected, query, null, true, expectSize);
+        assertQuery(expected, query.replace("like", "ilike"), null, true, expectSize);
     }
 }

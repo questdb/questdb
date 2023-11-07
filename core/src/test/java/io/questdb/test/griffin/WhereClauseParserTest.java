@@ -161,7 +161,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         reader = Misc.free(reader);
         metadata = null;
         noTimestampReader = Misc.free(noTimestampReader);
@@ -240,7 +240,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            Assert.assertEquals("[0] Invalid date", e.getMessage());
+            Assert.assertEquals("[0] Invalid date [str='2014-0x-01T12:30:00.000Z']", e.getMessage());
         }
     }
 
@@ -250,7 +250,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp > '2014-0x-01T12:30:00.000Z'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date", e.getMessage());
+            Assert.assertEquals("[12] Invalid date [str='2014-0x-01T12:30:00.000Z']", e.getMessage());
         }
     }
 
@@ -281,7 +281,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            Assert.assertEquals("[0] Invalid date", e.getMessage());
+            Assert.assertEquals("[0] Invalid date [str='1663676011000000']", e.getMessage());
         }
     }
 
@@ -291,7 +291,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp < '1663676011000000'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date", e.getMessage());
+            Assert.assertEquals("[12] Invalid date [str='1663676011000000']", e.getMessage());
         }
     }
 
@@ -2322,13 +2322,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNotInIntervalNonLiteral() {
-        try {
-            modelOf("not (timestamp() in  ('2015-05-11T15:00:00.000Z')) and timestamp = '2015-05-11'");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Column name");
-        }
+    public void testNotInIntervalNonLiteral() throws SqlException {
+        IntrinsicModel m = modelOf("not (timestamp() in  ('2015-05-11T15:00:00.000Z')) and timestamp = '2015-05-11'");
+
+        TestUtils.assertEquals("[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T00:00:00.000000Z}]", intervalToString(m));
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "'2015-05-11T15:00:00.000Z' timestamp in not");
     }
 
     @Test

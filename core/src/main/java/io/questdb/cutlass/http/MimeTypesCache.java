@@ -25,8 +25,10 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.BufferedReader;
@@ -36,7 +38,7 @@ import java.io.InputStreamReader;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
+public final class MimeTypesCache extends Utf8SequenceObjHashMap<CharSequence> {
 
     @TestOnly
     public MimeTypesCache(InputStream inputStream) {
@@ -46,14 +48,15 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
             Pattern pattern = Pattern.compile(regex);
 
             while (line != null) {
-                if (line.length() > 0 && line.charAt(0) != '#') {
+                if (!line.isEmpty() && line.charAt(0) != '#') {
                     Matcher matcher = pattern.matcher(line);
                     String l = matcher.replaceAll("\t");
                     String[] tuple = l.split("\t");
                     final String type = tuple[0].trim();
                     String[] suffixTuple = tuple[1].split(" ");
                     for (int i = 0, n = suffixTuple.length; i < n; i++) {
-                        this.put(suffixTuple[i].trim(), type);
+                        Utf8String s = new Utf8String(suffixTuple[i].trim());
+                        put(s, type);
                     }
                 }
                 line = reader.readLine();
@@ -86,9 +89,8 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
             ff.close(fd);
         }
 
-        final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+        final DirectUtf8String dus = new DirectUtf8String();
         try {
-
             long p = buffer;
             long hi = p + fileSize;
             long _lo = p;
@@ -111,12 +113,12 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
                             if (newline || _lo == p - 1) {
                                 _lo = p;
                             } else {
-                                String s = Chars.toString(dbcs.of(_lo, p - 1));
+                                Utf8String s = Utf8String.newInstance(dus.of(_lo, p - 1));
                                 _lo = p;
                                 if (contentType == null) {
-                                    contentType = s;
+                                    contentType = Utf8s.toString(s);
                                 } else {
-                                    this.put(s, contentType);
+                                    put(s, contentType);
                                 }
                             }
                         }
@@ -126,8 +128,8 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
                         newline = true;
                         comment = false;
                         if (_lo < p - 1 && contentType != null) {
-                            String s = Chars.toString(dbcs.of(_lo, p - 1));
-                            this.put(s, contentType);
+                            Utf8String s = Utf8String.newInstance(dus.of(_lo, p - 1));
+                            put(s, contentType);
                         }
                         contentType = null;
                         _lo = p;
@@ -142,10 +144,9 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
 
             // if there is no new line after last entry we may have this
             if (contentType != null && _lo < p) {
-                String s = Chars.toString(dbcs.of(_lo, p));
-                this.put(s, contentType);
+                Utf8String s = Utf8String.newInstance(dus.of(_lo, p));
+                put(s, contentType);
             }
-
         } finally {
             Unsafe.free(buffer, fileSize, MemoryTag.NATIVE_HTTP_CONN);
         }

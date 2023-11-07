@@ -24,44 +24,44 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 class PrometheusFormatUtils {
     static final char LF = '\n';
     static final CharSequence METRIC_NAME_PREFIX = "questdb_";
     static final CharSequence TYPE_PREFIX = "# TYPE questdb_";
 
-    static void appendCounterNamePrefix(CharSequence name, CharSink sink) {
-        sink.put(METRIC_NAME_PREFIX);
+    static void appendCounterNamePrefix(CharSequence name, CharSinkBase<?> sink) {
+        sink.putAscii(METRIC_NAME_PREFIX);
         sink.put(name);
-        sink.put("_total");
+        sink.putAscii("_total");
     }
 
-    static void appendCounterType(CharSequence name, CharSink sink) {
-        sink.put(TYPE_PREFIX);
+    static void appendCounterType(CharSequence name, CharSinkBase<?> sink) {
+        sink.putAscii(TYPE_PREFIX);
         sink.put(name);
-        sink.put("_total counter\n");
+        sink.putAscii("_total counter\n");
     }
 
-    static void appendLabel(CharSink sink, CharSequence labelName, CharSequence labelValue) {
+    static void appendLabel(CharSinkBase<?> sink, CharSequence labelName, CharSequence labelValue) {
         sink.put(labelName);
-        sink.put('=');
+        sink.putAscii('=');
         sink.putQuoted(labelValue);
     }
 
-    static void appendNewLine(CharSink sink) {
-        sink.put(LF);
+    static void appendNewLine(CharSinkBase<?> sink) {
+        sink.putAscii(LF);
     }
 
-    static void appendSampleLineSuffix(CharSink sink, long value) {
-        sink.put(' ');
+    static void appendSampleLineSuffix(CharSinkBase<?> sink, long value) {
+        sink.putAscii(' ');
         sink.put(value);
-        sink.put(LF);
+        sink.putAscii(LF);
     }
 
-    static void appendSampleLineSuffix(CharSink sink, double value) {
-        sink.put(' ');
+    static void appendSampleLineSuffix(CharSinkBase<?> sink, double value) {
+        sink.putAscii(' ');
         sink.put(value);
-        sink.put(LF);
+        sink.putAscii(LF);
     }
 }

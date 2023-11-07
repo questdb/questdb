@@ -149,7 +149,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
             } catch (SqlException ex) {
                 TestUtils.assertContains(
                         ex.getFlyweightMessage(),
-                        "unexpected token: NONE"
+                        "unexpected token [NONE]"
                 );
                 Assert.assertEquals(
                         "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY ".length(),
@@ -195,9 +195,9 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
         ddl("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_dir", false);
 
-        assertSql("name\twalEnabled\n" +
+        assertSql("table_name\twalEnabled\n" +
                 "my_table_dir\tfalse\n" +
-                "my_table_wal\ttrue\n", "select name, walEnabled from tables() order by name"
+                "my_table_wal\ttrue\n", "select table_name, walEnabled from tables() order by table_name"
         );
     }
 

@@ -45,7 +45,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public VirtualRecordCursorFactory(
             RecordMetadata metadata,
             ObjList<Function> functions,
-            RecordCursorFactory baseFactory) {
+            RecordCursorFactory baseFactory
+    ) {
         super(metadata);
         this.functions = functions;
         boolean supportsRandomAccess = baseFactory.recordCursorSupportsRandomAccess();
@@ -58,6 +59,16 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         this.supportsRandomAccess = supportsRandomAccess;
         this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, supportsRandomAccess);
         this.baseFactory = baseFactory;
+    }
+
+    @Override
+    public boolean followedLimitAdvice() {
+        return baseFactory.followedLimitAdvice();
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return baseFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -81,6 +92,11 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return baseFactory.getScanDirection();
+    }
+
+    @Override
+    public boolean implementsLimit() {
+        return baseFactory.implementsLimit();
     }
 
     @Override

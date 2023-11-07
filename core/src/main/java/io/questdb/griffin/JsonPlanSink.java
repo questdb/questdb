@@ -28,8 +28,8 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
 import io.questdb.std.Uuid;
+import io.questdb.std.str.Sinkable;
 
 public class JsonPlanSink extends BasePlanSink {
     final int NODE_ATTR = 2;
@@ -38,7 +38,7 @@ public class JsonPlanSink extends BasePlanSink {
     final int NODE_NONE = 0;
     final int NODE_TYPE = 1;
     final int NODE_VALUE = 5;
-    String childIndent = "    ";
+    final String childIndent = "    ";
     int lastNodeDepth = 0;
     int lastNodeType = 0;
     boolean quoteValue = false;
@@ -95,7 +95,10 @@ public class JsonPlanSink extends BasePlanSink {
         switch (lastNodeType) {
             case NODE_TYPE:
             case NODE_VALUE:
-                sink.putNoEsc("\",\n");
+                if (quoteValue) {
+                    sink.putNoEsc("\"");
+                }
+                sink.putNoEsc("\n");
                 break;
             case NODE_META:
             case NODE_ATTR:
@@ -166,6 +169,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(int i) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(i);
         return this;
@@ -173,6 +177,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(long l) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(l);
         return this;
@@ -180,6 +185,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(float f) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(f);
         return this;
@@ -187,6 +193,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(double d) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(d);
         return this;
@@ -194,6 +201,7 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink val(boolean b) {
+        quoteValue = false;
         checkType(NODE_VALUE);
         sink.put(b);
         return this;
@@ -296,12 +304,9 @@ public class JsonPlanSink extends BasePlanSink {
         if (newNodeType == NODE_CHILD) {
             if (lastNodeType != NODE_CHILD) {
                 sink.putNoEsc("\"Plans\": [\n");
-                indent();
-                sink.putNoEsc("{\n");
-            } else {
-                indent();
-                sink.putNoEsc("{\n");
             }
+            indent();
+            sink.putNoEsc("{\n");
         } else {
             char c = '"';
             if (newNodeType == NODE_VALUE) {

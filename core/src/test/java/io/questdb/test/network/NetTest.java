@@ -27,12 +27,12 @@ package io.questdb.test.network;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSequenceZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -194,35 +194,35 @@ public class NetTest {
     public void testSeek() {
         String msg = "Test ABC";
         StringSink sink = new StringSink();
-        CharSequenceZ charSink = new CharSequenceZ(msg);
-        int msgLen = charSink.length() + 1;
+        try (Path msgSink = new Path().of(msg).$()) {
+            int msgLen = msgSink.size() + 1;
 
-        int acceptFd = Net.socketTcp(true);
-        Assert.assertTrue(acceptFd > 0);
-        int port = assertCanBind(acceptFd);
-        Net.listen(acceptFd, 1024);
+            int acceptFd = Net.socketTcp(true);
+            Assert.assertTrue(acceptFd > 0);
+            int port = assertCanBind(acceptFd);
+            Net.listen(acceptFd, 1024);
 
-        int clientFd = Net.socketTcp(true);
-        long sockAddr = Net.sockaddr("127.0.0.1", port);
-        TestUtils.assertConnect(clientFd, sockAddr);
-        Assert.assertEquals(msgLen, Net.send(clientFd, charSink.address(), msgLen));
-        Net.close(clientFd);
-        Net.freeSockAddr(sockAddr);
+            int clientFd = Net.socketTcp(true);
+            long sockAddr = Net.sockaddr("127.0.0.1", port);
+            TestUtils.assertConnect(clientFd, sockAddr);
+            Assert.assertEquals(msgLen, Net.send(clientFd, msgSink.ptr(), msgLen));
+            Net.close(clientFd);
+            Net.freeSockAddr(sockAddr);
 
-        int serverFd = Net.accept(acceptFd);
-        long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
-        Chars.utf8ToUtf16Z(serverBuf, sink);
-        TestUtils.assertEquals(msg, sink);
-        Assert.assertEquals(msgLen, Net.recv(serverFd, serverBuf, msgLen));
-        sink.clear();
-        Chars.utf8ToUtf16Z(serverBuf, sink);
-        TestUtils.assertEquals(msg, sink);
-        Unsafe.free(serverBuf, msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        Net.close(serverFd);
+            int serverFd = Net.accept(acceptFd);
+            long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
+            Utf8s.utf8ToUtf16Z(serverBuf, sink);
+            TestUtils.assertEquals(msg, sink);
+            Assert.assertEquals(msgLen, Net.recv(serverFd, serverBuf, msgLen));
+            sink.clear();
+            Utf8s.utf8ToUtf16Z(serverBuf, sink);
+            TestUtils.assertEquals(msg, sink);
+            Unsafe.free(serverBuf, msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            Net.close(serverFd);
 
-        Net.close(acceptFd);
-        charSink.close();
+            Net.close(acceptFd);
+        }
     }
 
     @Test

@@ -146,7 +146,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
             SqlExecutionContext context,
             String tableName
     ) throws Exception {
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         sink.put("CREATE TABLE ");
         sink.put(tableName).put('(');
         sink.put(" l LONG,");

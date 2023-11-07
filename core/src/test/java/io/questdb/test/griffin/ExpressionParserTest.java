@@ -658,13 +658,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDotSpaceStar() {
-        assertFail("a. *", 3, "too few arguments");
-    }
-
-    @Test
     public void testDotSpaceStarExpression() throws SqlException {
-        x("a. 3 *", "a. * 3");
+        x("a. *", "a. * 3");
     }
 
     @Test
@@ -1043,8 +1038,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNewLambdaQuerySyntax() {
-        assertFail("x in (select a,b, from T)", 23, "column name expected");
+    public void testNewLambdaQuerySyntax() throws SqlException {
+        x("x  (select-choose a, b from (T)) in", "x in (select a,b, from T)");
     }
 
     @Test

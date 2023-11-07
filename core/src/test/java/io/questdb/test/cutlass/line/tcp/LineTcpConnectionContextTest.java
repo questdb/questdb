@@ -25,13 +25,13 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -446,7 +446,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "broken.d.1")) {
+                        if (Utf8s.endsWithAscii(name, "broken.d.1")) {
                             return -1;
                         }
                         return super.openRW(name, opts);
@@ -486,7 +486,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
+                        if (Utf8s.endsWithAscii(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
                             return -1;
                         }
                         return super.openRW(name, opts);
@@ -524,7 +524,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "broken.d")) {
+                        if (Utf8s.endsWithAscii(name, "broken.d")) {
                             return -1;
                         }
                         return super.openRW(name, opts);
@@ -688,9 +688,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer =
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
-                            table + ",location=us-eastcoast temperature=81,timestamp=1465839830101600200t\n" +
-                            table + ",location=us-midwest temperature=85,timestamp=1465839830102300200t,Timestamp=1465839830102800200t\n" +
-                            table + ",location=us-eastcoast temperature=89,Timestamp=1465839830102400200t\n" +
+                            table + ",location=us-eastcoast temperature=81,timestamp=1465839830101600t\n" +
+                            table + ",location=us-midwest temperature=85,timestamp=1465839830102300t,Timestamp=1465839830102800t\n" +
+                            table + ",location=us-eastcoast temperature=89,Timestamp=1465839830102400t\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
@@ -712,13 +712,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "duplicateTimestamp";
         runInContext(() -> {
             recvBuffer =
-                    table + ",location=us-midwest timestamp=1465839830100400200t,temperature=82\n" +
-                            table + ",location=us-midwest timestamp=1465839830100500200t,temperature=83\n" +
-                            table + ",location=us-eastcoast timestamp=1465839830101600200t,temperature=81\n" +
-                            table + ",location=us-midwest timestamp=1465839830102300200t,temperature=85\n" +
-                            table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=89\n" +
-                            table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=80\n" +
-                            table + ",location=us-westcost timestamp=1465839830102500200t,temperature=82\n";
+                    table + ",location=us-midwest timestamp=1465839830100400t,temperature=82\n" +
+                            table + ",location=us-midwest timestamp=1465839830100500t,temperature=83\n" +
+                            table + ",location=us-eastcoast timestamp=1465839830101600t,temperature=81\n" +
+                            table + ",location=us-midwest timestamp=1465839830102300t,temperature=85\n" +
+                            table + ",location=us-eastcoast timestamp=1465839830102400t,temperature=89\n" +
+                            table + ",location=us-eastcoast timestamp=1465839830102400t,temperature=80\n" +
+                            table + ",location=us-westcost timestamp=1465839830102500t,temperature=82\n";
             handleIO();
             closeContext();
             String expected = "location\ttimestamp\ttemperature\n" +
@@ -738,7 +738,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "duplicateTimestamp";
         runInContext(() -> {
             recvBuffer =
-                    table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100200t\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
                             table + ",location=us-midwest temperature=85 1465839830102300200\n" +
@@ -765,13 +765,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);");
             recvBuffer =
-                    table + ",location=us-midwest temperature=82,time=1465839830100300200t 1465839830100400200\n" +
+                    table + ",location=us-midwest temperature=82,time=1465839830100300t 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast,city=york temperature=81 1465839830101400200\n" +
                             table + ",location=us-midwest,city=london temperature=85 1465839830102300200\n" +
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
-                            table + ",location=us-eastcoast temperature=80,time=1465839830102500200t\n" +
-                            table + ",location=us-westcost temperature=82,time=1465839830102600200t 1465839830102700200\n";
+                            table + ",location=us-eastcoast temperature=80,time=1465839830102500t\n" +
+                            table + ",location=us-westcost temperature=82,time=1465839830102600t 1465839830102700200\n";
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttime\tcity\n" +
@@ -792,13 +792,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
-                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t 1465839830100300200\n" +
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast,city=york,city=london temperature=81,Temperature=89 1465839830101400200\n" +
                             table + ",location=us-midwest,LOCation=Europe,City=london,city=windsor temperature=85 1465839830102300200\n" +
                             table + ",location=us-eastcoast Temperature=89,temperature=88 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
-                            table + ",location=us-westcost temperature=82,timestamp=1465839830102500200t\n";
+                            table + ",location=us-westcost temperature=82,timestamp=1465839830102500t\n";
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tcity\n" +
@@ -1001,17 +1001,17 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
-                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t 1465839830100300200\n" +
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100100t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast,city=york,city=london temperature=81 1465839830101400200\n" +
                             table + ",location=us-midwest,city=london temperature=85 1465839830102300200\n" +
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
-                            table + ",location=us-westcost temperature=82,timestamp=1465839830102500200t\n";
+                            table + ",location=us-westcost temperature=82,timestamp=1465839830102500t\n";
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tcity\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100100Z\t\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tlondon\n" +
@@ -1134,7 +1134,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer =
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
-                            table + ",location=us-eastcoast temperature=81,timestamp=1465839830101500200t 1465839830101600200\n" +
+                            table + ",location=us-eastcoast temperature=81,timestamp=1465839830101500t 1465839830101600200\n" +
                             table + ",location=us-midwest temperature=85 1465839830102300200\n" +
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
@@ -1158,7 +1158,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "duplicateTimestamp";
         runInContext(() -> {
             recvBuffer =
-                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t,TimeStamp=1465839830100450200t 1465839830100700200\n" +
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400t,TimeStamp=1465839830100450t 1465839830100700200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
                             table + ",location=us-midwest temperature=85 1465839830102300200\n" +
@@ -1339,7 +1339,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
         runInContext(() -> {
             recvBuffer =
-                    table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100200t\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
                             table + ",location=us-midwest temperature=85 1465839830102300200\n" +
@@ -1353,21 +1353,20 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         engine.releaseInactive();
 
         runInContext(() -> {
-            recvBuffer = ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            recvBuffer = ",location=us-midwest temperature=82,timestamp=1465839830100200t\n";
             do {
                 handleContextIO0();
             } while (!recvBuffer.isEmpty());
 
-            recvBuffer = ".,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            recvBuffer = ".,location=us-midwest temperature=82,timestamp=1465839830100200t\n";
             do {
                 handleContextIO0();
             } while (!recvBuffer.isEmpty());
 
-            recvBuffer = "..\\/dbRoot,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            recvBuffer = "..\\/dbRoot,location=us-midwest temperature=82,timestamp=1465839830100200t\n";
             do {
                 handleContextIO0();
             } while (!recvBuffer.isEmpty());
-
 
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -1638,8 +1637,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
 
             assertSql(
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n",
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n",
+                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
             ddl("create table vbw(a int)");
         });

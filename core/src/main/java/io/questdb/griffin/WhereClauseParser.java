@@ -254,7 +254,7 @@ public final class WhereClauseParser implements Mutable {
         try {
             return IntervalUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException ignore) {
-            throw SqlException.invalidDate(position);
+            throw SqlException.invalidDate(str, position);
         }
     }
 
@@ -853,12 +853,11 @@ public final class WhereClauseParser implements Mutable {
 
             // clear values if this is new column and reset intrinsic values on nodes associated with old column
             if (newColumn) {
-                clearKeys();
+                clearAllKeys();
                 tempKeyValues.addAll(tempKeys);
                 tempKeyValuePos.addAll(tempPos);
                 tempKeyValueType.addAll(tempType);
                 allKeyValuesAreKnown = tmpAllKeyValuesAreKnown;
-                revertNodes(keyNodes);
                 model.keyColumn = columnName;
                 keyNodes.add(node);
                 node.intrinsicValue = IntrinsicModel.TRUE;
@@ -952,7 +951,7 @@ public final class WhereClauseParser implements Mutable {
             boolean latestByMultiColumn,
             TableReader reader
     ) throws SqlException {
-        if (nodesEqual(a, b) && !a.hasLeafs() && !b.hasLeafs()) {
+        if (nodesEqual(a, b) && a.noLeafs() && b.noLeafs()) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return true;
         }
@@ -1092,7 +1091,7 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
         if (col.type != ExpressionNode.LITERAL) {
-            throw SqlException.$(col.position, "Column name expected");
+            return false;
         }
 
         CharSequence column = translator.translateAlias(col.token);
@@ -1203,10 +1202,7 @@ public final class WhereClauseParser implements Mutable {
 
             // clear values if this is new column and reset intrinsic values on nodes associated with old column
             if (newColumn) {
-                clearKeys();
-                revertNodes(keyNodes);
-                clearExcludedKeys();
-                revertNodes(keyExclNodes);
+                clearAllKeys();
 
                 model.keyColumn = columnName;
                 keyExclNodes.add(notNode);
@@ -1280,7 +1276,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 lo = parseFullOrPartialDate(equalsTo, compareWithNode, true);
             } catch (NumericException e) {
-                throw SqlException.invalidDate(compareWithNode.position);
+                throw SqlException.invalidDate(compareWithNode.token, compareWithNode.position);
             }
             model.intersectIntervals(lo, Long.MAX_VALUE);
             node.intrinsicValue = IntrinsicModel.TRUE;
@@ -1328,7 +1324,7 @@ public final class WhereClauseParser implements Mutable {
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicModel.TRUE;
             } catch (NumericException e) {
-                throw SqlException.invalidDate(compareWithNode.position);
+                throw SqlException.invalidDate(compareWithNode.token, compareWithNode.position);
             }
             return true;
         } else if (isFunc(compareWithNode)) {
@@ -1468,6 +1464,13 @@ public final class WhereClauseParser implements Mutable {
             return true;
         }
         return ColumnType.isString(type);
+    }
+
+    private void clearAllKeys() {
+        clearKeys();
+        revertNodes(keyNodes);
+        clearExcludedKeys();
+        revertNodes(keyExclNodes);
     }
 
     private void clearExcludedKeys() {
@@ -1796,7 +1799,7 @@ public final class WhereClauseParser implements Mutable {
                     hash = GeoHashes.fromStringTruncatingNl(token, 1, len - sddLen, bits);
                 } else {
                     int bits = len - 2;
-                    if (bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+                    if (bits <= ColumnType.GEOLONG_MAX_BITS) {
                         type = ColumnType.getGeoHashTypeWithBits(bits);
                         hash = GeoHashes.fromBitStringNl(token, 2);
                     } else {
@@ -1814,15 +1817,17 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
-    private boolean removeAndIntrinsics(AliasTranslator translator,
-                                        IntrinsicModel model,
-                                        ExpressionNode node,
-                                        RecordMetadata m,
-                                        FunctionParser functionParser,
-                                        RecordMetadata metadata,
-                                        SqlExecutionContext executionContext,
-                                        boolean latestByMultiColumn,
-                                        TableReader reader) throws SqlException {
+    private boolean removeAndIntrinsics(
+            AliasTranslator translator,
+            IntrinsicModel model,
+            ExpressionNode node,
+            RecordMetadata m,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            TableReader reader
+    ) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN:
                 return analyzeIn(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);

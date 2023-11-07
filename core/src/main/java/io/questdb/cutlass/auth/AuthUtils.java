@@ -42,6 +42,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class AuthUtils {
+    public static final int CHALLENGE_LEN = 512;
     public static final String EC_ALGORITHM = "EC";
     public static final String EC_CURVE = "secp256r1";
     // there are 2 types of signatures:

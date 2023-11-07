@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory;
 import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.AbstractCairoTest;
@@ -71,7 +72,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyPool() throws Exception {
-        assertMemoryLeak(() -> assertSql("table\towner\ttimestamp\ttxn\n", "select * from reader_pool()"));
+        assertMemoryLeak(() -> assertSql("table_name\towner_thread_id\tlast_access_timestamp\tcurrent_txn\n", "select * from reader_pool()"));
     }
 
     @Test
@@ -89,10 +90,10 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("select * from reader_pool()")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(4, metadata.getColumnCount());
-                Assert.assertEquals("table", metadata.getColumnName(0));
-                Assert.assertEquals("owner", metadata.getColumnName(1));
-                Assert.assertEquals("timestamp", metadata.getColumnName(2));
-                Assert.assertEquals("txn", metadata.getColumnName(3));
+                Assert.assertEquals("table_name", metadata.getColumnName(0));
+                Assert.assertEquals("owner_thread_id", metadata.getColumnName(1));
+                Assert.assertEquals("last_access_timestamp", metadata.getColumnName(2));
+                Assert.assertEquals("current_txn", metadata.getColumnName(3));
                 Assert.assertEquals(ColumnType.STRING, metadata.getColumnType(0));
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(1));
                 Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(2));
@@ -131,8 +132,8 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
             assertReaderPool(readerAcquisitionCount * 2, eitherOf(
-                    recordValidator(allReadersAcquiredTime, "tab1", -1, 1),
-                    recordValidator(allReadersAcquiredTime, "tab2", -1, 1))
+                    recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NaN, 1),
+                    recordValidator(allReadersAcquiredTime, "tab2", Numbers.LONG_NaN, 1))
             );
         });
     }
@@ -140,13 +141,14 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     @Test
     public void testRandomAccessUnsupported() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-                 RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+            try (
+                    RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                    RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
+            ) {
                 Record record = readerPoolCursor.getRecord();
                 readerPoolCursor.recordAt(record, 0);
                 Assert.fail("Random access is not expected to be implemented");
-            } catch (UnsupportedOperationException e) {
-                TestUtils.assertContains(e.getMessage(), "Random access");
+            } catch (UnsupportedOperationException ignored) {
             }
         });
     }
@@ -154,12 +156,13 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     @Test
     public void testRecordBNotImplemented() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-                 RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+            try (
+                    RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                    RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
+            ) {
                 readerPoolCursor.getRecordB();
                 Assert.fail("RecordB is not expected to be implemented");
-            } catch (UnsupportedOperationException e) {
-                TestUtils.assertContains(e.getMessage(), "RecordB");
+            } catch (UnsupportedOperationException ignored) {
             }
         });
     }
@@ -188,7 +191,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             });
 
             // all readers should be released. they should have a timestamp set >= timestamp when all readers were acquired
-            assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, -1, 4));
+            assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, Numbers.LONG_NaN, 4));
         });
     }
 
@@ -212,7 +215,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             // check table reader timestamp was updated when it was returned to the pool
             assertTrue(allReadersAcquiredTime > startTime);
-            assertReaderPool(1, recordValidator(allReadersAcquiredTime, "tab1", -1, 1));
+            assertReaderPool(1, recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NaN, 1));
 
             // acquire again and check timestamp made progress
             // this is to make sure time is updated on re-acquisition too
@@ -236,8 +239,8 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
                     "2020-01-01T00:00:00.000000Z\t1\n" +
                     "2020-01-01T00:00:00.000000Z\t2\n", "select * from tab1");
 
-            assertSql("table\towner\ttxn\n" +
-                    "tab1\t-1\t1\n", "select table, owner, txn from reader_pool");
+            assertSql("table_name\towner_thread_id\tcurrent_txn\n" +
+                    "tab1\tNaN\t1\n", "select table_name, owner_thread_id, current_txn from reader_pool");
         });
     }
 
@@ -264,17 +267,17 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
     private static void assertReaderPool(int expectedRowCount, ReaderPoolRowValidator validator) throws Exception {
         try (
-                RecordCursorFactory factory = select("select * from reader_pool() order by table");
+                RecordCursorFactory factory = select("select * from reader_pool() order by table_name");
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             RecordMetadata metadata = factory.getMetadata();
             int i = 0;
             Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                CharSequence table = record.getStr(metadata.getColumnIndex("table"));
-                long owner = record.getLong(metadata.getColumnIndex("owner"));
-                long txn = record.getLong(metadata.getColumnIndex("txn"));
-                long timestamp = record.getTimestamp(metadata.getColumnIndex("timestamp"));
+                CharSequence table = record.getStr(metadata.getColumnIndex("table_name"));
+                long owner = record.getLong(metadata.getColumnIndex("owner_thread_id"));
+                long txn = record.getLong(metadata.getColumnIndex("current_txn"));
+                long timestamp = record.getTimestamp(metadata.getColumnIndex("last_access_timestamp"));
                 if (validator.validate(table, owner, txn, timestamp)) {
                     i++;
                 }

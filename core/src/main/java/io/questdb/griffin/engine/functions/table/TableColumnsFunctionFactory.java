@@ -45,6 +45,6 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final CharSequence tableName = args.getQuick(0).getStr(null);
         final TableToken token = sqlExecutionContext.getTableToken(tableName);
-        return new CursorFunction(new ShowColumnsRecordCursorFactory(token));
+        return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));
     }
 }

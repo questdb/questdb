@@ -25,8 +25,13 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
+import io.questdb.std.Long256;
+import io.questdb.std.Rows;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 public class TableReaderRecord implements Record, Sinkable {
 
@@ -191,7 +196,7 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSinkBase<?> sink) {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
@@ -308,8 +313,8 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("TableReaderRecord [columnBase=").put(columnBase).put(", recordIndex=").put(recordIndex).put(']');
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("TableReaderRecord [columnBase=").put(columnBase).putAscii(", recordIndex=").put(recordIndex).putAscii(']');
     }
 
     private long getAdjustedRecordIndex(int col) {

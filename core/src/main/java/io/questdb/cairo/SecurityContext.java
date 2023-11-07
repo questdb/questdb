@@ -34,9 +34,11 @@ public interface SecurityContext {
 
     void assumeServiceAccount(CharSequence serviceAccountName);
 
-    void authorizeAddPassword();
+    void authorizeAddPassword(CharSequence userOrServiceAccountName);
 
     void authorizeAddUser();
+
+    void authorizeAdminAction();
 
     void authorizeAlterTableAddColumn(TableToken tableToken);
 
@@ -45,6 +47,10 @@ public interface SecurityContext {
     void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeAlterTableAttachPartition(TableToken tableToken);
+
+    void authorizeAlterTableDedupDisable(TableToken tableToken);
+
+    void authorizeAlterTableDedupEnable(TableToken tableToken);
 
     void authorizeAlterTableDetachPartition(TableToken tableToken);
 
@@ -57,19 +63,15 @@ public interface SecurityContext {
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    void authorizeAlterTableSetDedup(TableToken tableToken);
-
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    void authorizeAssignServiceAccount();
-
-    void authorizeCopy();
+    void authorizeAssignServiceAccount(CharSequence serviceAccountName);
 
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeCreateGroup();
 
-    void authorizeCreateJwk();
+    void authorizeCreateJwk(CharSequence userOrServiceAccountName);
 
     void authorizeCreateServiceAccount();
 
@@ -81,7 +83,7 @@ public interface SecurityContext {
 
     void authorizeDropGroup();
 
-    void authorizeDropJwk();
+    void authorizeDropJwk(CharSequence userOrServiceAccountName);
 
     void authorizeDropServiceAccount();
 
@@ -91,23 +93,39 @@ public interface SecurityContext {
 
     void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
 
-    // columnNames.size() = 0 means all columns
-    void authorizeInsert(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+    void authorizeHTTP();
 
-    // Add column over ILP/TCP.
-    void authorizeLineAlterTableAddColumn(TableToken tableToken);
+    void authorizeILP();
 
-    // Insert over ILP/TCP.
-    void authorizeLineInsert(TableToken tableToken);
+    void authorizeInsert(TableToken tableToken);
 
-    // Create table over ILP/TCP.
-    void authorizeLineTableCreate();
+    void authorizePGWIRE();
 
-    void authorizeRemovePassword();
+    void authorizeRemovePassword(CharSequence userOrServiceAccountName);
 
     void authorizeRemoveUser();
 
+    void authorizeResumeWal(TableToken tableToken);
+
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeSelectOnAnyColumn(TableToken tableToken);
+
+    void authorizeShowGroups();
+
+    void authorizeShowGroups(CharSequence userName);
+
+    void authorizeShowPermissions(CharSequence entityName);
+
+    void authorizeShowServiceAccount(CharSequence serviceAccountName);
+
+    void authorizeShowServiceAccounts();
+
+    void authorizeShowServiceAccounts(CharSequence userOrGroupName);
+
+    void authorizeShowUser(CharSequence userName);
+
+    void authorizeShowUsers();
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
@@ -115,7 +133,7 @@ public interface SecurityContext {
 
     void authorizeTableDrop(TableToken tableToken);
 
-    // columnNames - empty means all columns
+    // columnNames - empty means all indexed columns
     void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableRename(TableToken tableToken);
@@ -126,9 +144,35 @@ public interface SecurityContext {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeUnassignServiceAccount();
+    void authorizeUnassignServiceAccount(CharSequence serviceAccountName);
+
+    /**
+     * Should throw an exception if:
+     * - logged in as a user and the user has been disabled,
+     * - logged in as a service account and the service account has been disabled,
+     * - logged in as a user, then assumed a service account and either the user or the service account has been disabled,
+     * or access to the service account has been revoked from the user
+     */
+    void checkEntityEnabled();
 
     void exitServiceAccount(CharSequence serviceAccountName);
 
+    default CharSequence getAssumedServiceAccount() {
+        final CharSequence principal = getPrincipal();
+        final CharSequence sessionPrincipal = getSessionPrincipal();
+        return sessionPrincipal == null || sessionPrincipal.equals(principal) ? null : principal;
+    }
+
+    /**
+     * User account used for permission checks, i.e. the session user account
+     * or the service account defined by an executed ASSUME statement.
+     */
     CharSequence getPrincipal();
+
+    /**
+     * User account used in initial authentication, i.e. to start the session.
+     */
+    default CharSequence getSessionPrincipal() {
+        return getPrincipal();
+    }
 }

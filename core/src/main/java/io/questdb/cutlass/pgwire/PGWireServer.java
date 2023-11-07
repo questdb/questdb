@@ -32,15 +32,12 @@ import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -64,10 +61,7 @@ public class PGWireServer implements Closeable {
             PGConnectionContextFactory contextFactory,
             CircuitBreakerRegistry registry
     ) {
-        this.dispatcher = IODispatchers.create(
-                configuration.getDispatcherConfiguration(),
-                contextFactory
-        );
+        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
         this.metrics = engine.getMetrics();
         this.workerPool = workerPool;
         this.registry = registry;
@@ -75,12 +69,6 @@ public class PGWireServer implements Closeable {
         workerPool.assign(dispatcher);
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            final PGJobContext jobContext = new PGJobContext(configuration, engine);
-
-            final SCSequence queryCacheEventSubSeq = new SCSequence();
-            final FanOut queryCacheEventFanOut = engine.getMessageBus().getQueryCacheEventFanOut();
-            queryCacheEventFanOut.and(queryCacheEventSubSeq);
-
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
@@ -88,7 +76,7 @@ public class PGWireServer implements Closeable {
                             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
                             return false;
                         }
-                        jobContext.handleClientOperation(context, operation);
+                        context.handleClientOperation(operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
                         return true;
                     } catch (PeerIsSlowToWriteException e) {
@@ -118,13 +106,6 @@ public class PGWireServer implements Closeable {
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    long seq = queryCacheEventSubSeq.next();
-                    if (seq > -1) {
-                        // Queue is not empty, so flush query cache.
-                        LOG.info().$("flushing PG Wire query cache [worker=").$(workerId).$(']').$();
-                        jobContext.flushQueryCache();
-                        queryCacheEventSubSeq.done(seq);
-                    }
                     return dispatcher.processIOQueue(processor);
                 }
             });
@@ -132,11 +113,6 @@ public class PGWireServer implements Closeable {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
             workerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
-            workerPool.freeOnExit((QuietCloseable) () -> {
-                Misc.free(jobContext);
-                engine.getMessageBus().getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
-                queryCacheEventSubSeq.clear();
-            });
         }
     }
 
@@ -163,20 +139,30 @@ public class PGWireServer implements Closeable {
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
         ) {
-            super(() -> {
-                NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
-                PGConnectionContext pgConnectionContext = new PGConnectionContext(
-                        engine,
-                        configuration,
-                        executionContextObjectFactory.newInstance(),
-                        circuitBreaker
-                );
-                FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                NetworkFacade nf = configuration.getNetworkFacade();
-                Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(nf, configuration, circuitBreaker, registry, pgConnectionContext);
-                pgConnectionContext.setAuthenticator(authenticator);
-                return pgConnectionContext;
-            }, configuration.getConnectionPoolInitialCapacity());
+            super(
+                    () -> {
+                        NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                                configuration.getCircuitBreakerConfiguration(),
+                                MemoryTag.NATIVE_CB5
+                        );
+                        PGConnectionContext pgConnectionContext = new PGConnectionContext(
+                                engine,
+                                configuration,
+                                executionContextObjectFactory.newInstance(),
+                                circuitBreaker
+                        );
+                        FactoryProvider factoryProvider = configuration.getFactoryProvider();
+                        Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
+                                configuration,
+                                circuitBreaker,
+                                registry,
+                                pgConnectionContext
+                        );
+                        pgConnectionContext.setAuthenticator(authenticator);
+                        return pgConnectionContext;
+                    },
+                    configuration.getConnectionPoolInitialCapacity()
+            );
         }
     }
 }

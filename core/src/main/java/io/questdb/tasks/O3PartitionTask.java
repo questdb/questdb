@@ -40,8 +40,10 @@ public class O3PartitionTask {
     private long dedupColSinkAddr;
     private boolean last;
     private long maxTimestamp; // table's max timestamp
+    private long newPartitionSize;
     private O3Basket o3Basket;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
+    private long oldPartitionSize;
     private long oooTimestampMax;
     private long oooTimestampMin;
     private int partitionBy;
@@ -73,12 +75,20 @@ public class O3PartitionTask {
         return maxTimestamp;
     }
 
+    public long getNewPartitionSize() {
+        return newPartitionSize;
+    }
+
     public O3Basket getO3Basket() {
         return o3Basket;
     }
 
     public ReadOnlyObjList<? extends MemoryCR> getO3Columns() {
         return o3Columns;
+    }
+
+    public long getOldPartitionSize() {
+        return oldPartitionSize;
     }
 
     public long getOooTimestampMax() {
@@ -161,6 +171,8 @@ public class O3PartitionTask {
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
+            long newPartitionSize,
+            long oldPartitionSize,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr
     ) {
@@ -183,6 +195,8 @@ public class O3PartitionTask {
         this.tableWriter = tableWriter;
         this.columnCounter = columnCounter;
         this.o3Basket = o3Basket;
+        this.newPartitionSize = newPartitionSize;
+        this.oldPartitionSize = oldPartitionSize;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
         this.dedupColSinkAddr = dedupColSinkAddr;
     }

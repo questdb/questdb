@@ -25,9 +25,11 @@
 package io.questdb.cairo;
 
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.NotNull;
 
 public class TableSyncModel implements Mutable, Sinkable {
 
@@ -166,7 +168,7 @@ public class TableSyncModel implements Mutable, Sinkable {
         n = Unsafe.getUnsafe().getInt(p);
         p += 4;
 
-        final StringSink nameSink = Misc.getThreadLocalBuilder();
+        final StringSink nameSink = Misc.getThreadLocalSink();
         for (int i = 0; i < n; i++) {
             int nameLen = Unsafe.getUnsafe().getInt(p);
             p += 4;
@@ -279,170 +281,163 @@ public class TableSyncModel implements Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-
-        sink.put('{');
-        sink.putQuoted("table").put(':').put('{');
-
-        sink.putQuoted("action").put(':');
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii('{');
+        sink.putAsciiQuoted("table").putAscii(':').putAscii('{');
+        sink.putAsciiQuoted("action").putAscii(':');
 
         switch (tableAction) {
             case TABLE_ACTION_KEEP:
-                sink.putQuoted("keep");
+                sink.putAsciiQuoted("keep");
                 break;
             case TABLE_ACTION_TRUNCATE:
-                sink.putQuoted("truncate");
+                sink.putAsciiQuoted("truncate");
                 break;
             case 2:
-                sink.putQuoted("replace");
+                sink.putAsciiQuoted("replace");
                 break;
         }
 
-        sink.put(',');
+        sink.putAscii(',');
 
-        sink.putQuoted("dataVersion").put(':').put(dataVersion);
+        sink.putAsciiQuoted("dataVersion").putAscii(':').put(dataVersion);
 
-        sink.put(',');
+        sink.putAscii(',');
 
-        sink.put("maxTimestamp").put(':').put('"').putISODate(maxTimestamp).put('"');
+        sink.putAscii("maxTimestamp:\"").putISODate(maxTimestamp).putAscii('"');
 
-        sink.put('}');
+        sink.putAscii('}');
 
         int n = columnTops.size();
         if (n > 0) {
-            sink.put(',');
+            sink.putAscii(',');
 
-            sink.putQuoted("columnTops").put(':').put('[');
+            sink.putAsciiQuoted("columnTops").putAscii(':').putAscii('[');
 
             for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
                 if (i > 0) {
-                    sink.put(',');
+                    sink.putAscii(',');
                 }
 
-                sink.put('{');
-                sink.putQuoted("ts").put(':').put('"').putISODate(columnTops.getQuick(i)).put('"').put(',');
-                sink.putQuoted("index").put(':').put(columnTops.getQuick(i + 1)).put(',');
-                sink.putQuoted("top").put(':').put(columnTops.getQuick(i + 2));
-                sink.put('}');
+                sink.putAscii('{');
+                sink.putAsciiQuoted("ts").putAscii(':').putAscii('"').putISODate(columnTops.getQuick(i)).putAscii('"').putAscii(',');
+                sink.putAsciiQuoted("index").putAscii(':').put(columnTops.getQuick(i + 1)).putAscii(',');
+                sink.putAsciiQuoted("top").putAscii(':').put(columnTops.getQuick(i + 2));
+                sink.putAscii('}');
             }
 
-            sink.put(']');
+            sink.putAscii(']');
         }
 
         n = varColumnSizes.size();
         if (n > 0) {
-            sink.put(',');
+            sink.putAscii(',');
 
-            sink.putQuoted("varColumns").put(':').put('[');
+            sink.putAsciiQuoted("varColumns").putAscii(':').putAscii('[');
 
             for (int i = 0; i < n; i += SLOTS_PER_VAR_COLUMN_SIZE) {
                 if (i > 0) {
-                    sink.put(',');
+                    sink.putAscii(',');
                 }
-                sink.put('{');
-                sink.putQuoted("ts").put(':').put('"').putISODate(varColumnSizes.getQuick(i)).put('"').put(',');
-                sink.putQuoted("index").put(':').put(varColumnSizes.getQuick(i + 1)).put(',');
-                sink.putQuoted("size").put(':').put(varColumnSizes.getQuick(i + 2));
-                sink.put('}');
+                sink.putAscii('{');
+                sink.putAsciiQuoted("ts").putAscii(':').putAscii('"').putISODate(varColumnSizes.getQuick(i)).putAscii('"').putAscii(',');
+                sink.putAsciiQuoted("index").putAscii(':').put(varColumnSizes.getQuick(i + 1)).putAscii(',');
+                sink.putAsciiQuoted("size").putAscii(':').put(varColumnSizes.getQuick(i + 2));
+                sink.putAscii('}');
             }
 
-            sink.put(']');
+            sink.putAscii(']');
         }
 
         n = partitions.size();
         if (n > 0) {
+            sink.putAscii(',');
 
-            sink.put(',');
-
-            sink.putQuoted("partitions").put(':').put('[');
+            sink.putAsciiQuoted("partitions").putAscii(':').putAscii('[');
 
             for (int i = 0; i < n; i += SLOTS_PER_PARTITION) {
                 if (i > 0) {
-                    sink.put(',');
+                    sink.putAscii(',');
                 }
-                sink.put('{');
-                sink.putQuoted("action").put(':').putQuoted(ACTION_NAMES[(int) partitions.getQuick(i)]).put(',');
-                sink.putQuoted("ts").put(':').put('"').putISODate(partitions.getQuick(i + 1)).put('"').put(',');
-                sink.putQuoted("startRow").put(':').put(partitions.getQuick(i + 2)).put(',');
-                sink.putQuoted("rowCount").put(':').put(partitions.getQuick(i + 3)).put(',');
-                sink.putQuoted("nameTxn").put(':').put(partitions.getQuick(i + 4)).put(',');
-                sink.putQuoted("columnVersion").put(':').put(partitions.getQuick(i + 5));
-                sink.put('}');
+                sink.putAscii('{');
+                sink.putAsciiQuoted("action").putAscii(':').putQuoted(ACTION_NAMES[(int) partitions.getQuick(i)]).putAscii(',');
+                sink.putAsciiQuoted("ts").putAscii(':').putAscii('"').putISODate(partitions.getQuick(i + 1)).putAscii('"').putAscii(',');
+                sink.putAsciiQuoted("startRow").putAscii(':').put(partitions.getQuick(i + 2)).putAscii(',');
+                sink.putAsciiQuoted("rowCount").putAscii(':').put(partitions.getQuick(i + 3)).putAscii(',');
+                sink.putAsciiQuoted("nameTxn").putAscii(':').put(partitions.getQuick(i + 4)).putAscii(',');
+                sink.putAsciiQuoted("columnVersion").putAscii(':').put(partitions.getQuick(i + 5));
+                sink.putAscii('}');
             }
 
-            sink.put(']');
-
+            sink.putAscii(']');
         }
 
         n = addedColumnMetadata.size();
         if (n > 0) {
+            sink.putAscii(',');
 
-            sink.put(',');
-
-            sink.putQuoted("columnMetaData").put(':').put('[');
+            sink.putAsciiQuoted("columnMetaData").putAscii(':').putAscii('[');
 
             for (int i = 0; i < n; i++) {
                 if (i > 0) {
-                    sink.put(',');
+                    sink.putAscii(',');
                 }
 
-                sink.put('{');
+                sink.putAscii('{');
 
                 final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
-                sink.putQuoted("name").put(':').putQuoted(metadata.getName()).put(',');
-                sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(metadata.getType())).put(',');
-                sink.putQuoted("index").put(':').put(metadata.isIndexed()).put(',');
-                sink.putQuoted("indexCapacity").put(':').put(metadata.getIndexValueBlockCapacity());
+                sink.putAsciiQuoted("name").putAscii(':').putQuoted(metadata.getName()).putAscii(',');
+                sink.putAsciiQuoted("type").putAscii(':').putQuoted(ColumnType.nameOf(metadata.getType())).putAscii(',');
+                sink.putAsciiQuoted("index").putAscii(':').put(metadata.isIndexed()).putAscii(',');
+                sink.putAsciiQuoted("indexCapacity").putAscii(':').put(metadata.getIndexValueBlockCapacity());
 
-                sink.put('}');
+                sink.putAscii('}');
             }
 
-            sink.put(']');
-
+            sink.putAscii(']');
         }
 
         n = columnMetaIndex.size();
 
         if (n > 0) {
-            sink.put(',');
+            sink.putAscii(',');
 
-            sink.putQuoted("columnMetaIndex").put(':').put('[');
+            sink.putAsciiQuoted("columnMetaIndex").putAscii(':').putAscii('[');
 
             for (int i = 0; i < n; i += SLOTS_PER_COLUMN_META_INDEX) {
-
                 if (i > 0) {
-                    sink.put(',');
+                    sink.putAscii(',');
                 }
 
                 int action = (int) columnMetaIndex.getQuick(i);
-                sink.put('{');
-                sink.putQuoted("action").put(':');
+                sink.putAscii('{');
+                sink.putAsciiQuoted("action").putAscii(':');
                 switch (action) {
                     case COLUMN_META_ACTION_REPLACE:
-                        sink.putQuoted("replace");
+                        sink.putAsciiQuoted("replace");
                         break;
                     case COLUMN_META_ACTION_MOVE:
-                        sink.putQuoted("move");
+                        sink.putAsciiQuoted("move");
                         break;
                     case COLUMN_META_ACTION_REMOVE:
-                        sink.putQuoted("remove");
+                        sink.putAsciiQuoted("remove");
                         break;
                     case COLUMN_META_ACTION_ADD:
-                        sink.putQuoted("add");
+                        sink.putAsciiQuoted("add");
                         break;
                     default:
                         break;
                 }
-                sink.put(',');
+                sink.putAscii(',');
 
                 long mix = columnMetaIndex.getQuick(i + 1);
-                sink.putQuoted("fromIndex").put(':').put(Numbers.decodeLowInt(mix)).put(',');
-                sink.putQuoted("toIndex").put(':').put(Numbers.decodeHighInt(mix));
+                sink.putAsciiQuoted("fromIndex").putAscii(':').put(Numbers.decodeLowInt(mix)).putAscii(',');
+                sink.putAsciiQuoted("toIndex").putAscii(':').put(Numbers.decodeHighInt(mix));
 
-                sink.put('}');
+                sink.putAscii('}');
             }
-            sink.put(']');
+            sink.putAscii(']');
         }
-        sink.put('}');
+        sink.putAscii('}');
     }
 }

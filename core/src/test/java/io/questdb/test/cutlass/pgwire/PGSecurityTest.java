@@ -33,6 +33,7 @@ import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
@@ -51,7 +52,7 @@ public class PGSecurityTest extends BasePGTest {
     private static final SecurityContextFactory READ_ONLY_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
     private static final FactoryProvider READ_ONLY_FACTORY_PROVIDER = new DefaultFactoryProvider() {
         @Override
-        public SecurityContextFactory getSecurityContextFactory() {
+        public @NotNull SecurityContextFactory getSecurityContextFactory() {
             return READ_ONLY_SECURITY_CONTEXT_FACTORY;
         }
     };
@@ -64,7 +65,7 @@ public class PGSecurityTest extends BasePGTest {
     private static final SecurityContextFactory READ_ONLY_USER_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(false, "user", false);
     private static final FactoryProvider READ_ONLY_USER_FACTORY_PROVIDER = new DefaultFactoryProvider() {
         @Override
-        public SecurityContextFactory getSecurityContextFactory() {
+        public @NotNull SecurityContextFactory getSecurityContextFactory() {
             return READ_ONLY_USER_SECURITY_CONTEXT_FACTORY;
         }
     };
@@ -86,6 +87,11 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testAllowDumpThreadStacks() throws Exception {
+        assertMemoryLeak(() -> executeWithPg("select dump_thread_stacks();"));
+    }
+
+    @Test
     public void testAllowsSelect() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table src (ts TIMESTAMP)");
@@ -103,6 +109,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowCopy() throws Exception {
+        ddl("create table testDisallowCopySerial (l long)");
         assertMemoryLeak(() -> assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true"));
     }
 
@@ -122,7 +129,7 @@ public class PGSecurityTest extends BasePGTest {
                 assertException("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
             } catch (PSQLException e) {
                 // the parser does not support DELETE
-                assertContains(e.getMessage(), "unexpected token: from");
+                assertContains(e.getMessage(), "unexpected token [from]");
             }
         });
     }
@@ -303,9 +310,9 @@ public class PGSecurityTest extends BasePGTest {
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
-            assertException("Query '" + query + "' must fail in the read-only mode!");
+            Assert.fail("Query '" + query + "' must fail in the read-only mode!");
         } catch (PSQLException e) {
-            assertContains(e.getMessage(), "Write permission denied");
+            assertContains(e.getMessage(), "permission denied");
         }
     }
 

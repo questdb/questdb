@@ -128,7 +128,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long ts = tsFunc.getTimestamp(rec);
+            long ts = tsFunc.getLong(rec);
             return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
         }
 

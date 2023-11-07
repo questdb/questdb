@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.mp.SimpleSpinLock;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -98,7 +98,7 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSinkBase<?> sink) {
         Long256Impl v = (Long256Impl) getLong256A(rec);
         v.toSink(sink);
     }

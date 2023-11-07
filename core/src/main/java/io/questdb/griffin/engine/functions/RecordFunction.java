@@ -30,13 +30,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 public abstract class RecordFunction implements ScalarFunction {
-    @Override
-    public int getArrayLength() {
-        throw new UnsupportedOperationException();
-    }
 
     @Override
     public BinarySequence getBin(Record rec) {
@@ -124,7 +121,7 @@ public abstract class RecordFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSinkBase<?> sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -154,17 +151,7 @@ public abstract class RecordFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void getStr(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 
@@ -174,17 +161,7 @@ public abstract class RecordFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStrB(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getStrLen(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 

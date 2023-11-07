@@ -25,10 +25,11 @@
 package io.questdb.network;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class NetworkError extends Error implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<NetworkError> tlException = new ThreadLocal<>(NetworkError::new);
@@ -90,7 +91,7 @@ public class NetworkError extends Error implements Sinkable, FlyweightMessageCon
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("[errno=").put(errno).put("] ").put(message);
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("[errno=").put(errno).putAscii("] ").put(message);
     }
 }

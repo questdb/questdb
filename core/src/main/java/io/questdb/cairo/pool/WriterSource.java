@@ -26,9 +26,10 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import org.jetbrains.annotations.NotNull;
 
 public interface WriterSource {
-    TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason);
+    TableWriterAPI getTableWriterAPI(TableToken tableToken, @NotNull String lockReason);
 
-    TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason);
+    TableWriterAPI getTableWriterAPI(CharSequence tableName, @NotNull String lockReason);
 }

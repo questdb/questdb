@@ -27,7 +27,8 @@ package io.questdb.cairo.vm.api;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 //contiguous appendable readable writable
 public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
@@ -139,7 +140,8 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
                 value.getLong0(),
                 value.getLong1(),
                 value.getLong2(),
-                value.getLong3());
+                value.getLong3()
+        );
     }
 
     default void putLong256(CharSequence hexString) {
@@ -157,7 +159,8 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
                 value.getLong0(),
                 value.getLong1(),
                 value.getLong2(),
-                value.getLong3());
+                value.getLong3()
+        );
     }
 
     default void putLong256(long offset, long l0, long l1, long l2, long l3) {
@@ -174,6 +177,11 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     default void putLong256Null() {
         Long256Impl.putNull(appendAddressFor(Long256.BYTES));
+    }
+
+    @Override
+    default void putLong256Utf8(@Nullable DirectUtf8Sequence hexString) {
+        throw new UnsupportedOperationException();
     }
 
     default long putNullBin() {
@@ -242,7 +250,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     }
 
     @Override
-    default long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars) {
+    default long putStrUtf8(DirectUtf8Sequence value, boolean hasNonAsciiChars) {
         throw new UnsupportedOperationException();
     }
 

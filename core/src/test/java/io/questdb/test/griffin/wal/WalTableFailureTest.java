@@ -44,6 +44,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -60,6 +61,7 @@ import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 public class WalTableFailureTest extends AbstractCairoTest {
+
     @Test
     public void testAddColumnFailToApplySequencerMetadataStructureChangeTransaction() throws Exception {
         assertMemoryLeak(() -> {
@@ -165,7 +167,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long mode) {
-                if (Chars.endsWith(name, "2022-02-25" + Files.SEPARATOR + "x.d.1") && counter++ < 2) {
+                if (Utf8s.endsWithAscii(name, "2022-02-25" + Files.SEPARATOR + "x.d.1") && counter++ < 2) {
                     return -1;
                 }
                 return super.openRW(name, mode);
@@ -300,7 +302,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, "wal2" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
+                if (Utf8s.endsWithAscii(from, "wal2" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
                     return -1;
                 }
                 return super.rename(from, to);
@@ -607,7 +609,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "new_column.d") && fail.get()) {
+                if (Utf8s.endsWithAscii(name, "new_column.d") && fail.get()) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -651,7 +653,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "new_column.d.1") && fail.get()) {
+                if (Utf8s.endsWithAscii(name, "new_column.d.1") && fail.get()) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -684,7 +686,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testNonWalTableTransactionNotificationIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            TableToken ignored = new TableToken(tableName, tableName, 123, false);
+            TableToken ignored = new TableToken(tableName, tableName, 123, false, false);
             createStandardWalTable(tableName);
 
             drainWalQueue();
@@ -830,7 +832,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "sym5.c")) {
+                if (Utf8s.containsAscii(name, "sym5.c")) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -851,7 +853,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ name) {
-                if (Chars.endsWith(name, META_FILE_NAME)) {
+                if (Utf8s.endsWithAscii(name, META_FILE_NAME)) {
                     fd = super.openRO(name);
                     return fd;
                 }
@@ -925,9 +927,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 compile("alter table " + tableToken.getTableName() + " add column jjj int, column2 long");
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(),
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
                         "statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                " are currently not supported for WAL tables");
+                                " are currently not supported for WAL tables"
+                );
             }
 
             insert("insert into " + tableToken.getTableName() +
@@ -942,13 +946,70 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTableResumeContinuesAfterEject() throws Exception {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, "x.d.") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuota(0);
+
+            //1
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            //2 fail
+            compile("update " + tableToken.getTableName() + " set x = 1111");
+            //3
+            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (1, 'AB', 'EF', '2022-02-24T01')");
+            //4
+            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (2, 'AB', 'EF', '2022-02-24T02')");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            engine.getTableSequencerAPI().releaseAll();
+
+            drainWalQueue();
+
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            engine.getTableSequencerAPI().releaseAll();
+            compile("alter table " + tableToken.getTableName() + " resume wal");
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            drainWalQueue();
+
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1111\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tAB\t2022-02-24T01:00:00.000000Z\tEF\n" +
+                    "2\tAB\t2022-02-24T02:00:00.000000Z\tEF\n", tableToken.getTableName());
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t0\t4\n", "wal_tables()");
+        });
+    }
+
+    @Test
     public void testWalTableSuspendResume() throws Exception {
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return Files.openRW(name, opts);
@@ -958,9 +1019,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(filesFacade, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            compile("update " + tableToken.getTableName() + " set x = 1111");
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
+            compile("update " + tableToken.getTableName() + " set x = 1111;");
+            compile("update " + tableToken.getTableName() + " set sym = 'XXX';");
+            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
 
             drainWalQueue();
 
@@ -968,7 +1029,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            compile("alter table " + tableToken.getTableName() + " resume wal");
+            compile("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
 
             drainWalQueue();
@@ -983,7 +1044,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return Files.openRW(name, opts);
@@ -991,7 +1052,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(filesFacade, () -> {
-
             //1
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             //2 fail
@@ -1008,13 +1068,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
             try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from transaction 999"); // fails
+                compile("alter table " + tableToken.getTableName() + " resume wal from transaction 999;"); // fails
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
             }
 
-            compile("alter table " + tableToken.getTableName() + " resume wal from txn 3");
+            compile("alter table " + tableToken.getTableName() + " resume wal from txn 3;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
@@ -1041,8 +1101,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             engine.getTableSequencerAPI().suspendTable(tableToken);
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
-                    "table does not exist [table=" + tableToken.getTableName() + "ererer]");
+            assertAlterTableTypeFail(
+                    "alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
+                    "table does not exist [table=" + tableToken.getTableName() + "ererer]"
+            );
         });
     }
 
@@ -1053,7 +1115,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return Files.openRW(name, opts);
@@ -1098,7 +1160,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -1153,7 +1215,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Misc.free(alterOperation);
             }
         });
-
     }
 
     private void failToApplyDoubleAlter(Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
@@ -1193,7 +1254,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "1" + Files.SEPARATOR + failToRollFile)) {
+                if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
                     fd = super.openRW(name, opts);
                     return fd;
                 }
@@ -1287,7 +1348,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
             @Override
             public int hardLink(LPSZ src, LPSZ hardLink) {
-                if (Chars.endsWith(src, Files.SEPARATOR + fileName)) {
+                if (Utf8s.endsWithAscii(src, Files.SEPARATOR + fileName)) {
                     return -1;
                 }
                 return Files.hardLink(src, hardLink);
@@ -1305,7 +1366,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     try (Path path = new Path()) {
                         String columnName = "sym";
                         path.of(engine.getConfiguration().getRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());
-                        int trimTo = path.length();
+                        int trimTo = path.size();
 
                         if (Os.type != Os.WINDOWS) {
                             // TODO: find out why files remain on Windows. They are not opened by anything

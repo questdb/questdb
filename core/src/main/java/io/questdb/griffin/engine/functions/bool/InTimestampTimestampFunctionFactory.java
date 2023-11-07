@@ -44,7 +44,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         try {
             return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());
         } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
+            throw SqlException.invalidDate(seq, position);
         }
     }
 

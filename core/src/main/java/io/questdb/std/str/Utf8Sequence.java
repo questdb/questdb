@@ -24,10 +24,22 @@
 
 package io.questdb.std.str;
 
+import org.jetbrains.annotations.NotNull;
+
 /**
  * A sequence of UTF-8 bytes.
  */
 public interface Utf8Sequence {
+
+    /**
+     * Returns a CharSequence view of the sequence.
+     * The view will be only valid if the sequence contains ASCII chars only.
+     *
+     * @return CharSequence view of the sequence
+     */
+    @NotNull
+    CharSequence asAsciiCharSequence();
+
     /**
      * Returns byte at index.
      * Note: Unchecked bounds.

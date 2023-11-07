@@ -35,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
@@ -55,6 +56,8 @@ public class TextLoaderTest extends AbstractCairoTest {
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
     private static final String PATH_SEP_REGEX = Os.isWindows() ?
             String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
+    private static final Utf8String TEST_TABLE_NAME = new Utf8String("test");
+    private static final Utf8String TEST_TS_COL_NAME = new Utf8String("ts");
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
@@ -560,7 +563,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 180_000_000,
                 721,
                 2_000_000,
-                2);
+                2
+        );
     }
 
     @Test
@@ -705,7 +709,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testDateFormatNoLocale() throws Exception {
-        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.enLocale;
+        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -1147,7 +1151,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                             PartitionBy.NONE
                     );
                     textLoader.setForceHeaders(true);
-                    playText(engine,
+                    playText(
+                            engine,
                             textLoader,
                             csv,
                             1024,
@@ -1157,7 +1162,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                             3,
                             true
                     );
-                });
+                }
+        );
     }
 
     @Test
@@ -1178,7 +1184,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 PartitionBy.NONE
                         );
                         textLoader.setForceHeaders(true);
-                        playText(engine,
+                        playText(
+                                engine,
                                 textLoader,
                                 csv,
                                 1024,
@@ -1192,7 +1199,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     } catch (TextException expected) {
                         Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1213,7 +1221,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 PartitionBy.NONE
                         );
                         textLoader.setForceHeaders(true);
-                        playText(engine,
+                        playText(
+                                engine,
                                 textLoader,
                                 csv,
                                 1024,
@@ -1227,7 +1236,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     } catch (TextException expected) {
                         Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1313,7 +1323,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 23,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -1382,7 +1393,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 5,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -2125,7 +2137,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 4,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -2454,7 +2467,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFormatNoLocale() throws Exception {
-        DateLocale locale = DateFormatUtils.enLocale;
+        DateLocale locale = DateFormatUtils.EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -2497,7 +2510,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 180_000_000,
                 721,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -2509,7 +2523,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                 -1,
                 -1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -2821,7 +2836,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                         expected,
                         "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                         3,
-                        3);
+                        3
+                );
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot import text into BINARY column");
@@ -2848,7 +2864,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
     }
 
@@ -2871,7 +2888,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
     }
 
@@ -3070,7 +3088,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
     }
 
@@ -3231,7 +3250,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                                 5,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -3249,7 +3269,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, atomicity, PartitionBy.NONE, null, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, overwrite, atomicity, PartitionBy.NONE, null, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3257,13 +3277,13 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, atomicity, partitionBy, "ts", null);
+        textLoader.configureDestination(TEST_TABLE_NAME, overwrite, atomicity, partitionBy, TEST_TS_COL_NAME, null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
     private void configureLoaderDefaults2(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, Atomicity.SKIP_COL, PartitionBy.DAY, TEST_TS_COL_NAME, null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
@@ -3331,7 +3351,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 final String dirName = extractLast(name);
                 if (!dirName.equals("seq")) {
                     rmdirCallCount.getAndIncrement();
@@ -3339,7 +3359,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                         Assert.fail(dirName + " not expected");
                     }
                 }
-                return Files.rmdir(name);
+                return super.rmdir(name, lazy);
             }
 
             @Override
@@ -3491,7 +3511,8 @@ public class TextLoaderTest extends AbstractCairoTest {
             long expectedWrittenLineCount,
             boolean skipLinesWithExtraValues
     ) throws Exception {
-        playText(engine,
+        playText(
+                engine,
                 textLoader,
                 text,
                 firstBufSize,
@@ -3512,7 +3533,8 @@ public class TextLoaderTest extends AbstractCairoTest {
             long expectedParsedLineCount,
             long expectedWrittenLineCount
     ) throws Exception {
-        playText(engine,
+        playText(
+                engine,
                 textLoader,
                 text,
                 firstBufSize,

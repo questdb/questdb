@@ -84,8 +84,8 @@ public final class Kqueue implements Closeable {
         return register(1);
     }
 
-    public int poll() {
-        return kqf.kevent(kq, 0, 0, eventList, capacity);
+    public int poll(int timeout) {
+        return kqf.kevent(kq, 0, 0, eventList, capacity, timeout);
     }
 
     public void readFD(int fd, long data) {
@@ -95,7 +95,7 @@ public final class Kqueue implements Closeable {
     }
 
     public int register(int n) {
-        return kqf.kevent(kq, changeList, n, 0, 0);
+        return kqf.kevent(kq, changeList, n, 0, 0, 0);
     }
 
     public int removeListen(int sfd) {

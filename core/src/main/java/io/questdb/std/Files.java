@@ -25,9 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -38,7 +36,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Files {
-
     public static final int DT_DIR = 4;
     public static final int DT_FILE = 8;
     public static final int DT_LNK = 10; // soft link
@@ -60,6 +57,8 @@ public final class Files {
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
+    private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
+    public static boolean VIRTIO_FS_DETECTED = false;
     static IntHashSet openFds;
 
     private Files() {
@@ -124,7 +123,7 @@ public final class Files {
     public static native int copy(long from, long to);
 
     public static int copy(LPSZ from, LPSZ to) {
-        return copy(from.address(), to.address());
+        return copy(from.ptr(), to.ptr());
     }
 
     public static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
@@ -145,7 +144,7 @@ public final class Files {
     public static native boolean exists(int fd);
 
     public static boolean exists(LPSZ lpsz) {
-        return lpsz != null && exists0(lpsz.address());
+        return lpsz != null && exists0(lpsz.ptr());
     }
 
     public static void fadvise(int fd, long offset, long len, int advise) {
@@ -159,7 +158,7 @@ public final class Files {
     public native static void findClose(long findPtr);
 
     public static long findFirst(LPSZ lpsz) {
-        return findFirst(lpsz.address());
+        return findFirst(lpsz.ptr());
     }
 
     public native static long findName(long findPtr);
@@ -175,10 +174,10 @@ public final class Files {
     public static native int fsync(int fd);
 
     public static long getDirSize(Path path) {
-        long pathUtf8Ptr = path.address();
+        long pathUtf8Ptr = path.ptr();
         long pFind = findFirst(pathUtf8Ptr);
         if (pFind > 0L) {
-            int len = path.length();
+            int len = path.size();
             try {
                 long totalSize = 0L;
                 do {
@@ -202,7 +201,7 @@ public final class Files {
 
     public static long getDiskFreeSpace(LPSZ path) {
         if (path != null) {
-            return getDiskSize(path.address());
+            return getDiskSize(path.ptr());
         }
         // current directory
         return 0L;
@@ -217,13 +216,17 @@ public final class Files {
      * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
      * positive number is magic that is not supported.
      */
-    public static int getFileSystemStatus(LPSZ lpszName) {
+    public static int getFileSystemStatus(Path lpszName) {
         assert lpszName.capacity() > 127;
-        return getFileSystemStatus(lpszName.address());
+        int status = getFileSystemStatus(lpszName.ptr());
+        if (status == VIRTIO_FS_MAGIC) {
+            VIRTIO_FS_DETECTED = true;
+        }
+        return status;
     }
 
     public static long getLastModified(LPSZ lpsz) {
-        return getLastModified(lpsz.address());
+        return getLastModified(lpsz.ptr());
     }
 
     public static String getOpenFdDebugInfo() {
@@ -251,7 +254,7 @@ public final class Files {
     public static native int hardLink(long lpszSrc, long lpszHardLink);
 
     public static int hardLink(LPSZ src, LPSZ hardLink) {
-        return hardLink(src.address(), hardLink.address());
+        return hardLink(src.ptr(), hardLink.ptr());
     }
 
     public static boolean isDirOrSoftLinkDir(LPSZ path) {
@@ -261,7 +264,7 @@ public final class Files {
         }
         try {
             int type = findType(ptr);
-            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
+            return type == DT_DIR || (type == DT_LNK && isDir(path.ptr()));
         } finally {
             findClose(ptr);
         }
@@ -271,7 +274,7 @@ public final class Files {
         return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);
     }
 
-    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @NotNull StringSink nameSink) {
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @NotNull MutableUtf8Sink nameSink) {
         return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
     }
 
@@ -282,11 +285,11 @@ public final class Files {
     public native static boolean isSoftLink(long lpszPath);
 
     public static boolean isSoftLink(LPSZ path) {
-        return isSoftLink(path.address());
+        return isSoftLink(path.ptr());
     }
 
     public static long length(LPSZ lpsz) {
-        return length0(lpsz.address());
+        return length0(lpsz.ptr());
     }
 
     public native static long length(int fd);
@@ -302,29 +305,29 @@ public final class Files {
     public static native void madvise0(long address, long len, int advise);
 
     public static int mkdir(Path path, int mode) {
-        return mkdir(path.address(), mode);
+        return mkdir(path.ptr(), mode);
     }
 
     public static int mkdirs(Path path, int mode) {
-        for (int i = 0, n = path.length(); i < n; i++) {
-            char c = path.charAt(i);
-            if (c == Files.SEPARATOR) {
+        for (int i = 0, n = path.size(); i < n; i++) {
+            byte b = path.byteAt(i);
+            if (b == Files.SEPARATOR) {
                 // do not attempt to create '/' on linux or 'C:\' on Windows
-                if ((i == 0 && Os.isPosix()) || (i == 2 && Os.isWindows() && path.charAt(1) == ':')) {
+                if ((i == 0 && Os.isPosix()) || (i == 2 && Os.isWindows() && path.byteAt(1) == ':')) {
                     continue;
                 }
 
                 // replace separator we just found with \0
                 // temporarily truncate path to the directory we need to create
                 path.$at(i);
-                if (path.length() > 0 && !Files.exists(path)) {
+                if (path.size() > 0 && !Files.exists(path)) {
                     int r = Files.mkdir(path, mode);
                     if (r != 0) {
-                        path.put(i, Files.SEPARATOR);
+                        path.put(i, (byte) Files.SEPARATOR);
                         return r;
                     }
                 }
-                path.put(i, Files.SEPARATOR);
+                path.put(i, (byte) Files.SEPARATOR);
             }
         }
         return 0;
@@ -375,6 +378,17 @@ public final class Files {
         return len == 2 && value.charAt(1) != '.';
     }
 
+    public static boolean notDots(Utf8Sequence value) {
+        final int size = value.size();
+        if (size > 2) {
+            return true;
+        }
+        if (value.byteAt(0) != '.') {
+            return true;
+        }
+        return size == 2 && value.byteAt(1) != '.';
+    }
+
     public static boolean notDots(long pUtf8NameZ) {
         final byte b0 = Unsafe.getUnsafe().getByte(pUtf8NameZ);
 
@@ -387,31 +401,31 @@ public final class Files {
     }
 
     public static int openAppend(LPSZ lpsz) {
-        return bumpFileCount(openAppend(lpsz.address()));
+        return bumpFileCount(openAppend(lpsz.ptr()));
     }
 
     public static int openCleanRW(LPSZ lpsz, long size) {
-        return bumpFileCount(openCleanRW(lpsz.address(), size));
+        return bumpFileCount(openCleanRW(lpsz.ptr(), size));
     }
 
     public native static int openCleanRW(long lpszName, long size);
 
     public static int openRO(LPSZ lpsz) {
-        return bumpFileCount(openRO(lpsz.address()));
+        return bumpFileCount(openRO(lpsz.ptr()));
     }
 
     public static int openRW(LPSZ lpsz) {
-        return bumpFileCount(openRW(lpsz.address()));
+        return bumpFileCount(openRW(lpsz.ptr()));
     }
 
     public static int openRW(LPSZ lpsz, long opts) {
-        return bumpFileCount(openRWOpts(lpsz.address(), opts));
+        return bumpFileCount(openRWOpts(lpsz.ptr(), opts));
     }
 
     public native static long read(int fd, long address, long len, long offset);
 
     public static boolean readLink(Path softLink, Path readTo) {
-        final int len = readTo.length();
+        final int len = readTo.size();
         final int bufSize = 1024;
         readTo.zeroPad(bufSize);
         // readlink copies link target into the give buffer, without zero-terminating it
@@ -420,12 +434,12 @@ public final class Files {
         // value. If the value is the same as the buffer size we make an assumption that
         // the link target is perhaps longer than the buffer.
 
-        int res = readLink0(softLink.address(), readTo.address() + len, bufSize);
+        int res = readLink0(softLink.ptr(), readTo.ptr() + len, bufSize);
         if (res > 0 && res < bufSize) {
             readTo.trimTo(len + res).$();
             // check if symlink is absolute or relative
-            if (readTo.charAt(0) != '/') {
-                int prefixLen = Chars.lastIndexOf(softLink, '/');
+            if (readTo.byteAt(0) != '/') {
+                int prefixLen = Utf8s.lastIndexOfAscii(softLink, '/');
                 if (prefixLen > 0) {
                     readTo.prefix(softLink, prefixLen + 1).$();
                 }
@@ -444,19 +458,33 @@ public final class Files {
     public native static short readNonNegativeShort(int fd, long offset);
 
     public static boolean remove(LPSZ lpsz) {
-        return remove(lpsz.address());
+        return remove(lpsz.ptr());
     }
 
     public static int rename(LPSZ oldName, LPSZ newName) {
-        return rename(oldName.address(), newName.address());
+        return rename(oldName.ptr(), newName.ptr());
     }
 
-    public static int rmdir(Path path) {
-        long pathUtf8Ptr = path.address();
+    /**
+     * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.
+     * The function can operate in two modes, eager and haltOnFail. In haltOnFail mode function fails fast, providing precise
+     * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
+     * directory, should some files remain. Thus, not providing correct diagnostics.
+     * <p>
+     * rmdir() will fail if directory does not exist
+     *
+     * @param path       path to the directory, must include trailing slash (/)
+     * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
+     *                   false, the function will remove as many files and subdirectories as possible. That might be useful
+     *                   when the intent is too free up as much disk space as possible.
+     * @return true on success
+     */
+    public static boolean rmdir(Path path, boolean haltOnFail) {
+        long pathUtf8Ptr = path.ptr();
         long pFind = findFirst(pathUtf8Ptr);
         if (pFind > 0L) {
-            int len = path.length();
-            int errno;
+            int len = path.size();
+            boolean res;
             int type;
             long nameUtf8Ptr;
             try {
@@ -465,13 +493,13 @@ public final class Files {
                     path.trimTo(len).concat(nameUtf8Ptr).$();
                     type = findType(pFind);
                     if (type == Files.DT_FILE) {
-                        if (!remove(pathUtf8Ptr)) {
-                            return Os.errno();
+                        if (!remove(pathUtf8Ptr) && haltOnFail) {
+                            return false;
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        errno = type == Files.DT_LNK ? unlink(pathUtf8Ptr) : rmdir(path);
-                        if (errno != 0) {
-                            return errno;
+                        res = type == Files.DT_LNK ? unlink(pathUtf8Ptr) == 0 : rmdir(path, haltOnFail);
+                        if (!res && haltOnFail) {
+                            return res;
                         }
                     }
                 }
@@ -480,34 +508,23 @@ public final class Files {
                 findClose(pFind);
                 path.trimTo(len).$();
             }
+
             if (isSoftLink(pathUtf8Ptr)) {
-                return unlink(pathUtf8Ptr);
-            } else if (rmdir(pathUtf8Ptr)) {
-                return 0;
+                return unlink(pathUtf8Ptr) == 0;
             }
+            return rmdir(pathUtf8Ptr);
         }
-        return Os.errno();
+        return false;
     }
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {
-        return setLastModified(lpsz.address(), millis);
+        return setLastModified(lpsz.ptr(), millis);
     }
 
     public static native int softLink(long lpszSrc, long lpszSoftLink);
 
     public static int softLink(LPSZ src, LPSZ softLink) {
-        return softLink(src.address(), softLink.address());
-    }
-
-    public static boolean strcmp(long lpsz, CharSequence s) {
-        int len = s.length();
-        for (int i = 0; i < len; i++) {
-            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
-            if (b == 0 || b != (byte) s.charAt(i)) {
-                return false;
-            }
-        }
-        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
+        return softLink(src.ptr(), softLink.ptr());
     }
 
     public static native int sync();
@@ -523,7 +540,7 @@ public final class Files {
 
     public native static boolean truncate(int fd, long size);
 
-    public static int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+    public static int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable MutableUtf8Sink nameSink) {
         if (!notDots(pUtf8NameZ)) {
             return DT_UNKNOWN;
         }
@@ -531,7 +548,7 @@ public final class Files {
         if (type == DT_DIR) {
             if (nameSink != null) {
                 nameSink.clear();
-                Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
+                Utf8s.utf8ToUtf16Z(pUtf8NameZ, nameSink);
             }
             path.trimTo(rootLen).concat(pUtf8NameZ).$();
             return DT_DIR;
@@ -540,10 +557,10 @@ public final class Files {
         if (type == DT_LNK) {
             if (nameSink != null) {
                 nameSink.clear();
-                Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
+                Utf8s.utf8ToUtf16Z(pUtf8NameZ, nameSink);
             }
             path.trimTo(rootLen).concat(pUtf8NameZ).$();
-            if (isDir(path.address())) {
+            if (isDir(path.ptr())) {
                 return DT_LNK;
             }
         }
@@ -554,11 +571,11 @@ public final class Files {
     public native static int unlink(long lpszSoftLink);
 
     public static int unlink(LPSZ softLink) {
-        return unlink(softLink.address());
+        return unlink(softLink.ptr());
     }
 
     public static void walk(Path path, FindVisitor func) {
-        int len = path.length();
+        int len = path.size();
         long p = findFirst(path);
         if (p > 0) {
             try {

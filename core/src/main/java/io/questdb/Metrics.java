@@ -27,18 +27,21 @@ package io.questdb;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
+import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 public class Metrics implements Scrapable {
     private final boolean enabled;
     private final GCMetrics gcMetrics;
     private final HealthMetricsImpl healthCheck;
     private final JsonQueryMetrics jsonQuery;
+    private final LineMetrics line;
     private final MetricsRegistry metricsRegistry;
     private final PGWireMetrics pgWire;
     private final Runtime runtime = Runtime.getRuntime();
@@ -47,17 +50,20 @@ public class Metrics implements Scrapable {
     private final VirtualLongGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
     private final TableWriterMetrics tableWriter;
     private final WalMetrics walMetrics;
+    private final WorkerMetrics workerMetrics;
 
     public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
         this.gcMetrics = new GCMetrics();
         this.jsonQuery = new JsonQueryMetrics(metricsRegistry);
         this.pgWire = new PGWireMetrics(metricsRegistry);
+        this.line = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
         this.tableWriter = new TableWriterMetrics(metricsRegistry);
         this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
+        this.workerMetrics = new WorkerMetrics(metricsRegistry);
     }
 
     public static Metrics disabled() {
@@ -68,8 +74,8 @@ public class Metrics implements Scrapable {
         return new Metrics(true, new MetricsRegistryImpl());
     }
 
-    public WalMetrics getWalMetrics() {
-        return walMetrics;
+    public MetricsRegistry getRegistry() {
+        return metricsRegistry;
     }
 
     public HealthMetricsImpl health() {
@@ -84,12 +90,16 @@ public class Metrics implements Scrapable {
         return jsonQuery;
     }
 
+    public LineMetrics line() {
+        return line;
+    }
+
     public PGWireMetrics pgWire() {
         return pgWire;
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
             gcMetrics.scrapeIntoPrometheus(sink);
@@ -98,6 +108,14 @@ public class Metrics implements Scrapable {
 
     public TableWriterMetrics tableWriter() {
         return tableWriter;
+    }
+
+    public WalMetrics walMetrics() {
+        return walMetrics;
+    }
+
+    public WorkerMetrics workerMetrics() {
+        return workerMetrics;
     }
 
     private void createMemoryGauges(MetricsRegistry metricsRegistry) {
@@ -113,5 +131,9 @@ public class Metrics implements Scrapable {
         metricsRegistry.newVirtualGauge("memory_jvm_free", jvmFreeMemRef);
         metricsRegistry.newVirtualGauge("memory_jvm_total", jvmTotalMemRef);
         metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);
+    }
+
+    void addScrapable(Scrapable scrapable) {
+        metricsRegistry.addScrapable(scrapable);
     }
 }

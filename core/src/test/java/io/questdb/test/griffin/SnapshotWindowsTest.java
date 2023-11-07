@@ -46,7 +46,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
     }
@@ -58,7 +58,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
 
         super.setUp();
         path.of(configuration.getSnapshotRoot()).slash();
-        rootLen = path.length();
+        rootLen = path.size();
     }
 
     @After

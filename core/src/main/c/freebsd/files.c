@@ -154,11 +154,11 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
     struct timeval t[2];
     gettimeofday(&t[0], NULL);
     t[1].tv_sec = millis / 1000;
-#ifdef __APPLE__    
+#ifdef __APPLE__
     t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
 #else
     t[1].tv_usec = ((millis % 1000) * 1000);
-#endif    
+#endif
     return (jboolean) (utimes((const char *) lpszName, t) == 0);
 }
 
@@ -235,7 +235,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         switch (sb.f_type) {
             case 0x1C: // apfs
             case 0x1a:
-                return -1 * ((jlong) sb.f_type);
+                return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             default:
                 return sb.f_type;
         }
@@ -425,7 +425,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
                 return sb.f_type;
             case 0x794c7630:
                 strcpy((char *) lpszName, "OVERLAYFS");
-                return -1 * ((jlong) sb.f_type);
+                return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             case 0x50495045:
                 strcpy((char *) lpszName, "PIPEFS");
                 return sb.f_type;
@@ -492,12 +492,16 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
             case 0x00011954:
                 strcpy((char *) lpszName, "UFS");
                 return sb.f_type;
+            case 0x35:
+                strcpy((char *) lpszName, "UFS");
+                // tested with FreeBSD 13.2, partition type 'freebsd-ufs'
+                return FLAG_FS_SUPPORTED * sb.f_type;
             case 0x9fa2:
                 strcpy((char *) lpszName, "USBDEVICE");
                 return sb.f_type;
             case 0x01021997:
                 strcpy((char *) lpszName, "V9FS");
-                return -1 * ((jlong) sb.f_type);
+                return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             case 0xa501fcf5:
                 strcpy((char *) lpszName, "VXFS");
                 return sb.f_type;
@@ -512,7 +516,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
                 return sb.f_type;
             case 0xEF53: // ext2, ext3, ext4
                 strcpy((char *) lpszName, "ext4");
-                return -1 * ((jlong) sb.f_type);
+                return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             default:
                 strcpy((char *) lpszName, "unknown");
                 return sb.f_type;

@@ -67,6 +67,16 @@ public class TableSequencerAPI implements QuietCloseable {
         this.createTxnTracker = dir -> new SeqTxnTracker();
     }
 
+    public void applyRename(TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                sequencer.notifyRename(tableToken);
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     @Override
     public void close() {
         closed = true;
@@ -217,6 +227,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public SeqTxnTracker getTxnTracker(TableToken tableToken) {
+        return getSeqTxnTracker(tableToken);
+    }
+
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {
         SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
         final boolean isSuspended = isSuspended(tableToken);
@@ -357,6 +371,9 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 if (!sequencer.isSuspended()) {
+                    // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
+                    // as a way to resume table which is not moving even if it's marked as not suspended.
+                    sequencer.resumeTable();
                     return;
                 }
                 final long nextTxn = sequencer.lastTxn() + 1;

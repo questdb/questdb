@@ -34,15 +34,22 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
+
+import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_STATUS_FORMAT;
+import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_STATUS_TABLE_NAME;
 
 public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeable {
 
     private final CairoEngine cairoEngine;
     private final String keepAliveHeader;
     private final Path path = new Path();
+    private final StringSink utf16Sink = new StringSink();
 
     public TableStatusCheckProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         this.cairoEngine = cairoEngine;
@@ -56,13 +63,17 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        CharSequence tableName = context.getRequestHeader().getUrlParam("j");
+        DirectUtf8Sequence tableName = context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_TABLE_NAME);
         if (tableName == null) {
             context.simpleResponse().sendStatus(200, "table name missing");
         } else {
-            TableToken tableToken = cairoEngine.getTableTokenIfExists(tableName);
-            int check = cairoEngine.getTableStatus(path, tableToken);
-            if (Chars.equalsNc("json", context.getRequestHeader().getUrlParam("f"))) {
+            int check = TableUtils.TABLE_DOES_NOT_EXIST;
+            utf16Sink.clear();
+            if (Utf8s.utf8ToUtf16(tableName, utf16Sink)) {
+                TableToken tableToken = cairoEngine.getTableTokenIfExists(utf16Sink);
+                check = cairoEngine.getTableStatus(path, tableToken);
+            }
+            if (Utf8s.equalsNcAscii("json", context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_FORMAT))) {
                 HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                 r.status(200, "application/json");
 

@@ -24,28 +24,43 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.ServerMain;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.network.NetworkFacade;
+import io.questdb.std.str.DirectUtf8Sink;
 
-public class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
+public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
     public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory();
 
     @Override
     public Authenticator getPgWireAuthenticator(
-            NetworkFacade nf,
             PGWireConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener
     ) {
+        // Normally, all authenticators instances share native buffers for static passwords as the buffers are allocated
+        // and owned by FactoryProviders.
+        // But the Default implementation does not use FactoryProviders at all. There is a single static field INSTANCE, see above.
+        // Thus, there is nothing what could own and close the buffers. So we allocate buffers for each authenticator
+        // and the authenticator will be responsible for closing them.
+        DirectUtf8Sink defaultUserPasswordSink = new DirectUtf8Sink(4);
+        DirectUtf8Sink readOnlyUserPasswordSink = new DirectUtf8Sink(4);
+        UsernamePasswordMatcher matcher = new CustomCloseActionPasswordMatcherDelegate(
+                ServerMain.newPgWireUsernamePasswordMatcher(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink),
+                () -> {
+                    defaultUserPasswordSink.close();
+                    readOnlyUserPasswordSink.close();
+                }
+        );
+
         return new CleartextPasswordPgWireAuthenticator(
-                nf,
                 configuration,
                 circuitBreaker,
                 registry,
                 optionsListener,
-                new StaticUsernamePasswordMatcher(configuration)
+                matcher,
+                true
         );
     }
 }

@@ -68,7 +68,7 @@ public class TableWriterBenchmark {
     }
 
     @Setup(Level.Iteration)
-    public void setup() throws Exception {
+    public void setup() {
         final CairoConfiguration configuration = getConfiguration();
 
         executeDdl("create table if not exists test1(f long)", configuration);
@@ -77,9 +77,9 @@ public class TableWriterBenchmark {
 
         LogFactory.haltInstance();
 
-        TableToken tableToken1 = new TableToken("test1", "test1", 0, false);
-        TableToken tableToken2 = new TableToken("test2", "test2", 0, false);
-        TableToken tableToken3 = new TableToken("test3", "test3", 0, false);
+        TableToken tableToken1 = new TableToken("test1", "test1", 0, false, false);
+        TableToken tableToken2 = new TableToken("test2", "test2", 0, false, false);
+        TableToken tableToken3 = new TableToken("test3", "test3", 0, false, false);
 
         writer = new TableWriter(configuration, tableToken1, Metrics.disabled());
         writer2 = new TableWriter(configuration, tableToken2, Metrics.disabled());
