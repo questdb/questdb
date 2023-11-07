@@ -2900,16 +2900,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     selectMetadata.add(colMetadata);
                 } else {
                     // avoid clashing with other columns using timestamp column name as alias
-                    int cnt = 30;
                     StringSink sink = Misc.getThreadLocalSink();
-                    sink.put("_internal_");
                     sink.put(colMetadata.getName());
-                    for (int i = 0; i < cnt; i++) {
-                        sink.put('0');
-                        if (selectMetadata.getColumnIndexQuiet(colMetadata.getName()) > -1) {
-                            break;
-                        }
-                    }
+                    int len = sink.length();
+                    int sequence = 0;
+
+                    do {
+                        sink.trimTo(len);
+                        sink.put(sequence++);
+                    } while (selectMetadata.getColumnIndexQuiet(colMetadata.getName()) < 0);
 
                     selectMetadata.add(
                             new TableColumnMetadata(
