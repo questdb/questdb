@@ -2908,7 +2908,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     do {
                         sink.trimTo(len);
                         sink.put(sequence++);
-                    } while (selectMetadata.getColumnIndexQuiet(colMetadata.getName()) < 0);
+                    } while (selectMetadata.getColumnIndexQuiet(sink) > -1);
 
                     selectMetadata.add(
                             new TableColumnMetadata(
