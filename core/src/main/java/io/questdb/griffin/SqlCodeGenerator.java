@@ -4833,7 +4833,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY");
+                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
                 }
             }
         }
