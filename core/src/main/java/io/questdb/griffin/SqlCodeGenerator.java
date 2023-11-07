@@ -61,6 +61,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -2895,7 +2896,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         )
                 );
             } else {
-                selectMetadata.add(colMetadata);
+                if (selectMetadata.getColumnIndexQuiet(colMetadata.getName()) < 0) {
+                    selectMetadata.add(colMetadata);
+                } else {
+                    // avoid clashing with other columns using timestamp column name as alias
+                    StringSink sink = Misc.getThreadLocalSink();
+                    sink.put(colMetadata.getName());
+                    int len = sink.length();
+                    int sequence = 0;
+
+                    do {
+                        sink.trimTo(len);
+                        sink.put(sequence++);
+                    } while (selectMetadata.getColumnIndexQuiet(sink) > -1);
+
+                    selectMetadata.add(
+                            new TableColumnMetadata(
+                                    sink.toString(),
+                                    colMetadata.getType(),
+                                    colMetadata.isIndexed(),
+                                    colMetadata.getIndexValueBlockCapacity(),
+                                    colMetadata.isSymbolTableStatic(),
+                                    metadata
+                            )
+                    );
+                }
             }
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
