@@ -134,7 +134,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 // Increment the counter to avoid miscalculation.
                 distinctSymbols++;
             }
-            distinctSymbols = Math.max(0, distinctSymbols - excludedSymbolKeys.size());
+            distinctSymbols -= excludedSymbolKeys.size();
             if (distinctSymbols > 0) {
                 rowIds.setCapacity(distinctSymbols);
             }
