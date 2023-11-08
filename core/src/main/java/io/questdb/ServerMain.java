@@ -208,7 +208,7 @@ public class ServerMain implements Closeable {
                 addShutdownHook();
             }
             workerPoolManager.start(log);
-            Bootstrap.logWebConsoleUrls(config, log, banner);
+            Bootstrap.logWebConsoleUrls(config, log, banner, webConsoleSchema());
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
         }
@@ -364,5 +364,9 @@ public class ServerMain implements Closeable {
             workerPool.assign(i, applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }
+    }
+
+    protected String webConsoleSchema() {
+        return "http://";
     }
 }
