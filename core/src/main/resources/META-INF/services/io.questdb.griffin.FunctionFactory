@@ -791,6 +791,8 @@ io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
 
 # metadata functions
 io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory
+io.questdb.griffin.engine.functions.metadata.InstanceNameFunctionFactory
+io.questdb.griffin.engine.functions.metadata.InstanceRGBFunctionFactory
 
 # Bitwise operators
 io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory

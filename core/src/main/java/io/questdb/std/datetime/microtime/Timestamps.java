@@ -34,10 +34,13 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 public final class Timestamps {
 
     public static final long DAY_MICROS = 86400000000L; // 24 * 60 * 60 * 1000 * 1000L
+    public static final long DAY_SECONDS = 86400;
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
+    public static final long HOUR_SECONDS = 3600;
     public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
+    public static final long MINUTE_SECONDS = 60;
     public static final long O3_MIN_TS = 0L;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
@@ -66,7 +69,6 @@ public final class Timestamps {
     private static final int HOUR_MINUTES = 60;
     private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
-    private static final int MINUTE_SECONDS = 60;
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long YEAR_MICROS = 365 * DAY_MICROS;
 
@@ -646,7 +648,7 @@ public final class Timestamps {
         if (micros > -1) {
             return (int) ((micros / SECOND_MICROS) % MINUTE_SECONDS);
         } else {
-            return MINUTE_SECONDS - 1 + (int) (((micros + 1) / SECOND_MICROS) % MINUTE_SECONDS);
+            return (int) (MINUTE_SECONDS - 1 + (int) (((micros + 1) / SECOND_MICROS) % MINUTE_SECONDS));
         }
     }
 

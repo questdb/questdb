@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -37,21 +36,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
     public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
 
     protected ReadOnlySecurityContext() {
-    }
-
-    @Override
-    public void assumeServiceAccount(CharSequence serviceAccountName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAddPassword(CharSequence userOrServiceAccountName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAddUser() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override
@@ -119,32 +103,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAssignServiceAccount(CharSequence serviceAccountName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeCreateGroup() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeCreateJwk(CharSequence userOrServiceAccountName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeCreateServiceAccount() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeCreateUser() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -154,46 +113,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDisableUser() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeDropGroup() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeDropJwk(CharSequence userOrServiceAccountName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeDropServiceAccount() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeDropUser() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeEnableUser() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeHTTP() {
-    }
-
-    @Override
-    public void authorizeILP() {
+    public void authorizeHttp() {
     }
 
     @Override
@@ -202,17 +122,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizePGWIRE() {
+    public void authorizeLineTcp() {
     }
 
     @Override
-    public void authorizeRemovePassword(CharSequence userOrServiceAccountName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeRemoveUser() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    public void authorizePGWire() {
     }
 
     @Override
@@ -226,38 +140,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
-    }
-
-    @Override
-    public void authorizeShowGroups() {
-    }
-
-    @Override
-    public void authorizeShowGroups(CharSequence userName) {
-    }
-
-    @Override
-    public void authorizeShowPermissions(CharSequence entityName) {
-    }
-
-    @Override
-    public void authorizeShowServiceAccount(CharSequence serviceAccountName) {
-    }
-
-    @Override
-    public void authorizeShowServiceAccounts() {
-    }
-
-    @Override
-    public void authorizeShowServiceAccounts(CharSequence userOrGroupName) {
-    }
-
-    @Override
-    public void authorizeShowUser(CharSequence userName) {
-    }
-
-    @Override
-    public void authorizeShowUsers() {
     }
 
     @Override
@@ -301,17 +183,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignServiceAccount(CharSequence serviceAccountName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
     public void checkEntityEnabled() {
-    }
-
-    @Override
-    public void exitServiceAccount(CharSequence serviceAccountName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override
