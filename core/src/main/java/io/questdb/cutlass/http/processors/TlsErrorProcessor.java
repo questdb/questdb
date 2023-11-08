@@ -8,7 +8,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
-public class TlsErrorProcessor implements HttpRequestProcessor {
+public final class TlsErrorProcessor implements HttpRequestProcessor {
     public final static TlsErrorProcessor INSTANCE = new TlsErrorProcessor();
 
     @Override
@@ -16,12 +16,21 @@ public class TlsErrorProcessor implements HttpRequestProcessor {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
         r.status(400, "text/plain");
         r.sendHeader();
-        r.putAscii("Use HTTPS to connect to this server");
+        r.putAscii("Use HTTPS to connect to this server.\n");
         r.sendChunk(true);
+
+        // force disconnects
+        throw ServerDisconnectException.INSTANCE;
     }
 
     @Override
     public boolean requiresAuthentication() {
         return false;
+    }
+
+    @Override
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        context.resumeResponseSend();
+        throw ServerDisconnectException.INSTANCE;
     }
 }
