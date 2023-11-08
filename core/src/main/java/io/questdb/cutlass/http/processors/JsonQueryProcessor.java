@@ -198,11 +198,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (CairoError e) {
             internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    400, e, state, context.getMetrics());
+                    400, e, state, context.getMetrics()
+            );
             readyForNextRequest(context);
         } catch (CairoException e) {
             internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics());
+                    e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics()
+            );
             readyForNextRequest(context);
             if (e.isEntityDisabled()) {
                 throw ServerDisconnectException.INSTANCE;
@@ -266,6 +268,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // preserve random when we park the context
             state.setRnd(sqlExecutionContext.getRandom());
         }
+    }
+
+    @Override
+    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        return context.getCookieHandler().processCookies(context, securityContext);
     }
 
     @Override

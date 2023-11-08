@@ -667,7 +667,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 if (configuration.areCookiesEnabled()) {
-                    if (!cookieHandler.processCookies(this, securityContext)) {
+                    if (!processor.processCookies(this, securityContext)) {
                         return false;
                     }
                 }

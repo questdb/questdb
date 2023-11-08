@@ -24,12 +24,12 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.processors.*;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
@@ -44,23 +44,22 @@ import java.io.Closeable;
 
 public class HttpServer implements Closeable {
 
-    private static final Log LOG = LogFactory.getLog(HttpServer.class);
+    private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
     private final WaitProcessor rescheduleContext;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
-    private final ObjList<Closeable> closeables = new ObjList<>();
     private final int workerCount;
 
     public HttpServer(
-            HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool,
+            HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool,
             SocketFactory socketFactory
     ) {
-        this(configuration, messageBus, metrics, pool, socketFactory, DefaultHttpCookieHandler.INSTANCE);
+        this(configuration, metrics, pool, socketFactory, DefaultHttpCookieHandler.INSTANCE);
     }
 
     public HttpServer(
-            HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool,
+            HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool,
             SocketFactory socketFactory, HttpCookieHandler cookieHandler
     ) {
         this.workerCount = pool.getWorkerCount();
