@@ -66,7 +66,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private long statementTimeout = -1L;
     private DirectUtf8String statusCode;
     private DirectUtf8String statusText;
-    private DirectUtf8String url;
+    private Utf8Sequence url;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> pool) {
         final int sz = Numbers.ceilPow2(bufferLen);
@@ -105,6 +105,12 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.needProtocol = true;
         // do not clear the pool
         // this.pool.clear();
+    }
+
+    public void clearAndSetUrl(String url) {
+        clear();
+        this.url = new Utf8String(url);
+        incomplete = false;
     }
 
     @Override
@@ -183,7 +189,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     }
 
     @Override
-    public DirectUtf8Sequence getUrl() {
+    public Utf8Sequence getUrl() {
         return url;
     }
 

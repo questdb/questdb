@@ -35,9 +35,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -606,7 +606,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor;
-        final DirectUtf8Sequence url = headerParser.getUrl();
+        final Utf8Sequence url = headerParser.getUrl();
         processor = selector.select(url);
         if (processor == null) {
             return selector.getDefaultProcessor();
@@ -625,7 +625,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (newRequest) {
                 while (headerParser.isIncomplete()) {
                     // read headers
-                    read = socket.recv(recvBuffer, recvBufferSize);
+                    try {
+                        read = socket.recv(recvBuffer, recvBufferSize);
+                    } catch (CairoException e) {
+                        if (Chars.equals(e.getFlyweightMessage(), "TLS handshake failed")) {
+                            headerParser.clearAndSetUrl("/tls-handshake-failed");
+                            break;
+                        } else {
+                            throw e;
+                        }
+                    }
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
                     if (read < 0) {
                         LOG.debug()
@@ -648,7 +657,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
             }
 
-            final DirectUtf8Sequence url = headerParser.getUrl();
+            final Utf8Sequence url = headerParser.getUrl();
             if (url == null) {
                 throw HttpException.instance("missing URL");
             }
