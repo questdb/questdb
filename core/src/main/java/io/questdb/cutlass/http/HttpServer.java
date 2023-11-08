@@ -45,11 +45,11 @@ import java.io.Closeable;
 public class HttpServer implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
+    private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
     private final WaitProcessor rescheduleContext;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
-    private final ObjList<Closeable> closeables = new ObjList<>();
     private final int workerCount;
 
     public HttpServer(
@@ -168,6 +168,18 @@ public class HttpServer implements Closeable {
             @Override
             public HttpRequestProcessor newInstance() {
                 return new StaticContentProcessor(configuration);
+            }
+        });
+
+        server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/tls-handshake-failed";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TlsErrorProcessor();
             }
         });
     }
