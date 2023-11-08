@@ -9,13 +9,14 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
 public class TlsErrorProcessor implements HttpRequestProcessor {
+    public final static TlsErrorProcessor INSTANCE = new TlsErrorProcessor();
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-        r.status(500, "text/plain");
+        r.status(400, "text/plain");
         r.sendHeader();
-        r.putAscii("Use TLS to connect to this server");
+        r.putAscii("Use HTTPS to connect to this server");
         r.sendChunk(true);
     }
 }

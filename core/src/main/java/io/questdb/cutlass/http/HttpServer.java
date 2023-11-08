@@ -179,7 +179,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new TlsErrorProcessor();
+                return TlsErrorProcessor.INSTANCE;
             }
         });
     }
