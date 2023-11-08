@@ -19,4 +19,9 @@ public class TlsErrorProcessor implements HttpRequestProcessor {
         r.putAscii("Use HTTPS to connect to this server");
         r.sendChunk(true);
     }
+
+    @Override
+    public boolean requiresAuthentication() {
+        return false;
+    }
 }

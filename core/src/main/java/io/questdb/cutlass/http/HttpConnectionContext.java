@@ -625,18 +625,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (newRequest) {
                 while (headerParser.isIncomplete()) {
                     // read headers
-                    try {
-                        read = socket.recv(recvBuffer, recvBufferSize);
-                    } catch (CairoException e) {
-                        if (Chars.equals(e.getFlyweightMessage(), "TLS handshake failed")) {
-                            headerParser.clearAndSetUrl("/tls-handshake-failed");
-                            break;
-                        } else {
-                            throw e;
-                        }
-                    }
+                    read = socket.recv(recvBuffer, recvBufferSize);
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
                     if (read < 0) {
+                        if (read == Socket.TLS_HANDSHAKE_ERROR_CODE) {
+                            headerParser.clearAndSetUrl("/tls-handshake-failed");
+                            break;
+                        }
                         LOG.debug()
                                 .$("done [fd=").$(getFd())
                                 .$(", errno=").$(nf.errno())

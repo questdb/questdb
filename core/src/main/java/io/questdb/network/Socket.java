@@ -34,14 +34,16 @@ import io.questdb.std.QuietCloseable;
  * {@link #close()}: see {@link #of(int)}.
  */
 public interface Socket extends QuietCloseable {
-
     int READ_FLAG = 1 << 1;
+    int TLS_HANDSHAKE_ERROR_CODE = -2;
     int WRITE_FLAG = 1;
 
     /**
      * @return file descriptor associated with the socket.
      */
     int getFd();
+
+    boolean isClosed();
 
     /**
      * @return true if TLS session was already started.
@@ -120,6 +122,4 @@ public interface Socket extends QuietCloseable {
      * the socket becomes writable.
      */
     boolean wantsTlsWrite();
-
-    boolean isClosed();
 }
