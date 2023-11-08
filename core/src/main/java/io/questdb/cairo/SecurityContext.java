@@ -24,16 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public interface SecurityContext extends QuietCloseable, Mutable {
-
-    void assumeServiceAccount(CharSequence serviceAccountName);
-
-    void authorizeAddPassword(CharSequence userOrServiceAccountName);
-
-    void authorizeAddUser();
 
     void authorizeAdminAction();
 
@@ -62,67 +58,23 @@ public interface SecurityContext extends QuietCloseable, Mutable {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    void authorizeAssignServiceAccount(CharSequence serviceAccountName);
-
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
-
-    void authorizeCreateGroup();
-
-    void authorizeCreateJwk(CharSequence userOrServiceAccountName);
-
-    void authorizeCreateServiceAccount();
-
-    void authorizeCreateUser();
 
     void authorizeDatabaseSnapshot();
 
-    void authorizeDisableUser();
-
-    void authorizeDropGroup();
-
-    void authorizeDropJwk(CharSequence userOrServiceAccountName);
-
-    void authorizeDropServiceAccount();
-
-    void authorizeDropUser();
-
-    void authorizeEnableUser();
-
-    void authorizeGrant(LongList permissions, CharSequence tableName, @NotNull ObjList<CharSequence> columns);
-
-    void authorizeHTTP();
-
-    void authorizeILP();
+    void authorizeHttp();
 
     void authorizeInsert(TableToken tableToken);
 
-    void authorizePGWIRE();
+    void authorizeLineTcp();
 
-    void authorizeRemovePassword(CharSequence userOrServiceAccountName);
-
-    void authorizeRemoveUser();
+    void authorizePGWire();
 
     void authorizeResumeWal(TableToken tableToken);
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
-
-    void authorizeShowGroups();
-
-    void authorizeShowGroups(CharSequence userName);
-
-    void authorizeShowPermissions(CharSequence entityName);
-
-    void authorizeShowServiceAccount(CharSequence serviceAccountName);
-
-    void authorizeShowServiceAccounts();
-
-    void authorizeShowServiceAccounts(CharSequence userOrGroupName);
-
-    void authorizeShowUser(CharSequence userName);
-
-    void authorizeShowUsers();
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
@@ -141,8 +93,6 @@ public interface SecurityContext extends QuietCloseable, Mutable {
 
     void authorizeTableVacuum(TableToken tableToken);
 
-    void authorizeUnassignServiceAccount(CharSequence serviceAccountName);
-
     /**
      * Should throw an exception if:
      * - logged in as a user and the user has been disabled,
@@ -151,8 +101,6 @@ public interface SecurityContext extends QuietCloseable, Mutable {
      * or access to the service account has been revoked from the user
      */
     void checkEntityEnabled();
-
-    void exitServiceAccount(CharSequence serviceAccountName);
 
     default CharSequence getAssumedServiceAccount() {
         final CharSequence principal = getPrincipal();

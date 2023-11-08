@@ -1706,7 +1706,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (r == Authenticator.OK) {
                 SecurityContext securityContext = securityContextFactory.getInstance(authenticator.getPrincipal(), SecurityContextFactory.PGWIRE);
                 try {
-                    securityContext.authorizePGWIRE();
+                    securityContext.authorizePGWire();
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     r = authenticator.loginOK();
                 } catch (CairoException e) {

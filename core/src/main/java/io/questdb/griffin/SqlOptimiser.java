@@ -2358,7 +2358,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
-        if (model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT) {
+        if (model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT &&
+                // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
+                model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW) {
             model.getParsedWhere().clear();
             final ObjList<ExpressionNode> nodes = model.parseWhereClause();
             model.setWhereClause(null);
@@ -2989,15 +2991,15 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        final ExpressionNode postJoinWhere = model.getPostJoinWhereClause();
+        if (postJoinWhere != null) {
+            emitLiteralsTopDown(postJoinWhere, model);
+        }
+
         // propagate join models columns in separate loop to catch columns added to models prior to the current one
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             final QueryModel jm = joinModels.getQuick(i);
             propagateTopDownColumns0(jm, false, model, true);
-        }
-
-        final ExpressionNode postJoinWhere = model.getPostJoinWhereClause();
-        if (postJoinWhere != null) {
-            emitLiteralsTopDown(postJoinWhere, model);
         }
 
         // If this is group by model we need to add all non-selected keys, only if this is sub-query

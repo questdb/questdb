@@ -198,11 +198,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (CairoError e) {
             internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    400, e, state, context.getMetrics());
+                    400, e, state, context.getMetrics()
+            );
             readyForNextRequest(context);
         } catch (CairoException e) {
             internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics());
+                    e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics()
+            );
             readyForNextRequest(context);
             if (e.isEntityDisabled()) {
                 throw ServerDisconnectException.INSTANCE;
@@ -235,7 +237,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     context,
                     nanosecondClock,
                     configuration.getFloatScale(),
-                    configuration.getDoubleScale()
+                    configuration.getDoubleScale(),
+                    configuration.getKeepAliveHeader()
             ));
         }
 
@@ -268,6 +271,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
+    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        return context.getCookieHandler().processCookies(context, securityContext);
+    }
+
+    @Override
     public void resumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
@@ -283,10 +291,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 doResumeSend(state, context, sqlExecutionContext);
             } catch (CairoError | CairoException e) {
-                // this is something we didn't expect
-                // log the exception and disconnect
-                logInternalError(e, state, context.getMetrics());
-                throw ServerDisconnectException.INSTANCE;
+                internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
+                        400, e, state, context.getMetrics());
             }
         }
     }
@@ -501,7 +507,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, false, sqlExecutionContext)) {
-                header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
                 doResumeSend(state, context, sqlExecutionContext);
                 metrics.jsonQuery().markComplete();
             } else {
@@ -551,7 +556,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         // Make sure to mark the query as non-cacheable.
         if (state.of(factory, false, sqlExecutionContext)) {
-            header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
             doResumeSend(state, context, sqlExecutionContext);
             metrics.jsonQuery().markComplete();
         } else {
@@ -567,7 +571,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {
-                header(context.getChunkedResponseSocket(), context, keepAliveHeader, 200);
                 doResumeSend(state, context, sqlExecutionContext);
                 metrics.jsonQuery().markComplete();
             } else {

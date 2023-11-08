@@ -22,32 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.metadata;
 
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import org.jetbrains.annotations.NotNull;
+public class InstanceNameFunctionFactory extends AbstrtactEnvVariableValueFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "instance_name()";
+    }
 
-public interface SqlExecutionCircuitBreakerConfiguration {
-
-    boolean checkConnection();
-
-    int getBufferSize();
-
-    int getCircuitBreakerThrottle();
-
-    @NotNull
-    MillisecondClock getClock();
-
-    @NotNull
-    NetworkFacade getNetworkFacade();
-
-    /**
-     * Maximum SQL execution time in millis.
-     *
-     * @return maximum SQL execution time in millis
-     */
-    long getQueryTimeout();
-
-    boolean isEnabled();
+    @Override
+    protected String getEnvVariableName() {
+        return "QDB_INSTANCE_NAME";
+    }
 }

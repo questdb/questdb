@@ -3019,6 +3019,30 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEvaluateLargeAddIntExpression() throws Exception {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put("select ");
+        for (int i = 0; i < 100; i++) {
+            sink.put("(rnd_uuid4()::int) + ");
+        }
+        sink.put(" null ");
+        String query = sink.toString();
+
+        assertSql("column\n\n", query);
+
+        sink.clear();
+        sink.put("select ");
+        for (int i = 0; i < 100; i++) {
+            sink.put("x + ");
+        }
+        sink.put(" 1 from tab");
+        query = sink.toString();
+
+        ddl("create table tab as (select 1::int x) ");
+        assertSql("column\n101\n", query);
+    }
+
+    @Test
     public void testExecuteQuery() throws Exception {
         assertFailure(
                 68,

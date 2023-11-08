@@ -170,7 +170,7 @@ class LineTcpWriterJob implements Job, Closeable {
                         tud.setWriterInError();
                         LOG.critical()
                                 .$("closing writer because of error [table=").$(tud.getTableToken())
-                                .$(",ex=").$(ex)
+                                .$(", ex=").$(ex)
                                 .I$();
                         metrics.health().incrementUnhandledErrors();
                         closeWriter = true;

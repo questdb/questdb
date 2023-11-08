@@ -163,7 +163,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent {
 
                 // Suspend the WalPurgeJob
                 if (walPurgeJobRunLock != null) {
-                    final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
+                    final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
                     while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
                         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     }

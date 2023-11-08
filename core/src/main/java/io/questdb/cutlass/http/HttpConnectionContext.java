@@ -420,7 +420,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         authenticator.getPrincipal(),
                         SecurityContextFactory.HTTP
                 );
-                securityContext.authorizeHTTP();
+                securityContext.authorizeHttp();
             } catch (CairoException e) {
                 // todo: handle this separately from auth failure
                 return false;
@@ -673,7 +673,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 if (configuration.areCookiesEnabled()) {
-                    if (!cookieHandler.processCookies(this, securityContext)) {
+                    if (!processor.processCookies(this, securityContext)) {
                         return false;
                     }
                 }

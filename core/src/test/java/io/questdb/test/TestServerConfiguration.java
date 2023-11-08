@@ -211,6 +211,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return factoryProvider;
+    }
+
+    @Override
     public HttpMinServerConfiguration getHttpMinServerConfiguration() {
         return confHttpMin;
     }

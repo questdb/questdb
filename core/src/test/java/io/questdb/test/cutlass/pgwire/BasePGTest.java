@@ -334,7 +334,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
 
             @Override
-            public long getTimeout() {
+            public long getQueryTimeout() {
                 return maxQueryTime;
             }
         };
