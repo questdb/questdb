@@ -58,7 +58,7 @@ public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecut
     }
 
     @Override
-    public long getTimeout() {
+    public long getQueryTimeout() {
         return Long.MAX_VALUE;
     }
 

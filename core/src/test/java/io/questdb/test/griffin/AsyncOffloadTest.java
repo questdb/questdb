@@ -398,7 +398,7 @@ public class AsyncOffloadTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long getTimeout() {
+                    public long getQueryTimeout() {
                         return 1;
                     }
                 },
@@ -455,7 +455,7 @@ public class AsyncOffloadTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long getTimeout() {
+                    public long getQueryTimeout() {
                         return 1;
                     }
                 },

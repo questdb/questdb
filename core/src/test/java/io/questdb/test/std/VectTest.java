@@ -243,6 +243,18 @@ public class VectTest {
     }
 
     @Test
+    public void testMaxInt() {
+        long size = 100;
+        long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Vect.setMemoryInt(ptr, -1, size / 4);
+            Assert.assertEquals(-1, Vect.maxInt(ptr, size / 4));
+        } finally {
+            Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testMemeq() {
         int maxSize = 1024 * 1024;
         int[] sizes = {16, 1024, maxSize};

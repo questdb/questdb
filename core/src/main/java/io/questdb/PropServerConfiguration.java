@@ -94,7 +94,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoTableRegistryCompactionThreshold;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
-    private final long circuitBreakerTimeout;
     private final int columnIndexerQueueCapacity;
     private final int columnPurgeQueueCapacity;
     private final long columnPurgeRetryDelay;
@@ -214,6 +213,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final String publicDirectory;
+    private final long queryTimeout;
     private final int readerPoolMaxSegments;
     private final int recvBufferSize;
     private final int repeatMigrationFromVersion;
@@ -738,7 +738,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE, 4096);
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
-            this.circuitBreakerTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, 60) * Timestamps.SECOND_MILLIS);
+            this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, 60) * Timestamps.SECOND_MILLIS);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
@@ -3903,8 +3903,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getTimeout() {
-            return circuitBreakerTimeout;
+        public long getQueryTimeout() {
+            return queryTimeout;
         }
 
         @Override

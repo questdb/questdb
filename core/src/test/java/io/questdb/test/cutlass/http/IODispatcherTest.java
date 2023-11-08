@@ -145,6 +145,12 @@ public class IODispatcherTest extends AbstractTest {
         testHttpClient.setKeepConnection(false);
     }
 
+    @Override
+    public void tearDown() throws Exception {
+        super.tearDown();
+        TestDataUnavailableFunctionFactory.eventCallback = null;
+    }
+
     @Test
     public void testBiasWrite() throws Exception {
         LOG.info().$("started testBiasWrite").$();
@@ -3519,11 +3525,25 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryDisconnectOnDataUnavailableEventNeverFired() throws Exception {
-        testDisconnectOnDataUnavailableEventNeverFired(
-                "GET /query?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
-                        + SendAndReceiveRequestBuilder.RequestHeaders
-        );
+    public void testJsonQueryErrorOnDataUnavailableEventNeverFired() throws Exception {
+        TestDataUnavailableFunctionFactory.eventCallback = event -> {
+            event.close();
+        };
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(100)
+                .run((engine) -> {
+                    testHttpClient.assertGetRegexp(
+                            "/query",
+                            "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                            "select * from test_data_unavailable(1, 10)",
+                            null, null,
+                            "400"
+                    );
+                });
     }
 
     @Test
@@ -4750,18 +4770,14 @@ public class IODispatcherTest extends AbstractTest {
                 .run((engine) -> {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        // We expect header only to be sent and then a disconnect.
-                        new SendAndReceiveRequestBuilder()
-                                .withExpectReceiveDisconnect(true)
-                                .executeWithStandardRequestHeaders(
-                                        "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "Keep-Alive: timeout=5, max=10000\r\n"
-                                );
+                        // we use regexp, because the fd is different every time
+                        testHttpClient.assertGetRegexp(
+                                "/query",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                                "select i, avg(l), max(l) from t group by i order by i asc limit 3",
+                                null, null,
+                                "400"
+                        );
                     }
                 });
     }
@@ -4793,6 +4809,18 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     }
                 });
+    }
+
+    @Test
+    public void testBadImplicitStrToLongCast() throws Exception {
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day bypass wal;");
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "insert into tab values(1, now(), now());"); // it should not be DDL:OK. change me when https://github.com/questdb/questdb/issues/3858 is fixed
+            testHttpClient.assertGet(
+                    "{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":0}",
+                    "select * from tab where when = '2023-10-17';"
+            );
+        });
     }
 
     @Test
@@ -6818,6 +6846,11 @@ public class IODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
                 .withTelemetry(false)
                 .run((engine) -> {
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                    };
+
                     final String select = "select * from test_data_unavailable(32, 10)";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
                             "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",

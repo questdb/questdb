@@ -61,6 +61,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -2895,7 +2896,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         )
                 );
             } else {
-                selectMetadata.add(colMetadata);
+                if (selectMetadata.getColumnIndexQuiet(colMetadata.getName()) < 0) {
+                    selectMetadata.add(colMetadata);
+                } else {
+                    // avoid clashing with other columns using timestamp column name as alias
+                    StringSink sink = Misc.getThreadLocalSink();
+                    sink.put(colMetadata.getName());
+                    int len = sink.length();
+                    int sequence = 0;
+
+                    do {
+                        sink.trimTo(len);
+                        sink.put(sequence++);
+                    } while (selectMetadata.getColumnIndexQuiet(sink) > -1);
+
+                    selectMetadata.add(
+                            new TableColumnMetadata(
+                                    sink.toString(),
+                                    colMetadata.getType(),
+                                    colMetadata.isIndexed(),
+                                    colMetadata.getIndexValueBlockCapacity(),
+                                    colMetadata.isSymbolTableStatic(),
+                                    metadata
+                            )
+                    );
+                }
             }
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
@@ -4833,7 +4858,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST BY");
+                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
                 }
             }
         }
@@ -5133,6 +5158,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sumConstructors.put(ColumnType.LONG256, SumLong256VectorAggregateFunction::new);
         sumConstructors.put(ColumnType.DATE, SumDateVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.TIMESTAMP, SumTimestampVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.SHORT, SumShortVectorAggregateFunction::new);
 
         ksumConstructors.put(ColumnType.DOUBLE, KSumDoubleVectorAggregateFunction::new);
         nsumConstructors.put(ColumnType.DOUBLE, NSumDoubleVectorAggregateFunction::new);
@@ -5142,17 +5168,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         avgConstructors.put(ColumnType.TIMESTAMP, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.DATE, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.INT, AvgIntVectorAggregateFunction::new);
+        avgConstructors.put(ColumnType.SHORT, AvgShortVectorAggregateFunction::new);
 
         minConstructors.put(ColumnType.DOUBLE, MinDoubleVectorAggregateFunction::new);
         minConstructors.put(ColumnType.LONG, MinLongVectorAggregateFunction::new);
         minConstructors.put(ColumnType.DATE, MinDateVectorAggregateFunction::new);
         minConstructors.put(ColumnType.TIMESTAMP, MinTimestampVectorAggregateFunction::new);
         minConstructors.put(ColumnType.INT, MinIntVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.SHORT, MinShortVectorAggregateFunction::new);
 
         maxConstructors.put(ColumnType.DOUBLE, MaxDoubleVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.LONG, MaxLongVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.SHORT, MaxShortVectorAggregateFunction::new);
     }
 }

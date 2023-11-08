@@ -22,32 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.test.griffin;
 
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-public interface SqlExecutionCircuitBreakerConfiguration {
+import java.util.HashMap;
+import java.util.Map;
 
-    boolean checkConnection();
+public class MetadataFunctionTest extends AbstractCairoTest {
 
-    int getBufferSize();
+    @Test
+    public void testInstanceName() throws SqlException {
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_INSTANCE_NAME", "my instance");
+        configOverrideEnv(env);
+        assertSql(
+                "instance_name\n" +
+                        "my instance\n",
+                "select instance_name"
+        );
+    }
 
-    int getCircuitBreakerThrottle();
-
-    @NotNull
-    MillisecondClock getClock();
-
-    @NotNull
-    NetworkFacade getNetworkFacade();
-
-    /**
-     * Maximum SQL execution time in millis.
-     *
-     * @return maximum SQL execution time in millis
-     */
-    long getQueryTimeout();
-
-    boolean isEnabled();
+    @Test
+    public void testInstanceRGB() throws SqlException {
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_INSTANCE_RGB", "R");
+        configOverrideEnv(env);
+        assertSql(
+                "instance_rgb\n" +
+                        "R\n",
+                "select instance_rgb"
+        );
+    }
 }
