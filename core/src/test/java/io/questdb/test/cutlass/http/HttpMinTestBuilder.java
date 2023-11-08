@@ -70,7 +70,7 @@ public class HttpMinTestBuilder {
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 final PrometheusMetricsProcessor.RequestStatePool requestStatePool = prometheusRequestStatePool != null
                         ? prometheusRequestStatePool
