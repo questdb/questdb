@@ -24,9 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.*;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
 public interface SecurityContext extends QuietCloseable, Mutable {
@@ -119,9 +120,5 @@ public interface SecurityContext extends QuietCloseable, Mutable {
      */
     default CharSequence getSessionPrincipal() {
         return getPrincipal();
-    }
-
-    default SecurityContext init(@Transient CharSequence principal) {
-        return this;
     }
 }
