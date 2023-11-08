@@ -5158,6 +5158,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sumConstructors.put(ColumnType.LONG256, SumLong256VectorAggregateFunction::new);
         sumConstructors.put(ColumnType.DATE, SumDateVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.TIMESTAMP, SumTimestampVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.SHORT, SumShortVectorAggregateFunction::new);
 
         ksumConstructors.put(ColumnType.DOUBLE, KSumDoubleVectorAggregateFunction::new);
         nsumConstructors.put(ColumnType.DOUBLE, NSumDoubleVectorAggregateFunction::new);
@@ -5167,17 +5168,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         avgConstructors.put(ColumnType.TIMESTAMP, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.DATE, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.INT, AvgIntVectorAggregateFunction::new);
+        avgConstructors.put(ColumnType.SHORT, AvgShortVectorAggregateFunction::new);
 
         minConstructors.put(ColumnType.DOUBLE, MinDoubleVectorAggregateFunction::new);
         minConstructors.put(ColumnType.LONG, MinLongVectorAggregateFunction::new);
         minConstructors.put(ColumnType.DATE, MinDateVectorAggregateFunction::new);
         minConstructors.put(ColumnType.TIMESTAMP, MinTimestampVectorAggregateFunction::new);
         minConstructors.put(ColumnType.INT, MinIntVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.SHORT, MinShortVectorAggregateFunction::new);
 
         maxConstructors.put(ColumnType.DOUBLE, MaxDoubleVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.LONG, MaxLongVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.SHORT, MaxShortVectorAggregateFunction::new);
     }
 }

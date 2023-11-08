@@ -423,7 +423,7 @@ double SUM_DOUBLE(double *d, int64_t count) {
     int64_t n = horizontal_add(nancount);
     for (; i < count; i++) {
         double x = *(d + i);
-        if (PREDICT_TRUE(!std::isnan(x))) { 
+        if (PREDICT_TRUE(!std::isnan(x))) {
             sum += x;
         } else {
             n++;
@@ -468,7 +468,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
         if (std::isfinite(x)) {
             auto y = x - c;
             auto t = sum + y;
-            c = (t - sum) -y;
+            c = (t - sum) - y;
             sum = t;
         } else {
             nans++;
@@ -613,7 +613,20 @@ LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)
 
 extern "C" {
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
+
+    JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_sumShort(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+        return sumShort_Vanilla((int16_t *) pLong, count);
+    }
+
+    JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_minShort(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+        return minShort_Vanilla((int16_t *) pLong, count);
+    }
+
+    JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_maxShort(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+        return maxShort_Vanilla((int16_t *) pLong, count);
+    }
+
+    JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
     return instrset_detect();
 }
 }
