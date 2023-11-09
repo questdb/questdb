@@ -242,7 +242,8 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
                     }
                     v = pool.next().of(_lo, _wptr - 1);
                     _lo = _wptr;
-                    headers.put(headerName, v);
+                    boolean added = headers.put(headerName, v);
+                    assert added : "duplicate header [" + headerName + "]";
                     headerName = null;
                     break;
                 default:

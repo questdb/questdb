@@ -208,10 +208,25 @@ public class ServerMain implements Closeable {
                 addShutdownHook();
             }
             workerPoolManager.start(log);
-            Bootstrap.logWebConsoleUrls(config, log, banner);
+            Bootstrap.logWebConsoleUrls(config, log, banner, webConsoleSchema());
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
         }
+    }
+
+    private void addShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                System.err.println("QuestDB is shutting down...");
+                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
+                close();
+                LogFactory.closeInstance();
+            } catch (Error ignore) {
+                // ignore
+            } finally {
+                System.err.println("QuestDB is shutdown.");
+            }
+        }));
     }
 
     private synchronized void initialize() {
@@ -317,7 +332,7 @@ public class ServerMain implements Closeable {
                 metrics
         ));
 
-        if (!isReadOnly && config.isIlpEnabled()) {
+        if (!isReadOnly && config.isLineTcpEnabled()) {
             // ilp/tcp
             freeOnExit.register(Services.createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
@@ -338,21 +353,6 @@ public class ServerMain implements Closeable {
         log.advisoryW().$("server is ready to be started").$();
     }
 
-    private void addShutdownHook() {
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                System.err.println("QuestDB is shutting down...");
-                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
-                close();
-                LogFactory.closeInstance();
-            } catch (Error ignore) {
-                // ignore
-            } finally {
-                System.err.println("QuestDB is shutdown.");
-            }
-        }));
-    }
-
     protected void setupWalApplyJob(
             WorkerPool workerPool,
             CairoEngine engine,
@@ -364,5 +364,9 @@ public class ServerMain implements Closeable {
             workerPool.assign(i, applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }
+    }
+
+    protected String webConsoleSchema() {
+        return "http://";
     }
 }

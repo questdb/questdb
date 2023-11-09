@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class RemIntFunctionFactory implements FunctionFactory {
@@ -58,7 +59,15 @@ public class RemIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return left.getInt(rec) % right.getInt(rec);
+            int l = this.left.getInt(rec);
+            if (l == Numbers.INT_NaN) {
+                return Numbers.INT_NaN;
+            }
+            int r = this.right.getInt(rec);
+            if (r == 0 || r == Numbers.INT_NaN) {
+                return Numbers.INT_NaN;
+            }
+            return l % r;
         }
 
         @Override

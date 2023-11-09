@@ -114,7 +114,7 @@ public final class Chars {
         base64Decode(encoded, target, base64UrlInverted);
     }
 
-    public static void base64UrlEncode(BinarySequence sequence, final int maxLength, CharSink buffer) {
+    public static void base64UrlEncode(BinarySequence sequence, int maxLength, CharSinkBase<?> buffer) {
         base64Encode(sequence, maxLength, buffer, base64Url);
         // base64 url does not use padding
     }
@@ -837,7 +837,7 @@ public final class Chars {
         return cs.length() >= l && equalsCharsLowerCase(startsLC, cs, l);
     }
 
-    public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
+    public static void toLowerCase(@Nullable CharSequence str, @NotNull CharSinkBase<?> sink) {
         if (str != null) {
             final int len = str.length();
             for (int i = 0; i < len; i++) {
@@ -866,7 +866,7 @@ public final class Chars {
         return character > 64 && character < 91 ? (char) (character + 32) : character;
     }
 
-    public static void toSink(BinarySequence sequence, CharSink sink) {
+    public static void toSink(@Nullable BinarySequence sequence, @NotNull CharSinkBase<?> sink) {
         if (sequence == null) {
             return;
         }
@@ -932,7 +932,7 @@ public final class Chars {
         return b.toString();
     }
 
-    public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
+    public static void toUpperCase(@Nullable CharSequence str, @NotNull CharSinkBase<?> sink) {
         if (str != null) {
             final int len = str.length();
             for (int i = 0; i < len; i++) {
