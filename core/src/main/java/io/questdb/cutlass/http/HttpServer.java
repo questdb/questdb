@@ -52,12 +52,12 @@ public class HttpServer implements Closeable {
             HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool,
             SocketFactory socketFactory
     ) {
-        this(configuration, metrics, pool, socketFactory, DefaultHttpCookieHandler.INSTANCE);
+        this(configuration, metrics, pool, socketFactory, DefaultHttpCookieHandler.INSTANCE, DefaultHttpHeaderParserFactory.INSTANCE);
     }
 
     public HttpServer(
             HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool,
-            SocketFactory socketFactory, HttpCookieHandler cookieHandler
+            SocketFactory socketFactory, HttpCookieHandler cookieHandler, HttpHeaderParserFactory headerParserFactory
     ) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
@@ -66,7 +66,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler);
+        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler, headerParserFactory);
         this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
@@ -220,9 +220,9 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
-        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler) {
+        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler, HttpHeaderParserFactory headerParserFactory) {
             super(
-                    () -> new HttpConnectionContext(configuration, metrics, socketFactory, cookieHandler),
+                    () -> new HttpConnectionContext(configuration, metrics, socketFactory, cookieHandler, headerParserFactory),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }

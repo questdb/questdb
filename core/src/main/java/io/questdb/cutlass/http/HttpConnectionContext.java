@@ -79,10 +79,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @TestOnly
     public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
-        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE);
+        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE, DefaultHttpHeaderParserFactory.INSTANCE);
     }
 
-    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler) {
+    public HttpConnectionContext(
+            HttpMinServerConfiguration configuration,
+            Metrics metrics,
+            SocketFactory socketFactory,
+            HttpCookieHandler cookieHandler,
+            HttpHeaderParserFactory headerParserFactory
+    ) {
         super(
                 socketFactory,
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
@@ -94,7 +100,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.cookieHandler = cookieHandler;
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
-        this.headerParser = new HttpHeaderParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
+        this.headerParser = headerParserFactory.newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.responseSink = new HttpResponseSink(contextConfiguration);
@@ -627,11 +633,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // read headers
                     read = socket.recv(recvBuffer, recvBufferSize);
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
-                    if (read < 0) {
-                        if (read == Socket.TLS_HANDSHAKE_ERROR_CODE) {
-                            headerParser.onTlsError();
-                            break;
-                        }
+                    if (read < 0 && !headerParser.onRecvError(read)) {
                         LOG.debug()
                                 .$("done [fd=").$(getFd())
                                 .$(", errno=").$(nf.errno())

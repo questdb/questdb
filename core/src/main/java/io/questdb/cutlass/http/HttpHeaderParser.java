@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cutlass.http.processors.TlsErrorProcessor;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 
@@ -33,7 +32,6 @@ import java.io.Closeable;
 import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
-    private static final Utf8String TLS_ERROR_URL = new Utf8String(TlsErrorProcessor.URL);
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
     // in theory, it is possible to send multiple cookies on separate lines in the header
     // if we used more cookies, the below map would need to hold a list of CharSequences
@@ -42,6 +40,8 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private final ObjectPool<DirectUtf8String> pool;
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
+    protected boolean incomplete;
+    protected Utf8Sequence url;
     private long _lo;
     private long _wptr;
     private DirectUtf8String boundary;
@@ -52,7 +52,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
-    private boolean incomplete;
     private boolean isMethod = true;
     private boolean isProtocol = true;
     private boolean isQueryParams = false;
@@ -68,7 +67,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private long statementTimeout = -1L;
     private DirectUtf8String statusCode;
     private DirectUtf8String statusText;
-    private Utf8Sequence url;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> pool) {
         final int sz = Numbers.ceilPow2(bufferLen);
@@ -202,10 +200,14 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         return incomplete;
     }
 
-    public void onTlsError() {
-        clear();
-        this.url = TLS_ERROR_URL;
-        incomplete = false;
+    /**
+     * Called when there is an error reading from socket.
+     *
+     * @param err return of the latest read operation
+     * @return true if error is recoverable, false if not
+     */
+    public boolean onRecvError(int err) {
+        return false;
     }
 
     public long parse(long ptr, long hi, boolean _method, boolean _protocol) {
