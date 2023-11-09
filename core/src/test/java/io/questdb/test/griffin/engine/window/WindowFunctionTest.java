@@ -1151,15 +1151,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAverageResolvesSymbolTablesInPartitionBy() throws Exception {
+    public void testAverageResolvesSymbolTablesInPartitionByCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x (sym symbol, i int);");
             insert("insert into x values ('aaa', 1);");
+            insert("insert into x values ('aaa', 2);");
 
             assertSql(
-                    "avg\n" +
-                            "1.0\n",
-                    "SELECT avg(i) OVER(PARTITION BY sym LIKE '%aaa%') FROM x;"
+                    "sym\tavg\n" +
+                            "aaa\t1.5\n" +
+                            "aaa\t1.5\n",
+                    "SELECT sym, avg(i) OVER(PARTITION BY sym LIKE '%aaa%') FROM x;"
+            );
+        });
+    }
+
+    @Test
+    public void testAverageResolvesSymbolTablesInPartitionByNonCachedWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (sym symbol, i int, ts timestamp) timestamp(ts) partition by day;");
+            insert("insert into x values ('aaa', 1, '2023-11-09T00:00:00.000000');");
+            insert("insert into x values ('aaa', 2, '2023-11-09T01:00:00.000000');");
+
+            assertSql(
+                    "ts\tsym\tavg\n" +
+                            "2023-11-09T00:00:00.000000Z\taaa\t1.0\n" +
+                            "2023-11-09T01:00:00.000000Z\taaa\t1.5\n",
+                    "SELECT ts, sym, avg(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts) FROM x;"
             );
         });
     }
