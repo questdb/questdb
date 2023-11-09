@@ -31,10 +31,6 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
 public interface HttpRequestProcessor {
-    default boolean assumeServiceAccountsFromCookies() {
-        return false;
-    }
-
     // after this callback is invoked the server will disconnect the client
     // if processor desires to write a goodbye letter to the client
     // it must also send TCP FIN by invoking socket.shutdownWrite()
