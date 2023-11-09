@@ -77,6 +77,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     @Override
     public void close() {
         if (busyContext != null) {
+            busyContext.closeSecurityContext();
             busyContext.getDispatcher().disconnect(busyContext, DISCONNECT_REASON_RETRY_FAILED);
             busyContext = null;
         }

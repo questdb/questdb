@@ -125,7 +125,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public void close() {
-        System.out.println(Thread.currentThread().getName() + " !!!!! close tcp context " + securityContext);
         clear();
         Misc.free(authenticator);
     }
@@ -409,7 +408,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     void closeSecurityContext() {
-        System.out.println(Thread.currentThread().getName() + " !!!!! close security context " + securityContext);
         securityContext.close();
         securityContext = DenyAllSecurityContext.INSTANCE;
     }
