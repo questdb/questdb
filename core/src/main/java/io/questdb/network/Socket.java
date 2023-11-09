@@ -35,7 +35,6 @@ import io.questdb.std.QuietCloseable;
  */
 public interface Socket extends QuietCloseable {
     int READ_FLAG = 1 << 1;
-    int TLS_HANDSHAKE_ERROR_CODE = -2;
     int WRITE_FLAG = 1;
 
     /**
