@@ -1805,7 +1805,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test 
     public void testDenseRankNoPartitionByAndNoOrderByWithWildcard() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1836,7 +1836,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithNoPartitionByAndOrderBySymbolWithWildcard() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "2\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "3\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1867,7 +1867,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithPartitionAndOrderByNonSymbol() throws Exception {
-        assertQuery("rank\tprice\tts\n" +
+        assertQuery("dense_rank\tprice\tts\n" +
                         "1\t42\t1970-01-01T00:00:00.000000Z\n" +
                         "2\t42\t1970-01-02T03:46:40.000000Z\n" +
                         "3\t42\t1970-01-03T07:33:20.000000Z\n" +
@@ -1898,7 +1898,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
-        assertQuery("rank\n" +
+        assertQuery("dense_rank\n" +
                         "1\n" +
                         "1\n" +
                         "1\n" +
@@ -1930,7 +1930,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithPartitionAndOrderBySymbolWithWildcard() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
@@ -1961,7 +1961,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithPartitionBySymbolAndMultiOrderWithWildcard() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "2\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1992,7 +1992,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithPartitionBySymbolAndNoOrderWithWildcard() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -2024,7 +2024,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithPartitionBySymbolAndOrderByIntPriceDescWithWildcard() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "2\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -2056,7 +2056,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithPartitionBySymbolAndOrderByIntPriceWithWildcard() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "4\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -2088,7 +2088,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
  */
     @Test
     public void testDenseRankWithPartitionBySymbolAndOrderByPriceWithWildcard() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery("dense_rank\tprice\tsymbol\tts\n" +
                         "2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "3\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +

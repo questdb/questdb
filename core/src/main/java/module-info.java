@@ -792,10 +792,10 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory,
 
             // window functions
-            io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory,
             io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory,
             io.questdb.griffin.engine.functions.window.RankFunctionFactory,
             io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
