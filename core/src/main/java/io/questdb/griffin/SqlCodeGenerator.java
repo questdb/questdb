@@ -3567,7 +3567,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     WindowFunction af = (WindowFunction) f;
                     functions.extendAndSet(i, f);
 
-                    //sorting  multiple passes are required, so fall back to old implementation
+                    // sorting and/or  multiple passes are required, so fall back to old implementation
                     if ((osz > 0 && !dismissOrder) || af.getPassCount() != WindowFunction.ZERO_PASS) {
                         isFastPath = false;
                         break;
@@ -3599,6 +3599,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
                 functions.extendAndSet(i, function);
 
+                if (baseMetadata.getTimestampIndex() != -1 &&
+                        baseMetadata.getTimestampIndex() == columnIndex) {
+                    factoryMetadata.setTimestampIndex(i);
+                }
+
                 if (Chars.equals(qc.getAst().token, qc.getAlias())) {
                     factoryMetadata.add(i, m);
                 } else {// keep alias
@@ -3612,6 +3617,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             )
                     );
                 }
+
             }
         }
 
@@ -3660,6 +3666,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 listColumnFilterB.extendAndSet(i, columnIndex);
                 intHashSet.add(columnIndex);
                 columnIndexes.extendAndSet(i, columnIndex);
+
+                if (baseMetadata.getTimestampIndex() != -1 &&
+                        baseMetadata.getTimestampIndex() == columnIndex) {
+                    factoryMetadata.setTimestampIndex(i);
+                }
             }
         }
 

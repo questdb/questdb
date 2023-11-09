@@ -1173,7 +1173,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1201,7 +1201,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1229,7 +1229,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 false,
                 true
         );
@@ -1285,7 +1285,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1313,7 +1313,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1341,7 +1341,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1369,7 +1369,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 false,
                 true
         );
@@ -1397,7 +1397,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1425,7 +1425,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1453,7 +1453,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1576,7 +1576,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 false,
                 true
         );
@@ -1604,7 +1604,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1686,7 +1686,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 false,
                 true
         );
@@ -1742,7 +1742,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1770,7 +1770,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                null,
+                "ts",
                 true,
                 false
         );
@@ -1827,6 +1827,185 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 Assert.assertEquals(7, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "window function called in non-window context, make sure to add OVER clause");
             }
+        });
+    }
+
+    @Test
+    public void testWindowFactoryRetainsTimestampMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
+
+            // table scans
+            assertQueryAndPlan("select ts, i, j, avg(j) over (), row_number() over (), rank() over () from tab",
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [avg(j) over (),row_number(),rank()]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "ts\ti\tj\tavg\trow_number\trank\n",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryAndPlan("select ts, i, j, avg(j) over () from tab order by ts desc",
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [avg(j) over ()]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n",
+                    "ts\ti\tj\tavg\n",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryAndPlan("select ts, i, j, avg(j) over (order by ts) from tab",
+                    "Window\n" +
+                            "  functions: [avg(j) over (rows between unbounded preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "ts\ti\tj\tavg\n",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryAndPlan("select ts, i, j, avg(j) over (order by ts desc) from tab order by ts desc",
+                    "Window\n" +
+                            "  functions: [avg(j) over (rows between unbounded preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n",
+                    "ts\ti\tj\tavg\n",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryAndPlan("select ts, i, j, avg(j) over (partition by i) from tab",
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [avg(j) over (partition by [i])]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "ts\ti\tj\tavg\n",
+                    "ts",
+                    true,
+                    false);
+
+            assertQueryAndPlan("select ts, i, j, avg(j) over (partition by i) from tab order by ts desc",
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [avg(j) over (partition by [i])]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n",
+                    "ts\ti\tj\tavg\n",
+                    "ts",
+                    true,
+                    false);
+
+            assertQueryAndPlan("select ts, i, j, avg(j) over (partition by i order by ts) from tab",
+                    "Window\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "ts\ti\tj\tavg\n",
+                    "ts",
+                    false,
+                    true);
+
+            assertQueryAndPlan("select ts, i, j, avg(j) over (partition by i order by ts desc) from tab order by ts desc",
+                    "Window\n" +
+                            "  functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n",
+                    "ts\ti\tj\tavg\n",
+                    "ts",
+                    false,
+                    true);
+
+            assertQueryAndPlan("select i, j, avg(j) over (partition by i order by ts) from tab order by ts",
+                    "SelectedRecord\n" +
+                            "    Window\n" +
+                            "      functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n",
+                    "i\tj\tavg\n",
+                    null,
+                    false,
+                    true);
+
+            assertQueryAndPlan("select i, j, avg(j) over (partition by i order by ts desc) from tab order by ts desc",
+                    "SelectedRecord\n" +
+                            "    Window\n" +
+                            "      functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n",
+                    "i\tj\tavg\n",
+                    null,
+                    false,
+                    true);
+
+            assertQueryAndPlan("select i, j, avg(j) over (partition by i order by ts range between 10 seconds preceding and current row), ts from tab",
+                    "Window\n" +
+                            "  functions: [avg(j) over (partition by [i] range between 10000000 preceding and current row)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "i\tj\tavg\tts\n",
+                    "ts",
+                    false,
+                    true);
+
+            // index scans
+            assertQueryAndPlan("select ts, i, j, row_number() over () from tab where sym = 'X'",
+                    "Window\n" +
+                            "  functions: [row_number()]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: sym deferred: true\n" +
+                            "          filter: sym='X'\n" +
+                            "        Frame forward scan on: tab\n",
+                    "ts\ti\tj\trow_number\n",
+                    "ts",
+                    false,
+                    false
+            );
+
+            assertQueryAndPlan("select ts, i, j, row_number() over () from tab where sym = 'X' order by ts desc",
+                    "Window\n" +
+                            "  functions: [row_number()]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index backward scan on: sym deferred: true\n" +
+                            "          filter: sym='X'\n" +
+                            "        Frame backward scan on: tab\n",
+                    "ts\ti\tj\trow_number\n",
+                    "ts",
+                    false,
+                    false
+            );
+
+            assertQueryAndPlan("select ts, i, j, row_number() over () from tab where sym IN ('X', 'Y') order by sym",
+                    "SelectedRecord\n" +
+                            "    Window\n" +
+                            "      functions: [row_number()]\n" +
+                            "        FilterOnValues symbolOrder: asc\n" +
+                            "            Cursor-order scan\n" +
+                            "                Index forward scan on: sym deferred: true\n" +
+                            "                  filter: sym='X'\n" +
+                            "                Index forward scan on: sym deferred: true\n" +
+                            "                  filter: sym='Y'\n" +
+                            "            Frame forward scan on: tab\n",
+                    "ts\ti\tj\trow_number\n",
+                    null,
+                    false,
+                    false
+            );
         });
     }
 
@@ -1916,5 +2095,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "              filter: sym='B'\n" +
                             "        Frame forward scan on: tab\n");
         });
+    }
+
+    private void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
+        assertPlan(query, plan);
+
+        assertQuery(expectedResult,
+                query,
+                expectedTimestamp,
+                supportsRandomAccess,
+                expectSize);
     }
 }
