@@ -110,8 +110,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     @Override
     public void clear() {
         super.clear();
-        securityContext.close();
-        securityContext = DenyAllSecurityContext.INSTANCE;
         authenticator.clear();
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
         peerDisconnected = false;
@@ -233,6 +231,35 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         return false;
     }
 
+    /**
+     * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
+     * context and protocol parser such that all pointers that point to the incomplete measurement will remain
+     * valid. This allows protocol parser to resume execution from the point of where measurement ended abruptly
+     *
+     * @param recvBufStartOfMeasurement the address in receive buffer where incomplete measurement starts. Everything from
+     *                                  this address to end of the receive buffer will be copied to the start of the
+     *                                  receive buffer
+     * @return true if there was an incomplete measurement in the first place
+     */
+    private boolean compactBuffer(long recvBufStartOfMeasurement) {
+        assert recvBufStartOfMeasurement <= recvBufPos;
+        if (recvBufStartOfMeasurement > recvBufStart) {
+            final long len = recvBufPos - recvBufStartOfMeasurement;
+            if (len > 0) {
+                Vect.memmove(recvBufStart, recvBufStartOfMeasurement, len); // Use memmove, there may be an overlap
+                final long shl = recvBufStartOfMeasurement - recvBufStart;
+                parser.shl(shl);
+                this.recvBufStartOfMeasurement -= shl;
+            } else {
+                assert len == 0;
+                resetParser();
+            }
+            recvBufPos = recvBufStart + len;
+            return true;
+        }
+        return false;
+    }
+
     private void doHandleDisconnectEvent() {
         if (parser.getBufferAddress() == recvBufEnd) {
             LOG.error().$('[').$(getFd()).$("] buffer overflow [line.tcp.msg.buffer.size=").$(recvBufEnd - recvBufStart).$(']').$();
@@ -296,62 +323,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 .$();
     }
 
-    private void startNewMeasurement() {
-        parser.startNextMeasurement();
-        recvBufStartOfMeasurement = parser.getBufferAddress();
-        // we ran out of buffer, move to start and start parsing new data from socket
-        if (recvBufStartOfMeasurement == recvBufPos) {
-            recvBufPos = recvBufStart;
-            parser.of(recvBufStart);
-            recvBufStartOfMeasurement = recvBufStart;
-        }
-    }
-
-    void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
-        tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
-    }
-
-    /**
-     * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
-     * context and protocol parser such that all pointers that point to the incomplete measurement will remain
-     * valid. This allows protocol parser to resume execution from the point of where measurement ended abruptly
-     *
-     * @param recvBufStartOfMeasurement the address in receive buffer where incomplete measurement starts. Everything from
-     *                                  this address to end of the receive buffer will be copied to the start of the
-     *                                  receive buffer
-     * @return true if there was an incomplete measurement in the first place
-     */
-    protected final boolean compactBuffer(long recvBufStartOfMeasurement) {
-        assert recvBufStartOfMeasurement <= recvBufPos;
-        if (recvBufStartOfMeasurement > recvBufStart) {
-            final long len = recvBufPos - recvBufStartOfMeasurement;
-            if (len > 0) {
-                Vect.memmove(recvBufStart, recvBufStartOfMeasurement, len); // Use memmove, there may be an overlap
-                final long shl = recvBufStartOfMeasurement - recvBufStart;
-                parser.shl(shl);
-                this.recvBufStartOfMeasurement -= shl;
-            } else {
-                assert len == 0;
-                resetParser();
-            }
-            recvBufPos = recvBufStart + len;
-            return true;
-        }
-        return false;
-    }
-
-    protected SecurityContext getSecurityContext() {
-        return securityContext;
-    }
-
-    protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
+    private IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
                 ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(getSecurityContext(), netIoJob, this, parser)) {
+                            if (scheduler.scheduleEvent(securityContext, netIoJob, this, parser)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(getFd()).$("] queue full").$();
@@ -411,6 +390,26 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
+    }
+
+    private void startNewMeasurement() {
+        parser.startNextMeasurement();
+        recvBufStartOfMeasurement = parser.getBufferAddress();
+        // we ran out of buffer, move to start and start parsing new data from socket
+        if (recvBufStartOfMeasurement == recvBufPos) {
+            recvBufPos = recvBufStart;
+            parser.of(recvBufStart);
+            recvBufStartOfMeasurement = recvBufStart;
+        }
+    }
+
+    void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+        tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
+    }
+
+    void closeSecurityContext() {
+        securityContext.close();
+        securityContext = DenyAllSecurityContext.INSTANCE;
     }
 
     protected boolean read() {

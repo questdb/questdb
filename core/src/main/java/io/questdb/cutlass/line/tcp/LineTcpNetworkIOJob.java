@@ -155,6 +155,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
                 case QUEUE_FULL:
                     return true;
                 case NEEDS_DISCONNECT:
+                    context.closeSecurityContext();
                     context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
                     return false;
             }
