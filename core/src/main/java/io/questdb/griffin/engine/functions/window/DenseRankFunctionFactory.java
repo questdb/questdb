@@ -50,7 +50,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "dense_rank()";
 
     @Override
-    public String getSignature() {
+    public String getSignature() { 
         return SIGNATURE;
     }
 
@@ -72,9 +72,9 @@ public class DenseRankFunctionFactory implements FunctionFactory {
             throw SqlException.emptyWindowContext(position);
         }
 
-        if (windowContext.getPartitionByRecord() != null) {
-            ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
-            arrayColumnTypes.add(ColumnType.LONG); // max index
+        if (windowContext.getPartitionByRecord() != null) { // if window context is partitioned by 
+            ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes(); // add 
+            arrayColumnTypes.add(ColumnType.LONG); // rank index
             arrayColumnTypes.add(ColumnType.LONG); // current index
             arrayColumnTypes.add(ColumnType.LONG); // offset
             Map map = MapFactory.createMap(configuration, windowContext.getPartitionByKeyTypes(), arrayColumnTypes);
@@ -90,7 +90,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
 
         private int columnIndex;
         private long currentIndex = 0;
-        private long maxIndex = 0;
+        private long rankIndex = 0;
         private long offset = 0;
         private RecordComparator recordComparator;
 
@@ -106,7 +106,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(Record record) {
             assert recordComparator == null;
-            value = ++maxIndex;
+            value = rankIndex;
         }
 
         @Override
@@ -128,8 +128,9 @@ public class DenseRankFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (recordComparator == null) {
-                // order dismiss
-                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
+                // order dismiss 
+                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rankIndex + 1);
+                rankIndex++;
             } else {
                 if (currentIndex == 0) {
                     currentIndex = 1;
@@ -138,13 +139,14 @@ public class DenseRankFunctionFactory implements FunctionFactory {
                     // compare with prev record
                     recordComparator.setLeft(record);
                     if (recordComparator.compare(spi.getRecordAt(offset)) != 0) {
-                        currentIndex = maxIndex + 1;
+                        currentIndex = rankIndex + 1;
                         offset = recordOffset;
+                        rankIndex++;
                     }
                 }
                 Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndex);
             }
-            maxIndex++;
+            //rankIndex++; 
         }
 
         @Override
@@ -154,7 +156,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
 
         @Override
         public void reset() {
-            maxIndex = 0;
+            rankIndex = 0;
             currentIndex = 0;
             offset = 0;
         }
@@ -178,7 +180,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
     private static class DenseRankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
 
         private final static int VAL_CURRENT_INDEX = 1;
-        private final static int VAL_MAX_INDEX = 0;
+        private final static int VAL_RANK_INDEX = 0;
         private final static int VAL_OFFSET = 2;
         private final Map map;
         private final VirtualRecord partitionByRecord;
@@ -207,18 +209,18 @@ public class DenseRankFunctionFactory implements FunctionFactory {
             MapKey mapKey = map.withKey();
             mapKey.put(partitionByRecord, partitionBySink);
             MapValue mapValue = mapKey.createValue();
-            long maxIndex = 0;
+            long rankIndex = 0;
             if (mapValue.isNew()) {
-                mapValue.putLong(VAL_MAX_INDEX, 0);
+                mapValue.putLong(VAL_RANK_INDEX, 0);
                 mapValue.putLong(VAL_CURRENT_INDEX, 0);
                 mapValue.putLong(VAL_OFFSET, 0);
             } else {
-                maxIndex = mapValue.getLong(VAL_MAX_INDEX);
+                rankIndex = mapValue.getLong(VAL_RANK_INDEX);
             }
 
             assert recordComparator == null;
-            value = maxIndex + 1;
-            mapValue.putLong(VAL_MAX_INDEX, value);
+            value = rankIndex + 1;
+            mapValue.putLong(VAL_RANK_INDEX, value);
         }
 
         @Override
@@ -244,35 +246,38 @@ public class DenseRankFunctionFactory implements FunctionFactory {
             MapKey mapKey = map.withKey();
             mapKey.put(partitionByRecord, partitionBySink);
             MapValue mapValue = mapKey.createValue();
-            long maxIndex = 0;
+            long rankIndex = 0;
             if (mapValue.isNew()) {
-                mapValue.putLong(VAL_MAX_INDEX, 0);
+                mapValue.putLong(VAL_RANK_INDEX, 0);
                 mapValue.putLong(VAL_CURRENT_INDEX, 0);
                 mapValue.putLong(VAL_OFFSET, 0);
             } else {
-                maxIndex = mapValue.getLong(VAL_MAX_INDEX);
+                rankIndex = mapValue.getLong(VAL_RANK_INDEX);
             }
 
             if (recordComparator == null) {
                 // no order or order dismiss
-                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
+                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rankIndex + 1);
+                mapValue.putLong(VAL_RANK_INDEX, rankIndex + 1);
             } else {
                 long currentIndex = mapValue.getLong(VAL_CURRENT_INDEX);
                 long offset = mapValue.getLong(VAL_OFFSET);
                 if (currentIndex == 0) {
                     mapValue.putLong(VAL_CURRENT_INDEX, 1);
                     mapValue.putLong(VAL_OFFSET, recordOffset);
+                    mapValue.putLong(VAL_RANK_INDEX, rankIndex + 1);
                 } else {
                     // compare with prev record
                     recordComparator.setLeft(record);
                     if (recordComparator.compare(spi.getRecordAt(offset)) != 0) {
-                        mapValue.putLong(VAL_CURRENT_INDEX, maxIndex + 1);
+                        mapValue.putLong(VAL_CURRENT_INDEX, rankIndex + 1);
                         mapValue.putLong(VAL_OFFSET, recordOffset);
+
                     }
                 }
                 Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), mapValue.getLong(VAL_CURRENT_INDEX));
             }
-            mapValue.putLong(VAL_MAX_INDEX, maxIndex + 1);
+            //mapValue.putLong(VAL_RANK_INDEX, rankIndex + 1);
         }
 
         @Override
