@@ -170,7 +170,7 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
-                return "/tls-handshake-failed";
+                return TlsErrorProcessor.URL;
             }
 
             @Override

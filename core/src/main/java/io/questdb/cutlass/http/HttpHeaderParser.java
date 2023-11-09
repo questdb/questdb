@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cutlass.http.processors.TlsErrorProcessor;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 
@@ -32,6 +33,7 @@ import java.io.Closeable;
 import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
+    private static final Utf8String TLS_ERROR_URL = new Utf8String(TlsErrorProcessor.URL);
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
     // in theory, it is possible to send multiple cookies on separate lines in the header
     // if we used more cookies, the below map would need to hold a list of CharSequences
@@ -105,12 +107,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.needProtocol = true;
         // do not clear the pool
         // this.pool.clear();
-    }
-
-    public void clearAndSetUrl(String url) {
-        clear();
-        this.url = new Utf8String(url);
-        incomplete = false;
     }
 
     @Override
@@ -204,6 +200,12 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
     public boolean isIncomplete() {
         return incomplete;
+    }
+
+    public void onTlsError() {
+        clear();
+        this.url = TLS_ERROR_URL;
+        incomplete = false;
     }
 
     public long parse(long ptr, long hi, boolean _method, boolean _protocol) {

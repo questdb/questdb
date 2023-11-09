@@ -9,13 +9,15 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
 public final class TlsErrorProcessor implements HttpRequestProcessor {
-    public final static TlsErrorProcessor INSTANCE = new TlsErrorProcessor();
+    public static final TlsErrorProcessor INSTANCE = new TlsErrorProcessor();
+    public static final String URL = "/tls-handshake-failed";
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
         r.status(400, "text/plain");
         r.sendHeader();
+
         r.putAscii("Use HTTPS to connect to this server.\n");
         r.sendChunk(true);
 

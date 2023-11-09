@@ -629,7 +629,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
                     if (read < 0) {
                         if (read == Socket.TLS_HANDSHAKE_ERROR_CODE) {
-                            headerParser.clearAndSetUrl("/tls-handshake-failed");
+                            headerParser.onTlsError();
                             break;
                         }
                         LOG.debug()
@@ -692,8 +692,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     read = socket.recv(recvBuffer, 1);
                     if (read != 0) {
                         dumpBuffer(recvBuffer, read);
-                        LOG.info().$("disconnect after request [fd=").$(getFd()).I$();
-                        dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                        LOG.info().$("disconnect after request [fd=").$(getFd()).$(", read=").$(read).I$();
+                        int reason = read > 0 ? DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES : DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV;
+                        dispatcher.disconnect(this, reason);
                         busyRecv = false;
                     } else {
                         processor.onHeadersReady(this);
