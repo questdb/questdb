@@ -261,7 +261,14 @@ public final class Unsafe {
 
     private static void checkAllocLimit(long size, int memoryTag) {
         if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
-            throw CairoException.critical(0).put("table writing memory limit reached");
+            long usage = COUNTERS[memoryTag].sum();
+            if (usage + size > WRITER_MEM_LIMIT) {
+                throw CairoException.critical(0).put("table writing memory limit reached [usage=")
+                        .put(usage)
+                        .put(", limit=").put(WRITER_MEM_LIMIT)
+                        .put(", allocation=").put(size)
+                        .put(']');
+            }
         }
     }
 

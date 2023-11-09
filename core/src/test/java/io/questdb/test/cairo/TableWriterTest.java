@@ -3179,15 +3179,26 @@ public class TableWriterTest extends AbstractCairoTest {
                 Unsafe.setWriterMemLimit(configuration.getO3ColumnMemorySize());
                 create(FF, PartitionBy.DAY, N);
                 try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-                    // Write O3
+                    try {
+                        // Write O3
+                        Rnd rnd = new Rnd();
+                        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                        populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
+                        populateRow(writer, rnd, ts - 1000, 60L * 60000L * 1000L);
+
+                        Assert.fail("writer creation should fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "table writing memory limit reached");
+                    }
+
+                    writer.rollback();
+                    Unsafe.setWriterMemLimit(2L * (writer.getColumnCount() + 1) * configuration.getO3ColumnMemorySize());
                     Rnd rnd = new Rnd();
                     long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                     populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
                     populateRow(writer, rnd, ts - 1000, 60L * 60000L * 1000L);
 
-                    Assert.fail("writer creation should fail");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "table writing memory limit reached");
+                    writer.commit();
                 }
             } finally {
                 Unsafe.setWriterMemLimit(0);
