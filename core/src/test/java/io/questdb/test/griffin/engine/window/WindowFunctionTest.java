@@ -1778,19 +1778,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
 /* dense_rank() function tests
  * 
- * 1.  testDenseRankFailsIsNoWindowContext
- * 2.  testDenseRankNoPartitionByAndNoOrderByWildcardLast
- * 3.  testDenseRankWithNoPartitionByAndOrderBySymbolWildcardLast
- * 4.  testDenseRankWithPartitionAndOrderByNonSymbol
- * 5.  testDenseRankWithPartitionAndOrderBySymbolNoWildcard
- * 6.  testDenseRankWithPartitionAndOrderBySymbolWildcardFirst
- * 7.  testDenseRankWithPartitionAndOrderBySymbolWildcardLast
- * 8.  testDenseRankWithPartitionBySymbolAndMultiOrderWildcardLast
- * 9.  testDenseRankWithPartitionBySymbolAndNoOrderWildcardLast
- * 10. testDenseRankWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast
- * 11. testDenseRankWithPartitionBySymbolAndOrderByIntPriceWildcardLast
- * 12. testDenseRankWithPartitionBySymbolAndOrderByPriceWildcardLast
- */
 
 /* 1. 
  * 
