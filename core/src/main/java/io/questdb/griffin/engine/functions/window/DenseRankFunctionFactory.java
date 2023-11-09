@@ -144,7 +144,6 @@ public class DenseRankFunctionFactory implements FunctionFactory {
                 }
                 Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndex);
             }
-            maxIndex++;
         }
 
         @Override
