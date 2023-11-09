@@ -3453,7 +3453,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata chainMetadata = new GenericRecordMetadata();
         GenericRecordMetadata factoryMetadata = new GenericRecordMetadata();
 
-        ObjList<Function> functions = new ObjList<Function>();
+        ObjList<Function> functions = new ObjList<>();
 
         // if all window function don't require sorting or more than one pass then use streaming factory
         boolean isFastPath = true;
@@ -3461,7 +3461,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
             if (qc.isWindowColumn()) {
-
                 final WindowColumn ac = (WindowColumn) qc;
                 final ExpressionNode ast = qc.getAst();
                 if (ast.paramCount > 1) {
@@ -3587,8 +3586,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         false,
                         null
                 ));
-            } // column
-            else {
+            } else { // column
                 final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
                 final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
 
@@ -3601,7 +3599,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (Chars.equals(qc.getAst().token, qc.getAlias())) {
                     factoryMetadata.add(i, m);
-                } else {// keep alias
+                } else { // keep alias
                     factoryMetadata.add(i, new TableColumnMetadata(
                                     Chars.toString(qc.getAlias()),
                                     m.getType(),
@@ -3623,7 +3621,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             functions.clear();
         }
 
-
         listColumnFilterA.clear();
         listColumnFilterB.clear();
 
@@ -3644,7 +3641,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 chainMetadata.add(i, m);
                 if (Chars.equals(qc.getAst().token, qc.getAlias())) {
                     factoryMetadata.add(i, m);
-                } else {// keep alias
+                } else { // keep alias
                     factoryMetadata.add(i, new TableColumnMetadata(
                                     Chars.toString(qc.getAlias()),
                                     m.getType(),
@@ -3784,7 +3781,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
                 final Function f;
                 try {
-                    //function needs to resolve args against chain metadata
+                    // function needs to resolve args against chain metadata
                     f = functionParser.parseFunction(ast, chainMetadata, executionContext);
                     if (!(f instanceof WindowFunction)) {
                         Misc.free(base);
