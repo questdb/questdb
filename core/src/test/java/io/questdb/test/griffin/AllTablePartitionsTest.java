@@ -25,15 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class AllTablePartitionsTest extends AbstractCairoTest {
 
@@ -69,6 +64,29 @@ public class AllTablePartitionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllPartitionsOneTableWithMetadata() throws Exception {
+        String tableName = "aTable";
+        String expected = "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\ttableName\n" +
+                "0\tMONTH\t2023-01\t2023-01-02T00:00:00.000000Z\t2023-01-08T00:00:00.000000Z\t7\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tTABLE\n";
+
+        assertMemoryLeak(() -> {
+            createTable(tableName, PartitionBy.MONTH, 7);
+            String finallyExpected = replaceSizeToMatchOS(expected, tableName);
+            assertQuery(
+                    finallyExpected,
+                    "select index, partitionBy, name, minTimestamp, maxTimestamp, numRows, diskSize, diskSizeHuman," +
+                            " readOnly, active, attached, detached, attachable, tableName from all_table_partitions()" +
+                            " where tableName='" + tableName + "'",
+                    null,
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+
+    @Test
     public void testAllPartitionsFewTables() throws Exception {
         String expectedHeader = "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\ttableName";
 
@@ -91,7 +109,7 @@ public class AllTablePartitionsTest extends AbstractCairoTest {
             createTable(tableName1, PartitionBy.MONTH, 7);
             createTable(tableName2, PartitionBy.DAY, 10);
             String finallyExpected1 = replaceSizeToMatchOS(expected1, tableName1).replaceAll("\n$", "");
-            ;
+
             String finallyExpected2 = replaceSizeToMatchOS(expected2, tableName2);
             assertAllPartitionTables(expectedHeader + finallyExpected1 + finallyExpected2);
         });
@@ -135,41 +153,23 @@ public class AllTablePartitionsTest extends AbstractCairoTest {
     }
 
     private void assertAllPartitionTables(String expected) throws SqlException {
-        SOCountDownLatch done = new SOCountDownLatch(1);
-        AtomicInteger failureCounter = new AtomicInteger();
-        new Thread(() -> {
-            try {
-                try {
-                    assertQuery(
-                            expected,
-                            "select * from all_table_partitions()",
-                            null,
-                            false,
-                            false,
-                            true
-                    );
-                } catch (Throwable e) {
-                    e.printStackTrace();
-                    failureCounter.incrementAndGet();
-                }
-            } finally {
-                done.countDown();
-            }
-        }).start();
-        done.await();
-        Assert.assertEquals(0, failureCounter.get());
+        assertQuery(
+                expected,
+                "select * from all_table_partitions()",
+                null,
+                false,
+                false,
+                true
+        );
     }
 
-    public static TableToken createTable(String tableName, int partitionBy, int nRows) throws SqlException {
+    public static void createTable(String tableName, int partitionBy, int nRows) throws SqlException {
         String createTable = "CREATE TABLE " + tableName + " AS (" +
                 "    SELECT" +
-                "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
                 "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 24 * 3600 * 1000000L timestamp" +
                 "    FROM long_sequence(" + nRows + ")" +
-                "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY " + PartitionBy.toString(partitionBy);
+                ") TIMESTAMP(timestamp) PARTITION BY " + PartitionBy.toString(partitionBy);
         ddl(createTable);
-        return engine.verifyTableName(tableName);
     }
-
 }
 

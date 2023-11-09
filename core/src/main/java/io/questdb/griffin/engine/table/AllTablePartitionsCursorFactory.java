@@ -22,40 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.table;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.table.AllTablePartitionsCursorFactory;
-import io.questdb.griffin.engine.table.SequentialRecordCursorFactory;
-import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
-public class AllTablePartitionsFunctionFactory implements FunctionFactory {
+public class AllTablePartitionsCursorFactory extends SequentialRecordCursorFactory<ShowPartitionsRecordCursorFactory> {
+
     @Override
-    public String getSignature() {
-        return "all_table_partitions()";
+    public RecordMetadata getMetadata() {
+        return ShowPartitionsRecordCursorFactory.METADATA;
     }
 
     @Override
-    public boolean isCursor() {
-        return true;
+    public void initFactories(SqlExecutionContext executionContext, ObjList<ShowPartitionsRecordCursorFactory> factoriesBucket) {
+        ObjHashSet<TableToken> tableTokensBucket = new ObjHashSet<>();
+        CairoEngine engine = executionContext.getCairoEngine();
+        engine.getTableTokens(tableTokensBucket, true);
+
+        for (int i = 0; i < tableTokensBucket.size(); i++) {
+            TableToken tt = tableTokensBucket.get(i);
+
+            ShowPartitionsRecordCursorFactory factory = new ShowPartitionsRecordCursorFactory(tt);
+            factoriesBucket.add(factory);
+        }
     }
 
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
-            return new CursorFunction(new AllTablePartitionsCursorFactory());
-    }
 }

@@ -46,7 +46,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     private static final Comparator<String> CHAR_COMPARATOR = Chars::compare;
     private static final Log LOG = LogFactory.getLog(ShowPartitionsRecordCursor.class);
-    private static final RecordMetadata METADATA;
+    public static final RecordMetadata METADATA;
     private final ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private final Path path = new Path();
     private final TableToken tableToken;

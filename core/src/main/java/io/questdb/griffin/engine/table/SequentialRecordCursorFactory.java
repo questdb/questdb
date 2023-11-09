@@ -24,55 +24,62 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 /**
- * Returns rows from current data frame in order of cursors list :
+ * Returns rows from current record in order of cursors list :
  * - first fetches and returns all records from first cursor
  * - then from second cursor, third, ...
  * until all cursors are exhausted .
  */
-public class SequentialRecordCursorFactory<T extends RecordCursorFactory> implements RecordCursorFactory {
+public abstract class SequentialRecordCursorFactory<T extends RecordCursorFactory> implements RecordCursorFactory {
     private final SequentialRecordCursor cursor;
     private final ObjList<T> cursorFactories;
     private final ObjList<RecordCursor> cursors;
 
-    public SequentialRecordCursorFactory(ObjList<T> cursorFactories) {
-        this.cursorFactories = cursorFactories;
+    public SequentialRecordCursorFactory() {
+        cursorFactories = new ObjList<>();
         cursors = new ObjList<>();
         cursor = new SequentialRecordCursor();
     }
 
-    @Override
-    public RecordMetadata getMetadata() {
-        if (cursorFactories.size() == 0) {
-            return AnyRecordMetadata.INSTANCE;
-        }
-        return cursorFactories.getQuick(0).getMetadata();
-    }
+    public abstract RecordMetadata getMetadata();
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 
+
+    public abstract void initFactories(SqlExecutionContext executionContext, ObjList<T> factoriesBucket);
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        for (int i = 0; i < cursorFactories.size(); i++) {
+            T factory = cursorFactories.getQuick(i);
+            factory.close();
+        }
+        this.cursorFactories.clear();
+
+        initFactories(executionContext, this.cursorFactories);
+
+        for (int i = 0; i < cursors.size(); i++) {
+            RecordCursor cur = cursors.getQuick(i);
+            cur.close();
+        }
+        cursors.clear();
+
         for (int i = 0; i < cursorFactories.size(); i++) {
             RecordCursor cursor = cursorFactories.getQuick(i).getCursor(executionContext);
             cursors.extendAndSet(i, cursor);
@@ -93,8 +100,8 @@ public class SequentialRecordCursorFactory<T extends RecordCursorFactory> implem
     public void close() {
         RecordCursorFactory.super.close();
         for (int i = 0; i < cursorFactories.size(); i++) {
-               RecordCursorFactory factory = cursorFactories.get(i);
-               factory.close();
+            RecordCursorFactory factory = cursorFactories.get(i);
+            factory.close();
         }
         cursorFactories.clear();
     }
