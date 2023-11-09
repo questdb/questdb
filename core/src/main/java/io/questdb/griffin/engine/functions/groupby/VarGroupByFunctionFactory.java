@@ -24,13 +24,6 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
 public class VarGroupByFunctionFactory extends VarSampleGroupByFunctionFactory {
     @Override
     public String getSignature() {
