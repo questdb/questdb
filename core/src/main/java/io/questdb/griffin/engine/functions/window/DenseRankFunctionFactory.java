@@ -47,7 +47,7 @@ import io.questdb.std.Unsafe;
 
 public class DenseRankFunctionFactory implements FunctionFactory {
 
-    private static final String SIGNATURE = "rank()";
+    private static final String SIGNATURE = "dense_rank()";
 
     @Override
     public String getSignature() {
@@ -311,7 +311,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
 
         private long rank;
 
-        public SequenceRankFunction() {
+        public SequenceDenseRankFunction() {
         }
 
         @Override
