@@ -251,15 +251,15 @@ LongShortVecFuncType *POINTER_NAME(func) = &func ## _dispatch; \
 int64_t F_DISPATCH(func) (int16_t *pi, int64_t count) { \
     const int iset = instrset_detect();  \
     if (iset >= 10) { \
-    POINTER_NAME(func) = &F_AVX512(func); \
+        POINTER_NAME(func) = &F_AVX512(func); \
     } else if (iset >= 8) { \
-    POINTER_NAME(func) = &F_VANILLA(func); \
+        POINTER_NAME(func) = &F_VANILLA(func); \
     } else if (iset >= 5) { \
-    POINTER_NAME(func) = &F_SSE41(func); \
+        POINTER_NAME(func) = &F_SSE41(func); \
     } else if (iset >= 2) { \
-    POINTER_NAME(func) = &F_SSE2(func); \
+        POINTER_NAME(func) = &F_SSE2(func); \
     } else { \
-    POINTER_NAME(func) = &F_VANILLA(func); \
+        POINTER_NAME(func) = &F_VANILLA(func); \
     }\
     return (*POINTER_NAME(func))(pi, count); \
 } \
