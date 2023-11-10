@@ -106,7 +106,7 @@ public class DenseRankFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(Record record) {
             assert recordComparator == null;
-            value = rankIndex;
+            value = ++rankIndex;
         }
 
         @Override
