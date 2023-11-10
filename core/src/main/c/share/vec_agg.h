@@ -55,14 +55,11 @@ double F_DISPATCH(func) (double *d, int64_t count) { \
 } \
 \
 inline double func(double *d, int64_t count) { \
-return (*POINTER_NAME(func))(d, count); \
+    return (*POINTER_NAME(func))(d, count); \
 }\
 \
 extern "C" { \
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pDouble, jlong size) { \
-    return func((double *) pDouble, size); \
-}\
-JNIEXPORT jdouble JNICALL JavaCritical_io_questdb_std_Vect_ ## func(jlong pDouble, jlong size) { \
     return func((double *) pDouble, size); \
 }\
 \
@@ -93,7 +90,7 @@ int64_t F_DISPATCH(func) (double *d, int64_t count) { \
 } \
 \
 inline int64_t func(double *d, int64_t count) { \
-return (*POINTER_NAME(func))(d, count); \
+    return (*POINTER_NAME(func))(d, count); \
 }\
 \
 extern "C" { \
@@ -128,7 +125,7 @@ int64_t F_DISPATCH(func) (int32_t *pi, int64_t count) { \
 } \
 \
 inline int64_t func(int32_t *i, int64_t count) { \
-return (*POINTER_NAME(func))(i, count); \
+    return (*POINTER_NAME(func))(i, count); \
 }\
 \
 extern "C" { \
@@ -163,7 +160,7 @@ double F_DISPATCH(func) (int32_t *pi, int64_t count) { \
 } \
 \
 inline double func(int32_t *i, int64_t count) { \
-return (*POINTER_NAME(func))(i, count); \
+    return (*POINTER_NAME(func))(i, count); \
 }\
 \
 extern "C" { \
@@ -198,7 +195,7 @@ int32_t F_DISPATCH(func) (int32_t *pi, int64_t count) { \
 } \
 \
 inline int32_t func(int32_t *i, int64_t count) { \
-return (*POINTER_NAME(func))(i, count); \
+    return (*POINTER_NAME(func))(i, count); \
 }\
 \
 extern "C" { \
@@ -233,7 +230,7 @@ int64_t F_DISPATCH(func) (int64_t *pi, int64_t count) { \
 } \
 \
 inline int64_t func(int64_t *pl, int64_t count) { \
-return (*POINTER_NAME(func))(pl, count); \
+    return (*POINTER_NAME(func))(pl, count); \
 }\
 \
 extern "C" { \
@@ -268,12 +265,12 @@ int64_t F_DISPATCH(func) (int16_t *pi, int64_t count) { \
 } \
 \
 inline int64_t func(int16_t *pl, int64_t count) { \
-return (*POINTER_NAME(func))(pl, count); \
+    return (*POINTER_NAME(func))(pl, count); \
 }\
 \
 extern "C" { \
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pLong, jlong count) { \
-return func((int16_t *) pLong, count); \
+    return func((int16_t *) pLong, count); \
 }\
 \
 }
@@ -303,7 +300,7 @@ double F_DISPATCH(func) (int64_t *pi, int64_t count) { \
 } \
 \
 inline double func(int64_t *pl, int64_t count) { \
-return (*POINTER_NAME(func))(pl, count); \
+    return (*POINTER_NAME(func))(pl, count); \
 }\
 \
 extern "C" { \
@@ -338,7 +335,7 @@ bool F_DISPATCH(func) (int32_t *pi, int64_t count) { \
 } \
 \
 inline bool func(int32_t *i, int64_t count) { \
-return (*POINTER_NAME(func))(i, count); \
+    return (*POINTER_NAME(func))(i, count); \
 }\
 \
 extern "C" { \
@@ -373,7 +370,7 @@ int64_t F_DISPATCH(func) (int16_t *ps, int64_t count) { \
 } \
 \
 inline int64_t func(int16_t *ps, int64_t count) { \
-return (*POINTER_NAME(func))(ps, count); \
+    return (*POINTER_NAME(func))(ps, count); \
 }\
 \
 extern "C" { \
@@ -408,7 +405,7 @@ int32_t F_DISPATCH(func) (int16_t *ps, int64_t count) { \
 } \
 \
 inline int32_t func(int16_t *ps, int64_t count) { \
-return (*POINTER_NAME(func))(ps, count); \
+    return (*POINTER_NAME(func))(ps, count); \
 }\
 \
 extern "C" { \
