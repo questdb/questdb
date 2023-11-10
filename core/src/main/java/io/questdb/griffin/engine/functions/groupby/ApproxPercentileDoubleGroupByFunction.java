@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
@@ -48,14 +49,21 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     private int valueIndex;
 
     Function defaultPrecisionFunc = new IntFunction() {
+        final int defaultPrecision = 3;
+
         @Override
         public int getInt(Record rec) {
-            return 3;
+            return defaultPrecision;
         }
 
         @Override
         public boolean isConstant() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(defaultPrecision);
         }
     };
 
