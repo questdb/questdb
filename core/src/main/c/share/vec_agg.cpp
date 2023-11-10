@@ -399,16 +399,17 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
         return L_MIN;
     }
 
-    const int32_t step = 16;
+    const int32_t step = 32;
     const auto remainder = (int32_t) (count - (count / step) * step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    Vec16s vec;
-    Vec8i acc0 = 0;
-    Vec8i acc1 = 0;
+    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
+    Vec32s vec;
+    Vec16i acc0 = 0;
+    Vec16i acc1 = 0;
     for (; ps < vec_lim; ps += step) {
-        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
+        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
         vec.load(ps);
         acc0 += extend_low(vec);
         acc1 += extend_high(vec);
@@ -430,15 +431,16 @@ int32_t MIN_SHORT(int16_t *ps, int64_t count) {
         return I_MIN;
     }
 
-    const int step = 16;
+    const int step = 32;
     const auto remainder = (int32_t) (count - (count / step) * step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    Vec16s vec;
-    Vec16s vecMin = S_MAX;
+    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
+    Vec32s vec;
+    Vec32s vecMin = S_MAX;
     for (; ps < vec_lim; ps += step) {
-        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
+        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
         vec.load(ps);
         vecMin = min(vecMin, vec);
     }
@@ -460,15 +462,16 @@ int32_t MAX_SHORT(int16_t *ps, int64_t count) {
         return I_MIN;
     }
 
-    const int step = 16;
+    const int step = 32;
     const auto remainder = (int32_t) (count - (count / step) * step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
-    Vec16s vec;
-    Vec16s vecMax = S_MIN;
+    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
+    Vec32s vec;
+    Vec32s vecMax = S_MIN;
     for (; ps < vec_lim; ps += step) {
-        _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
+        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
         vec.load(ps);
         vecMax = max(vecMax, vec);
     }
