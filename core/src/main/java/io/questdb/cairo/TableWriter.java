@@ -220,6 +220,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryARW o3TimestampMemCpy;
     private long partitionTimestampHi;
     private boolean performRecovery;
+    private boolean processingQueue;
     private PurgingOperator purgingOperator;
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -5742,10 +5743,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void processCommandQueue(boolean contextAllowsAnyStructureChanges) {
-        long cursor;
-        while ((cursor = commandSubSeq.next()) > -1) {
-            TableWriterTask cmd = commandQueue.get(cursor);
-            processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+        // In case processing of a queue calls rollback() on the writer
+        // do not recursively start processing the queue again.
+        if (!processingQueue) {
+            try {
+                processingQueue = true;
+                long cursor;
+                while ((cursor = commandSubSeq.next()) > -1) {
+                    TableWriterTask cmd = commandQueue.get(cursor);
+                    processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+                }
+            } finally {
+                processingQueue = false;
+            }
         }
     }
 
