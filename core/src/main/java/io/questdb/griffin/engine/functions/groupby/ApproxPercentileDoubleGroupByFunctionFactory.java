@@ -35,7 +35,7 @@ import io.questdb.std.ObjList;
 public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "approx_percentile(dD)";
+        return "approx_percentile(Dd)";
     }
 
     @Override
@@ -45,9 +45,9 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        double percentile = args.getQuick(0).getDouble(null);
+        double percentile = args.getQuick(1).getDouble(null);
         if (percentile < 0 || percentile > 1) {
-            throw SqlException.$(argPositions.getQuick(0), "percentile must be between 0 and 1");
+            throw SqlException.$(argPositions.getQuick(1), "percentile must be between 0 and 1");
         }
 
         return new ApproxPercentileDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));

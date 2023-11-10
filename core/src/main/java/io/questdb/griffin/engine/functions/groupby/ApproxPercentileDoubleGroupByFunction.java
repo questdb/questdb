@@ -38,17 +38,17 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     // specifies the precision for the recorded values (between 0 and 5).
     // trade-off between memory usage and accuracy.
     private final int numberOfSignificantValueDigits = 3;
-    private final Function left;
-    private final Function right;
+    private final Function exprFunc;
+    private final Function percentileFunc;
     private final ObjList<DoubleHistogram> histograms = new ObjList<>();
 
     private int histogramIndex;
 
     private int valueIndex;
 
-    public ApproxPercentileDoubleGroupByFunction(Function left, Function right) {
-        this.left = left;
-        this.right = right;
+    public ApproxPercentileDoubleGroupByFunction(Function exprFunc, Function percentileFunc) {
+        this.exprFunc = exprFunc;
+        this.percentileFunc = percentileFunc;
     }
 
     @Override
@@ -67,7 +67,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
         }
         histogram.reset();
 
-        final double val = right.getDouble(record);
+        final double val = exprFunc.getDouble(record);
         if (Numbers.isFinite(val)) {
             histogram.recordValue(val);
         }
@@ -77,7 +77,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final DoubleHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
-        final double val = right.getDouble(record);
+        final double val = exprFunc.getDouble(record);
         if (Numbers.isFinite(val)) {
             histogram.recordValue(val);
         }
@@ -85,12 +85,12 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
 
     @Override
     public Function getLeft() {
-        return left;
+        return exprFunc;
     }
 
     @Override
     public Function getRight() {
-        return right;
+        return percentileFunc;
     }
 
     @Override
@@ -103,7 +103,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
         if (histogram.empty()) {
             return Double.NaN;
         }
-        return histogram.getValueAtPercentile(left.getDouble(rec) * 100);
+        return histogram.getValueAtPercentile(percentileFunc.getDouble(rec) * 100);
     }
 
     @Override

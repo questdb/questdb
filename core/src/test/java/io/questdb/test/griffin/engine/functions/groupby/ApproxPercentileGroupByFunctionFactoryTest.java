@@ -32,8 +32,8 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testInvalidPercentile1() throws Exception {
         assertException(
-                "select approx_percentile(1.1, x) from long_sequence(1)",
-                25,
+                "select approx_percentile(x, 1.1) from long_sequence(1)",
+                28,
                 "percentile must be between 0 and 1"
         );
     }
@@ -43,7 +43,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         assertException(
                 "select approx_percentile(x, x) from long_sequence(1)",
                 7,
-                "expected args: (DOUBLE constant,DOUBLE)"
+                "expected args: (DOUBLE,DOUBLE constant)"
         );
     }
 
@@ -52,7 +52,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             ddl("create table test as (select cast(x as double) x from long_sequence(100))");
             assertSql(
-                    "approx_percentile\n1.0\n", "select approx_percentile(0, x) from test"
+                    "approx_percentile\n1.0\n", "select approx_percentile(x, 0) from test"
             );
         });
     }
@@ -62,7 +62,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             ddl("create table test as (select cast(x as double) x from long_sequence(100))");
             assertSql(
-                    "approx_percentile\n50.0302734375\n", "select approx_percentile(0.5, x) from test"
+                    "approx_percentile\n50.0302734375\n", "select approx_percentile(x, 0.5) from test"
             );
         });
     }
@@ -72,7 +72,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             ddl("create table test as (select cast(x as double) x from long_sequence(100))");
             assertSql(
-                    "approx_percentile\n100.0615234375\n", "select approx_percentile(1.0, x) from test"
+                    "approx_percentile\n100.0615234375\n", "select approx_percentile(x, 1.0) from test"
             );
         });
     }
@@ -82,7 +82,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             ddl("create table test as (select x from long_sequence(100))");
             assertSql(
-                    "approx_percentile\n50.0302734375\n", "select approx_percentile(0.5, x) from test"
+                    "approx_percentile\n50.0302734375\n", "select approx_percentile(x, 0.5) from test"
             );
         });
     }
@@ -92,7 +92,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             ddl("create table test as (select cast(x as int) x from long_sequence(100))");
             assertSql(
-                    "approx_percentile\n50.0302734375\n", "select approx_percentile(0.5, x) from test"
+                    "approx_percentile\n50.0302734375\n", "select approx_percentile(x, 0.5) from test"
             );
         });
     }
@@ -102,7 +102,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             ddl("create table test as (select cast(x as float) x from long_sequence(100))");
             assertSql(
-                    "approx_percentile\n50.0302734375\n", "select approx_percentile(0.5, x) from test"
+                    "approx_percentile\n50.0302734375\n", "select approx_percentile(x, 0.5) from test"
             );
         });
     }
@@ -111,7 +111,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxPercentileEmptyTable() throws Exception {
         compile("create table test (x long)");
         assertMemoryLeak(() -> assertSql("approx_percentile\n" +
-                "NaN\n", "select approx_percentile(0.5, x) from test")
+                "NaN\n", "select approx_percentile(x, 0.5) from test")
         );
     }
 
@@ -120,7 +120,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         compile("create table test (x long)");
         insert("insert into test values (null), (null), (null)");
         assertMemoryLeak(() -> assertSql("approx_percentile\n" +
-                "NaN\n", "select approx_percentile(0.5, x) from test")
+                "NaN\n", "select approx_percentile(x, 0.5) from test")
         );
     }
 
@@ -129,7 +129,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         compile("create table test (x long)");
         insert("insert into test values (1.0), (null), (null), (null)");
         assertMemoryLeak(() -> assertSql("approx_percentile\n" +
-                "1.0\n", "select approx_percentile(0.5, x) from test")
+                "1.0\n", "select approx_percentile(x, 0.5) from test")
         );
     }
 
@@ -138,7 +138,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             ddl("create table test as (select 5.0 x from long_sequence(100))");
             assertSql(
-                    "approx_percentile\n5.0\n", "select approx_percentile(0.5, x) from test"
+                    "approx_percentile\n5.0\n", "select approx_percentile(x, 0.5) from test"
             );
         });
     }
