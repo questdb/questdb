@@ -84,10 +84,14 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public Function getLeft() { return left; }
+    public Function getLeft() {
+        return left;
+    }
 
     @Override
-    public Function getRight() { return right; }
+    public Function getRight() {
+        return right;
+    }
 
     @Override
     public double getDouble(Record rec) {
@@ -103,7 +107,9 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public String getName() { return "approx_percentile"; }
+    public String getName() {
+        return "approx_percentile";
+    }
 
     @Override
     public boolean isConstant() {
