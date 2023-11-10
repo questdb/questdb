@@ -311,7 +311,7 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
         vec.load(pi);
         bVec = vec != I_MIN;
         hasData = hasData || horizontal_count(bVec) > 0;
-        result += horizontal_add_x(select(bVec, vec, 0));
+        result += horizontal_add(select(bVec, vec, 0));
     }
 
     if (pi < lim) {
@@ -405,13 +405,16 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
     const auto *vec_lim = lim - remainder;
 
     Vec16s vec;
-    int64_t result = 0;
+    Vec8i acc0 = 0;
+    Vec8i acc1 = 0;
     for (; ps < vec_lim; ps += step) {
         _mm_prefetch(ps + 31 * step, _MM_HINT_T1);
         vec.load(ps);
-        result += horizontal_add_x(vec);
+        acc0 += extend_low(vec);
+        acc1 += extend_high(vec);
     }
 
+    int64_t result = horizontal_add(acc0) + horizontal_add(acc1);
     if (ps < lim) {
         for (; ps < lim; ps++) {
             int16_t v = *ps;
