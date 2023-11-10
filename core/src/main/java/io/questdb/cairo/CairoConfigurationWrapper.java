@@ -762,8 +762,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemDataAppendPageSize() {
+        return delegate.getSystemDataAppendPageSize();
+    }
+
+    @Override
+    public int getSystemO3ColumnMemorySize() {
+        return delegate.getSystemO3ColumnMemorySize();
+    }
+
+    @Override
     public @NotNull CharSequence getSystemTableNamePrefix() {
         return delegate.getSystemTableNamePrefix();
+    }
+
+    @Override
+    public long getSystemWalDataAppendPageSize() {
+        return delegate.getSystemWalDataAppendPageSize();
     }
 
     @Override

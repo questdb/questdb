@@ -772,8 +772,23 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemDataAppendPageSize() {
+        return 256 * 1024;
+    }
+
+    @Override
+    public int getSystemO3ColumnMemorySize() {
+        return 256 * 1024;
+    }
+
+    @Override
     public @NotNull CharSequence getSystemTableNamePrefix() {
         return "__sys";
+    }
+
+    @Override
+    public long getSystemWalDataAppendPageSize() {
+        return 256 * 1024;
     }
 
     @Override
