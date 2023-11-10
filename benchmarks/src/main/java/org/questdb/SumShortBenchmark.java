@@ -47,7 +47,6 @@ public class SumShortBenchmark {
                 .include(SumShortBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(2)
-                .addProfiler("gc")
                 .forks(1)
                 .build();
 
