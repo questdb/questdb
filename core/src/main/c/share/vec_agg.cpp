@@ -279,13 +279,10 @@ int64_t COUNT_INT(int32_t *pi, int64_t count) {
     }
 
     int64_t result = horizontal_add(veccount);
-
-    if (pi < lim) {
-        for (; pi < lim; pi++) {
-            int32_t v = *pi;
-            if (PREDICT_TRUE(v != I_MIN)) {
-                ++result;
-            }
+    for (; pi < lim; pi++) {
+        int32_t v = *pi;
+        if (PREDICT_TRUE(v != I_MIN)) {
+            ++result;
         }
     }
 
@@ -314,13 +311,11 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
         result += horizontal_add(select(bVec, vec, 0));
     }
 
-    if (pi < lim) {
-        for (; pi < lim; pi++) {
-            int32_t v = *pi;
-            if (PREDICT_TRUE(v != I_MIN)) {
-                result += v;
-                hasData = true;
-            }
+    for (; pi < lim; pi++) {
+        int32_t v = *pi;
+        if (PREDICT_TRUE(v != I_MIN)) {
+            result += v;
+            hasData = true;
         }
     }
 
@@ -416,11 +411,9 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
     }
 
     int64_t result = horizontal_add(acc0) + horizontal_add(acc1);
-    if (ps < lim) {
-        for (; ps < lim; ps++) {
-            int16_t v = *ps;
-            result += v;
-        }
+    for (; ps < lim; ps++) {
+        int16_t v = *ps;
+        result += v;
     }
 
     return result;
@@ -446,12 +439,10 @@ int32_t MIN_SHORT(int16_t *ps, int64_t count) {
     }
 
     int32_t min = horizontal_min(vecMin);
-    if (ps < lim) {
-        for (; ps < lim; ps++) {
-            int16_t x = *ps;
-            if (x < min) {
-                min = x;
-            }
+    for (; ps < lim; ps++) {
+        int16_t x = *ps;
+        if (x < min) {
+            min = x;
         }
     }
     return min;
@@ -477,12 +468,10 @@ int32_t MAX_SHORT(int16_t *ps, int64_t count) {
     }
 
     int32_t max = horizontal_max(vecMax);
-    if (ps < lim) {
-        for (; ps < lim; ps++) {
-            int16_t x = *ps;
-            if (x > max) {
-                max = x;
-            }
+    for (; ps < lim; ps++) {
+        int16_t x = *ps;
+        if (x > max) {
+            max = x;
         }
     }
     return max;
@@ -515,7 +504,6 @@ int64_t COUNT_DOUBLE(double *d, int64_t count) {
             n++;
         }
     }
-
     return count - n;
 }
 
@@ -686,7 +674,6 @@ double MIN_DOUBLE(double *d, int64_t count) {
     if (min < D_MAX) {
         return min;
     }
-
     return NAN;
 }
 
@@ -695,10 +682,11 @@ double MAX_DOUBLE(double *d, int64_t count) {
         return NAN;
     }
 
-    Vec8d vec;
     const int step = 8;
     const double *lim = d + count;
     const double *lim_vec = lim - step + 1;
+
+    Vec8d vec;
     Vec8d vecMax = D_MIN;
     Vec8db bVec;
     for (; d < lim_vec; d += step) {

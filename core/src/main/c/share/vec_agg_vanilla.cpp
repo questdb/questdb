@@ -173,17 +173,18 @@ double minDouble_Vanilla(double *d, int64_t count) {
         return NAN;
     }
     const double *ext = d + count;
-    double min = LDBL_MAX;
+    double min = D_MAX;
     double *pd = d;
-    bool hasData = false;
     for (; pd < ext; pd++) {
         double x = *pd;
-        if (x < min) {
+        if (!std::isnan(x) && x < min) {
             min = x;
-            hasData = true;
         }
     }
-    return hasData ? min : NAN;
+    if (min < D_MAX) {
+        return min;
+    }
+    return NAN;
 }
 
 double maxDouble_Vanilla(double *d, int64_t count) {
@@ -191,17 +192,18 @@ double maxDouble_Vanilla(double *d, int64_t count) {
         return NAN;
     }
     const double *ext = d + count;
-    double max = LDBL_MIN;
+    double max = D_MIN;
     double *pd = d;
-    bool hasData = false;
     for (; pd < ext; pd++) {
         double x = *pd;
-        if (x > max) {
+        if (!std::isnan(x) && x > max) {
             max = x;
-            hasData = true;
         }
     }
-    return hasData ? max : NAN;
+    if (max > D_MIN) {
+        return max;
+    }
+    return NAN;
 }
 
 int64_t countLong_Vanilla(int64_t *pl, int64_t count) {
