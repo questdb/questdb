@@ -33,7 +33,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testInvalidPercentile1() throws Exception {
         assertException(
                 "select approx_percentile(x, 1.1) from long_sequence(1)",
-                28,
+                0,
                 "percentile must be between 0 and 1"
         );
     }
@@ -41,9 +41,36 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     @Test
     public void testInvalidPercentile2() throws Exception {
         assertException(
+                "select approx_percentile(x, -1) from long_sequence(1)",
+                0,
+                "percentile must be between 0 and 1"
+        );
+    }
+
+    @Test
+    public void testInvalidPercentile3() throws Exception {
+        assertException(
                 "select approx_percentile(x, x) from long_sequence(1)",
-                7,
-                "expected args: (DOUBLE,DOUBLE constant)"
+                0,
+                "percentile must be a constant"
+        );
+    }
+
+    @Test
+    public void testInvalidPrecision1() throws Exception {
+        assertException(
+                "select approx_percentile(x, 0.5, 6) from long_sequence(1)",
+                0,
+                "precision must be between 0 and 5"
+        );
+    }
+
+    @Test
+    public void testInvalidPrecision2() throws Exception {
+        assertException(
+                "select approx_percentile(x, 0.5, -1) from long_sequence(1)",
+                0,
+                "precision must be between 0 and 5"
         );
     }
 
@@ -59,6 +86,16 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
 
     @Test
     public void testApprox50thPercentileDoubleValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(100))");
+            assertSql(
+                    "approx_percentile\n50.0302734375\n", "select approx_percentile(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testApprox50thPercentileDoubleValuesWith5() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test as (select cast(x as double) x from long_sequence(100))");
             assertSql(

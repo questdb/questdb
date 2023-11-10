@@ -766,6 +766,7 @@ io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFa
 
 # 'approx_percentile'
 io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByDefaultFunctionFactory
 
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
