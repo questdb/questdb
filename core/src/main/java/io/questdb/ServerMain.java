@@ -214,6 +214,21 @@ public class ServerMain implements Closeable {
         }
     }
 
+    private void addShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                System.err.println("QuestDB is shutting down...");
+                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
+                close();
+                LogFactory.closeInstance();
+            } catch (Error ignore) {
+                // ignore
+            } finally {
+                System.err.println("QuestDB is shutdown.");
+            }
+        }));
+    }
+
     private synchronized void initialize() {
         initialized = true;
 
@@ -317,7 +332,7 @@ public class ServerMain implements Closeable {
                 metrics
         ));
 
-        if (!isReadOnly && config.isIlpEnabled()) {
+        if (!isReadOnly && config.isLineTcpEnabled()) {
             // ilp/tcp
             freeOnExit.register(Services.createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
@@ -336,21 +351,6 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("server is ready to be started").$();
-    }
-
-    private void addShutdownHook() {
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                System.err.println("QuestDB is shutting down...");
-                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
-                close();
-                LogFactory.closeInstance();
-            } catch (Error ignore) {
-                // ignore
-            } finally {
-                System.err.println("QuestDB is shutdown.");
-            }
-        }));
     }
 
     protected void setupWalApplyJob(

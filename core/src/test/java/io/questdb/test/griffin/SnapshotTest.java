@@ -60,7 +60,7 @@ public class SnapshotTest extends AbstractCairoTest {
             }
 
             @Override
-            public long getTimeout() {
+            public long getQueryTimeout() {
                 return 100;
             }
         };
@@ -487,7 +487,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 @Override
-                public long getTimeout() {
+                public long getQueryTimeout() {
                     return 10;
                 }
             };
@@ -527,7 +527,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 @Override
-                public long getTimeout() {
+                public long getQueryTimeout() {
                     return 10;
                 }
             };

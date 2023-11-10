@@ -100,4 +100,16 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JN
     return 0.0;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_sumShort(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+    return sumShort_Vanilla((int16_t *) pLong, count);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_minShort(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+    return minShort_Vanilla((int16_t *) pLong, count);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_maxShort(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+    return maxShort_Vanilla((int16_t *) pLong, count);
+}
+
 }

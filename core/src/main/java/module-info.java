@@ -802,6 +802,8 @@ open module io.questdb {
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
+            io.questdb.griffin.engine.functions.metadata.InstanceNameFunctionFactory,
+            io.questdb.griffin.engine.functions.metadata.InstanceRGBFunctionFactory,
             // geohash functions
             io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
             // bin functions

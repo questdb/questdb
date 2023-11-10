@@ -54,7 +54,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.memoryTag = memoryTag;
         this.buffer = Unsafe.malloc(this.bufferSize, this.memoryTag);
         this.clock = configuration.getClock();
-        long timeout = configuration.getTimeout();
+        long timeout = configuration.getQueryTimeout();
         if (timeout > 0) {
             this.timeout = timeout;
         } else if (timeout == TIMEOUT_FAIL_ON_FIRST_CHECK) {

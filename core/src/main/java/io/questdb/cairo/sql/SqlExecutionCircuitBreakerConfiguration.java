@@ -47,7 +47,7 @@ public interface SqlExecutionCircuitBreakerConfiguration {
      *
      * @return maximum SQL execution time in millis
      */
-    long getTimeout();
+    long getQueryTimeout();
 
     boolean isEnabled();
 }

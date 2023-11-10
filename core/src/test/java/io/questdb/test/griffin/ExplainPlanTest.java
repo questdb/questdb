@@ -4638,6 +4638,129 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPostJoinConditionColumnsAreResolved() throws Exception {
+        assertMemoryLeak(() -> {
+            String query = "SELECT count(*)\n" +
+                    "FROM test as T1\n" +
+                    "JOIN ( SELECT * FROM test ) as T2 ON T1.event < T2.event\n" +
+                    "JOIN test as T3 ON T2.created = T3.created";
+
+            ddl("create table test (event int, created timestamp)");
+            insert("insert into test values (1, 1), (2, 2)");
+
+            assertPlan(query,
+                    "Count\n" +
+                            "    Filter filter: T1.event<T2.event\n" +
+                            "        Cross Join\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: T3.created=T2.created\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: test\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: test\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: test\n"
+            );
+
+            assertSql("count\n1\n", query);
+        });
+    }
+
+    @Test
+    public void testPredicatesArentPushedIntoWindowModel() throws Exception {
+        assertMemoryLeak(() -> {
+            String query = "SELECT * " +
+                    "FROM ( " +
+                    "  SELECT *, ROW_NUMBER() OVER ( PARTITION BY a ORDER BY b ) rownum " +
+                    "  FROM (" +
+                    "    SELECT 1 a, 2 b, 4 c " +
+                    "    UNION " +
+                    "    SELECT 1, 3, 5 " +
+                    "  ) o " +
+                    ") ra " +
+                    "WHERE ra.rownum = 1 " +
+                    "AND   c = 5";
+
+            assertPlan(query,
+                    "Filter filter: (rownum=1 and c=5)\n" +
+                            "    CachedWindow\n" +
+                            "      orderedFunctions: [[b] => [row_number() over (partition by [a])]]\n" +
+                            "        Union\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [1,2,4]\n" +
+                            "                long_sequence count: 1\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [1,3,5]\n" +
+                            "                long_sequence count: 1\n");
+            assertSql("a\tb\tc\trownum\n", query);
+
+            ddl("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
+
+            assertPlan("SELECT *, ROW_NUMBER() OVER () FROM tab WHERE x = 10",
+                    "Window\n" +
+                            "  functions: [row_number()]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: x=10\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+
+            assertPlan("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) WHERE x = 10",
+                    "Filter filter: x=10\n" +
+                            "    Window\n" +
+                            "      functions: [row_number()]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+
+            assertPlan("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab UNION ALL select 11, 11  ) WHERE x = 10",
+                    "Filter filter: x=10\n" +
+                            "    Union All\n" +
+                            "        Window\n" +
+                            "          functions: [row_number()]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [11,11]\n" +
+                            "            long_sequence count: 1\n");
+
+            assertPlan("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab cross join (select 11, 11)  ) WHERE x = 10",
+                    "Filter filter: x=10\n" +
+                            "    Window\n" +
+                            "      functions: [row_number()]\n" +
+                            "        SelectedRecord\n" +
+                            "            Cross Join\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                VirtualRecord\n" +
+                            "                  functions: [11,11]\n" +
+                            "                    long_sequence count: 1\n");
+
+            assertPlan("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) join (select 11L y, 11) on x=y WHERE x = 10",
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: y=x\n" +
+                            "        Filter filter: x=10\n" +
+                            "            Window\n" +
+                            "              functions: [row_number()]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "        Hash\n" +
+                            "            Filter filter: y=10\n" +
+                            "                VirtualRecord\n" +
+                            "                  functions: [11L,11]\n" +
+                            "                    long_sequence count: 1\n");
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithAddition() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE tab ( x int );");
