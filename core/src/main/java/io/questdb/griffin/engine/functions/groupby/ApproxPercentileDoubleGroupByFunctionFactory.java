@@ -45,6 +45,6 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new ApproxPercentileDoubleGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2));
+        return new ApproxPercentileDoubleGroupByFunction(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 }

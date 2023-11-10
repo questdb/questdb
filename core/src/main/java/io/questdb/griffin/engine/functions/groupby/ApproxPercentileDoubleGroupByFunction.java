@@ -39,6 +39,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 
 public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, TernaryFunction {
+    private final int funcPosition;
     private final Function exprFunc;
     private final Function percentileFunc;
     // specifies the precision for the recorded values (between 0 and 5, defaults to 3).
@@ -67,13 +68,15 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
         }
     };
 
-    public ApproxPercentileDoubleGroupByFunction(Function exprFunc, Function percentileFunc) {
+    public ApproxPercentileDoubleGroupByFunction(int funcPosition, Function exprFunc, Function percentileFunc) {
+        this.funcPosition = funcPosition;
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
         this.precisionFunc = defaultPrecisionFunc;
     }
 
-    public ApproxPercentileDoubleGroupByFunction(Function exprFunc, Function percentileFunc, Function precisionFunc) {
+    public ApproxPercentileDoubleGroupByFunction(int funcPosition, Function exprFunc, Function percentileFunc, Function precisionFunc) {
+        this.funcPosition = funcPosition;
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
         this.precisionFunc = precisionFunc;
@@ -86,19 +89,19 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
         precisionFunc.init(symbolTableSource, executionContext);
 
         if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
-            throw SqlException.$(0, "percentile must be a constant");
+            throw SqlException.$(funcPosition, "percentile must be a constant");
         }
         double percentile = percentileFunc.getDouble(null);
         if (percentile < 0 || percentile > 1) {
-            throw SqlException.$(0, "percentile must be between 0 and 1");
+            throw SqlException.$(funcPosition, "percentile must be between 0 and 1");
         }
 
         if (!precisionFunc.isConstant()) {
-            throw SqlException.$(0, "precision must be a constant");
+            throw SqlException.$(funcPosition, "precision must be a constant");
         }
         int precision = precisionFunc.getInt(null);
         if (precision < 0 || precision > 5) {
-            throw SqlException.$(0, "precision must be between 0 and 5");
+            throw SqlException.$(funcPosition, "precision must be between 0 and 5");
         }
     }
 
