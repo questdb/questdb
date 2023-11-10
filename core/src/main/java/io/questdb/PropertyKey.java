@@ -437,6 +437,11 @@ public enum PropertyKey implements ConfigProperty {
     }
 
     @Override
+    public String getEnvVarEquivalent() {
+        return "QDB_" + propertyPath.replace('.', '_').toUpperCase();
+    }
+
+    @Override
     public String getPropertyPath() {
         return propertyPath;
     }

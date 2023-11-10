@@ -25,5 +25,7 @@
 package io.questdb;
 
 public interface ConfigProperty {
+    String getEnvVarEquivalent();
+
     String getPropertyPath();
 }
