@@ -264,7 +264,7 @@ int64_t COUNT_INT(int32_t *pi, int64_t count) {
     }
 
     const int32_t step = 16;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim = pi + count;
     const auto *vec_lim = lim - remainder;
 
@@ -295,7 +295,7 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     }
 
     const int32_t step = 16;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim = pi + count;
     const auto *vec_lim = lim - remainder;
 
@@ -395,7 +395,7 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
     }
 
     const int32_t step = 32;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
@@ -425,7 +425,7 @@ int32_t MIN_SHORT(int16_t *ps, int64_t count) {
     }
 
     const int step = 32;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
@@ -454,7 +454,7 @@ int32_t MAX_SHORT(int16_t *ps, int64_t count) {
     }
 
     const int step = 32;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim = ps + count;
     const auto *vec_lim = lim - remainder;
 
@@ -552,7 +552,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim_vec = lim - remainder;
     Vec8d sumVec = 0.;
     Vec8d yVec;
@@ -601,7 +601,7 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim_vec = lim - remainder;
     Vec8d sumVec = 0.;
     Vec8d cVec = 0.;
