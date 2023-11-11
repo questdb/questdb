@@ -88,7 +88,7 @@ public final class Services {
         }
 
         final HttpCookieHandler cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool,
+        final HttpServer server = new HttpServer(configuration, metrics, workerPool,
                 configuration.getFactoryProvider().getHttpSocketFactory(), cookieHandler
         );
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
@@ -195,7 +195,7 @@ public final class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
+        final HttpServer server = new HttpServer(configuration, metrics, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
