@@ -50,7 +50,10 @@ public class MapFactory {
                     keyTypes,
                     keyCapacity,
                     configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getSqlFastMapDiskSpillThreshold(),
+                    configuration.getSqlFastMapDiskSpillExtendSegmentSize(),
+                    configuration.getSqlFastMapDiskSpillRoot()
             );
         }
 
@@ -86,7 +89,10 @@ public class MapFactory {
                     valueTypes,
                     keyCapacity,
                     configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getSqlFastMapDiskSpillThreshold(),
+                    configuration.getSqlFastMapDiskSpillExtendSegmentSize(),
+                    configuration.getSqlFastMapDiskSpillRoot()
             );
         }
 

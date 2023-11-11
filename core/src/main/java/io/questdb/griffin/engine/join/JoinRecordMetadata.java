@@ -45,7 +45,11 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     private int refCount;
 
     public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
-        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);
+        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes,
+                columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(),
+                configuration.getSqlFastMapDiskSpillThreshold(),
+                configuration.getSqlFastMapDiskSpillExtendSegmentSize(),
+                configuration.getSqlFastMapDiskSpillRoot(), MemoryTag.NATIVE_JOIN_MAP);
         this.timestampIndex = -1;
         this.columnCount = 0;
         this.refCount = 1;

@@ -82,11 +82,21 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         try (TableReader reader = newTableReader(configuration, "all")) {
             final SymbolAsIntTypes valueTypes = new SymbolAsIntTypes().of(reader.getMetadata());
-            try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
+            try (final Map map = new FastMap(Numbers.SIZE_1MB,
+                    keyTypes,
+                    valueTypes,
+                    N,
+                    0.5,
+                    100,
+                    configuration.getSqlFastMapDiskSpillThreshold(),
+                    configuration.getSqlFastMapDiskSpillExtendSegmentSize(),
+                    configuration.getSqlFastMapDiskSpillRoot()
+            )) {
 
                 EntityColumnFilter columnFilter = new EntityColumnFilter();
                 columnFilter.of(reader.getMetadata().getColumnCount());
-                RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
+                RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(),
+                        reader.getMetadata(), columnFilter);
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
 
@@ -172,15 +182,24 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.BOOLEAN);
             valueTypes.add(ColumnType.TIMESTAMP);
             valueTypes.add(ColumnType.INT);
-            try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
+            try (final Map map = new FastMap(Numbers.SIZE_1MB,
+                    keyTypes,
+                    valueTypes,
+                    N,
+                    0.5,
+                    100,
+                    configuration.getSqlFastMapDiskSpillThreshold(),
+                    configuration.getSqlFastMapDiskSpillExtendSegmentSize(),
+                    configuration.getSqlFastMapDiskSpillRoot()
+            )) {
 
                 ListColumnFilter columnFilter = new ListColumnFilter();
                 columnFilter.add(8);
                 columnFilter.add(10);
                 columnFilter.add(7);
 
-
-                RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
+                RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(),
+                        reader.getMetadata(), columnFilter);
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
 

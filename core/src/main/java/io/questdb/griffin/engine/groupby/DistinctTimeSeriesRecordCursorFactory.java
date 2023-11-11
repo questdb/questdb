@@ -59,7 +59,10 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
                 metadata,
                 configuration.getSqlDistinctTimestampKeyCapacity(),
                 configuration.getSqlDistinctTimestampLoadFactor(),
-                Integer.MAX_VALUE
+                Integer.MAX_VALUE,
+                configuration.getSqlFastMapDiskSpillThreshold(),
+                configuration.getSqlFastMapDiskSpillExtendSegmentSize(),
+                configuration.getSqlFastMapDiskSpillRoot()
         );
 
         this.base = base;
