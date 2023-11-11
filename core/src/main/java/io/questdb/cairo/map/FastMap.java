@@ -27,27 +27,30 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.MemoryCARWSpillable;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.UUID;
+
 /**
- * FastMap is a general purpose off-heap hash table used to store intermediate data of join,
- * group by, sample by queries, but not only. It provides {@link MapKey} and {@link MapValue},
- * as well as {@link RecordCursor} interfaces for data access and modification.
- * The preferred way to create a FastMap is {@link MapFactory}.
+ * FastMap is a general purpose off-heap hash table used to store intermediate data of join, group by, sample by
+ * queries, but not only. It provides {@link MapKey} and {@link MapValue}, as well as {@link RecordCursor} interfaces
+ * for data access and modification. The preferred way to create a FastMap is {@link MapFactory}.
  * <p>
  * <strong>Important!</strong>
- * Key and value structures must match the ones provided via lists of columns ({@link ColumnTypes})
- * to the map constructor. Later put* calls made on {@link MapKey} and {@link MapValue} must match
- * the declared column types to guarantee memory access safety.
+ * Key and value structures must match the ones provided via lists of columns ({@link ColumnTypes}) to the map
+ * constructor. Later put* calls made on {@link MapKey} and {@link MapValue} must match the declared column types to
+ * guarantee memory access safety.
  * <p>
- * Keys may be var-size, i.e. a key may contain string or binary columns, while values are expected
- * to be fixed-size. Only insertions and updates operations are supported meaning that a key can't
- * be removed from the map once it was inserted.
+ * Keys may be var-size, i.e. a key may contain string or binary columns, while values are expected to be fixed-size.
+ * Only insertions and updates operations are supported meaning that a key can't be removed from the map once it was
+ * inserted.
  * <p>
  * Map iteration provided by {@link RecordCursor} preserves the key insertion order.
  * <p>
@@ -73,11 +76,10 @@ import org.jetbrains.annotations.Nullable;
  * Length field is present for var-size keys only. It stores full key-value pair length in bytes.
  */
 public class FastMap implements Map, Reopenable {
-
-    private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
+    public static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
+    private static final Log LOG = LogFactory.getLog(FastMap.class);
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final FastMapCursor cursor;
-    private final int initialHeapSize;
     private final int initialKeyCapacity;
     private final BaseKey key;
     private final int keyOffset;
@@ -85,7 +87,6 @@ public class FastMap implements Map, Reopenable {
     private final int keySize;
     private final int listMemoryTag;
     private final double loadFactor;
-    private final int mapMemoryTag;
     private final FastMapRecord record;
     private final FastMapValue value;
     private final FastMapValue value2;
@@ -95,11 +96,13 @@ public class FastMap implements Map, Reopenable {
     private int free;
     private int keyCapacity;
     private int mask;
-    private MemoryCARWSpillable mem;
+    private SpillableHeapMemory mem;
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
     private DirectLongList offsets;
     private int size = 0;
+    private Path spillFilePath;
 
+    // Unspillable implementation for fastmap
     public FastMap(
             int heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
@@ -107,7 +110,48 @@ public class FastMap implements Map, Reopenable {
             double loadFactor,
             int maxResizes
     ) {
-        this(heapSize, keyTypes, null, keyCapacity, loadFactor, maxResizes);
+        this(heapSize,
+                keyTypes,
+                null,
+                keyCapacity,
+                loadFactor,
+                maxResizes
+        );
+    }
+
+    public FastMap(
+            int heapSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes
+    ) {
+        this(heapSize,
+                keyTypes,
+                valueTypes,
+                keyCapacity,
+                loadFactor,
+                maxResizes,
+                MAX_HEAP_SIZE,
+                MAX_HEAP_SIZE,
+                null
+        );
+    }
+
+    public FastMap(
+            int heapSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            long diskSpillThreshold,
+            long extendSegmentSize,
+            String spillRoot
+    ) {
+        this(heapSize,
+                keyTypes, null, keyCapacity, loadFactor, maxResizes, diskSpillThreshold,
+                extendSegmentSize, spillRoot);
     }
 
     public FastMap(
@@ -117,9 +161,14 @@ public class FastMap implements Map, Reopenable {
             int keyCapacity,
             double loadFactor,
             int maxResizes,
+            long diskSpillThreshold,
+            long extendSegmentSize,
+            String spillRoot,
             int memoryTag
     ) {
-        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, diskSpillThreshold,
+                extendSegmentSize,
+                spillRoot, memoryTag, memoryTag);
     }
 
     public FastMap(
@@ -128,9 +177,22 @@ public class FastMap implements Map, Reopenable {
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
-            int maxResizes
+            int maxResizes,
+            long diskSpillThreshold,
+            long extendSegmentSize,
+            String spillRoot
     ) {
-        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+        this(heapSize,
+                keyTypes,
+                valueTypes,
+                keyCapacity,
+                loadFactor,
+                maxResizes,
+                diskSpillThreshold,
+                extendSegmentSize,
+                spillRoot,
+                MemoryTag.NATIVE_FAST_MAP,
+                MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
     }
 
     FastMap(
@@ -140,40 +202,26 @@ public class FastMap implements Map, Reopenable {
             int keyCapacity,
             double loadFactor,
             int maxResizes,
+            long diskSpillThreshold,
+            long extendSegmentSize,
+            String spillRoot,
             int mapMemoryTag,
             int listMemoryTag
     ) {
         assert heapSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
 
-        this.mapMemoryTag = mapMemoryTag;
         this.listMemoryTag = listMemoryTag;
-        initialKeyCapacity = keyCapacity;
-        initialHeapSize = heapSize;
+        this.initialKeyCapacity = keyCapacity;
         this.loadFactor = loadFactor;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
-        this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
+        this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY :
+                Numbers.ceilPow2(this.keyCapacity);
         mask = this.keyCapacity - 1;
         free = (int) (this.keyCapacity * loadFactor);
         offsets = new DirectLongList(this.keyCapacity, listMemoryTag);
         offsets.setPos(this.keyCapacity);
         offsets.zero(0);
-        long maxPagesFromMaxHeap = MAX_HEAP_SIZE/heapSize;
-        int maxPages = (int) maxPagesFromMaxHeap;
-        long maxPagesFromMaxResizes = 1L;
-        int nResizes = 0;
-        while(nResizes < maxResizes){
-            maxPagesFromMaxResizes <<= 1;
-            if(maxPagesFromMaxResizes > maxPagesFromMaxHeap) {
-                break;
-            }
-            nResizes++;
-        }
-        if(nResizes == maxResizes){
-            maxPages = (int) maxPagesFromMaxResizes;
-        }
-        // TODO: what to set for default size
-        this.mem = new MemoryCARWSpillable(heapSize, maxPages, heapSize*3, Path.getThreadLocal("/tmp/questdb/fastmap"), mapMemoryTag, MemoryTag.MMAP_FAST_MAP);
 
         final int keyColumnCount = keyTypes.getColumnCount();
         int keySize = 0;
@@ -188,6 +236,7 @@ public class FastMap implements Map, Reopenable {
             }
         }
         this.keySize = keySize;
+        key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
 
         // Reserve 4 bytes for key length in case of var-size keys.
         int offset = keySize != -1 ? 0 : 4;
@@ -202,8 +251,9 @@ public class FastMap implements Map, Reopenable {
                 final int columnType = valueTypes.getColumnType(i);
                 final int size = ColumnType.sizeOf(columnType);
                 if (size <= 0) {
-                    close();
-                    throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                    Misc.free(offsets);
+                    throw CairoException.nonCritical().put("value type is not supported: ").put(
+                            ColumnType.nameOf(columnType));
                 }
                 offset += size;
                 valueSize += size;
@@ -220,9 +270,31 @@ public class FastMap implements Map, Reopenable {
 
         record = new FastMapRecord(valueOffsets, keyOffset, value, keyTypes, valueTypes);
 
-        assert keySize + valueSize < heapSize : "page size is too small to fit a single key";
+        // pageSize should be power of 2.
+        long pageSize = Numbers.ceilPow2(heapSize);
+        assert keySize + valueSize < pageSize : "page size is too small to fit a single key";
+
+        // Without spillableHeapMemory, every resize multiples current size by 2, and resize stop when maxResizes
+        // is reached. With spillableHeapMemory, this is no longer relevant. We just use maxResizes value to define
+        // maxSize of spillableHeapMemory.
+        long maxSize = getMaxHeapSize(pageSize, maxResizes);
+        if (diskSpillThreshold == MAX_HEAP_SIZE && extendSegmentSize == MAX_HEAP_SIZE) {
+            diskSpillThreshold = maxSize;
+            extendSegmentSize = maxSize;
+        }
+        spillFilePath = spillRoot != null ?
+                Path.getThreadLocal(spillRoot).concat(UUID.randomUUID() + ".tmp") :
+                null;
+        this.mem = new SpillableHeapMemory(
+                heapSize,
+                diskSpillThreshold,
+                extendSegmentSize,
+                maxSize,
+                spillFilePath,
+                mapMemoryTag,
+                MemoryTag.MMAP_FAST_MAP);
+
         cursor = new FastMapCursor(record, this);
-        key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
     }
 
     @Override
@@ -236,7 +308,7 @@ public class FastMap implements Map, Reopenable {
     @Override
     public final void close() {
         Misc.free(offsets);
-        if(mem.getAddress() != 0){
+        if (mem.getAddress() != 0) {
             mem.close();
             free = 0;
             size = 0;
@@ -338,6 +410,20 @@ public class FastMap implements Map, Reopenable {
         }
         size++;
         return valueOf(mem.getAddress() + keyWriter.startOffset, true, value);
+    }
+
+    private long getMaxHeapSize(long pageSize, long maxResizes) {
+        long maxSize = pageSize;
+        while (maxSize < MAX_HEAP_SIZE && maxResizes > 0) {
+            maxSize <<= 1;
+            maxResizes--;
+        }
+        if (maxSize > MAX_HEAP_SIZE) {
+            LOG.info().$("maxSize is larger than max allowed size. Set to max allowed size ").$(MAX_HEAP_SIZE)
+                    .$();
+            maxSize = MAX_HEAP_SIZE;
+        }
+        return maxSize;
     }
 
     private FastMapValue probe0(BaseKey keyWriter, int index, int hashCode, FastMapValue value) {

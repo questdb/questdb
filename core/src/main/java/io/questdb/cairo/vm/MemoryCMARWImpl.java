@@ -46,7 +46,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
     private long minMappedMemorySize = -1;
 
-    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag,
+                           long opts) {
         of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 
@@ -73,7 +74,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             final long truncateSize;
             if (truncate) {
                 long appendOffset = getAppendOffset();
-                truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
+                truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) :
+                        appendOffset;
 
                 long sz = Math.min(size, truncateSize);
                 if (appendOffset < sz) {
@@ -157,7 +159,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts,
+                   int madviseOpts) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = extendSegmentSize;
         this.madviseOpts = madviseOpts;
@@ -183,7 +186,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size,
+                   int memoryTag) {
         of(ff, fd, null, size, memoryTag);
         // TODO: (2) Well here is overwritten but above of() is public
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
@@ -340,7 +344,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.appendAddress = pageAddress + size;
         }
         if (name != null) {
-            LOG.debug().$("open [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+            LOG.debug().$("open [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(
+                    this.size).$(']').$();
         } else {
             LOG.debug().$("open [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
         }

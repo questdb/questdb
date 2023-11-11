@@ -607,6 +607,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlFastMapDiskSpillExtendSegmentSize() {
+        return delegate.getSqlFastMapDiskSpillExtendSegmentSize();
+    }
+
+    @Override
+    public String getSqlFastMapDiskSpillRoot() {
+        return delegate.getSqlFastMapDiskSpillRoot();
+    }
+
+    @Override
+    public long getSqlFastMapDiskSpillThreshold() {
+        return delegate.getSqlFastMapDiskSpillThreshold();
+    }
+
+    @Override
     public double getSqlFastMapLoadFactor() {
         return delegate.getSqlFastMapLoadFactor();
     }

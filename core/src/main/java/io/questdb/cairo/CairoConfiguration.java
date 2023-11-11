@@ -49,6 +49,7 @@ public interface CairoConfiguration {
     long O_NONE = 0;
     long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
+    long DEFAULT_FAST_MAP_EXTEND_SEGMENT_SIZE = 16 * 1024 * 1024;
 
     boolean attachPartitionCopy();
 
@@ -359,6 +360,12 @@ public interface CairoConfiguration {
     double getSqlDistinctTimestampLoadFactor();
 
     int getSqlExpressionPoolCapacity();
+
+    long getSqlFastMapDiskSpillExtendSegmentSize();
+
+    String getSqlFastMapDiskSpillRoot();
+
+    long getSqlFastMapDiskSpillThreshold();
 
     double getSqlFastMapLoadFactor();
 

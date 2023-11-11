@@ -59,21 +59,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         return putNullBin();
     }
 
-    default void putBin32(long offset, BinarySequence value) {
-        if (value != null) {
-            final long len = value.length();
-            if (len + Integer.BYTES > Integer.MAX_VALUE) {
-                throw CairoException.nonCritical().put("binary column is too large");
-            }
-            long addr = appendAddressFor(offset, len + Integer.BYTES);
-            Unsafe.getUnsafe().putInt(addr, (int) len);
-            value.copyTo(addr + Integer.BYTES, 0, len);
-        } else {
-            putNullBin32(offset);
-        }
-    }
-
-
     @Override
     default void putBlockOfBytes(long from, long len) {
         Vect.memcpy(appendAddressFor(len), from, len);
@@ -142,12 +127,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Unsafe.getUnsafe().putLong(addr + Long.BYTES, hi);
     }
 
-    default void putLong128(long offset, long lo, long hi) {
-        long addr = appendAddressFor(offset, 2 * Long.BYTES);
-        Unsafe.getUnsafe().putLong(addr, lo);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, hi);
-    }
-
     default void putLong256(long l0, long l1, long l2, long l3) {
         final long addr = appendAddressFor(32);
         Unsafe.getUnsafe().putLong(addr, l0);
@@ -203,10 +182,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         return getAppendOffset();
     }
 
-    default void putNullBin32(long offset) {
-        putInt(offset, TableUtils.NULL_LEN);
-    }
-
     default long putNullStr() {
         putInt(TableUtils.NULL_LEN);
         return getAppendOffset();
@@ -253,26 +228,11 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         }
     }
 
-    default void putStrLowerCase(long offset, CharSequence value) {
-        if (value != null) {
-            putStrLowerCase(offset, value, 0, value.length());
-        } else {
-            putNullStr(offset);
-        }
-    }
-
     default void putStr(long offset, CharSequence value, int pos, int len) {
         final long addr = appendAddressFor(offset, Vm.getStorageLength(len));
         Unsafe.getUnsafe().putInt(addr, len);
         Chars.copyStrChars(value, pos, len, addr + Vm.STRING_LENGTH_BYTES);
     }
-
-    default void putStrLowerCase(long offset, CharSequence value, int pos, int len) {
-        final long addr = appendAddressFor(offset, Vm.getStorageLength(len));
-        Unsafe.getUnsafe().putInt(addr, len);
-        Chars.copyStrCharsLowerCase(value, pos, len, addr + Vm.STRING_LENGTH_BYTES);
-    }
-
 
     default long putStrUnsafe(CharSequence value, int pos, int len) {
         final long storageLen = Vm.getStorageLength(len);

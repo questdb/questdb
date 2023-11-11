@@ -1470,6 +1470,8 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 long expectedAppendOffset = map.getAppendOffset();
+                System.out.println(Numbers.SIZE_1MB << 1);
+                System.out.println(expectedAppendOffset);
 
                 rnd.reset();
                 for (int i = 0; i < N; i++) {

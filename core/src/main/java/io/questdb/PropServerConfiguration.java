@@ -164,6 +164,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxUncommittedRows;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
+    private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
@@ -226,6 +227,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlDoubleToStrCastScale;
     private final int sqlExplainModelPoolCapacity;
     private final int sqlExpressionPoolCapacity;
+    private final long sqlFastMapDiskSpillExtendSegmentSize;
+    private final String sqlFastMapDiskSpillRoot;
+    private final long sqlFastMapDiskSpillThreshold;
     private final double sqlFastMapLoadFactor;
     private final int sqlFloatToStrCastScale;
     private final int sqlGroupByMapCapacity;
@@ -460,7 +464,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
-    private final MicrosecondClock microsecondClock;
 
     public PropServerConfiguration(
             String root,
@@ -832,6 +835,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSmallMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
+            this.sqlFastMapDiskSpillExtendSegmentSize = getLong(properties, env, PropertyKey.CAIRO_SQL_FAST_MAP_DISK_SPILL_EXTEND_SEGMENT_SIZE, CairoConfiguration.DEFAULT_FAST_MAP_EXTEND_SEGMENT_SIZE);
+            this.sqlFastMapDiskSpillThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_FAST_MAP_DISK_SPILL_THRESHOLD, CairoConfiguration.DEFAULT_FAST_MAP_EXTEND_SEGMENT_SIZE);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
@@ -864,6 +869,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelay = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 10.0);
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
+
+            if (Numbers.ceilPow2(this.sqlFastMapDiskSpillThreshold) <= Numbers.ceilPow2(this.sqlSmallMapPageSize)
+                    || Numbers.ceilPow2(this.sqlFastMapDiskSpillExtendSegmentSize) <= Numbers.ceilPow2(this.sqlSmallMapPageSize)) {
+                throw new ServerConfigurationException("the ceil power 2 of [key=" + PropertyKey.CAIRO_SQL_FAST_MAP_DISK_SPILL_THRESHOLD.getPropertyPath() + "] " +
+                        "and [key=" + PropertyKey.CAIRO_SQL_FAST_MAP_DISK_SPILL_EXTEND_SEGMENT_SIZE.getPropertyPath() + " should be larger than " +
+                        "the ceil power 2 of [key=" + PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE.getPropertyPath() + "]");
+            }
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
@@ -942,6 +954,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
+
+            this.sqlFastMapDiskSpillRoot = getString(properties, env, PropertyKey.CAIRO_SQL_FAST_MAP_DISK_SPILL_ROOT, tmpRoot + "/fastmap");
 
             String cairoSQLCopyIdSupplier = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ID_SUPPLIER, "random");
             this.cairoSQLCopyIdSupplier = Chars.equalsLowerCaseAscii(cairoSQLCopyIdSupplier, "sequential") ? 1 : 0;
@@ -1722,11 +1736,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
 
         @Override
-        public @NotNull MicrosecondClock getMicrosecondClock() {
-            return microsecondClock;
-        }
-
-        @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
         }
@@ -2026,6 +2035,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull MicrosecondClock getMicrosecondClock() {
+            return microsecondClock;
+        }
+
+        @Override
         public long getMiscAppendPageSize() {
             return writerMiscAppendPageSize;
         }
@@ -2278,6 +2292,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlExpressionPoolCapacity() {
             return sqlExpressionPoolCapacity;
+        }
+
+        @Override
+        public long getSqlFastMapDiskSpillExtendSegmentSize() {
+            return sqlFastMapDiskSpillExtendSegmentSize;
+        }
+
+        @Override
+        public String getSqlFastMapDiskSpillRoot() {
+            return sqlFastMapDiskSpillRoot;
+        }
+
+        @Override
+        public long getSqlFastMapDiskSpillThreshold() {
+            return sqlFastMapDiskSpillThreshold;
         }
 
         @Override
