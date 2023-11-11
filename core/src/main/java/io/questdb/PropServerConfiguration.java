@@ -465,6 +465,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
 
+
     public PropServerConfiguration(
             String root,
             Properties properties,
