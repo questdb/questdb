@@ -33,7 +33,7 @@ public class ShowServerVersionTest extends AbstractCairoTest {
 
     @Test
     public void testShowServerVersion() throws SqlException {
-        final var expected = "server_version\n" +
+        final String expected = "server_version\n" +
                 ServerVersion.SERVER_VERSION + "\n";
         assertQuery(
                 expected,
