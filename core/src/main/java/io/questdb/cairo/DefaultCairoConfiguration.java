@@ -872,6 +872,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterPoolMaxSegments() {
+        return 5;
+    }
+
+    @Override
     public int getWindowColumnPoolCapacity() {
         return 64;
     }

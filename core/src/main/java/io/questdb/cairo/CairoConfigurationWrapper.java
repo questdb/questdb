@@ -867,6 +867,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterPoolMaxSegments() {
+        return delegate.getWalWriterPoolMaxSegments();
+    }
+
+    @Override
     public int getWindowColumnPoolCapacity() {
         return delegate.getWindowColumnPoolCapacity();
     }
