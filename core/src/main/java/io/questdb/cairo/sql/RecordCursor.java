@@ -37,7 +37,12 @@ import java.io.Closeable;
 public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
-     * Counts remaining number of records in this cursor.
+     * Counts remaining number of records in this cursor, moving the cursor to the end.
+     * <p>
+     * Note - this method should handle return correct result even it's interrupted by {@link DataUnavailableException}
+     *
+     * @param circuitBreaker - circuit breaker to use to check for timeouts or stale connection.
+     * @return number of rows left to read
      */
     default long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
         long count = 0;

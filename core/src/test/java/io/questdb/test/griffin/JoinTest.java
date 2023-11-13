@@ -4324,36 +4324,36 @@ public class JoinTest extends AbstractCairoTest {
 
             insert("insert into TabA select x::timestamp, x/6 from long_sequence(10)");
             insert("insert into TabB select (x*15L*60L*1000000L)::timestamp, x/6 from long_sequence(10)");
-//
-//            //async filter
-//            String selectWithFilter = "(select * from TabA where x = 0 " +
-//                    "union all " +
-//                    "select * from TabB where x = 1 " +
-//                    "union all " +
-//                    "select * from taBC where x = 0 )";
-//            assertSkipToAndCalculateSize(selectWithFilter, 10);
-//
-//            //async filter with limit
-//            String selectWithFilterAndLimit = "( " +
-//                    "selecT * from " +
-//                    "(select * from TabA where x = 0 limit 3) " +
-//                    "union all " +
-//                    "(select * from TabB where x = 1 limit 3) " +
-//                    "union all " +
-//                    "(select * from taBC where x = 0 limit 1) )";
-//            assertSkipToAndCalculateSize(selectWithFilterAndLimit, 6);
-//
-//            // fwd data frame
-//            String selectWithFwdFrame = "(select * from TabA union all select * from TabB union all select * from TabC)";
-//            assertSkipToAndCalculateSize(selectWithFwdFrame, 20);
-//
-//            // bwd data frame
-//            String selectWithBwdFrame = "(select * from " +
-//                    "(select * from TabA order by ts desc) " +
-//                    "union all " +
-//                    "(select * from TabB order by ts desc) " +
-//                    "union all (select * from tabC order by ts desc) )";
-//            assertSkipToAndCalculateSize(selectWithBwdFrame, 20);
+
+            //async filter
+            String selectWithFilter = "(select * from TabA where x = 0 " +
+                    "union all " +
+                    "select * from TabB where x = 1 " +
+                    "union all " +
+                    "select * from taBC where x = 0 )";
+            assertSkipToAndCalculateSize(selectWithFilter, 10);
+
+            //async filter with limit
+            String selectWithFilterAndLimit = "( " +
+                    "selecT * from " +
+                    "(select * from TabA where x = 0 limit 3) " +
+                    "union all " +
+                    "(select * from TabB where x = 1 limit 3) " +
+                    "union all " +
+                    "(select * from taBC where x = 0 limit 1) )";
+            assertSkipToAndCalculateSize(selectWithFilterAndLimit, 6);
+
+            // fwd data frame
+            String selectWithFwdFrame = "(select * from TabA union all select * from TabB union all select * from TabC)";
+            assertSkipToAndCalculateSize(selectWithFwdFrame, 20);
+
+            // bwd data frame
+            String selectWithBwdFrame = "(select * from " +
+                    "(select * from TabA order by ts desc) " +
+                    "union all " +
+                    "(select * from TabB order by ts desc) " +
+                    "union all (select * from tabC order by ts desc) )";
+            assertSkipToAndCalculateSize(selectWithBwdFrame, 20);
 
             // interval fwd data frame
             String selectWithIntervalFwdFrame = "(" +

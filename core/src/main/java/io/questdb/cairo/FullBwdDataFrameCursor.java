@@ -62,17 +62,17 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
     }
 
     @Override
-    public @Nullable DataFrame skipTo(long rowCount, long[] skipped) {
+    public @Nullable DataFrame skipTo(long rowsToSkip, long[] rowsAlreadySkipped) {
         int partitionCount = getTableReader().getPartitionCount();
 
         if (partitionCount < 1) {
             return null;
         }
 
-        rowCount -= skipped[0];
+        rowsToSkip -= rowsAlreadySkipped[0];
 
         if (skipToPartitionIndex == -1) {
-            skipToPosition = rowCount;
+            skipToPosition = rowsToSkip;
             skipToPartitionIndex = partitionCount - 1;
         }
 
@@ -84,11 +84,11 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 continue;
             }
             if (partitionRows > skipToPosition) {
-                skipped[0] += skipToPosition;
+                rowsAlreadySkipped[0] += skipToPosition;
                 break;
             }
 
-            skipped[0] += partitionRows;
+            rowsAlreadySkipped[0] += partitionRows;
 
             if (skipToPartitionIndex != 0) {
                 skipToPosition -= partitionRows;
