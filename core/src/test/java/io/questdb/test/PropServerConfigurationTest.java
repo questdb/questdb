@@ -1063,7 +1063,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(42_000_000, configuration.getCairoConfiguration().getO3MinLag());
             Assert.assertEquals(420_000_000, configuration.getCairoConfiguration().getO3MaxLag());
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getO3ColumnMemorySize());
-            Assert.assertEquals(8192, configuration.getCairoConfiguration().getSystemO3ColumnMemorySize());
+            Assert.assertEquals(65536, configuration.getCairoConfiguration().getSystemO3ColumnMemorySize());
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlDistinctTimestampKeyCapacity());
             Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlDistinctTimestampLoadFactor(), 0.001);
