@@ -706,8 +706,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setBoolean0(Function function, boolean value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BOOLEAN:
                 ((BooleanBindVariable) function).value = value;
                 break;
@@ -721,8 +720,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setByte0(Function function, byte value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = value;
                 break;
@@ -760,9 +758,8 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setChar0(Function function, char value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
         // treat char as string representation of numeric type
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.BYTE);
                 break;
@@ -803,8 +800,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setDouble0(Function function, double value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.FLOAT:
                 ((FloatBindVariable) function).value = SqlUtil.implicitCastAsFloat(value, ColumnType.DOUBLE);
                 break;
@@ -825,8 +821,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setFloat0(Function function, float value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.FLOAT:
                 ((FloatBindVariable) function).value = value;
                 break;
@@ -883,8 +878,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setInt0(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.INT) : 0;
                 break;
@@ -925,8 +919,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.LONG) : 0;
                 break;
@@ -972,8 +965,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             int index,
             @Nullable CharSequence name
     ) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.LONG256:
                 ((Long256BindVariable) function).setValue(l0, l1, l2, l3);
                 break;
@@ -987,8 +979,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setShort0(Function function, short value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = SqlUtil.implicitCastAsByte(value, ColumnType.SHORT);
                 break;
@@ -1026,8 +1017,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BOOLEAN:
                 ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
                 break;
@@ -1077,8 +1067,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setTimestamp0(Function function, long value, int index) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.TIMESTAMP) : 0;
                 break;
@@ -1113,8 +1102,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setUuid(Function function, long lo, long hi, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.UUID:
                 ((UuidBindVariable) function).set(lo, hi);
                 break;

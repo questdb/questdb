@@ -665,8 +665,8 @@ public final class Numbers {
         }
     }
 
-    // returns net addr + netmask in a single long value 
-    // throws NumericException on error 
+    // returns net addr + netmask in a single long value
+    // throws NumericException on error
     public static long getIPv4Subnet(CharSequence sequence) throws NumericException {
         int netmask = getIPv4Netmask(sequence);
         if (netmask == BAD_NETMASK) {

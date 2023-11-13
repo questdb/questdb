@@ -514,7 +514,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
             if (timestampIndex != NO_INDEX) {
                 final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
-                final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
+                final byte typeTag = ColumnType.tagOf(timestampAdapter.getType());
                 if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
                     throw TextException.$("not a timestamp '").put(importedTimestampColumnName).put('\'');
                 }

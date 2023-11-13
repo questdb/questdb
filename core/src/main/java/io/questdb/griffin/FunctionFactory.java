@@ -39,6 +39,10 @@ public interface FunctionFactory {
      * ',', '(', ')', '*', '/', '%', '+', '-', '='.
      * <p>
      * Argument types are represented by single character from this table:
+     *
+     * (Lower-case letters will require arguments to be constant expressions.
+     * Upper-case letters allow both constant and variable expressions.)
+     *
      * <ul>
      * <li>B = byte</li>
      * <li>C = cursor</li>
@@ -67,8 +71,6 @@ public interface FunctionFactory {
      * <li>x = ipv4</li>
      * </ul>
      * <p>
-     * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
-     * variable expressions.
      *
      * @return signature, for example "substr(SII)"
      */

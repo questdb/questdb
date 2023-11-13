@@ -89,7 +89,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 if (argsSize == 2) {
-                    int type0 = ColumnType.tagOf(args.getQuick(0).getType());
+                    byte type0 = ColumnType.tagOf(args.getQuick(0).getType());
                     if (type0 != ColumnType.tagOf(args.getQuick(1).getType())) {
                         return new TwoSymStrCoalesceFunction(args);
                     } else if (type0 == ColumnType.SYMBOL) {

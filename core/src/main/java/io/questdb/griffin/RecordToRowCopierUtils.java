@@ -53,15 +53,15 @@ public class RecordToRowCopierUtils {
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
 
         // Character        Type        Interpretation
+        // Z                boolean     true or false
         // B                byte        signed byte
+        // S                short       signed short
         // C                char        Unicode character code point in the Basic Multilingual Plane, encoded with UTF-16
-        // D                double      double-precision floating-point value
-        // F                float       single-precision floating-point value
         // I                int         integer
         // J                long        long integer
+        // F                float       single-precision floating-point value
+        // D                double      double-precision floating-point value
         // L ClassName ;    reference   an instance of class ClassName
-        // S                short       signed short
-        // Z                boolean     true or false
         // [                reference   one array dimension
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
@@ -679,7 +679,7 @@ public class RecordToRowCopierUtils {
                         // truncate within the same storage type
                         asm.i2l();
                         asm.ldc(fromColumnType_0 + i * 2);
-                        // toColumnType
+                        // toColumnType_0
                         asm.ldc(toColumnType_0 + i * 2);
                         asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                         asm.l2i();
@@ -711,7 +711,7 @@ public class RecordToRowCopierUtils {
                     break;
                 case ColumnType.GEOINT:
                     asm.invokeInterface(rGetGeoInt, 1);
-                    switch (ColumnType.tagOf(toColumnType)) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.GEOBYTE:
                             asm.i2l();
                             asm.ldc(fromColumnType_0 + i * 2);
@@ -747,7 +747,7 @@ public class RecordToRowCopierUtils {
                     break;
                 case ColumnType.GEOLONG:
                     asm.invokeInterface(rGetGeoLong, 1);
-                    switch (ColumnType.tagOf(toColumnType)) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.GEOBYTE:
                             asm.ldc(fromColumnType_0 + i * 2);
                             asm.ldc(toColumnType_0 + i * 2);
@@ -787,7 +787,7 @@ public class RecordToRowCopierUtils {
                 case ColumnType.LONG128:
                     // fall through
                 case ColumnType.UUID:
-                    switch (ColumnType.tagOf(toColumnType)) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.LONG128:
                             // fall through
                         case ColumnType.UUID:

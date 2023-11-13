@@ -177,5 +177,4 @@ public abstract class StrFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.STRING;
     }
-
 }

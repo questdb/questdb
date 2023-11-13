@@ -1482,7 +1482,7 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'h';
     }
 
-    public static boolean isNanKeyword(CharSequence tok) {
+    public static boolean isNaNKeyword(CharSequence tok) {
         if (tok.length() != 3) {
             return false;
         }

@@ -398,6 +398,4 @@ public class SqlUtilTest {
         // otherwise sink can end up having odd characters
         TimestampFormatUtils.init();
     }
-
-
 }

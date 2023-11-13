@@ -460,9 +460,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (index == -1) {
             return false;
         }
-        final int columnType = metadata.getColumnType(index);
-        final int columnTypeTag = ColumnType.tagOf(columnType);
-        return columnTypeTag == ColumnType.BOOLEAN;
+        return ColumnType.tagOf(metadata.getColumnType(index)) == ColumnType.BOOLEAN;
     }
 
     private boolean isTopLevelBooleanColumn(ExpressionNode node) {
@@ -541,7 +539,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
-        final int columnTypeTag = ColumnType.tagOf(columnType);
+        final byte columnTypeTag = ColumnType.tagOf(columnType);
         int typeCode = bindVariableTypeCode(columnTypeTag);
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(node.position)
@@ -567,7 +565,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         final int columnType = metadata.getColumnType(index);
-        final int columnTypeTag = ColumnType.tagOf(columnType);
+        final byte columnTypeTag = ColumnType.tagOf(columnType);
         int typeCode = columnTypeCode(columnTypeTag);
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position)
@@ -1136,7 +1134,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             Function varFunction = getBindVariableFunction(node.position, node.token);
             // We treat bind variables as columns here for the sake of simplicity
             final int columnType = varFunction.getType();
-            int columnTypeTag = ColumnType.tagOf(columnType);
+            byte columnTypeTag = ColumnType.tagOf(columnType);
             // Treat string bind variable to be of symbol type
             if (columnTypeTag == ColumnType.STRING) {
                 columnTypeTag = ColumnType.SYMBOL;
@@ -1155,7 +1153,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 throw SqlException.invalidColumn(node.position, node.token);
             }
             final int columnType = metadata.getColumnType(columnIndex);
-            final int columnTypeTag = ColumnType.tagOf(columnType);
+            final byte columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
                 symbolTable = (StaticSymbolTable) pageFrameCursor.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;

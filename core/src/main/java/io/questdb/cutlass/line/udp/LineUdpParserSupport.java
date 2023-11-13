@@ -85,7 +85,7 @@ public class LineUdpParserSupport {
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return defaultFloatColumnType;
                     }
-                    if (SqlKeywords.isNanKeyword(value)) {
+                    if (SqlKeywords.isNaNKeyword(value)) {
                         return defaultFloatColumnType;
                     }
                     if (value.charAt(0) == '"') {

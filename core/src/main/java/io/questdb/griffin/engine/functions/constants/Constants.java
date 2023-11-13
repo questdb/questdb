@@ -55,9 +55,8 @@ public final class Constants {
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
-        int typeTag = ColumnType.tagOf(columnType);
-        if (typeTag >= ColumnType.GEOBYTE &&
-                typeTag <= ColumnType.GEOLONG) {
+        byte typeTag = ColumnType.tagOf(columnType);
+        if (typeTag >= ColumnType.GEOBYTE && typeTag <= ColumnType.GEOLONG) {
             int bits = ColumnType.getGeoHashBits(columnType);
             if (bits != 0) {
                 return geoNullConstants.get(bits);
@@ -72,50 +71,50 @@ public final class Constants {
     }
 
     static {
-        nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.FALSE);
         nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
-        nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.FALSE);
-        nullConstants.extendAndSet(ColumnType.DOUBLE, DoubleConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);
         nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
+        nullConstants.extendAndSet(ColumnType.DOUBLE, DoubleConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
         nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
         nullConstants.extendAndSet(ColumnType.GEOBYTE, GeoByteConstant.NULL);
         nullConstants.extendAndSet(ColumnType.GEOSHORT, GeoShortConstant.NULL);
         nullConstants.extendAndSet(ColumnType.GEOINT, GeoIntConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.LONG128, Long128Constant.NULL);
         nullConstants.extendAndSet(ColumnType.GEOLONG, GeoLongConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
         nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.LONG128, Long128Constant.NULL);
         nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
-
-        typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
-
         for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));
         }
+
+        typeConstants.extendAndSet(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.LONG128, Long128TypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
     }
 }
