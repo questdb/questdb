@@ -190,6 +190,24 @@ public class RecordToRowCopierUtils {
             asm.aload(1);
             asm.iconst(i);
 
+            // BYTE          -> NUMERIC
+            // SHORT         -> NUMERIC
+            // CHAR          -> NUMERIC, CHAR, STRING, SYMBOL, GEOBYTE
+            // INT           -> NUMERIC
+            // LONG          -> NUMERIC
+            // DATE          -> NUMERIC
+            // TIMESTAMP     -> NUMERIC
+            // FLOAT         -> NUMERIC
+            // DOUBLE        -> NUMERIC
+            // STRING/SYMBOL -> NUMERIC, CHAR, LONG256, GEOHASH, UUID, IPv4
+            // LONG256       -> LONG256
+            // UUID/LONG128  -> STRING, UUID, LONG128
+            // GEOHASH       -> GEOHASH
+            // IPv4          -> IPv4
+            //
+            // GEOHASH: GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+            // NUMERIC: BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE (excludes CHAR)
+
             int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             if (fromColumnTypeTag == ColumnType.NULL) {
                 fromColumnTypeTag = toColumnTypeTag;

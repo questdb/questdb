@@ -1030,36 +1030,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
     }
 
-    private static class Candidate {
-        Match bestMatch = Match.NO_MATCH;
-        FunctionFactoryDescriptor descriptor;
-        boolean sigVarArg;
-        boolean sigVarArgConst;
-        int signatureScore = ColumnType.OVERLOAD_NONE;
-
-        private void clear() {
-            descriptor = null;
-            sigVarArg = false;
-            sigVarArgConst = false;
-            signatureScore = ColumnType.OVERLOAD_NONE;
-            bestMatch = Match.NO_MATCH;
-        }
-
-        private void update(
-                FunctionFactoryDescriptor descriptor,
-                boolean sigVarArg,
-                boolean sigVarArgConst,
-                Match bestMatch,
-                int sigScore
-        ) {
-            this.descriptor = descriptor;
-            this.sigVarArg = sigVarArg;
-            this.sigVarArgConst = sigVarArgConst;
-            this.bestMatch = bestMatch;
-            this.signatureScore = sigScore;
-        }
-    }
-
     static {
         for (int i = 0, n = SqlCompilerImpl.sqlControlSymbols.size(); i < n; i++) {
             FunctionFactoryCache.invalidFunctionNames.add(SqlCompilerImpl.sqlControlSymbols.getQuick(i));
