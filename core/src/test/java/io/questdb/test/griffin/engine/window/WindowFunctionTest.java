@@ -40,7 +40,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
             assertException("select ts, i, j, avg(i) over (partition by i order by ts groups unbounded preceding) from tab",
-                    17, "function not implemented for given window parameters");
+                    17, "function not implemented for given window parameters"
+            );
         });
     }
 
@@ -53,25 +54,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //trigger removal of rows below lo boundary AND resize of buffer
             insert("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\n" +
                             "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\n" +
                             "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\n" +
                             "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.0\n" +
                             "1970-01-01T00:00:00.190000Z\t22500\t90000\t50000.0\n",
-                    "select * from (select ts, i, j, avg(j) over (order by ts range between 80000 preceding and current row) from tab) limit -5");
+                    "select * from (select ts, i, j, avg(j) over (order by ts range between 80000 preceding and current row) from tab) limit -5"
+            );
 
             ddl("truncate table tab");
             // trigger buffer resize
             insert("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\n" +
                             "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\n" +
                             "1970-01-01T00:00:00.189998Z\t22499\t89998\t49998.0\n" +
                             "1970-01-01T00:00:00.189999Z\t22499\t89999\t49999.0\n" +
                             "1970-01-01T00:00:00.190000Z\t22500\t90000\t50000.0\n",
-                    "select * from (select ts, i, j, avg(j) over (order by ts range between 80000 preceding and current row) from tab) limit -5");
+                    "select * from (select ts, i, j, avg(j) over (order by ts range between 80000 preceding and current row) from tab) limit -5"
+            );
         });
     }
 
@@ -87,14 +92,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.460000Z\t460000\t420000.0\n";
 
             // cross-check with moving average re-write using aggregate functions
-            assertSql(expected,
+            assertSql(
+                    expected,
                     " select max(ts) as ts, max(j) j, avg(j) as avg from " +
                             "( select ts, i, j, row_number() over (order by ts desc) as rn from tab order by ts desc) " +
-                            "where rn between 1 and 80001 ");
+                            "where rn between 1 and 80001 "
+            );
 
-            assertSql(expected,
+            assertSql(
+                    expected,
                     "select * from (" +
-                            "select * from (select ts, j, avg(j) over (order by ts rows between 80000 preceding and current row) from tab) limit -1) ");
+                            "select * from (select ts, j, avg(j) over (order by ts rows between 80000 preceding and current row) from tab) limit -1) "
+            );
         });
     }
 
@@ -110,14 +119,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:01.100000Z\t49980.066958378644\n";
 
             // cross-check with moving average re-write using aggregate functions
-            assertSql(expected,
+            assertSql(
+                    expected,
                     " select max(ts) as ts, avg(j) as avg from " +
                             "( select ts, i, j, row_number() over (order by ts desc) as rn from tab order by ts desc) " +
-                            "where rn between 1 and 80001 ");
+                            "where rn between 1 and 80001 "
+            );
 
-            assertSql(expected,
+            assertSql(
+                    expected,
                     "select * from (" +
-                            "select * from (select ts, avg(j) over (order by ts rows between 80000 preceding and current row) from tab) limit -1) ");
+                            "select * from (select ts, avg(j) over (order by ts rows between 80000 preceding and current row) from tab) limit -1) "
+            );
         });
     }
 
@@ -139,14 +152,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.459999Z\t3\t459999\t419999.0\n";
 
             // cross-check with moving average re-write using aggregate functions
-            assertSql(expected,
+            assertSql(
+                    expected,
                     " select max(data.ts) as ts, data.i as i, max(data.j) as j, avg(data.j) as avg from " +
                             "( select i, max(ts) as max from tab group by i) cnt " +
                             "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "group by data.i");
+                            "group by data.i"
+            );
 
-            assertSql(expected,
-                    "select * from (select * from (select ts, i, j, avg(j) over (partition by i order by ts range between 80000 preceding and current row) from tab) limit -4) order by i");
+            assertSql(
+                    expected,
+                    "select * from (select * from (select ts, i, j, avg(j) over (partition by i order by ts range between 80000 preceding and current row) from tab) limit -4) order by i"
+            );
         });
     }
 
@@ -180,19 +197,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\n";
 
             // cross-check with moving average re-write using aggregate functions
-            assertSql(expected,
+            assertSql(
+                    expected,
                     " select max(data.ts) as ts, data.i as i, avg(data.j) as avg from " +
                             "( select i, max(ts) as max from tab group by i) cnt " +
                             "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
                             "group by data.i " +
-                            "order by data.i ");
+                            "order by data.i "
+            );
 
-            assertSql(expected,
+            assertSql(
+                    expected,
                     "select last(ts) as ts, i, last(avg) as avg from " +
                             "(select * from (select ts, i, avg(j) over (partition by i order by ts range between 80000 preceding and current row) avg " +
                             "from tab ) " +
                             "limit -100 )" +
-                            "order by i");
+                            "order by i"
+            );
         });
     }
 
@@ -211,21 +232,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.459999Z\t3\t459999\t299999.0\n";
 
             // cross-check with moving average re-write using aggregate functions
-            assertSql(expected,
+            assertSql(
+                    expected,
                     " select max(ts) as ts, i, max(j) j, avg(j) as avg from " +
                             "( select ts, i, j, row_number() over (partition by i order by ts desc) as rn from tab order by ts desc) " +
                             "where rn between 1 and 80001 " +
                             "group by i " +
-                            "order by i");
+                            "order by i"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.460000Z\t0\t460000\t300000.0\n" +
                             "1970-01-01T00:00:00.459997Z\t1\t459997\t299997.0\n" +
                             "1970-01-01T00:00:00.459998Z\t2\t459998\t299998.0\n" +
                             "1970-01-01T00:00:00.459999Z\t3\t459999\t299999.0\n",
                     "select * from (" +
                             "select * from (select ts, i, j, avg(j) over (partition by i order by ts rows between 80000 preceding and current row) from tab) limit -4) " +
-                            "order by i");
+                            "order by i"
+            );
         });
     }
 
@@ -236,7 +261,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             insert("insert into tab_big select (x*1000000)::timestamp, x/4, x%5 from long_sequence(10)");
 
             // tests when frame doesn't end on current row and time gaps between values are bigger than hi bound
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:01.000000Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:02.000000Z\t0\t2\t1.0\n" +
                             "1970-01-01T00:00:03.000000Z\t0\t3\t1.5\n" +
@@ -247,9 +273,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:08.000000Z\t2\t3\tNaN\n" +
                             "1970-01-01T00:00:09.000000Z\t2\t4\t3.0\n" +
                             "1970-01-01T00:00:10.000000Z\t2\t0\t3.5\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) from tab_big");
+                    "select ts, i, j, avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) from tab_big"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:10.000000Z\t2\t0\tNaN\n" +
                             "1970-01-01T00:00:09.000000Z\t2\t4\t0.0\n" +
                             "1970-01-01T00:00:08.000000Z\t2\t3\t2.0\n" +
@@ -260,9 +288,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:03.000000Z\t0\t3\tNaN\n" +
                             "1970-01-01T00:00:02.000000Z\t0\t2\t3.0\n" +
                             "1970-01-01T00:00:01.000000Z\t0\t1\t2.5\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) from tab_big order by ts desc");
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) from tab_big order by ts desc"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:01.000000Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:02.000000Z\t0\t2\t1.0\n" +
                             "1970-01-01T00:00:03.000000Z\t0\t3\t1.5\n" +
@@ -273,9 +303,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:08.000000Z\t2\t3\t1.8571428571428572\n" +
                             "1970-01-01T00:00:09.000000Z\t2\t4\t2.0\n" +
                             "1970-01-01T00:00:10.000000Z\t2\t0\t2.2222222222222223\n",
-                    "select ts, i, j, avg(j) over (order by ts range between unbounded preceding and 1 preceding) from tab_big");
+                    "select ts, i, j, avg(j) over (order by ts range between unbounded preceding and 1 preceding) from tab_big"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:10.000000Z\t2\t0\tNaN\n" +
                             "1970-01-01T00:00:09.000000Z\t2\t4\t0.0\n" +
                             "1970-01-01T00:00:08.000000Z\t2\t3\t2.0\n" +
@@ -286,13 +318,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:03.000000Z\t0\t3\t2.0\n" +
                             "1970-01-01T00:00:02.000000Z\t0\t2\t2.125\n" +
                             "1970-01-01T00:00:01.000000Z\t0\t1\t2.111111111111111\n",
-                    "select ts, i, j, avg(j) over (order by ts desc range between unbounded preceding and 1 preceding) from tab_big order by ts desc");
+                    "select ts, i, j, avg(j) over (order by ts desc range between unbounded preceding and 1 preceding) from tab_big order by ts desc"
+            );
 
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
             // tests for between X preceding and [Y preceding | current row]
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\n" +
@@ -300,9 +334,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\n",
-                    "select ts, i, j, avg(j) over () from tab");
+                    "select ts, i, j, avg(j) over () from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
@@ -310,9 +346,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t1.75\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\n",
-                    "select ts, i, j, avg(j) over (partition by i) from tab");
+                    "select ts, i, j, avg(j) over (partition by i) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t2.5\n" +
@@ -320,9 +358,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t0.5\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts range between 1 microsecond preceding and current row) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts range between 1 microsecond preceding and current row) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
@@ -330,9 +370,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 4 preceding and 2 preceding) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 4 preceding and 2 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\tNaN\n" +
@@ -340,9 +382,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
@@ -350,9 +394,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000003Z\t0\t3\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t3.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding) from tab order by ts desc");
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 preceding) from tab order by ts desc"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.5\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\t1.0\n" +
@@ -360,9 +406,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t2.5\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 preceding and current row) from tab order by ts desc");
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 preceding and current row) from tab order by ts desc"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\n" +
@@ -370,9 +418,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 0 preceding and current row) from tab order by ts desc");
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 0 preceding and current row) from tab order by ts desc"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
@@ -380,9 +430,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts asc range between 0 preceding and current row) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts asc range between 0 preceding and current row) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
@@ -390,9 +442,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts asc range between unbounded preceding and current row) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts asc range between unbounded preceding and current row) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.5\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\t1.0\n" +
@@ -400,9 +454,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t2.5\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) from tab order by ts desc");
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) from tab order by ts desc"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\n" +
@@ -410,9 +466,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.6666666666666667\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\t1.5\n" +
@@ -420,10 +478,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000003Z\t0\t3\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t3.0\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.5\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) from tab order by ts desc");
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) from tab order by ts desc"
+            );
 
             //all nulls because values never enter the frame
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\tNaN\n" +
@@ -431,9 +491,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts asc range between unbounded preceding and 10 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
@@ -441,13 +503,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000003Z\t0\t3\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding) from tab order by ts desc");
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and 10 preceding) from tab order by ts desc"
+            );
 
             //with duplicate timestamp values (but still unique within partition)
             ddl("create table dups(ts timestamp, i long, j long) timestamp(ts) partition by year");
             insert("insert into dups select (x/2)::timestamp, x%2, x%5 from long_sequence(10)");
 
-            assertSql("ts\ti\tj\n" +
+            assertSql(
+                    "ts\ti\tj\n" +
                             "1970-01-01T00:00:00.000000Z\t1\t1\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t2\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t3\n" +
@@ -458,7 +522,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000004Z\t0\t3\n" +
                             "1970-01-01T00:00:00.000004Z\t1\t4\n" +
                             "1970-01-01T00:00:00.000005Z\t0\t0\n",
-                    "select * from dups");
+                    "select * from dups"
+            );
 
             String dupResult = "ts\ti\tj\tavg\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\n" +
@@ -472,14 +537,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\n" +
                     "1970-01-01T00:00:00.000005Z\t0\t0\t2.0\n";
 
-            assertSql(dupResult,
-                    "select ts, i, j, avg(j) over (partition by i order by ts range between 4 preceding and current row) from dups");
+            assertSql(
+                    dupResult,
+                    "select ts, i, j, avg(j) over (partition by i order by ts range between 4 preceding and current row) from dups"
+            );
 
-            assertSql(dupResult,
-                    "select ts, i, j, avg(j) over (partition by i order by ts range between 4 preceding and current row) from dups order by ts");
+            assertSql(
+                    dupResult,
+                    "select ts, i, j, avg(j) over (partition by i order by ts range between 4 preceding and current row) from dups order by ts"
+            );
 
-            assertSql(dupResult,
-                    "select ts, i, j, avg(j) over (partition by i order by ts range between unbounded preceding and current row) from dups order by ts");
+            assertSql(
+                    dupResult,
+                    "select ts, i, j, avg(j) over (partition by i order by ts range between unbounded preceding and current row) from dups order by ts"
+            );
 
             String dupResult2 = "ts\ti\tj\tavg\n" +
                     "1970-01-01T00:00:00.000005Z\t0\t0\t0.0\n" +
@@ -493,17 +564,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000001Z\t0\t2\t2.0\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\t2.0\n";
 
-            assertSql(dupResult2,
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 preceding and current row) from dups order by ts desc");
+            assertSql(
+                    dupResult2,
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 preceding and current row) from dups order by ts desc"
+            );
 
-            assertSql(dupResult2,
-                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) from dups order by ts desc");
+            assertSql(
+                    dupResult2,
+                    "select ts, i, j, avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) from dups order by ts desc"
+            );
 
             //with duplicate timestamp values (including ts duplicates within partition)
             ddl("create table dups2(ts timestamp, i long, j long, n long) timestamp(ts) partition by year");
             insert("insert into dups2 select (x/4)::timestamp, x%2, x%5, x from long_sequence(10)");
 
-            assertSql("ts\ti\tj\tn\n" +
+            assertSql(
+                    "ts\ti\tj\tn\n" +
                             "1970-01-01T00:00:00.000000Z\t0\t2\t2\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t4\t4\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t6\n" +
@@ -514,9 +590,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000001Z\t1\t0\t5\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t2\t7\n" +
                             "1970-01-01T00:00:00.000002Z\t1\t4\t9\n",
-                    "select * from dups2 order by i, n");
+                    "select * from dups2 order by i, n"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t4\t4.0\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.5\n" +
@@ -527,9 +605,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000001Z\t1\t0\t0.0\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t2\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\n",
-                    "select ts, i, j, avg from ( select ts, i, j, n, avg(j) over (partition by i order by ts range between 0 preceding and current row) as avg from dups2 limit 10) order by i, n");
+                    "select ts, i, j, avg from ( select ts, i, j, n, avg(j) over (partition by i order by ts range between 0 preceding and current row) as avg from dups2 limit 10) order by i, n"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t0\t1.0\n" +
@@ -540,9 +620,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t4\t2.5\n" +
                             "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\n",
-                    "select ts, i, j, avg from ( select ts, i, j, n, avg(j) over (partition by i order by ts desc range between 0 preceding and current row) as avg from dups2 order by ts desc limit 10) order by i desc, n desc");
+                    "select ts, i, j, avg from ( select ts, i, j, n, avg(j) over (partition by i order by ts desc range between 0 preceding and current row) as avg from dups2 order by ts desc limit 10) order by i desc, n desc"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t4\t3.0\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\n" +
@@ -555,9 +637,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000002Z\t1\t4\t2.0\n",
                     "select ts,i,j,avg from ( " +
                             "select ts, i, j,n, avg(j) over (partition by i order by ts range between 1 preceding and current row) as avg from dups2 limit 10" +
-                            ") order by i, n");
+                            ") order by i, n"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t2\t3.0\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t0\t2.0\n" +
@@ -570,7 +654,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000000Z\t0\t2\t2.3333333333333335\n",
                     "select ts,i,j,avg from ( " +
                             "select ts, i, j,n, avg(j) over (partition by i order by ts desc range between 1 preceding and current row) as avg from dups2 order by ts desc limit 10" +
-                            ") order by i desc, n desc");
+                            ") order by i desc, n desc"
+            );
 
             String dupResult3 = "ts\ti\tj\tavg\n" +
                     "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\n" +
@@ -584,17 +669,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000001Z\t1\t2\t1.5\n" +
                     "1970-01-01T00:00:00.000002Z\t1\t4\t2.0\n";
 
-            assertSql(dupResult3,
+            assertSql(
+                    dupResult3,
                     "select ts,i,j,avg from ( " +
                             "select ts, i, j, n, avg(j) over (partition by i order by ts range between 4 preceding and current row) avg from dups2 order by ts limit 10" +
-                            ") order by i, n");
+                            ") order by i, n"
+            );
 
-            assertSql(dupResult3,
+            assertSql(
+                    dupResult3,
                     "select ts,i,j,avg from ( " +
                             "select ts, i, j, n, avg(j) over (partition by i order by ts range between unbounded preceding and current row) avg from dups2 order by ts limit 10" +
-                            ") order by i, n");
+                            ") order by i, n"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000000Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t4\t2.0\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\n" +
@@ -607,7 +697,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000002Z\t1\t4\t1.5\n",
                     "select ts,i,j,avg from ( " +
                             "select ts, i, j, n, avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) avg from dups2 order by ts limit 10" +
-                            ") order by i, n");
+                            ") order by i, n"
+            );
 
             String dupResult4 = "ts\ti\tj\tavg\n" +
                     "1970-01-01T00:00:00.000002Z\t1\t4\t4.0\n" +
@@ -620,17 +711,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000001Z\t0\t1\t1.3333333333333333\n" +
                     "1970-01-01T00:00:00.000001Z\t0\t4\t2.0\n" +
                     "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\n";
-            assertSql(dupResult4,
+            assertSql(
+                    dupResult4,
                     "select ts,i,j,avg from ( " +
                             "select ts, i, j, n, avg(j) over (partition by i order by ts desc range between 4 preceding and current row) avg from dups2 order by ts desc limit 10" +
-                            ") order by i desc, n desc");
+                            ") order by i desc, n desc"
+            );
 
-            assertSql(dupResult4,
+            assertSql(
+                    dupResult4,
                     "select ts,i,j,avg from ( " +
                             "select ts, i, j, n, avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) avg from dups2 order by ts desc limit 10" +
-                            ") order by i desc, n desc");
+                            ") order by i desc, n desc"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000002Z\t1\t4\tNaN\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t2\t4.0\n" +
                             "1970-01-01T00:00:00.000001Z\t1\t0\t4.0\n" +
@@ -643,18 +739,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000000Z\t0\t2\t2.0\n",
                     "select ts,i,j,avg from ( " +
                             "select ts, i, j, n, avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) avg from dups2 order by ts desc limit 10" +
-                            ") order by i desc, n desc");
+                            ") order by i desc, n desc"
+            );
 
             // table without designated timestamp
             ddl("create table nodts(ts timestamp, i long, j long)");
             insert("insert into nodts select (x/2)::timestamp, x%2, x%5 from long_sequence(10)");
 
             // timestamp ascending order is declared using timestamp(ts) clause
-            assertSql(dupResult,
-                    "select ts, i, j, avg(j) over (partition by i order by ts range between 4 preceding and current row) from nodts timestamp(ts)");
+            assertSql(
+                    dupResult,
+                    "select ts, i, j, avg(j) over (partition by i order by ts range between 4 preceding and current row) from nodts timestamp(ts)"
+            );
 
-            assertSql(dupResult,
-                    "select ts, i, j, avg(j) over (partition by i order by ts range between unbounded preceding and current row) from nodts timestamp(ts)");
+            assertSql(
+                    dupResult,
+                    "select ts, i, j, avg(j) over (partition by i order by ts range between unbounded preceding and current row) from nodts timestamp(ts)"
+            );
         });
     }
 
@@ -665,37 +766,46 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table nodts(ts timestamp, i long, j long)");
 
             assertException("select ts, i, j, avg(j) over (partition by i order by ts range between 4 preceding and current row) from nodts",
-                    54, "RANGE is supported only for queries ordered by designated timestamp");
+                    54, "RANGE is supported only for queries ordered by designated timestamp"
+            );
 
             // while it's possible to declare ascending designated timestamp order, it's not possible to declare descending order
             assertException("select ts, i, j, avg(j) over (partition by i order by ts desc range between 4 preceding and current row) from nodts timestamp(ts)",
-                    54, "RANGE is supported only for queries ordered by designated timestamp");
+                    54, "RANGE is supported only for queries ordered by designated timestamp"
+            );
 
             //table with designated timestamp
             ddl("create table tab (ts timestamp, i long, j long, otherTs timestamp) timestamp(ts) partition by month");
 
             assertException("select ts, i, j, avg(i) over (partition by i order by j desc range between unbounded preceding and 10 microsecond preceding) " +
                             "from tab order by ts desc",
-                    54, "RANGE is supported only for queries ordered by designated timestamp");
+                    54, "RANGE is supported only for queries ordered by designated timestamp"
+            );
 
             assertException("select ts, i, j, avg(i) over (partition by i order by j range 10 microsecond preceding) from tab",
-                    54, "RANGE is supported only for queries ordered by designated timestamp");
+                    54, "RANGE is supported only for queries ordered by designated timestamp"
+            );
 
             // order by column_number doesn't work with in over clause so 1 is treated as integer constant
             assertException("select ts, i, j, avg(i) over (partition by i order by 1 range 10 microsecond preceding) from tab",
-                    54, "RANGE is supported only for queries ordered by designated timestamp");
+                    54, "RANGE is supported only for queries ordered by designated timestamp"
+            );
 
             assertException("select ts, i, j, avg(i) over (partition by i order by ts+i range 10 microsecond preceding) from tab",
-                    56, "RANGE is supported only for queries ordered by designated timestamp");
+                    56, "RANGE is supported only for queries ordered by designated timestamp"
+            );
 
             assertException("select ts, i, j, avg(i) over (partition by i order by otherTs range 10 microsecond preceding) from tab",
-                    54, "RANGE is supported only for queries ordered by designated timestamp");
+                    54, "RANGE is supported only for queries ordered by designated timestamp"
+            );
 
             assertException("select ts, i, j, avg(i) over (partition by i order by ts range 10 microsecond preceding) from tab timestamp(otherTs)",
-                    54, "RANGE is supported only for queries ordered by designated timestamp");
+                    54, "RANGE is supported only for queries ordered by designated timestamp"
+            );
 
             assertException("select ts, i, j, avg(i) over (partition by i order by otherTs desc range 10 microsecond preceding) from tab timestamp(otherTs)",
-                    54, "RANGE is supported only for queries ordered by designated timestamp");
+                    54, "RANGE is supported only for queries ordered by designated timestamp"
+            );
         });
     }
 
@@ -705,7 +815,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long, d double) timestamp(ts)");
             insert("insert into tab select x::timestamp, x/4, x%5, x%5 from long_sequence(7)");
 
-            assertSql("ts\ti\tj\n" +
+            assertSql(
+                    "ts\ti\tj\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\n" +
@@ -713,9 +824,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\n",
-                    "select ts, i, j from tab");
+                    "select ts, i, j from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
@@ -723,9 +836,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.8333333333333333\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\n",
-                    "select ts, i, j, avg(d) over (order by ts rows unbounded preceding) from tab");
+                    "select ts, i, j, avg(d) over (order by ts rows unbounded preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
@@ -733,9 +848,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t1.5\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.4\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\n",
-                    "select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab");
+                    "select ts, i, j, avg(j) over (order by i, j rows unbounded preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
@@ -743,9 +860,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
-                    "select ts, i, j, avg(d) over (order by ts rows current row) from tab");
+                    "select ts, i, j, avg(d) over (order by ts rows current row) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t3.0\n" +
@@ -753,9 +872,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
-                    "select ts, i, j, avg(d) over (order by ts desc rows current row) from tab");
+                    "select ts, i, j, avg(d) over (order by ts desc rows current row) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.5\n" +
@@ -763,9 +884,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.5\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t2.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.8333333333333333\n",
-                    "select ts, i, j, avg(d) over (order by ts rows between unbounded preceding and 1 preceding) from tab");
+                    "select ts, i, j, avg(d) over (order by ts rows between unbounded preceding and 1 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
@@ -773,9 +896,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t3.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.3333333333333335\n",
-                    "select ts, i, j, avg(d) over (order by ts rows between 4 preceding and 2 preceding) from tab");
+                    "select ts, i, j, avg(d) over (order by ts rows between 4 preceding and 2 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.6666666666666667\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
@@ -783,9 +908,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n",
-                    "select ts, i, j, avg(d) over (order by ts desc rows between 4 preceding and 2 preceding) from tab");
+                    "select ts, i, j, avg(d) over (order by ts desc rows between 4 preceding and 2 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.8571428571428572\n" +
@@ -793,9 +920,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.8571428571428572\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\n",
-                    "select ts, i, j, avg(d) over (order by i rows between unbounded preceding and unbounded following) from tab");
+                    "select ts, i, j, avg(d) over (order by i rows between unbounded preceding and unbounded following) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t2.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
@@ -803,7 +932,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t1.75\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.75\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.75\n",
-                    "select ts, i, j, avg(d) over (partition by i rows between unbounded preceding and unbounded following) from tab");
+                    "select ts, i, j, avg(d) over (partition by i rows between unbounded preceding and unbounded following) from tab"
+            );
 
             String rowsResult1 = "ts\ti\tj\tavg\n" +
                     "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
@@ -821,7 +951,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertSql(rowsResult1, "select ts, i, j, avg(j) over (partition by i order by ts rows between 10 preceding and current row) from tab");
             assertSql(rowsResult1, "select ts, i, j, avg(j) over (partition by i order by ts rows between 3 preceding and current row) from tab");
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t2.5\n" +
@@ -829,9 +960,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t0.5\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.5\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 1 preceding and current row)  from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t2.0\n" +
@@ -839,7 +972,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t1.6666666666666667\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t1.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 2 preceding and current row) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 2 preceding and current row) from tab"
+            );
 
             String result2 = "ts\ti\tj\tavg\n" +
                     "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
@@ -854,7 +988,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertSql(result2, "select ts, i, j, avg(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row) from tab");
 
             //partitions are smaller than 10 elements so avg is all nulls
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\tNaN\n" +
@@ -862,9 +997,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\tNaN\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
@@ -872,9 +1009,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding) from tab"
+            );
 
-            assertSql("ts\ti\tj\tavg\n" +
+            assertSql(
+                    "ts\ti\tj\tavg\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\tNaN\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\tNaN\n" +
                             "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\n" +
@@ -882,7 +1021,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000005Z\t1\t0\tNaN\n" +
                             "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\n" +
                             "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n",
-                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding) from tab");
+                    "select ts, i, j, avg(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding) from tab"
+            );
 
             // here avg returns j as double because it processes current row only
             assertSql("ts\ti\tj\tavg\n" +
@@ -895,7 +1035,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\n", "select ts, i, j, avg(j) over (partition by i order by ts rows current row) from tab");
 
             // test with dependencies not included on column list + column reorder + sort
-            assertSql("avg\tts\ti\tj\n" +
+            assertSql(
+                    "avg\tts\ti\tj\n" +
                             "1.0\t1970-01-01T00:00:00.000001Z\t0\t1\n" +
                             "1.5\t1970-01-01T00:00:00.000002Z\t0\t2\n" +
                             "2.5\t1970-01-01T00:00:00.000003Z\t0\t3\n" +
@@ -903,9 +1044,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "2.0\t1970-01-01T00:00:00.000005Z\t1\t0\n" +
                             "0.5\t1970-01-01T00:00:00.000006Z\t1\t1\n" +
                             "1.5\t1970-01-01T00:00:00.000007Z\t1\t2\n",
-                    "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), ts, i, j from tab");
+                    "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), ts, i, j from tab"
+            );
 
-            assertSql("avg\ti\tj\n" +
+            assertSql(
+                    "avg\ti\tj\n" +
                             "1.0\t0\t1\n" +
                             "1.5\t0\t2\n" +
                             "2.5\t0\t3\n" +
@@ -913,9 +1056,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "2.0\t1\t0\n" +
                             "0.5\t1\t1\n" +
                             "1.5\t1\t2\n",
-                    "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), i, j from tab");
+                    "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), i, j from tab"
+            );
 
-            assertSql("avg\n" +
+            assertSql(
+                    "avg\n" +
                             "1.5\n" +
                             "2.5\n" +
                             "3.0\n" +
@@ -923,9 +1068,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "0.5\n" +
                             "1.5\n" +
                             "2.0\n",
-                    "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row) from tab");
+                    "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row) from tab"
+            );
 
-            assertSql("avg\n" +
+            assertSql(
+                    "avg\n" +
                             "1.5\n" +
                             "2.5\n" +
                             "3.0\n" +
@@ -933,9 +1080,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "0.5\n" +
                             "1.5\n" +
                             "2.0\n",
-                    "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row) from tab order by ts");
+                    "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row) from tab order by ts"
+            );
 
-            assertSql("avg\ti\tj\n" +
+            assertSql(
+                    "avg\ti\tj\n" +
                             "1.0\t0\t1\n" +
                             "1.5\t0\t2\n" +
                             "2.5\t0\t3\n" +
@@ -943,7 +1092,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "0.5\t1\t1\n" +
                             "1.5\t1\t2\n" +
                             "3.0\t1\t4\n",
-                    "select avg(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), i, j from tab order by i,j");
+                    "select avg(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), i, j from tab order by i,j"
+            );
         });
     }
 
@@ -982,7 +1132,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table  cpu ( hostname symbol, usage_system double )");
             insert("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
 
-            assertSql("hostname\tusage_system\tavg\n" +
+            assertSql(
+                    "hostname\tusage_system\tavg\n" +
                             "A\t1.0\t1.0\n" +
                             "A\t2.0\t1.5\n" +
                             "B\t3.0\t3.0\n" +
@@ -994,7 +1145,40 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "A\t9.0\t4.0\n" +
                             "B\t10.0\t7.0\n",
                     "select hostname, usage_system, avg(usage_system) over(partition by hostname rows between 50 preceding and current row) " +
-                            "from cpu limit 10;");
+                            "from cpu limit 10;"
+            );
+        });
+    }
+
+    @Test
+    public void testAverageResolvesSymbolTablesInPartitionByCachedWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (sym symbol, i int);");
+            insert("insert into x values ('aaa', 1);");
+            insert("insert into x values ('aaa', 2);");
+
+            assertSql(
+                    "sym\tavg\n" +
+                            "aaa\t1.5\n" +
+                            "aaa\t1.5\n",
+                    "SELECT sym, avg(i) OVER(PARTITION BY sym LIKE '%aaa%') FROM x;"
+            );
+        });
+    }
+
+    @Test
+    public void testAverageResolvesSymbolTablesInPartitionByNonCachedWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (sym symbol, i int, ts timestamp) timestamp(ts) partition by day;");
+            insert("insert into x values ('aaa', 1, '2023-11-09T00:00:00.000000');");
+            insert("insert into x values ('aaa', 2, '2023-11-09T01:00:00.000000');");
+
+            assertSql(
+                    "ts\tsym\tavg\n" +
+                            "2023-11-09T00:00:00.000000Z\taaa\t1.0\n" +
+                            "2023-11-09T01:00:00.000000Z\taaa\t1.5\n",
+                    "SELECT ts, sym, avg(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts) FROM x;"
+            );
         });
     }
 
@@ -1022,9 +1206,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             assertException("select avg(j) over (partition by i rows between 10 following and 20 following) from tab",
-                    51, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+                    51, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only"
+            );
             assertException("select avg(j) over (partition by i rows between current row and 10 following) from tab",
-                    67, "frame end supports _number_ PRECEDING and CURRENT ROW only");
+                    67, "frame end supports _number_ PRECEDING and CURRENT ROW only"
+            );
         });
     }
 
@@ -1035,7 +1221,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
             //row_number()
-            assertSql("row_number\n" +
+            assertSql(
+                    "row_number\n" +
                             "3\n" +
                             "2\n" +
                             "1\n" +
@@ -1044,9 +1231,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "2\n" +
                             "1\n",
                     "select row_number() over (partition by i order by ts desc) " +
-                            "from tab order by ts asc");
+                            "from tab order by ts asc"
+            );
 
-            assertSql("row_number\n" +
+            assertSql(
+                    "row_number\n" +
                             "1\n" +
                             "2\n" +
                             "3\n" +
@@ -1055,9 +1244,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "2\n" +
                             "3\n",
                     "select row_number() over (partition by i order by ts desc)" +
-                            "from tab order by ts desc");
+                            "from tab order by ts desc"
+            );
 
-            assertSql("row_number\n" +
+            assertSql(
+                    "row_number\n" +
                             "1\n" +
                             "2\n" +
                             "3\n" +
@@ -1066,9 +1257,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "3\n" +
                             "4\n",
                     "select row_number() over (partition by i order by ts asc) " +
-                            "from tab order by ts asc");
+                            "from tab order by ts asc"
+            );
 
-            assertSql("row_number\n" +
+            assertSql(
+                    "row_number\n" +
                             "4\n" +
                             "3\n" +
                             "2\n" +
@@ -1077,9 +1270,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "2\n" +
                             "1\n",
                     "select row_number() over (partition by i order by ts asc) " +
-                            "from tab order by ts desc");
+                            "from tab order by ts desc"
+            );
 
-            assertSql("row_number\n" +
+            assertSql(
+                    "row_number\n" +
                             "3\n" +
                             "2\n" +
                             "1\n" +
@@ -1088,9 +1283,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "2\n" +
                             "1\n",
                     "select row_number() over (partition by i order by i, j asc) " +
-                            "from tab order by ts desc");
+                            "from tab order by ts desc"
+            );
 
-            assertPlan("select row_number() over (partition by i order by ts asc), " +
+            assertPlan(
+                    "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc) " +
                             "from tab " +
@@ -1101,10 +1298,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: tab\n");
+                            "            Frame forward scan on: tab\n"
+            );
 
             //avg(), row_number() and rank()
-            assertSql("row_number\tavg\trank\n" +
+            assertSql(
+                    "row_number\tavg\trank\n" +
                             "1\t2.0\t1\n" +
                             "2\t2.5\t2\n" +
                             "3\t3.0\t3\n" +
@@ -1116,9 +1315,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc) " +
                             "from tab " +
-                            "order by ts asc");
+                            "order by ts asc"
+            );
 
-            assertSql("row_number\tavg\trank\n" +
+            assertSql(
+                    "row_number\tavg\trank\n" +
                             "4\t2.0\t3\n" +
                             "3\t1.5\t2\n" +
                             "2\t1.0\t1\n" +
@@ -1130,7 +1331,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   rank() over (partition by i order by j asc) " +
                             "from tab " +
-                            "order by ts desc");
+                            "order by ts desc"
+            );
         });
     }
 
@@ -1153,7 +1355,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithNoPartitionByAndNoOrderByWildcardLast() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1181,7 +1384,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithNoPartitionByAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "rank\tprice\tsymbol\tts\n" +
                         "3\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "7\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1209,7 +1413,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionAndOrderByNonSymbol() throws Exception {
-        assertQuery("rank\tprice\tts\n" +
+        assertQuery(
+                "rank\tprice\tts\n" +
                         "1\t42\t1970-01-01T00:00:00.000000Z\n" +
                         "2\t42\t1970-01-02T03:46:40.000000Z\n" +
                         "3\t42\t1970-01-03T07:33:20.000000Z\n" +
@@ -1237,7 +1442,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
-        assertQuery("rank\n" +
+        assertQuery(
+                "rank\n" +
                         "1\n" +
                         "1\n" +
                         "1\n" +
@@ -1265,7 +1471,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
-        assertQuery("price\tsymbol\tts\trank\n" +
+        assertQuery(
+                "price\tsymbol\tts\trank\n" +
                         "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t1\n" +
                         "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t1\n" +
                         "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t1\n" +
@@ -1293,7 +1500,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "rank\tprice\tsymbol\tts\n" +
                         "1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
@@ -1321,7 +1529,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionBySymbolAndMultiOrderWildcardLast() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "4\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1349,7 +1558,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionBySymbolAndNoOrderWildcardLast() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1377,7 +1587,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "rank\tprice\tsymbol\tts\n" +
                         "2\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1405,7 +1616,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionBySymbolAndOrderByIntPriceWildcardLast() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "4\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
                         "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
@@ -1433,7 +1645,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithPartitionBySymbolAndOrderByPriceWildcardLast() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "rank\tprice\tsymbol\tts\n" +
                         "2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "3\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
@@ -1478,7 +1691,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithFilter() throws Exception {
-        assertQuery("author\tsym\tcommits\trk\n" +
+        assertQuery(
+                "author\tsym\tcommits\trk\n" +
                         "user2\tETH\t3\t2\n" +
                         "user1\tETH\t3\t1\n",
                 "with active_devs as (" +
@@ -1507,7 +1721,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndDifferentOrder() throws Exception {
-        assertQuery("x\ty\trn\n" +
+        assertQuery(
+                "x\ty\trn\n" +
                         "1\t1\t10\n" +
                         "2\t0\t5\n" +
                         "3\t1\t9\n" +
@@ -1528,7 +1743,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndNoOrderInSubQuery() throws Exception {
-        assertQuery("symbol\trn\n" +
+        assertQuery(
+                "symbol\trn\n" +
                         "CC\t2\n" +
                         "BB\t3\n" +
                         "CC\t4\n" +
@@ -1556,7 +1772,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndNoOrderWildcardLast() throws Exception {
-        assertQuery("row_number\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "row_number\tprice\tsymbol\tts\n" +
                         "1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "2\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "3\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
@@ -1584,7 +1801,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery("row_number\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "row_number\tprice\tsymbol\tts\n" +
                         "10\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "7\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "9\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
@@ -1612,7 +1830,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndSameOrderFollowedByBaseFactory() throws Exception {
-        assertQuery("ts\ts\trn\n" +
+        assertQuery(
+                "ts\ts\trn\n" +
                         "1970-01-01T00:00:00.000000Z\ta\t1\n" +
                         "1970-01-02T03:46:40.000000Z\ta\t2\n" +
                         "1970-01-10T06:13:20.000000Z\ta\t3\n" +
@@ -1639,7 +1858,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndSameOrderNotFollowedByBaseFactory() throws Exception {
-        assertQuery("ts\ts\trn\n" +
+        assertQuery(
+                "ts\ts\trn\n" +
                         "1970-01-10T06:13:20.000000Z\ta\t1\n" +
                         "1970-01-02T03:46:40.000000Z\ta\t2\n" +
                         "1970-01-01T00:00:00.000000Z\ta\t3\n" +
@@ -1666,7 +1886,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithPartitionAndOrderByNonSymbol() throws Exception {
-        assertQuery("row_number\tprice\tts\n" +
+        assertQuery(
+                "row_number\tprice\tts\n" +
                         "1\t42\t1970-01-01T00:00:00.000000Z\n" +
                         "2\t42\t1970-01-02T03:46:40.000000Z\n" +
                         "3\t42\t1970-01-03T07:33:20.000000Z\n" +
@@ -1694,7 +1915,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
-        assertQuery("row_number\n" +
+        assertQuery(
+                "row_number\n" +
                         "3\n" +
                         "6\n" +
                         "2\n" +
@@ -1722,7 +1944,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
-        assertQuery("price\tsymbol\tts\trow_number\n" +
+        assertQuery(
+                "price\tsymbol\tts\trow_number\n" +
                         "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t3\n" +
                         "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t6\n" +
                         "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t2\n" +
@@ -1750,7 +1973,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery("row_number\tprice\tsymbol\tts\n" +
+        assertQuery(
+                "row_number\tprice\tsymbol\tts\n" +
                         "3\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "6\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
                         "2\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
@@ -1788,7 +2012,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 //TODO: improve error message and position
                 assertException("select avg(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0, "Maximum number of pages (10) breached in VirtualMemory");
+                        0, "Maximum number of pages (10) breached in VirtualMemory"
+                );
             });
         } finally {
             //disable
@@ -1835,21 +2060,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row) from tab",
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row) from tab",
                     "CachedWindow\n" +
                             "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
+                            "        Frame forward scan on: tab\n"
+            );
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc",
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc",
                     "CachedWindow\n" +
                             "  orderedFunctions: [[ts] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
-                            "        Frame backward scan on: tab\n");
+                            "        Frame backward scan on: tab\n"
+            );
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym in ( 'A', 'B') ",
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym in ( 'A', 'B') ",
                     "CachedWindow\n" +
                             "  orderedFunctions: [[ts] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
                             "    FilterOnValues symbolOrder: desc\n" +
@@ -1858,15 +2088,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "              filter: sym='A'\n" +
                             "            Index forward scan on: sym deferred: true\n" +
                             "              filter: sym='B'\n" +
-                            "        Frame forward scan on: tab\n");
+                            "        Frame forward scan on: tab\n"
+            );
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'",
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'",
                     "CachedWindow\n" +
                             "  orderedFunctions: [[ts desc] => [avg(1) over (partition by [i] rows between 1 preceding and current row)]]\n" +
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: sym deferred: true\n" +
                             "          filter: sym='A'\n" +
-                            "        Frame forward scan on: tab\n");
+                            "        Frame forward scan on: tab\n"
+            );
         });
     }
 
@@ -1875,36 +2108,45 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab",
                     "Window\n" +
                             "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
+                            "        Frame forward scan on: tab\n"
+            );
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc",
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc",
                     "Window\n" +
                             "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
+                            "        Frame forward scan on: tab\n"
+            );
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc",
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc",
                     "Window\n" +
                             "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DataFrame\n" +
                             "        Row backward scan\n" +
-                            "        Frame backward scan on: tab\n");
+                            "        Frame backward scan on: tab\n"
+            );
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym = 'A'",
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym = 'A'",
                     "Window\n" +
                             "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: sym deferred: true\n" +
                             "          filter: sym='A'\n" +
-                            "        Frame forward scan on: tab\n");
+                            "        Frame forward scan on: tab\n"
+            );
 
-            assertPlan("select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row) " +
+            assertPlan(
+                    "select ts, i, j, avg(1) over (partition by i order by ts asc rows between 1 preceding and current row) " +
                             "from tab where sym in ( 'A', 'B') order by ts asc",
                     "Window\n" +
                             "  functions: [avg(1) over (partition by [i] rows between 1 preceding and current row)]\n" +
@@ -1914,7 +2156,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "              filter: sym='A'\n" +
                             "            Index forward scan on: sym deferred: true\n" +
                             "              filter: sym='B'\n" +
-                            "        Frame forward scan on: tab\n");
+                            "        Frame forward scan on: tab\n"
+            );
         });
     }
 }
