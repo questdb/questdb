@@ -38,68 +38,32 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 
-public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, TernaryFunction {
-    private final int funcPosition;
+public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
     private final Function percentileFunc;
     // specifies the precision for the recorded values (between 0 and 5, defaults to 3).
     // trade-off between memory usage and accuracy.
-    private final Function precisionFunc;
+    private final int precision;
+    private final int funcPosition;
     private final ObjList<DoubleHistogram> histograms = new ObjList<>();
     private int histogramIndex;
     private int valueIndex;
 
-    Function defaultPrecisionFunc = new IntFunction() {
-        final int defaultPrecision = 3;
-
-        @Override
-        public int getInt(Record rec) {
-            return defaultPrecision;
-        }
-
-        @Override
-        public boolean isConstant() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(defaultPrecision);
-        }
-    };
-
-    public ApproxPercentileDoubleGroupByFunction(int funcPosition, Function exprFunc, Function percentileFunc) {
-        this.funcPosition = funcPosition;
+    public ApproxPercentileDoubleGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
-        this.precisionFunc = defaultPrecisionFunc;
-    }
-
-    public ApproxPercentileDoubleGroupByFunction(int funcPosition, Function exprFunc, Function percentileFunc, Function precisionFunc) {
+        this.precision = precision;
         this.funcPosition = funcPosition;
-        this.exprFunc = exprFunc;
-        this.percentileFunc = percentileFunc;
-        this.precisionFunc = precisionFunc;
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        exprFunc.init(symbolTableSource, executionContext);
-        percentileFunc.init(symbolTableSource, executionContext);
-        precisionFunc.init(symbolTableSource, executionContext);
+        BinaryFunction.super.init(symbolTableSource, executionContext);
 
-        if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
-            throw SqlException.$(funcPosition, "percentile must be a constant");
-        }
-        double percentile = percentileFunc.getDouble(null);
-        if (percentile < 0 || percentile > 1) {
+        final double percentile = percentileFunc.getDouble(null);
+        if (Double.isNaN(percentile) || percentile < 0 || percentile > 1) {
             throw SqlException.$(funcPosition, "percentile must be between 0 and 1");
         }
-
-        if (!precisionFunc.isConstant()) {
-            throw SqlException.$(funcPosition, "precision must be a constant");
-        }
-        int precision = precisionFunc.getInt(null);
         if (precision < 0 || precision > 5) {
             throw SqlException.$(funcPosition, "precision must be between 0 and 5");
         }
@@ -115,7 +79,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     public void computeFirst(MapValue mapValue, Record record) {
         final DoubleHistogram histogram;
         if (histograms.size() <= histogramIndex) {
-            histograms.extendAndSet(histogramIndex, histogram = new DoubleHistogram(precisionFunc.getInt(null)));
+            histograms.extendAndSet(histogramIndex, histogram = new DoubleHistogram(precision));
         } else {
             histogram = histograms.getQuick(histogramIndex);
         }
@@ -148,13 +112,8 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public Function getCenter() {
-        return percentileFunc;
-    }
-
-    @Override
     public Function getRight() {
-        return precisionFunc;
+        return percentileFunc;
     }
 
     @Override
@@ -167,7 +126,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
         if (histogram.empty()) {
             return Double.NaN;
         }
-        return histogram.getValueAtPercentile(percentileFunc.getDouble(rec) * 100);
+        return histogram.getValueAtPercentile(percentileFunc.getDouble(null) * 100);
     }
 
     @Override

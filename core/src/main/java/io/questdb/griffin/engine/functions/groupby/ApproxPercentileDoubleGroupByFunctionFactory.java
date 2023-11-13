@@ -45,6 +45,17 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new ApproxPercentileDoubleGroupByFunction(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
+        final Function exprFunc = args.getQuick(0);
+        final Function percentileFunc = args.getQuick(1);
+        final Function precisionFunc = args.getQuick(2);
+
+        if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
+            throw SqlException.$(argPositions.getQuick(1), "percentile must be a constant");
+        }
+        if (!precisionFunc.isConstant()) {
+            throw SqlException.$(argPositions.getQuick(2), "precision must be a constant");
+        }
+
+        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, precisionFunc.getInt(null), position);
     }
 }

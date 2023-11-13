@@ -51,7 +51,7 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testInvalidPercentile3() throws Exception {
         assertException(
                 "select approx_percentile(x, x) from long_sequence(1)",
-                7,
+                28,
                 "percentile must be a constant"
         );
     }
@@ -176,6 +176,68 @@ public class ApproxPercentileGroupByFunctionFactoryTest extends AbstractCairoTes
             ddl("create table test as (select 5.0 x from long_sequence(100))");
             assertSql(
                     "approx_percentile\n5.0\n", "select approx_percentile(x, 0.5) from test"
+            );
+        });
+    }
+
+    // test increasing level of precision
+    @Test
+    public void testApprox50thPercentileWithPrecision1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(1000))");
+            assertSql(
+                    "approx_percentile\n511.9375\n", "select approx_percentile(x, 0.5, 1) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testApprox50thPercentileWithPrecision2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(1000))");
+            assertSql(
+                    "approx_percentile\n501.9921875\n", "select approx_percentile(x, 0.5, 2) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testApprox50thPercentileWithPrecision3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(1000))");
+            assertSql(
+                    "approx_percentile\n500.2490234375\n", "select approx_percentile(x, 0.5, 3) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testApprox50thPercentileWithPrecision4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(1000))");
+            assertSql(
+                    "approx_percentile\n500.01556396484375\n", "select approx_percentile(x, 0.5, 4) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testApprox50thPercentileWithPrecision5() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select cast(x as double) x from long_sequence(1000))");
+            assertSql(
+                    "approx_percentile\n500.00194549560547\n", "select approx_percentile(x, 0.5, 5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testApproxPercentileWithPercentileBindVariable() throws Exception {
+        bindVariableService.setDouble(0, 0.5);
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select 5.0 x from long_sequence(100))");
+            assertSql(
+                    "approx_percentile\n5.0\n", "select approx_percentile(x, $1) from test"
             );
         });
     }
