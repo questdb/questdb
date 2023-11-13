@@ -270,6 +270,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         @Override
+        public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
+            return base.calculateSize(circuitBreaker);
+        }
+
+        @Override
         public void close() {
             if (isOpen) {
                 Misc.free(base);
@@ -318,7 +323,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public long size() {
-            return isRecordChainBuilt ? recordChain.size() : -1;// in case recordChain starts returning actual size 
+            return isRecordChainBuilt ? recordChain.size() : -1;// in case recordChain starts returning actual size
         }
 
         @Override

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -48,6 +49,11 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
             this.recordB = null;
         }
         this.supportsRandomAccess = supportsRandomAccess;
+    }
+
+    @Override
+    public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
+        return baseCursor.calculateSize(circuitBreaker);
     }
 
     @Override
@@ -105,6 +111,11 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     @Override
     public long size() {
         return baseCursor != null ? baseCursor.size() : -1;
+    }
+
+    @Override
+    public long skipTo(long rowCount) throws DataUnavailableException {
+        return baseCursor.skipTo(rowCount);
     }
 
     @Override

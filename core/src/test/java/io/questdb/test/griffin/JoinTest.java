@@ -1532,6 +1532,78 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinCount() throws Exception {
+        assertMemoryLeak(() -> {
+            // 1 partition
+            compile("create table TabA ( " +
+                    "          ts timestamp, " +
+                    "          x long " +
+                    "        ) timestamp(ts) PARTITION by month");
+
+            // 3 partitions
+            compile("create table TabB ( " +
+                    "          ts timestamp, " +
+                    "          x long " +
+                    "        ) timestamp(ts) PARTITION by hour");
+
+            // 0 partitions
+            compile("create table TabC ( " +
+                    "          ts timestamp, " +
+                    "          x long " +
+                    "        ) timestamp(ts) PARTITION by year");
+
+            insert("insert into TabA select x::timestamp, x/6 from long_sequence(10)");
+            insert("insert into TabB select (x*15L*60L*1000000L)::timestamp, x/6 from long_sequence(10)");
+
+            //join with empty table
+            String selectWithEmpty = "(" +
+                    "select * from TabA " +
+                    "cross join TabC )";
+            assertSkipToAndCalculateSize(selectWithEmpty, 0);
+
+            //async filter
+            String selectWithFilter = "(" +
+                    "select * from TabA " +
+                    "cross join TabB " +
+                    "where TabA.x = 0 " +
+                    "and TabB.x = 1 )";
+            assertSkipToAndCalculateSize(selectWithFilter, 25);
+
+            //async filter with limit
+            String selectWithFilterWithLimit = "( select * from " +
+                    "(select * from TabA where x = 0 limit 3) " +
+                    "cross join " +
+                    "(select * from TabB where x = 1 limit 3) )";
+            assertSkipToAndCalculateSize(selectWithFilterWithLimit, 9);
+
+            // fwd data frame
+            String selectWithFwdFrame = "(select * from TabA " +
+                    "cross join TabB )";
+            assertSkipToAndCalculateSize(selectWithFwdFrame, 100);
+
+            // bwd data frame
+            String selectWithBwdFrame = "(select * from " +
+                    "(select * from TabA order by ts desc) " +
+                    "cross join " +
+                    "(select * from TabB order by ts desc) )";
+            assertSkipToAndCalculateSize(selectWithBwdFrame, 100);
+
+            String selectWithIntervalFwdFrame = "( select * from " +
+                    "(select * from TabA where ts > 1) " +
+                    "cross join " +
+                    "(select * from TabB where ts > 15L*60L*1000000L) )";
+            assertSkipToAndCalculateSize(selectWithIntervalFwdFrame, 81);
+
+            // bwd data frame
+            String selectWithIntervalBwdFrame = "( select * from " +
+                    "(select * from TabA where ts > 1 order by ts desc ) " +
+                    "cross join " +
+                    "(select * from TabB where ts > 15L*60L*1000000L order by ts desc) )";
+            assertSkipToAndCalculateSize(selectWithIntervalBwdFrame, 81);
+        });
+    }
+
+    @Test
     public void testCrossJoinNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tn\tkk1\ta1\tb1\n" +
@@ -4230,6 +4302,79 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllCount() throws Exception {
+        assertMemoryLeak(() -> {
+            // 1 partition
+            compile("create table TabA ( " +
+                    "          ts timestamp, " +
+                    "          x long " +
+                    "        ) timestamp(ts) PARTITION by month");
+
+            // 3 partitions
+            compile("create table TabB ( " +
+                    "          ts timestamp, " +
+                    "          x long " +
+                    "        ) timestamp(ts) PARTITION by hour");
+
+            // 0 partitions
+            compile("create table TabC ( " +
+                    "          ts timestamp, " +
+                    "          x long " +
+                    "        ) timestamp(ts) PARTITION by year");
+
+            insert("insert into TabA select x::timestamp, x/6 from long_sequence(10)");
+            insert("insert into TabB select (x*15L*60L*1000000L)::timestamp, x/6 from long_sequence(10)");
+//
+//            //async filter
+//            String selectWithFilter = "(select * from TabA where x = 0 " +
+//                    "union all " +
+//                    "select * from TabB where x = 1 " +
+//                    "union all " +
+//                    "select * from taBC where x = 0 )";
+//            assertSkipToAndCalculateSize(selectWithFilter, 10);
+//
+//            //async filter with limit
+//            String selectWithFilterAndLimit = "( " +
+//                    "selecT * from " +
+//                    "(select * from TabA where x = 0 limit 3) " +
+//                    "union all " +
+//                    "(select * from TabB where x = 1 limit 3) " +
+//                    "union all " +
+//                    "(select * from taBC where x = 0 limit 1) )";
+//            assertSkipToAndCalculateSize(selectWithFilterAndLimit, 6);
+//
+//            // fwd data frame
+//            String selectWithFwdFrame = "(select * from TabA union all select * from TabB union all select * from TabC)";
+//            assertSkipToAndCalculateSize(selectWithFwdFrame, 20);
+//
+//            // bwd data frame
+//            String selectWithBwdFrame = "(select * from " +
+//                    "(select * from TabA order by ts desc) " +
+//                    "union all " +
+//                    "(select * from TabB order by ts desc) " +
+//                    "union all (select * from tabC order by ts desc) )";
+//            assertSkipToAndCalculateSize(selectWithBwdFrame, 20);
+
+            // interval fwd data frame
+            String selectWithIntervalFwdFrame = "(" +
+                    "(select * from TabA where ts > 1) " +
+                    "union all " +
+                    "(select * from TabB where ts > 15L*60L*1000000L) " +
+                    "union all " +
+                    "(select * from TabC where ts > 1))";
+            assertSkipToAndCalculateSize(selectWithIntervalFwdFrame, 18);
+
+            String selectWithIntervalBwdFrame = "(" +
+                    "(select * from TabA where ts > 1 order by ts desc) " +
+                    "union all " +
+                    "(select * from TabB where ts > 15L*60L*1000000L order by ts desc) " +
+                    "union all " +
+                    "(select * from TabC where ts > 1 order by ts desc))";
+            assertSkipToAndCalculateSize(selectWithIntervalBwdFrame, 18);
+        });
+    }
+
+    @Test
     public void testUnionAllCursorLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union all select x from crj", false);
     }
@@ -4257,6 +4402,30 @@ public class JoinTest extends AbstractCairoTest {
 
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws SqlException {
         assertQuery("id\n1\n", query.replace("#JOIN_TYPE#", left), null, false, expectSize);
+    }
+
+    private void assertSkipToAndCalculateSize(String select, int size) throws SqlException {
+        assertSql("count\n" + size + "\n", "select count(*) from " + select);
+
+        try (RecordCursorFactory factory = select(select)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertEquals(size, cursor.calculateSize(sqlExecutionContext.getCircuitBreaker()));
+
+                for (int i = 0; i < size + 2; i++) {
+                    cursor.toTop();
+                    cursor.skipTo(i);
+                    Assert.assertEquals(Math.max(size - i, 0), cursor.calculateSize(sqlExecutionContext.getCircuitBreaker()));
+
+                    cursor.toTop();
+                    for (int j = 0; j < i; j++) {
+                        if (!cursor.hasNext()) {
+                            break;
+                        }
+                    }
+                    Assert.assertEquals(Math.max(size - i, 0), cursor.calculateSize(sqlExecutionContext.getCircuitBreaker()));
+                }
+            }
+        }
     }
 
     private void testAsOfJoin0(boolean fullFatJoin) throws Exception {

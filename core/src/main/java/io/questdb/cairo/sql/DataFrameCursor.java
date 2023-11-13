@@ -38,6 +38,10 @@ import java.io.Closeable;
  */
 public interface DataFrameCursor extends Closeable, SymbolTableSource {
 
+    default long calculateSize() {
+        return 0L;
+    }
+
     /**
      * Must be closed after other calls are complete
      */
@@ -78,7 +82,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
      * @return data frame and position (lo) of given rowCount (according to cursor order).
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    default @Nullable DataFrame skipTo(long rowCount) {
+    default @Nullable DataFrame skipTo(long rowCount, long[] skippedCount) {
         throw new UnsupportedOperationException();
     }
 

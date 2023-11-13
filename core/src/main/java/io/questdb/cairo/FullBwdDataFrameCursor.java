@@ -28,8 +28,21 @@ import io.questdb.cairo.sql.DataFrame;
 import org.jetbrains.annotations.Nullable;
 
 public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
+    private long size = 0;
     private int skipToPartitionIndex = -1;
     private long skipToPosition = -1;
+
+    @Override
+    public long calculateSize() {
+        while (partitionIndex > -1) {
+            final long hi = reader.openPartition(partitionIndex);
+            if (hi > 0) {
+                size += hi;
+            }
+            partitionIndex--;
+        }
+        return size;
+    }
 
     @Override
     public DataFrame next() {
@@ -43,19 +56,20 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 frame.rowHi = hi;
                 partitionIndex--;
                 return frame;
-
             }
         }
         return null;
     }
 
     @Override
-    public @Nullable DataFrame skipTo(long rowCount) {
+    public @Nullable DataFrame skipTo(long rowCount, long[] skipped) {
         int partitionCount = getTableReader().getPartitionCount();
 
         if (partitionCount < 1) {
             return null;
         }
+
+        rowCount -= skipped[0];
 
         if (skipToPartitionIndex == -1) {
             skipToPosition = rowCount;
@@ -70,13 +84,17 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 continue;
             }
             if (partitionRows > skipToPosition) {
+                skipped[0] += skipToPosition;
                 break;
             }
-            if (skipToPartitionIndex == 0) {
+
+            skipped[0] += partitionRows;
+
+            if (skipToPartitionIndex != 0) {
+                skipToPosition -= partitionRows;
+            } else {
                 skipToPosition = -1;
                 break;
-            } else {
-                skipToPosition -= partitionRows;
             }
             skipToPartitionIndex--;
         }
@@ -101,5 +119,6 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
         partitionIndex = partitionHi - 1;
         skipToPartitionIndex = -1;
         skipToPosition = -1;
+        size = 0;
     }
 }

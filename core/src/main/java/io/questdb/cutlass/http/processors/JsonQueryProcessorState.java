@@ -75,6 +75,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
     private long compilerNanos;
@@ -134,6 +135,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnNames.clear();
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
+        circuitBreaker = null;
         record = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -165,6 +167,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        circuitBreaker = null;
         freeAsyncOperation();
     }
 
@@ -645,6 +648,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // closing cursor here guarantees that by the time http client finished reading response the table
         // is released
         cursor = Misc.free(cursor);
+        circuitBreaker = null;
         queryState = QUERY_SUFFIX;
         if (count > -1) {
             logTimings();
@@ -695,14 +699,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             // this is the tail end of the cursor
             // we don't need to read records, just round up record count
             final RecordCursor cursor = this.cursor;
-            final long size = cursor.size();
+            long size = cursor.size();
             if (size < 0) {
-                LOG.info().$("counting").$();
-                long count = 1;
-                while (cursor.hasNext()) {
-                    count++;
-                }
-                this.count += count;
+                this.count += cursor.calculateSize(circuitBreaker) + 1;
             } else {
                 this.count = size;
             }
@@ -867,6 +866,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
         this.cursor = factory.getCursor(sqlExecutionContext);
+        this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();

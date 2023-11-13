@@ -28,8 +28,22 @@ import io.questdb.cairo.sql.DataFrame;
 import org.jetbrains.annotations.Nullable;
 
 public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
+    private long size = 0;// keep count in case calculation is interrupted by DataUnavailableException
     private int skipToPartitionIndex = -1;
     private long skipToPosition = -1;
+
+    @Override
+    public long calculateSize() {
+        while (partitionIndex < partitionHi) {
+            final long hi = getTableReader().openPartition(partitionIndex);
+            if (hi > 0) {
+                size += hi;
+            }
+            partitionIndex++;
+        }
+
+        return size;
+    }
 
     @Override
     public @Nullable DataFrame next() {
@@ -50,12 +64,17 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
     }
 
     @Override
-    public @Nullable DataFrame skipTo(long rowCount) {
+    public @Nullable DataFrame skipTo(long rowCount, long[] skipped) {
         int partitionCount = getTableReader().getPartitionCount();
 
         if (partitionCount < 1) {
             return null;
         }
+
+        rowCount -= skipped[0];
+//        if (rowCount < 1) {
+//            return frame;
+//        }
 
         if (skipToPartitionIndex == -1) {
             skipToPosition = rowCount;
@@ -70,15 +89,20 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 continue;
             }
             if (partitionRows > skipToPosition) {
+                skipped[0] += skipToPosition;
                 break;
             }
-            if (skipToPartitionIndex == partitionCount - 1) {
+
+            skipped[0] += partitionRows;
+
+            if (skipToPartitionIndex != partitionCount - 1) {
+                skipToPosition -= partitionRows;
+                skipToPartitionIndex++;
+            } else {
+                //skipped[0] = rowCount - (skipToPosition - partitionRows);
                 skipToPosition = partitionRows;
                 break;
-            } else {
-                skipToPosition -= partitionRows;
             }
-            skipToPartitionIndex++;
         }
 
         frame.partitionIndex = skipToPartitionIndex;
@@ -101,5 +125,6 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
         partitionIndex = 0;
         skipToPosition = -1;
         skipToPartitionIndex = -1;
+        size = 0;
     }
 }
