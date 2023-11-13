@@ -276,7 +276,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
-            return base.calculateSize(circuitBreaker);
+            return baseCursor.calculateSize(circuitBreaker);
         }
 
         @Override
