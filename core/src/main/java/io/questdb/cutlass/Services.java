@@ -46,14 +46,14 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
-public final class Services {
+public class Services {
+    public static final Services INSTANCE = new Services();
 
-    private Services() {
-        throw new UnsupportedOperationException("not instantiatable");
+    protected Services() {
     }
 
     @Nullable
-    public static HttpServer createHttpServer(
+    public HttpServer createHttpServer(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
@@ -76,7 +76,7 @@ public final class Services {
     }
 
     @Nullable
-    public static HttpServer createHttpServer(
+    public HttpServer createHttpServer(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
@@ -88,8 +88,9 @@ public final class Services {
         }
 
         final HttpCookieHandler cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
+        final HttpHeaderParserFactory headerParserFactory = configuration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(configuration, metrics, workerPool,
-                configuration.getFactoryProvider().getHttpSocketFactory(), cookieHandler
+                configuration.getFactoryProvider().getHttpSocketFactory(), cookieHandler, headerParserFactory
         );
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
@@ -110,7 +111,7 @@ public final class Services {
     }
 
     @Nullable
-    public static LineTcpReceiver createLineTcpReceiver(
+    public LineTcpReceiver createLineTcpReceiver(
             LineTcpReceiverConfiguration config,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
@@ -145,7 +146,7 @@ public final class Services {
     }
 
     @Nullable
-    public static AbstractLineProtoUdpReceiver createLineUdpReceiver(
+    public AbstractLineProtoUdpReceiver createLineUdpReceiver(
             LineUdpReceiverConfiguration config,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
@@ -162,7 +163,7 @@ public final class Services {
     }
 
     @Nullable
-    public static HttpServer createMinHttpServer(
+    public HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
@@ -185,7 +186,7 @@ public final class Services {
     }
 
     @Nullable
-    public static HttpServer createMinHttpServer(
+    public HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
@@ -228,7 +229,7 @@ public final class Services {
     }
 
     @Nullable
-    public static PGWireServer createPGWireServer(
+    public PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,

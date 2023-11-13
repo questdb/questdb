@@ -76,6 +76,8 @@
 
 constexpr jdouble D_MAX = std::numeric_limits<jdouble>::infinity();
 constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
+constexpr jint S_MIN = std::numeric_limits<jshort>::min();
+constexpr jint S_MAX = std::numeric_limits<jshort>::max();
 constexpr jint I_MIN = std::numeric_limits<jint>::min();
 constexpr jint I_MAX = std::numeric_limits<jint>::max();
 constexpr jlong L_MIN = std::numeric_limits<jlong>::min();

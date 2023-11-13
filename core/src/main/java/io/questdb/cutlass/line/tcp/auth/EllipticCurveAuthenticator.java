@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp.auth;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
@@ -65,6 +66,11 @@ public class EllipticCurveAuthenticator implements Authenticator {
     @Override
     public void close() {
         challengePtr = Unsafe.free(challengePtr, AuthUtils.CHALLENGE_LEN, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    @Override
+    public byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_JWK_TOKEN;
     }
 
     @Override
