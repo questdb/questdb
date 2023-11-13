@@ -88,8 +88,7 @@ public class TestUtils {
             String columnName = metadataExpected.getColumnName(i);
             try {
                 columnType = metadataExpected.getColumnType(i);
-                int tagType = ColumnType.tagOf(columnType);
-                switch (tagType) {
+                switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
                         Assert.assertEquals(rr.getDate(i), lr.getDate(i));
                         break;

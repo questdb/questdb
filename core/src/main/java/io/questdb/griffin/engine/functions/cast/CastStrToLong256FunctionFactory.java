@@ -43,7 +43,7 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToLong256Function {
+    public static class Func extends AbstractCastToLong256Function {
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
         private final Long256Impl long256builder = new Long256Impl();

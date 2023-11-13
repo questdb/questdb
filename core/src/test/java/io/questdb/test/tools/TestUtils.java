@@ -914,9 +914,8 @@ public final class TestUtils {
         StringBuilder indexes = new StringBuilder();
         sql.append("create table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            int colType = ColumnType.tagOf(tableModel.getColumnType(i));
             CharSequence colName = tableModel.getColumnName(i);
-            switch (colType) {
+            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
                 case ColumnType.INT:
                     sql.append("cast(x as int) ").append(colName);
                     break;
@@ -1594,8 +1593,7 @@ public final class TestUtils {
             String columnName = metadataExpected.getColumnName(i);
             try {
                 columnType = metadataExpected.getColumnType(i);
-                int tagType = ColumnType.tagOf(columnType);
-                switch (tagType) {
+                switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
                         Assert.assertEquals(rr.getDate(i), lr.getDate(i));
                         break;

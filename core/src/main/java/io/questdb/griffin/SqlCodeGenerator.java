@@ -877,8 +877,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < columnCount; i++) {
             int toType = castToMetadata.getColumnType(i);
             int fromType = castFromMetadata.getColumnType(i);
-            int toTag = ColumnType.tagOf(toType);
-            int fromTag = ColumnType.tagOf(fromType);
+            byte toTag = ColumnType.tagOf(toType);
+            byte fromTag = ColumnType.tagOf(fromType);
             if (fromTag == ColumnType.NULL) {
                 castFunctions.add(NullConstant.NULL);
             } else {

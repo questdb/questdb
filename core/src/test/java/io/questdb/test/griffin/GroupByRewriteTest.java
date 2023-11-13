@@ -43,7 +43,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             });
             throw new RuntimeException("query above should have thrown");
         } catch (SqlException e) {
-            String expected = "[49] unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,BOOLEAN,INT constant)";
+            String expected = "[49] Unexpected argument for function [name=SUM, signature=(DOUBLE), args=(INT constant, BOOLEAN, INT constant)]";
             Assert.assertEquals(expected, e.getMessage());
         }
     }

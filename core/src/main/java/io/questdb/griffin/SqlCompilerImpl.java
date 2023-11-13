@@ -2239,7 +2239,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     if (cursorColumnCount <= writerTimestampIndex) {
                         throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
                     } else {
-                        int columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
+                        byte columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
                         if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
                             throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
                         }
@@ -2411,7 +2411,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
                         // get column position
                         ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                        throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
+                        throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "VIRTUAL_" + i, tableColumnType, updateColumnName);
                     }
                 }
             }

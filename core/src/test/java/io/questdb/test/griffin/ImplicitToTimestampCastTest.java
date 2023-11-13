@@ -47,7 +47,7 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
             );
             Assert.fail("error should be thrown");
         } catch (SqlException e) {
-            Assert.assertEquals(e.getMessage(), "[37] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (SYMBOL,INT constant)");
+            Assert.assertEquals(e.getMessage(), "[37] Unexpected argument for function [name==, signature=(STRING, STRING), args=(SYMBOL, INT constant)]");
         }
     }
 
@@ -63,7 +63,7 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
                     null, true, false);
             Assert.fail("Exception should be thrown");
         } catch (SqlException e) {
-            Assert.assertEquals(e.getMessage(), "[32] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (TIMESTAMP,SYMBOL)");
+            Assert.assertEquals(e.getMessage(), "[32] Unexpected argument for function [name==, signature=(STRING, STRING), args=(TIMESTAMP, SYMBOL)]");
         }
     }
 

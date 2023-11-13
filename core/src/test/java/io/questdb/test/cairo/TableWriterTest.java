@@ -3977,7 +3977,7 @@ public class TableWriterTest extends AbstractCairoTest {
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
-            int columnTypeTag;
+            byte columnTypeTag;
             TableToken tableToken;
             try (TableWriter writer = getWriter(model.getName())) {
 

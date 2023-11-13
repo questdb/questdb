@@ -47,7 +47,7 @@ public class ImplicitToDateCastTest extends AbstractCairoTest {
                     null, true, false);
             Assert.fail("Exception should be thrown");
         } catch (SqlException e) {
-            Assert.assertEquals(e.getMessage(), "[34] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (DATE,SYMBOL)");
+            Assert.assertEquals(e.getMessage(), "[34] Unexpected argument for function [name==, signature=(STRING, STRING), args=(DATE, SYMBOL)]");
         }
     }
 

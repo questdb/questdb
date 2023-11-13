@@ -42,7 +42,7 @@ public class FunctionParserErrorTest extends AbstractCairoTest {
                     null, null, true, true);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "unexpected argument for function: between");
+            TestUtils.assertContains(e.getMessage(), "Unexpected argument for function [name=between, signature=(TIMESTAMP, TIMESTAMP, TIMESTAMP), args=(TIMESTAMP, STRING constant, STRING)]");
         }
 
         runTestQuery();
@@ -56,7 +56,7 @@ public class FunctionParserErrorTest extends AbstractCairoTest {
                     null, null, true, true);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: ln");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unexpected argument for function [name=ln, signature=(DOUBLE), args=(INT constant, INT constant)]");
         }
 
         runTestQuery();
@@ -70,7 +70,7 @@ public class FunctionParserErrorTest extends AbstractCairoTest {
                     null, null, true, true);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: abs");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unexpected argument for function [name=abs, signature=(INT), args=(INT constant, INT constant, INT constant, INT constant)]");
         }
 
         runTestQuery();

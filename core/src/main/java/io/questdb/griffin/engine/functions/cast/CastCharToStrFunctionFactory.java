@@ -62,7 +62,7 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         return new Func(func);
     }
 
-    private static class Func extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 

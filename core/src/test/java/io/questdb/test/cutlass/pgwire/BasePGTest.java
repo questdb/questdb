@@ -388,11 +388,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected Connection getConnection(int port, boolean simple, boolean binary) throws SQLException {
-        if (simple) {
-            return getConnection(Mode.SIMPLE, port, binary, -2);
-        } else {
-            return getConnection(Mode.EXTENDED, port, binary, -2);
-        }
+        return getConnection(simple ? Mode.SIMPLE : Mode.EXTENDED, port, binary, -2);
     }
 
     protected Connection getConnection(int port, boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
@@ -512,10 +508,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     public enum Mode {
-        SIMPLE("simple"),
-        EXTENDED("extended"),
-        EXTENDED_FOR_PREPARED("extendedForPrepared"),
-        EXTENDED_CACHE_EVERYTHING("extendedCacheEverything");
+        SIMPLE("simple"), // 'Q' execute, no parse, no bind, text mode only
+        EXTENDED("extended"), // always use bind/execute messages
+        EXTENDED_FOR_PREPARED("extendedForPrepared"), // same as extended for prepared statements only
+        EXTENDED_CACHE_EVERYTHING("extendedCacheEverything"); // same as extended caching everything
 
         public final String value;
 

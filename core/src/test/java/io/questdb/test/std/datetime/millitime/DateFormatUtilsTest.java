@@ -30,35 +30,28 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DateFormatUtilsTest {
-    
+    private static final long EXPECTED = 1577836800000L; // millis
+
     @Test
     public void testParseDate() throws NumericException {
+        Assert.assertEquals(EXPECTED, DateFormatUtils.parseDate(String.valueOf(EXPECTED)));
+
         // PG_DATE_FORMAT: y-MM-dd
-        long millis = DateFormatUtils.parseDate("2020-01-01");
-        Assert.assertEquals(1577836800000L, millis);
+        Assert.assertEquals(EXPECTED, DateFormatUtils.parseDate("2020-01-01"));
 
         // pgDateTimeFormat: y-MM-dd HH:mm:ssz
-        millis = DateFormatUtils.parseDate("2020-01-01 00:00:00UTC");
-        Assert.assertEquals(1577836800000L, millis);
+        Assert.assertEquals(EXPECTED, DateFormatUtils.parseDate("2020-01-01 00:00:00UTC"));
 
         // PG_DATE_Z_FORMAT: y-MM-dd z
-        millis = DateFormatUtils.parseDate("2020-01-01 UTC");
-        Assert.assertEquals(1577836800000L, millis);
+        Assert.assertEquals(EXPECTED, DateFormatUtils.parseDate("2020-01-01 UTC"));
 
         // PG_DATE_MILLI_TIME_Z_FORMAT: y-MM-dd HH:mm:ss.Sz
-        millis = DateFormatUtils.parseDate("2020-01-01 00:00:00.000UTC");
-        Assert.assertEquals(1577836800000L, millis);
+        Assert.assertEquals(EXPECTED, DateFormatUtils.parseDate("2020-01-01 00:00:00.000UTC"));
 
         // PG_DATE_MILLI_TIME_Z_PRINT_FORMAT: y-MM-dd HH:mm:ss.SSSz
-        millis = DateFormatUtils.parseDate("2020-01-01 00:00:00.000UTC");
-        Assert.assertEquals(1577836800000L, millis);
+        Assert.assertEquals(EXPECTED, DateFormatUtils.parseDate("2020-01-01 00:00:00.000UTC"));
 
         // PG_DATE_MILLI_TIME_Z_PRINT_FORMAT: y-MM-dd HH:mm:ss.SSSz + extra millis
-        millis = DateFormatUtils.parseDate("2020-01-01 00:00:00.001UTC");
-        Assert.assertEquals(1577836800001L, millis);
-
-        // millis
-        millis = DateFormatUtils.parseDate("1577836800000");
-        Assert.assertEquals(1577836800000L, millis);
+        Assert.assertEquals(EXPECTED + 1L, DateFormatUtils.parseDate("2020-01-01 00:00:00.001UTC"));
     }
 }

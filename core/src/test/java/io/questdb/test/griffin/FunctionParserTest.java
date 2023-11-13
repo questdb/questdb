@@ -464,7 +464,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        assertFail(0, "exception in function factory", "x()", metadata);
+        assertFail(0, "oops", "x()", metadata);
     }
 
     @Test
@@ -1102,7 +1102,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, true, null));
-        assertFail(4, "invalid constant: 1c", "a + 1c", metadata);
+        assertFail(4, "Invalid constant [value=1c]", "a + 1c", metadata);
     }
 
     @Test
@@ -1144,7 +1144,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new SysdateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        assertFail(7, "unexpected argument", "a or   sysdate(a)", metadata);
+        assertFail(7, "Unexpected argument for function [name=sysdate, signature=(), args=(BOOLEAN)]", "a or   sysdate(a)", metadata);
     }
 
     @Test
@@ -1186,7 +1186,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unexpected argument for function [name=x, signature=(SHORT), args=(DOUBLE constant)]");
         }
     }
 
@@ -1211,8 +1211,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
-            TestUtils.assertContains(e.getFlyweightMessage(), "constant");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unexpected argument for function [name=x, signature=(INT constant), args=(INT)]");
         }
     }
 

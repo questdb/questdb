@@ -49,7 +49,7 @@ public class CastStrToCharFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToCharFunction {
+    public static class Func extends AbstractCastToCharFunction {
         private final Function arg;
 
         public Func(Function arg) {

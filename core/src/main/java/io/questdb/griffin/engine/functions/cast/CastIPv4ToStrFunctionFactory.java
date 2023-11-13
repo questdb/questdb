@@ -52,14 +52,14 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
             Numbers.intToIPv4Sink(sink, IPv4Func.getIPv4(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new CastIPv4ToStrFunctionFactory.CastIPv4ToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastIPv4ToStrFunction extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public CastIPv4ToStrFunction(Function arg) {
+        public Func(Function arg) {
             super(arg);
         }
 

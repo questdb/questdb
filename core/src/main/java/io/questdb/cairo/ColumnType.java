@@ -109,8 +109,8 @@ public final class ColumnType {
 
     public static int getGeoHashTypeWithBits(int bits) {
         assert bits > 0 && bits <= GEOLONG_MAX_BITS;
-        // this logic relies on GeoHash type value to be clustered together
-        return mkGeoHashType(bits, (byte) (GEOBYTE + pow2SizeOfBits(bits)));
+        int baseType = GEOBYTE + GEO_TYPE_SIZE_POW2[bits];
+        return ((baseType & ~(0xFF << TAG_SIZE)) | (bits << TAG_SIZE) | TYPE_FLAG_GEOHASH); // 16 bit flag
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
@@ -131,7 +131,8 @@ public final class ColumnType {
         // For example IntFunction has getDouble() method implemented and does not need
         // additional wrap function to CAST to double.
         // This is usually case for widening conversions.
-        return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
+        return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType)
+                || fromType == NULL
                 // char can be short and short can be char for symmetry
                 || (fromType == CHAR && toType == SHORT) || (fromType == TIMESTAMP && toType == LONG);
     }
@@ -181,7 +182,12 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) && (getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0)) || isBuiltInWideningCast(fromType, toType) || isStringCast(fromType, toType) || isGeoHashWideningCast(fromType, toType) || isImplicitParsingCast(fromType, toType) || isIPv4Cast(fromType, toType);
+        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) && (getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0))
+                || isBuiltInWideningCast(fromType, toType)
+                || isStringCast(fromType, toType)
+                || isGeoHashWideningCast(fromType, toType)
+                || isImplicitParsingCast(fromType, toType)
+                || isIPv4Cast(fromType, toType);
     }
 
     public static boolean isUndefined(int columnType) {
@@ -247,7 +253,12 @@ public final class ColumnType {
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         final int fromTag = tagOf(fromType);
-        return (fromTag == GEOLONG && toTag == GEOINT) || (fromTag == GEOLONG && toTag == GEOSHORT) || (fromTag == GEOLONG && toTag == GEOBYTE) || (fromTag == GEOINT && toTag == GEOSHORT) || (fromTag == GEOINT && toTag == GEOBYTE) || (fromTag == GEOSHORT && toTag == GEOBYTE);
+        return (fromTag == GEOLONG && toTag == GEOINT)
+                || (fromTag == GEOLONG && toTag == GEOSHORT)
+                || (fromTag == GEOLONG && toTag == GEOBYTE)
+                || (fromTag == GEOINT && toTag == GEOSHORT)
+                || (fromTag == GEOINT && toTag == GEOBYTE)
+                || (fromTag == GEOSHORT && toTag == GEOBYTE);
     }
 
     private static boolean isIPv4Cast(int fromType, int toType) {
@@ -256,19 +267,34 @@ public final class ColumnType {
 
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
-        return (fromType == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (fromType == STRING && toTag == GEOBYTE) || (fromType == STRING && toTag == GEOSHORT) || (fromType == STRING && toTag == GEOINT) || (fromType == STRING && toTag == GEOLONG) || (fromType == STRING && toTag == TIMESTAMP) || (fromType == SYMBOL && toTag == TIMESTAMP) || (fromType == STRING && toTag == LONG256);
+        return (fromType == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6)
+                || (fromType == STRING && toTag == GEOBYTE)
+                || (fromType == STRING && toTag == GEOSHORT)
+                || (fromType == STRING && toTag == GEOINT)
+                || (fromType == STRING && toTag == GEOLONG)
+                || (fromType == STRING && toTag == TIMESTAMP)
+                || (fromType == SYMBOL && toTag == TIMESTAMP)
+                || (fromType == STRING && toTag == LONG256);
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
-        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG))) || (fromType == FLOAT && toType >= BYTE && toType <= LONG) || (fromType == LONG && toType >= BYTE && toType <= INT) || (fromType == INT && toType >= BYTE && toType <= SHORT) || (fromType == SHORT && toType == BYTE) || (fromType == CHAR && toType == BYTE) || (fromType == STRING && toType == BYTE) || (fromType == STRING && toType == SHORT) || (fromType == STRING && toType == INT) || (fromType == STRING && toType == LONG) || (fromType == STRING && toType == DATE) || (fromType == STRING && toType == TIMESTAMP) || (fromType == STRING && toType == FLOAT) || (fromType == STRING && toType == DOUBLE) || (fromType == STRING && toType == CHAR) || (fromType == STRING && toType == UUID);
+        int fromTag = tagOf(fromType);
+        int toTag = tagOf(toType);
+        return (fromTag == DOUBLE && (toTag == FLOAT || (toTag >= BYTE && toTag <= LONG)))
+                || (fromTag == FLOAT && toTag >= BYTE && toTag <= LONG)
+                || (fromTag == LONG && toTag >= BYTE && toTag <= INT)
+                || (fromTag == INT && toTag >= BYTE && toTag <= SHORT)
+                || (fromTag == SHORT && toTag == BYTE)
+                || (fromTag == CHAR && toTag == BYTE)
+                || (fromTag == STRING && ((toTag >= BYTE && toTag <= DOUBLE) || toTag == UUID));
     }
 
     private static boolean isStringCast(int fromType, int toType) {
-        return (fromType == STRING && toType == SYMBOL) || (fromType == SYMBOL && toType == STRING) || (fromType == CHAR && toType == SYMBOL) || (fromType == CHAR && toType == STRING) || (fromType == UUID && toType == STRING);
-    }
-
-    private static int mkGeoHashType(int bits, byte baseType) {
-        return (baseType & ~(0xFF << TAG_SIZE)) | (bits << TAG_SIZE) | TYPE_FLAG_GEOHASH; // bit 16 is GeoHash flag
+        return (fromType == STRING && toType == SYMBOL)
+                || (fromType == SYMBOL && toType == STRING)
+                || (fromType == CHAR && toType == SYMBOL)
+                || (fromType == CHAR && toType == STRING)
+                || (fromType == UUID && toType == STRING);
     }
 
     private static short pow2(short value) {

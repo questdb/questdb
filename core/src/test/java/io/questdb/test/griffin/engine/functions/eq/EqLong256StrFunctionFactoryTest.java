@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.cairo.ImplicitCastException;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -61,7 +61,7 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
                     null,
                     true);
             Assert.fail();
-        } catch (ImplicitCastException e) {
+        } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `0xG56` [STRING -> LONG256]");
         }
     }

@@ -800,42 +800,42 @@ public class UpdateTest extends AbstractCairoTest {
             assertException(
                     "UPDATE up SET xint = xdouble",
                     21,
-                    "inconvertible types: DOUBLE -> INT [from=, to=xint]"
+                    "inconvertible types: DOUBLE -> INT [from=VIRTUAL_0, to=xint]"
             );
             assertException(
                     "UPDATE up SET xint = xlong",
                     21,
-                    "inconvertible types: LONG -> INT [from=, to=xint]"
+                    "inconvertible types: LONG -> INT [from=VIRTUAL_0, to=xint]"
             );
             assertException(
                     "UPDATE up SET xshort = xlong",
                     23,
-                    "inconvertible types: LONG -> SHORT [from=, to=xshort]"
+                    "inconvertible types: LONG -> SHORT [from=VIRTUAL_0, to=xshort]"
             );
             assertException(
                     "UPDATE up SET xchar = xlong",
                     22,
-                    "inconvertible types: LONG -> CHAR [from=, to=xchar]"
+                    "inconvertible types: LONG -> CHAR [from=VIRTUAL_0, to=xchar]"
             );
             assertException(
                     "UPDATE up SET xbyte = xlong",
                     22,
-                    "inconvertible types: LONG -> BYTE [from=, to=xbyte]"
+                    "inconvertible types: LONG -> BYTE [from=VIRTUAL_0, to=xbyte]"
             );
             assertException(
                     "UPDATE up SET xlong = xl256",
                     22,
-                    "inconvertible types: LONG256 -> LONG [from=, to=xlong]"
+                    "inconvertible types: LONG256 -> LONG [from=VIRTUAL_0, to=xlong]"
             );
             assertException(
                     "UPDATE up SET xl256 = xlong",
                     22,
-                    "inconvertible types: LONG -> LONG256 [from=, to=xl256]"
+                    "inconvertible types: LONG -> LONG256 [from=VIRTUAL_0, to=xl256]"
             );
             assertException(
                     "UPDATE up SET xchar = xlong",
                     22,
-                    "inconvertible types: LONG -> CHAR [from=, to=xchar]"
+                    "inconvertible types: LONG -> CHAR [from=VIRTUAL_0, to=xchar]"
             );
 
             String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +

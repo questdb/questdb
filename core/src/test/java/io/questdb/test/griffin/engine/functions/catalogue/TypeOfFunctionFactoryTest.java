@@ -65,6 +65,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     public void testTypeOfAllTypes() throws SqlException {
         Set<Byte> exclude = new HashSet<>();
         exclude.add(ColumnType.GEOHASH);
+        exclude.add(ColumnType.LONG128);
         exclude.add(ColumnType.GEOBYTE);
         exclude.add(ColumnType.GEOSHORT);
         exclude.add(ColumnType.GEOINT);
@@ -75,7 +76,6 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
         exclude.add(ColumnType.REGCLASS);
         exclude.add(ColumnType.ARRAY_STRING);
         exclude.add(ColumnType.REGPROCEDURE);
-        exclude.add(ColumnType.LONG128);
         for (byte type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
             if (exclude.contains(type)) {
                 continue;

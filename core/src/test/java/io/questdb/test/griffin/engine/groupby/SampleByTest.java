@@ -2308,7 +2308,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
+                10,
                 "inconvertible value: `ab` [STRING -> DOUBLE]"
         );
     }
@@ -2326,7 +2326,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
+                10,
                 "inconvertible value: `ac` [STRING -> DOUBLE]"
         );
     }

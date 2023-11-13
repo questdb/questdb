@@ -489,7 +489,7 @@ public class UuidTest extends AbstractCairoTest {
     public void testLongExplicitCastAsUuid() throws Exception {
         ddl("create table x (l long)");
         insert("insert into x values (42)");
-        assertException("select cast(l as uuid) from x", 7, "unexpected argument for function");
+        assertException("select cast(l as uuid) from x", 7, "Unexpected argument for function [name=cast, signature=(DOUBLE, BOOLEAN constant), args=(LONG, UUID constant)]");
     }
 
     @Test
