@@ -1,0 +1,31 @@
+name: Rebuild MacOS ARM and Push to PR
+on:
+  workflow_dispatch:
+
+# This workflow is triggered manually from the Actions tab.
+
+jobs:
+  publish:
+    runs-on: macos-13-xlarge
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install tooling
+        run: |
+          brew install make cmake gcc
+      - name: Go to the build directory
+        run: |
+          cd core
+          cmake -B build/release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/release --config Release
+          cd ..
+      - name: Commit the file
+        run: |
+          git config --global user.name 'GitHub Actions - ARM build'
+          git config --global user.email 'jaromir@questdb.io'
+          git add src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
+          git commit -m "Rebuild MacOS ARM"
+#      - name: Push the file
+#        uses: ad-m/github-push-action@master
+#        with:
+#          branch: ${{ github.head_ref }}
+
