@@ -5,7 +5,7 @@ on:
 # This workflow is triggered manually from the Actions tab.
 
 jobs:
-  publish:
+  rebuild:
     runs-on: macos-13-xlarge
     steps:
       - uses: actions/checkout@v3
@@ -22,10 +22,10 @@ jobs:
         run: |
           git config --global user.name 'GitHub Actions - ARM build'
           git config --global user.email 'jaromir@questdb.io'
-          git add src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
+          git add core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
           git commit -m "Rebuild MacOS ARM"
-#      - name: Push the file
-#        uses: ad-m/github-push-action@master
-#        with:
-#          branch: ${{ github.head_ref }}
+      - name: Push the file to the current branch
+        uses: ad-m/github-push-action@d91a48109
+        with:
+          branch: ${{ github.head_ref }}
 
