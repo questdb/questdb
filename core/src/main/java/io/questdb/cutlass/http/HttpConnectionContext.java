@@ -35,9 +35,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -79,10 +79,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @TestOnly
     public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
-        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE);
+        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE, DefaultHttpHeaderParserFactory.INSTANCE);
     }
 
-    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler) {
+    public HttpConnectionContext(
+            HttpMinServerConfiguration configuration,
+            Metrics metrics,
+            SocketFactory socketFactory,
+            HttpCookieHandler cookieHandler,
+            HttpHeaderParserFactory headerParserFactory
+    ) {
         super(
                 socketFactory,
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
@@ -94,7 +100,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.cookieHandler = cookieHandler;
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
-        this.headerParser = new HttpHeaderParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
+        this.headerParser = headerParserFactory.newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.responseSink = new HttpResponseSink(contextConfiguration);
@@ -416,6 +422,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
                     authenticator.getPrincipal(),
+                    authenticator.getAuthType(),
                     SecurityContextFactory.HTTP
             );
             securityContext.authorizeHttp();
@@ -606,7 +613,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor;
-        final DirectUtf8Sequence url = headerParser.getUrl();
+        final Utf8Sequence url = headerParser.getUrl();
         processor = selector.select(url);
         if (processor == null) {
             return selector.getDefaultProcessor();
@@ -627,7 +634,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // read headers
                     read = socket.recv(recvBuffer, recvBufferSize);
                     LOG.debug().$("recv [fd=").$(getFd()).$(", count=").$(read).I$();
-                    if (read < 0) {
+                    if (read < 0 && !headerParser.onRecvError(read)) {
                         LOG.debug()
                                 .$("done [fd=").$(getFd())
                                 .$(", errno=").$(nf.errno())
@@ -648,7 +655,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
             }
 
-            final DirectUtf8Sequence url = headerParser.getUrl();
+            final Utf8Sequence url = headerParser.getUrl();
             if (url == null) {
                 throw HttpException.instance("missing URL");
             }
@@ -688,8 +695,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     read = socket.recv(recvBuffer, 1);
                     if (read != 0) {
                         dumpBuffer(recvBuffer, read);
-                        LOG.info().$("disconnect after request [fd=").$(getFd()).I$();
-                        dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
+                        LOG.info().$("disconnect after request [fd=").$(getFd()).$(", read=").$(read).I$();
+                        int reason = read > 0 ? DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES : DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV;
+                        dispatcher.disconnect(this, reason);
                         busyRecv = false;
                     } else {
                         processor.onHeadersReady(this);
