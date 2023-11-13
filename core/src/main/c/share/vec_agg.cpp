@@ -278,7 +278,7 @@ int64_t COUNT_INT(int32_t *pi, int64_t count) {
         veccount = if_add(bVec, veccount, 1);
     }
 
-    int64_t result = horizontal_add(veccount);
+    int64_t result = horizontal_add_x(veccount);
     for (; pi < lim; pi++) {
         int32_t v = *pi;
         if (PREDICT_TRUE(v != I_MIN)) {
@@ -308,7 +308,7 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
         vec.load(pi);
         bVec = vec != I_MIN;
         hasData = hasData || horizontal_count(bVec) > 0;
-        result += horizontal_add(select(bVec, vec, 0));
+        result += horizontal_add_x(select(bVec, vec, 0));
     }
 
     for (; pi < lim; pi++) {
@@ -410,7 +410,7 @@ int64_t SUM_SHORT(int16_t *ps, int64_t count) {
         acc1 += extend_high(vec);
     }
 
-    int64_t result = horizontal_add(acc0) + horizontal_add(acc1);
+    int64_t result = horizontal_add_x(acc0) + horizontal_add_x(acc1);
     for (; ps < lim; ps++) {
         int16_t v = *ps;
         result += v;
