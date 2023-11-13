@@ -327,7 +327,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     ex.put(',');
                 }
                 final int mask = descriptor.getArgTypeMask(i);
-                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toType(mask)));
+                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(mask)));
                 if (FunctionFactoryDescriptor.isArray(mask)) {
                     ex.put("[]");
                 }
@@ -564,7 +564,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             if (sigArgCount > 0) {
                 final int lastSigArgMask = descriptor.getArgTypeMask(sigArgCount - 1);
-                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgMask) == ColumnType.VAR_ARG;
+                sigVarArg = FunctionFactoryDescriptor.toTypeTag(lastSigArgMask) == ColumnType.VAR_ARG;
                 sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgMask);
             } else {
                 sigVarArg = false;
@@ -604,10 +604,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break;
                     }
 
-                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
                     final int argType = arg.getType();
-                    final short argTypeTag = ColumnType.tagOf(argType);
-                    final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
+                    final byte argTypeTag = ColumnType.tagOf(argType);
+                    final byte sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgTypeMask);
 
                     if (sigArgTypeTag == argTypeTag ||
                             (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
@@ -636,7 +635,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     //
                     // output of a cast() function is always the 2nd argument in a function signature
                     if (argIdx != 1 || !Chars.equals("cast", node.token)) {
-                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
+                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgTypeTag); // NULL to any is 0
 
                         if (argTypeTag == ColumnType.STRING &&
                                 sigArgTypeTag == ColumnType.CHAR) {
@@ -764,7 +763,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         for (int i = 0, n = undefinedVariables.size(); i < n; i++) {
             final int pos = undefinedVariables.getQuick(i);
             if (pos < candidateSigArgCount) {
-                final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
+                final int sigArgType = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeMask(pos));
                 args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
             } else {
                 args.getQuick(pos).assignType(ColumnType.VAR_ARG, sqlExecutionContext.getBindVariableService());
@@ -773,7 +772,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final short sigArgTypeTag = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeMask(k));
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
             if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {

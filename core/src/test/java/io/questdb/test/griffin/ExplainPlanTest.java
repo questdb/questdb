@@ -1844,7 +1844,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                 for (int p = 0; p < sigArgCount; p++) {
                     int sigArgTypeMask = descriptor.getArgTypeMask(p);
-                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    final byte sigArgType = FunctionFactoryDescriptor.toTypeTag(sigArgTypeMask);
                     boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
 
                     if (p > 0) {
@@ -1862,7 +1862,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 for (int p = 0; p < sigArgCount; p++) {
                     int argTypeMask = descriptor.getArgTypeMask(p);
                     boolean isConstant = FunctionFactoryDescriptor.isConstant(argTypeMask);
-                    short sigArgType = FunctionFactoryDescriptor.toType(argTypeMask);
+                    byte sigArgType = FunctionFactoryDescriptor.toTypeTag(argTypeMask);
                     ObjList<Function> availableValues = constFuncs.get(sigArgType);
                     int constValues = availableValues != null ? availableValues.size() : 1;
                     combinations *= (constValues + (isConstant ? 0 : 1));
@@ -1879,7 +1879,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     try {
                         for (int p = 0; p < sigArgCount; p++) {
                             int sigArgTypeMask = descriptor.getArgTypeMask(p);
-                            short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                            byte sigArgType = FunctionFactoryDescriptor.toTypeTag(sigArgTypeMask);
                             boolean isConstant = FunctionFactoryDescriptor.isConstant(sigArgTypeMask);
                             boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
                             boolean useConst = isConstant || (tempNo & 1) == 1 || sigArgType == ColumnType.CURSOR || sigArgType == ColumnType.RECORD;

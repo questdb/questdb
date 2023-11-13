@@ -32,8 +32,8 @@ import io.questdb.std.str.StringSink;
 public class FunctionFactoryDescriptor {
     private static final int ARRAY_MASK = 1 << 31;
     private static final int CONST_MASK = 1 << 30;
+    private static final IntObjHashMap<String> TYPE2NAME = new IntObjHashMap<>();
     private static final int TYPE_MASK = ~(ARRAY_MASK | CONST_MASK);
-    private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private final long[] argTypes;
     private final FunctionFactory factory;
     private final int openBraceIndex;
@@ -44,7 +44,7 @@ public class FunctionFactoryDescriptor {
         this.factory = factory;
 
         final String sig = factory.getSignature();
-        this.openBraceIndex = validateSignatureAndGetNameSeparator(sig);
+        openBraceIndex = validateSignatureAndGetNameSeparator(sig);
         // validate data types
         int typeCount = 0;
         for (
@@ -52,7 +52,7 @@ public class FunctionFactoryDescriptor {
                 i < n; typeCount++
         ) {
             char cc = sig.charAt(i);
-            if (FunctionFactoryDescriptor.getArgType(cc) == -1) {
+            if (FunctionFactoryDescriptor.getArgType(cc) == ColumnType.UNDEFINED) {
                 throw SqlException.position(0).put("illegal argument type: ").put('`').put(cc).put('`');
             }
             // check if this is an array
@@ -88,93 +88,65 @@ public class FunctionFactoryDescriptor {
             types[arrayIndex] |= (toUnsignedLong(type) << (32 - arrayValueOffset));
             typeIndex++;
         }
-        this.argTypes = types;
-        this.sigArgCount = typeCount;
+        argTypes = types;
+        sigArgCount = typeCount;
     }
 
-    public static int getArgType(char c) {
-        int sigArgType;
+    public static byte getArgType(char c) {
         switch (c | 32) {
-            case 'd':
-                sigArgType = ColumnType.DOUBLE;
-                break;
-            case 'b':
-                sigArgType = ColumnType.BYTE;
-                break;
-            case 'e':
-                sigArgType = ColumnType.SHORT;
-                break;
-            case 'a':
-                sigArgType = ColumnType.CHAR;
-                break;
-            case 'f':
-                sigArgType = ColumnType.FLOAT;
-                break;
-            case 'i':
-                sigArgType = ColumnType.INT;
-                break;
-            case 'l':
-                sigArgType = ColumnType.LONG;
-                break;
-            case 's':
-                sigArgType = ColumnType.STRING;
-                break;
             case 't':
-                sigArgType = ColumnType.BOOLEAN;
-                break;
-            case 'k':
-                sigArgType = ColumnType.SYMBOL;
-                break;
+                return ColumnType.BOOLEAN;
+            case 'b':
+                return ColumnType.BYTE;
+            case 'e':
+                return ColumnType.SHORT;
+            case 'a':
+                return ColumnType.CHAR;
+            case 'i':
+                return ColumnType.INT;
+            case 'l':
+                return ColumnType.LONG;
             case 'm':
-                sigArgType = ColumnType.DATE;
-                break;
+                return ColumnType.DATE;
             case 'n':
-                sigArgType = ColumnType.TIMESTAMP;
-                break;
-            case 'u':
-                sigArgType = ColumnType.BINARY;
-                break;
-            case 'v':
-                sigArgType = ColumnType.VAR_ARG;
-                break;
-            case 'c':
-                sigArgType = ColumnType.CURSOR;
-                break;
-            case 'r':
-                sigArgType = ColumnType.RECORD;
-                break;
+                return ColumnType.TIMESTAMP;
+            case 'f':
+                return ColumnType.FLOAT;
+            case 'd':
+                return ColumnType.DOUBLE;
+            case 's':
+                return ColumnType.STRING;
+            case 'k':
+                return ColumnType.SYMBOL;
             case 'h':
-                sigArgType = ColumnType.LONG256;
-                break;
-            case 'g':
-                sigArgType = ColumnType.GEOHASH;
-                break;
-            case 'o':
-                sigArgType = ColumnType.NULL;
-                break;
-            case 'p':
-                sigArgType = ColumnType.REGCLASS;
-                break;
-            case 'q':
-                sigArgType = ColumnType.REGPROCEDURE;
-                break;
-            case 'w':
-                sigArgType = ColumnType.ARRAY_STRING;
-                break;
-            case 'j':
-                sigArgType = ColumnType.LONG128;
-                break;
+                return ColumnType.LONG256;
+            case 'u':
+                return ColumnType.BINARY;
             case 'z':
-                sigArgType = ColumnType.UUID;
-                break;
+                return ColumnType.UUID;
+            case 'c':
+                return ColumnType.CURSOR;
+            case 'v':
+                return ColumnType.VAR_ARG;
+            case 'r':
+                return ColumnType.RECORD;
+            case 'g':
+                return ColumnType.GEOHASH;
+            case 'j':
+                return ColumnType.LONG128;
             case 'x':
-                sigArgType = ColumnType.IPv4;
-                break;
+                return ColumnType.IPv4;
+            case 'p':
+                return ColumnType.REGCLASS;
+            case 'q':
+                return ColumnType.REGPROCEDURE;
+            case 'w':
+                return ColumnType.ARRAY_STRING;
+            case 'o':
+                return ColumnType.NULL;
             default:
-                sigArgType = -1;
-                break;
+                return ColumnType.UNDEFINED;
         }
-        return sigArgType;
     }
 
     public static boolean isArray(int mask) {
@@ -210,8 +182,8 @@ public class FunctionFactoryDescriptor {
         return signatureBuilder.toString();
     }
 
-    public static short toType(int mask) {
-        return (short) (mask & TYPE_MASK);
+    public static byte toTypeTag(int mask) {
+        return (byte) (mask & TYPE_MASK);
     }
 
     public static StringSink translateSignature(CharSequence funcName, String signature, StringSink sink) {
@@ -219,12 +191,12 @@ public class FunctionFactoryDescriptor {
         try {
             openBraceIndex = validateSignatureAndGetNameSeparator(signature);
         } catch (SqlException err) {
-            throw new IllegalArgumentException("offending: '" + signature + "', reason: " + err.getMessage());
+            throw new IllegalArgumentException(err.getMessage());
         }
         sink.put(funcName).put('(');
         for (int i = openBraceIndex + 1, n = signature.length() - 1; i < n; i++) {
             char c = signature.charAt(i);
-            String type = typeNameMap.get(c | 32);
+            String type = TYPE2NAME.get(c | 32);
             if (type == null) {
                 throw new IllegalArgumentException("offending: '" + c + '\'');
             }
@@ -307,31 +279,31 @@ public class FunctionFactoryDescriptor {
     }
 
     static {
-        typeNameMap.put('d', "double");
-        typeNameMap.put('b', "byte");
-        typeNameMap.put('e', "short");
-        typeNameMap.put('a', "char");
-        typeNameMap.put('f', "float");
-        typeNameMap.put('i', "int");
-        typeNameMap.put('l', "long");
-        typeNameMap.put('s', "string");
-        typeNameMap.put('t', "boolean");
-        typeNameMap.put('k', "symbol");
-        typeNameMap.put('m', "date");
-        typeNameMap.put('n', "timestamp");
-        typeNameMap.put('u', "binary");
-        typeNameMap.put('v', "var_arg");
-        typeNameMap.put('c', "cursor");
-        typeNameMap.put('r', "record");
-        typeNameMap.put('h', "long256");
-        typeNameMap.put('g', "geohash");
-        typeNameMap.put('o', "null");
-        typeNameMap.put('p', "reg_class");
-        typeNameMap.put('q', "reg_procedure");
-        typeNameMap.put('w', "array_string");
-        typeNameMap.put('j', "long128");
-        typeNameMap.put('z', "uuid");
-        typeNameMap.put('x', "ipv4");
-        typeNameMap.put('[' | 32, "[]");
+        TYPE2NAME.put('t', "boolean");
+        TYPE2NAME.put('b', "byte");
+        TYPE2NAME.put('e', "short");
+        TYPE2NAME.put('a', "char");
+        TYPE2NAME.put('i', "int");
+        TYPE2NAME.put('l', "long");
+        TYPE2NAME.put('m', "date");
+        TYPE2NAME.put('n', "timestamp");
+        TYPE2NAME.put('f', "float");
+        TYPE2NAME.put('d', "double");
+        TYPE2NAME.put('s', "string");
+        TYPE2NAME.put('k', "symbol");
+        TYPE2NAME.put('h', "long256");
+        TYPE2NAME.put('u', "binary");
+        TYPE2NAME.put('z', "uuid");
+        TYPE2NAME.put('c', "cursor");
+        TYPE2NAME.put('v', "var_arg");
+        TYPE2NAME.put('r', "record");
+        TYPE2NAME.put('g', "geohash");
+        TYPE2NAME.put('j', "long128");
+        TYPE2NAME.put('x', "ipv4");
+        TYPE2NAME.put('p', "reg_class");
+        TYPE2NAME.put('q', "reg_procedure");
+        TYPE2NAME.put('w', "array_string");
+        TYPE2NAME.put('[' | 32, "[]");
+        TYPE2NAME.put('o', "null");
     }
 }

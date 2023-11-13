@@ -25,12 +25,14 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.HashSet;
+import java.util.Set;
 
 public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     @Test
@@ -60,24 +62,26 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTypeOfAllRegularDataTypes() throws SqlException {
-        for (int i = ColumnType.BOOLEAN; i < ColumnType.NULL; i++) {
-            String name = ColumnType.nameOf(i);
-            if (Chars.equals("unknown", name)
-                    || i == ColumnType.CURSOR
-                    || i == ColumnType.VAR_ARG
-                    || i == ColumnType.RECORD
-                    || i == ColumnType.GEOHASH
-                    || i == ColumnType.LONG128
-                    || i == ColumnType.REGCLASS
-                    || i == ColumnType.REGPROCEDURE
-                    || i == ColumnType.ARRAY_STRING
-                    || i == ColumnType.PARAMETER
-            ) {
+    public void testTypeOfAllTypes() throws SqlException {
+        Set<Byte> exclude = new HashSet<>();
+        exclude.add(ColumnType.GEOHASH);
+        exclude.add(ColumnType.GEOBYTE);
+        exclude.add(ColumnType.GEOSHORT);
+        exclude.add(ColumnType.GEOINT);
+        exclude.add(ColumnType.GEOLONG);
+        exclude.add(ColumnType.CURSOR);
+        exclude.add(ColumnType.VAR_ARG);
+        exclude.add(ColumnType.RECORD);
+        exclude.add(ColumnType.REGCLASS);
+        exclude.add(ColumnType.ARRAY_STRING);
+        exclude.add(ColumnType.REGPROCEDURE);
+        exclude.add(ColumnType.LONG128);
+        for (byte type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
+            if (exclude.contains(type)) {
                 continue;
             }
-
-            assertSql("typeOf\n" + ColumnType.nameOf(i) + "\n", "select typeOf(cast(null as " + name + "  ))");
+            String name = ColumnType.nameOf(type);
+            assertSql("typeOf\n" + name + "\n", "select typeOf(cast(null as " + name + "  ))");
         }
     }
 

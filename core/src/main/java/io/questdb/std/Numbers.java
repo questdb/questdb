@@ -754,11 +754,12 @@ public final class Numbers {
         return (value & (value - 1)) == 0;
     }
 
+    public static double longToDouble(long value) {
+        return value != Numbers.LONG_NaN ?  value : Double.NaN;
+    }
+
     public static float longToFloat(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Float.NaN;
+        return value != Numbers.LONG_NaN? value : Float.NaN;
     }
 
     public static int msb(int value) {

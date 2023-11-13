@@ -24,25 +24,22 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.IntObjHashMap;
-import io.questdb.std.Long256;
-import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
-// ColumnType layout - 32bit
+// ColumnType is always a 32bit int with layout:
 //
-// | PGWire format | Extra type information | Type discriminant (tag) |
-// +---------------+------------------------+-------------------------+
-// |    1 bit      |        23 bits         |         8 bits          |
-// +---------------+------------------------+-------------------------+
-
-/**
- * Column types as numeric (integer) values
- */
+// | PGWire format | Extra type information  | Tag    |
+// +---------------+-------------------------+--------+
+// |    1 bit      |        23 bits          | 8 bits |
+// +------------------+----------------------+--------+
+// |              0|0000000 00000000 00000000|00000000|
+// |              0|               1 <-- 16th isGeoHash
+// |              0|              1  <-- 17th isDesignatedTimestamp
 public final class ColumnType {
-    public static final int GEOBYTE_MAX_BITS = 7;
+    public static final int DYNAMIC_TYPE_SIZE = 0; // visible for test only
     // geohash bits <-> backing primitive types bit boundaries
+    public static final int GEOBYTE_MAX_BITS = 7;
     public static final int GEOBYTE_MIN_BITS = 1;
     public static final int GEOINT_MAX_BITS = 31;
     public static final int GEOINT_MIN_BITS = 16;
@@ -51,76 +48,69 @@ public final class ColumnType {
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int MIGRATION_VERSION = 427;
-    public static final short OVERLOAD_FULL = -1; // akin to no distance
-    public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
-    // our type system is absolutely ordered ranging
-    // - from UNDEFINED: index 0, represents lack of type, an internal parsing concept.
-    // - to NULL: index must be last, other parts of the codebase rely on this fact.
-    public static final short UNDEFINED = 0;                    // = 0
-    public static final short BOOLEAN = UNDEFINED + 1;          // = 1
-    public static final short BYTE = BOOLEAN + 1;               // = 2
-    public static final short SHORT = BYTE + 1;                 // = 3
-    public static final short CHAR = SHORT + 1;                 // = 4
-    public static final short INT = CHAR + 1;                   // = 5
-    public static final short LONG = INT + 1;                   // = 6
-    public static final short DATE = LONG + 1;                  // = 7
-    public static final short TIMESTAMP = DATE + 1;             // = 8
-    public static final short FLOAT = TIMESTAMP + 1;            // = 9
-    public static final short DOUBLE = FLOAT + 1;               // = 10
-    public static final short STRING = DOUBLE + 1;              // = 11
-    public static final short SYMBOL = STRING + 1;              // = 12
-    public static final short LONG256 = SYMBOL + 1;             // = 13
-    public static final short GEOBYTE = LONG256 + 1;            // = 14
-    public static final short GEOSHORT = GEOBYTE + 1;           // = 15
-    public static final short GEOINT = GEOSHORT + 1;            // = 16
-    public static final short GEOLONG = GEOINT + 1;             // = 17
-    public static final short BINARY = GEOLONG + 1;             // = 18
-    public static final short UUID = BINARY + 1;                // = 19
-    public static final short CURSOR = UUID + 1;                // = 20
-    public static final short VAR_ARG = CURSOR + 1;             // = 21
-    public static final short RECORD = VAR_ARG + 1;             // = 22
-    // GEOHASH is not stored. It is used on function
-    // arguments to resolve overloads. We also build
-    // overload matrix, which logic relies on GEOHASH
-    // value >UUID and <MAX.
-    public static final short GEOHASH = RECORD + 1;             // = 23
-    public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
-    public static final short IPv4 = LONG128 + 1;               // = 25
-    // PG specific types to work with 3rd party software
-    // with canned catalogue queries:
-    // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = IPv4 + 1;              // = 26;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 27;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
-    public static final short NULL = PARAMETER + 1;             // = 30; ALWAYS the last
-
+    public static final int NOT_STORED_TYPE_SIZE = -1; // visible for test only
+    public static final int OVERLOAD_NONE = 10000; // akin to infinite distance
+    // Column type discriminants (tags) are numeric byte values, ordered:
+    // - from UNDEFINED: index 0, lack of type, an internal parsing concept.
+    //          functions cannot accept UNDEFINED (signature not supported).
+    // - to NULL: index must be last, codebase relies on this.
+    public static final byte UNDEFINED = 0;                    // 0
+    public static final byte BOOLEAN = UNDEFINED + 1;          // 1 not numeric
+    public static final byte BYTE = BOOLEAN + 1;               // 2 numeric
+    public static final byte SHORT = BYTE + 1;                 // 3 numeric
+    public static final byte CHAR = SHORT + 1;                 // 4 not numeric
+    public static final byte INT = CHAR + 1;                   // 5 numeric
+    public static final byte LONG = INT + 1;                   // 6 numeric
+    public static final byte DATE = LONG + 1;                  // 7 numeric
+    public static final byte TIMESTAMP = DATE + 1;             // 8 numeric
+    public static final byte FLOAT = TIMESTAMP + 1;            // 9 numeric
+    public static final byte DOUBLE = FLOAT + 1;               // 10 numeric
+    public static final byte STRING = DOUBLE + 1;              // 11
+    public static final byte SYMBOL = STRING + 1;              // 12
+    public static final byte LONG256 = SYMBOL + 1;             // 13
+    public static final byte GEOBYTE = LONG256 + 1;            // 14 internal only
+    public static final byte GEOSHORT = GEOBYTE + 1;           // 15 internal only
+    public static final byte GEOINT = GEOSHORT + 1;            // 16 internal only
+    public static final byte GEOLONG = GEOINT + 1;             // 17 internal only
+    public static final byte BINARY = GEOLONG + 1;             // 18
+    public static final byte UUID = BINARY + 1;                // 19
+    public static final byte CURSOR = UUID + 1;                // 20 internal only
+    public static final byte VAR_ARG = CURSOR + 1;             // 21 internal only
+    public static final byte RECORD = VAR_ARG + 1;             // 22 internal only
+    public static final byte GEOHASH = RECORD + 1;             // 23 internal only, used generically in function signature to resolve overloads
+    public static final byte LONG128 = GEOHASH + 1;            // 24 limited support, few tests only
+    public static final byte IPv4 = LONG128 + 1;               // 25
+    public static final byte REGCLASS = IPv4 + 1;              // 26 pg-wire only
+    public static final byte REGPROCEDURE = REGCLASS + 1;      // 27 pg-wire only
+    public static final byte ARRAY_STRING = REGPROCEDURE + 1;  // 28 pg-wire only
+    public static final byte NULL = ARRAY_STRING + 1;          // 29 internal only, NULL is ALWAYS last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
-    private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
-    private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+    public static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
+    public static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
     // column type version as written to the metadata file
     public static final int VERSION = 426;
-    static final int[] GEO_TYPE_SIZE_POW2;
-    private static final int BITS_OFFSET = 8;
-    private static final short[][] OVERLOAD_PRIORITY;
+    static final short[] GEO_TYPE_SIZE_POW2;
+    private static final LowerCaseCharSequenceIntHashMap NAME2TYPE = new LowerCaseCharSequenceIntHashMap();
+    private static final int OVERLOAD_MAX = -1; // akin to no distance
+    private static final byte[][] OVERLOAD_PRIORITY;
+    private static final int TAG_SIZE = Byte.SIZE;
+    private static final IntObjHashMap<String> TYPE2NAME = new IntObjHashMap<>();
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
-    private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
-    private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
-    private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
+    private static final int TYPE_FLAG_GEOHASH = (1 << 16);
 
     private ColumnType() {
     }
 
     public static int getGeoHashBits(int type) {
-        return (byte) ((type >> BITS_OFFSET) & 0xFF);
+        return (byte) ((type >> TAG_SIZE) & 0xFF);
     }
 
     public static int getGeoHashTypeWithBits(int bits) {
         assert bits > 0 && bits <= GEOLONG_MAX_BITS;
         // this logic relies on GeoHash type value to be clustered together
-        return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
+        return mkGeoHashType(bits, (byte) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
@@ -132,7 +122,7 @@ public final class ColumnType {
     }
 
     public static boolean isBoolean(int columnType) {
-        return columnType == ColumnType.BOOLEAN;
+        return columnType == BOOLEAN;
     }
 
     public static boolean isBuiltInWideningCast(int fromType, int toType) {
@@ -163,11 +153,11 @@ public final class ColumnType {
     }
 
     public static boolean isGeoHash(int columnType) {
-        return (columnType & TYPE_FLAG_GEO_HASH) != 0;
+        return (columnType & TYPE_FLAG_GEOHASH) != 0;
     }
 
     public static boolean isInt(int columnType) {
-        return columnType == ColumnType.INT;
+        return columnType == INT;
     }
 
     public static boolean isNull(int columnType) {
@@ -203,64 +193,54 @@ public final class ColumnType {
     }
 
     public static String nameOf(int columnType) {
-        final int index = typeNameMap.keyIndex(columnType);
-        if (index > -1) {
-            return "unknown";
-        }
-        return typeNameMap.valueAtQuick(index);
+        int index = TYPE2NAME.keyIndex(columnType);
+        return index < 0 ? TYPE2NAME.valueAtQuick(index) : "unknown";
     }
 
-    public static int overloadDistance(short from, short to) {
-        final int fromTag = tagOf(from);
-        final int toTag = tagOf(to);
-        // Functions cannot accept UNDEFINED type (signature is not supported)
-        // this check is just in case
-        assert toTag > UNDEFINED : "Undefined not supported in overloads";
-        return OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag];
+    public static int overloadDistance(byte fromType, byte toType) {
+        assert toType != UNDEFINED : "Undefined not supported in overloads";
+        return OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * tagOf(fromType) + tagOf(toType)];
     }
 
     public static int pow2SizeOf(int columnType) {
         return TYPE_SIZE_POW2[tagOf(columnType)];
     }
 
-    public static int pow2SizeOfBits(int bits) {
+    public static short pow2SizeOfBits(int bits) {
         assert bits <= GEOLONG_MAX_BITS;
         return GEO_TYPE_SIZE_POW2[bits];
     }
 
-    public static int setDesignatedTimestampBit(int tsType, boolean designated) {
+    public static int setDesignatedTimestampBit(int type, boolean designated) {
         if (designated) {
-            return tsType | TYPE_FLAG_DESIGNATED_TIMESTAMP;
+            return type | TYPE_FLAG_DESIGNATED_TIMESTAMP;
         } else {
-            return tsType & ~(TYPE_FLAG_DESIGNATED_TIMESTAMP);
+            return type & ~(TYPE_FLAG_DESIGNATED_TIMESTAMP);
         }
     }
 
     public static int sizeOf(int columnType) {
-        short tag = tagOf(columnType);
-        if (tag < TYPE_SIZE.length) {
-            return TYPE_SIZE[tag];
-        }
-        return -1;
+        byte tag = tagOf(columnType);
+        return tag < TYPE_SIZE.length ? TYPE_SIZE[tag] : NOT_STORED_TYPE_SIZE;
     }
 
-    public static short tagOf(int type) {
-        return (short) (type & 0xFF);
+    public static byte tagOf(int type) {
+        return (byte) (type & 0xFF);
     }
 
-    public static short tagOf(CharSequence name) {
-        return (short) nameTypeMap.get(name);
+    public static byte tagOf(CharSequence name) {
+        return (byte) NAME2TYPE.get(name);
     }
 
     public static int typeOf(CharSequence name) {
-        return nameTypeMap.get(name);
+        return NAME2TYPE.get(name);
     }
 
     public static int variableColumnLengthBytes(int columnType) {
-        if (columnType == ColumnType.STRING) {
+        if (columnType == STRING) {
             return Integer.BYTES;
         }
-        assert columnType == ColumnType.BINARY;
+        assert columnType == BINARY;
         return Long.BYTES;
     }
 
@@ -287,40 +267,53 @@ public final class ColumnType {
         return (fromType == STRING && toType == SYMBOL) || (fromType == SYMBOL && toType == STRING) || (fromType == CHAR && toType == SYMBOL) || (fromType == CHAR && toType == STRING) || (fromType == UUID && toType == STRING);
     }
 
-    private static int mkGeoHashType(int bits, short baseType) {
-        return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
+    private static int mkGeoHashType(int bits, byte baseType) {
+        return (baseType & ~(0xFF << TAG_SIZE)) | (bits << TAG_SIZE) | TYPE_FLAG_GEOHASH; // bit 16 is GeoHash flag
+    }
+
+    private static short pow2(short value) {
+        switch (value) {
+            case NOT_STORED_TYPE_SIZE:
+            case DYNAMIC_TYPE_SIZE:
+                return -1;
+            default:
+                return (short) Numbers.msb(value);
+        }
     }
 
     static {
         assert MIGRATION_VERSION >= VERSION;
-        // For function overload the priority is taken from left to right
-        OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-                /* 1  BOOLEAN   */, {BOOLEAN}
-                /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 4  CHAR      */, {CHAR, STRING}
-                /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
-                /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
-                /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
-                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE}
-                /* 9  FLOAT     */, {FLOAT, DOUBLE}
-                /* 10 DOUBLE    */, {DOUBLE}
-                /* 11 STRING    */, {STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
-                /* 12 SYMBOL    */, {SYMBOL, STRING}
-                /* 13 LONG256   */, {LONG256}
-                /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
-                /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
-                /* 18 BINARY    */, {BINARY}
-                /* 19 UUID      */, {UUID, STRING}};
-        for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
-            for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
-                short value = OVERLOAD_NONE;
+        // type overload priority matrix:
+        OVERLOAD_PRIORITY = new byte[][]{
+                /* 0 UNDEFINED     */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+                /* 1  BOOLEAN      */, {BOOLEAN}
+                /* 2  BYTE         */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 3  SHORT        */, {SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 4  CHAR         */, {CHAR, STRING}
+                /* 5  INT          */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
+                /* 6  LONG         */, {LONG, DOUBLE, TIMESTAMP, DATE}
+                /* 7  DATE         */, {DATE, TIMESTAMP, LONG}
+                /* 8  TIMESTAMP    */, {TIMESTAMP, LONG, DATE}
+                /* 9  FLOAT        */, {FLOAT, DOUBLE}
+                /* 10 DOUBLE       */, {DOUBLE}
+                /* 11 STRING       */, {STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
+                /* 12 SYMBOL       */, {SYMBOL, STRING}
+                /* 13 LONG256      */, {LONG256}
+                /* 14 GEOBYTE      */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 15 GEOSHORT     */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 16 GEOINT       */, {GEOINT, GEOLONG, GEOHASH}
+                /* 17 GEOLONG      */, {GEOLONG, GEOHASH}
+                /* 18 BINARY       */, {BINARY}
+                /* 19 UUID         */, {UUID, STRING}
+        };
+        // see testOverloadPriorityMatrix for a view of the matrix
+        for (byte fromTag = UNDEFINED; fromTag < NULL; fromTag++) { // distance NULL to any type is 0
+            OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + UNDEFINED] = OVERLOAD_NONE;
+            for (byte toTag = BOOLEAN; toTag <= NULL; toTag++) {
+                int value = toTag == VAR_ARG ? OVERLOAD_MAX : OVERLOAD_NONE;
                 if (fromTag < OVERLOAD_PRIORITY.length) {
-                    short[] priority = OVERLOAD_PRIORITY[fromTag];
-                    for (short i = 0; i < priority.length; i++) {
+                    byte[] priority = OVERLOAD_PRIORITY[fromTag];
+                    for (int i = 0; i < priority.length; i++) {
                         if (priority[i] == toTag) {
                             value = i;
                             break;
@@ -330,73 +323,70 @@ public final class ColumnType {
                 OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag] = value;
             }
         }
-        // When null used as func arg, default to string as function factory arg to avoid weird behaviour
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
+        OVERLOAD_PRIORITY_MATRIX[VAR_ARG] = OVERLOAD_NONE;
+        // When null used as func arg, default to string as function factory arg
+        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_MAX;
         // Do the same for symbol -> avoids weird null behaviour
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
+        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_MAX;
 
+        TYPE_SIZE[CURSOR] = NOT_STORED_TYPE_SIZE;
+        TYPE_SIZE[VAR_ARG] = NOT_STORED_TYPE_SIZE;
+        TYPE_SIZE[RECORD] = NOT_STORED_TYPE_SIZE;
+        TYPE_SIZE[UNDEFINED] = NOT_STORED_TYPE_SIZE;
+        TYPE_SIZE[BOOLEAN] = Byte.BYTES;
+        TYPE_SIZE[BYTE] = Byte.BYTES;
+        TYPE_SIZE[SHORT] = Short.BYTES;
+        TYPE_SIZE[CHAR] = Character.BYTES;
+        TYPE_SIZE[INT] = Integer.BYTES;
+        TYPE_SIZE[LONG] = Long.BYTES;
+        TYPE_SIZE[DATE] = Long.BYTES;
+        TYPE_SIZE[TIMESTAMP] = Long.BYTES;
+        TYPE_SIZE[FLOAT] = Float.BYTES;
+        TYPE_SIZE[DOUBLE] = Double.BYTES;
+        TYPE_SIZE[STRING] = DYNAMIC_TYPE_SIZE;
+        TYPE_SIZE[SYMBOL] = Integer.BYTES;
+        TYPE_SIZE[LONG256] = Long256.BYTES;
+        TYPE_SIZE[GEOBYTE] = Byte.BYTES;
+        TYPE_SIZE[GEOSHORT] = Short.BYTES;
+        TYPE_SIZE[GEOINT] = Integer.BYTES;
+        TYPE_SIZE[GEOLONG] = Long.BYTES;
+        TYPE_SIZE[BINARY] = DYNAMIC_TYPE_SIZE;
+        TYPE_SIZE[UUID] = Uuid.BYTES;
+        TYPE_SIZE[LONG128] = Long128.BYTES;
+        TYPE_SIZE[IPv4] = Integer.BYTES;
+        TYPE_SIZE[NULL] = DYNAMIC_TYPE_SIZE; // storage size is column dependent
 
-        GEO_TYPE_SIZE_POW2 = new int[GEOLONG_MAX_BITS + 1];
+        TYPE_SIZE_POW2[UNDEFINED] = pow2(TYPE_SIZE[UNDEFINED]);
+        TYPE_SIZE_POW2[BOOLEAN] = pow2(TYPE_SIZE[BOOLEAN]);
+        TYPE_SIZE_POW2[BYTE] = pow2(TYPE_SIZE[BYTE]);
+        TYPE_SIZE_POW2[SHORT] = pow2(TYPE_SIZE[SHORT]);
+        TYPE_SIZE_POW2[CHAR] = pow2(TYPE_SIZE[CHAR]);
+        TYPE_SIZE_POW2[FLOAT] = pow2(TYPE_SIZE[FLOAT]);
+        TYPE_SIZE_POW2[INT] = pow2(TYPE_SIZE[INT]);
+        TYPE_SIZE_POW2[IPv4] = pow2(TYPE_SIZE[IPv4]);
+        TYPE_SIZE_POW2[SYMBOL] = pow2(TYPE_SIZE[SYMBOL]);
+        TYPE_SIZE_POW2[DOUBLE] = pow2(TYPE_SIZE[DOUBLE]);
+        TYPE_SIZE_POW2[STRING] = pow2(TYPE_SIZE[STRING]);
+        TYPE_SIZE_POW2[LONG] = pow2(TYPE_SIZE[LONG]);
+        TYPE_SIZE_POW2[DATE] = pow2(TYPE_SIZE[DATE]);
+        TYPE_SIZE_POW2[TIMESTAMP] = pow2(TYPE_SIZE[TIMESTAMP]);
+        TYPE_SIZE_POW2[LONG256] = pow2(TYPE_SIZE[LONG256]);
+        TYPE_SIZE_POW2[GEOBYTE] = pow2(TYPE_SIZE[GEOBYTE]);
+        TYPE_SIZE_POW2[GEOSHORT] = pow2(TYPE_SIZE[GEOSHORT]);
+        TYPE_SIZE_POW2[GEOINT] = pow2(TYPE_SIZE[GEOINT]);
+        TYPE_SIZE_POW2[GEOLONG] = pow2(TYPE_SIZE[GEOLONG]);
+        TYPE_SIZE_POW2[BINARY] = pow2(TYPE_SIZE[BINARY]);
+        TYPE_SIZE_POW2[CURSOR] = pow2(TYPE_SIZE[CURSOR]);
+        TYPE_SIZE_POW2[VAR_ARG] = pow2(TYPE_SIZE[VAR_ARG]);
+        TYPE_SIZE_POW2[RECORD] = pow2(TYPE_SIZE[RECORD]);
+        TYPE_SIZE_POW2[NULL] = pow2(TYPE_SIZE[NULL]);
+        TYPE_SIZE_POW2[LONG128] = pow2(TYPE_SIZE[LONG128]);
+        TYPE_SIZE_POW2[UUID] = pow2(TYPE_SIZE[UUID]);
+
+        GEO_TYPE_SIZE_POW2 = new short[GEOLONG_MAX_BITS + 1];
         for (int bits = 1; bits <= GEOLONG_MAX_BITS; bits++) {
-            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
+            GEO_TYPE_SIZE_POW2[bits] = (short) Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
-
-        typeNameMap.put(BOOLEAN, "BOOLEAN");
-        typeNameMap.put(BYTE, "BYTE");
-        typeNameMap.put(DOUBLE, "DOUBLE");
-        typeNameMap.put(FLOAT, "FLOAT");
-        typeNameMap.put(INT, "INT");
-        typeNameMap.put(LONG, "LONG");
-        typeNameMap.put(SHORT, "SHORT");
-        typeNameMap.put(CHAR, "CHAR");
-        typeNameMap.put(STRING, "STRING");
-        typeNameMap.put(SYMBOL, "SYMBOL");
-        typeNameMap.put(BINARY, "BINARY");
-        typeNameMap.put(DATE, "DATE");
-        typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
-        typeNameMap.put(LONG256, "LONG256");
-        typeNameMap.put(UUID, "UUID");
-        typeNameMap.put(LONG128, "LONG128");
-        typeNameMap.put(CURSOR, "CURSOR");
-        typeNameMap.put(RECORD, "RECORD");
-        typeNameMap.put(VAR_ARG, "VARARG");
-        typeNameMap.put(GEOHASH, "GEOHASH");
-        typeNameMap.put(REGCLASS, "regclass");
-        typeNameMap.put(REGPROCEDURE, "regprocedure");
-        typeNameMap.put(ARRAY_STRING, "text[]");
-        typeNameMap.put(IPv4, "IPv4");
-
-        nameTypeMap.put("boolean", BOOLEAN);
-        nameTypeMap.put("byte", BYTE);
-        nameTypeMap.put("double", DOUBLE);
-        nameTypeMap.put("float", FLOAT);
-        nameTypeMap.put("int", INT);
-        nameTypeMap.put("long", LONG);
-        nameTypeMap.put("short", SHORT);
-        nameTypeMap.put("char", CHAR);
-        nameTypeMap.put("string", STRING);
-        nameTypeMap.put("symbol", SYMBOL);
-        nameTypeMap.put("binary", BINARY);
-        nameTypeMap.put("date", DATE);
-        nameTypeMap.put("parameter", PARAMETER);
-        nameTypeMap.put("timestamp", TIMESTAMP);
-        nameTypeMap.put("cursor", CURSOR);
-        nameTypeMap.put("long256", LONG256);
-        nameTypeMap.put("uuid", UUID);
-        nameTypeMap.put("long128", LONG128);
-        nameTypeMap.put("geohash", GEOHASH);
-        nameTypeMap.put("text", STRING);
-        nameTypeMap.put("smallint", SHORT);
-        nameTypeMap.put("bigint", LONG);
-        nameTypeMap.put("real", FLOAT);
-        nameTypeMap.put("bytea", STRING);
-        nameTypeMap.put("varchar", STRING);
-        nameTypeMap.put("regclass", REGCLASS);
-        nameTypeMap.put("regprocedure", REGPROCEDURE);
-        nameTypeMap.put("text[]", ARRAY_STRING);
-        nameTypeMap.put("IPv4", IPv4);
-
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {
             sink.clear();
@@ -407,64 +397,76 @@ public final class ColumnType {
             }
             String name = sink.toString();
             int type = getGeoHashTypeWithBits(b);
-            typeNameMap.put(type, name);
-            nameTypeMap.put(name, type);
+            NAME2TYPE.put(name, type);
+            TYPE2NAME.put(type, name);
         }
 
-        TYPE_SIZE_POW2[UNDEFINED] = -1;
-        TYPE_SIZE_POW2[BOOLEAN] = 0;
-        TYPE_SIZE_POW2[BYTE] = 0;
-        TYPE_SIZE_POW2[SHORT] = 1;
-        TYPE_SIZE_POW2[CHAR] = 1;
-        TYPE_SIZE_POW2[FLOAT] = 2;
-        TYPE_SIZE_POW2[INT] = 2;
-        TYPE_SIZE_POW2[IPv4] = 2;
-        TYPE_SIZE_POW2[SYMBOL] = 2;
-        TYPE_SIZE_POW2[DOUBLE] = 3;
-        TYPE_SIZE_POW2[STRING] = -1;
-        TYPE_SIZE_POW2[LONG] = 3;
-        TYPE_SIZE_POW2[DATE] = 3;
-        TYPE_SIZE_POW2[TIMESTAMP] = 3;
-        TYPE_SIZE_POW2[LONG256] = 5;
-        TYPE_SIZE_POW2[GEOBYTE] = 0;
-        TYPE_SIZE_POW2[GEOSHORT] = 1;
-        TYPE_SIZE_POW2[GEOINT] = 2;
-        TYPE_SIZE_POW2[GEOLONG] = 3;
-        TYPE_SIZE_POW2[BINARY] = -1;
-        TYPE_SIZE_POW2[PARAMETER] = -1;
-        TYPE_SIZE_POW2[CURSOR] = -1;
-        TYPE_SIZE_POW2[VAR_ARG] = -1;
-        TYPE_SIZE_POW2[RECORD] = -1;
-        TYPE_SIZE_POW2[NULL] = -1;
-        TYPE_SIZE_POW2[LONG128] = 4;
-        TYPE_SIZE_POW2[UUID] = 4;
+        TYPE2NAME.put(UNDEFINED, "UNDEFINED");
+        TYPE2NAME.put(BOOLEAN, "BOOLEAN");
+        TYPE2NAME.put(BYTE, "BYTE");
+        TYPE2NAME.put(SHORT, "SHORT");
+        TYPE2NAME.put(CHAR, "CHAR");
+        TYPE2NAME.put(INT, "INT");
+        TYPE2NAME.put(LONG, "LONG");
+        TYPE2NAME.put(DATE, "DATE");
+        TYPE2NAME.put(TIMESTAMP, "TIMESTAMP");
+        TYPE2NAME.put(FLOAT, "FLOAT");
+        TYPE2NAME.put(DOUBLE, "DOUBLE");
+        TYPE2NAME.put(STRING, "STRING");
+        TYPE2NAME.put(SYMBOL, "SYMBOL");
+        TYPE2NAME.put(LONG256, "LONG256");
+        TYPE2NAME.put(GEOBYTE, "GEOBYTE");
+        TYPE2NAME.put(GEOSHORT, "GEOSHORT");
+        TYPE2NAME.put(GEOINT, "GEOINT");
+        TYPE2NAME.put(GEOLONG, "GEOLONG");
+        TYPE2NAME.put(BINARY, "BINARY");
+        TYPE2NAME.put(UUID, "UUID");
+        TYPE2NAME.put(CURSOR, "CURSOR");
+        TYPE2NAME.put(VAR_ARG, "VARARG");
+        TYPE2NAME.put(RECORD, "RECORD");
+        TYPE2NAME.put(GEOHASH, "GEOHASH");
+        TYPE2NAME.put(LONG128, "LONG128");
+        TYPE2NAME.put(IPv4, "IPv4");
+        TYPE2NAME.put(REGCLASS, "regclass");
+        TYPE2NAME.put(REGPROCEDURE, "regprocedure");
+        TYPE2NAME.put(ARRAY_STRING, "text[]");
+        TYPE2NAME.put(NULL, "NULL");
 
-        TYPE_SIZE[UNDEFINED] = -1;
-        TYPE_SIZE[BOOLEAN] = Byte.BYTES;
-        TYPE_SIZE[BYTE] = Byte.BYTES;
-        TYPE_SIZE[SHORT] = Short.BYTES;
-        TYPE_SIZE[CHAR] = Character.BYTES;
-        TYPE_SIZE[FLOAT] = Float.BYTES;
-        TYPE_SIZE[INT] = Integer.BYTES;
-        TYPE_SIZE[IPv4] = Integer.BYTES;
-        TYPE_SIZE[SYMBOL] = Integer.BYTES;
-        TYPE_SIZE[STRING] = 0;
-        TYPE_SIZE[DOUBLE] = Double.BYTES;
-        TYPE_SIZE[LONG] = Long.BYTES;
-        TYPE_SIZE[DATE] = Long.BYTES;
-        TYPE_SIZE[TIMESTAMP] = Long.BYTES;
-        TYPE_SIZE[LONG256] = Long256.BYTES;
-        TYPE_SIZE[GEOBYTE] = Byte.BYTES;
-        TYPE_SIZE[GEOSHORT] = Short.BYTES;
-        TYPE_SIZE[GEOINT] = Integer.BYTES;
-        TYPE_SIZE[GEOLONG] = Long.BYTES;
-        TYPE_SIZE[BINARY] = 0;
-        TYPE_SIZE[PARAMETER] = -1;
-        TYPE_SIZE[CURSOR] = -1;
-        TYPE_SIZE[VAR_ARG] = -1;
-        TYPE_SIZE[RECORD] = -1;
-        TYPE_SIZE[UUID] = 2 * Long.BYTES;
-        TYPE_SIZE[NULL] = 0;
-        TYPE_SIZE[LONG128] = 2 * Long.BYTES;
+        NAME2TYPE.put("undefined", UNDEFINED);
+        NAME2TYPE.put("boolean", BOOLEAN);
+        NAME2TYPE.put("byte", BYTE);
+        NAME2TYPE.put("short", SHORT);
+        NAME2TYPE.put("smallint", SHORT);
+        NAME2TYPE.put("char", CHAR);
+        NAME2TYPE.put("int", INT);
+        NAME2TYPE.put("long", LONG);
+        NAME2TYPE.put("bigint", LONG);
+        NAME2TYPE.put("date", DATE);
+        NAME2TYPE.put("timestamp", TIMESTAMP);
+        NAME2TYPE.put("float", FLOAT);
+        NAME2TYPE.put("real", FLOAT);
+        NAME2TYPE.put("double", DOUBLE);
+        NAME2TYPE.put("string", STRING);
+        NAME2TYPE.put("bytea", STRING);
+        NAME2TYPE.put("varchar", STRING);
+        NAME2TYPE.put("text", STRING);
+        NAME2TYPE.put("symbol", SYMBOL);
+        NAME2TYPE.put("long256", LONG256);
+        NAME2TYPE.put("geobyte", GEOBYTE);
+        NAME2TYPE.put("geoshort", GEOSHORT);
+        NAME2TYPE.put("geoint", GEOINT);
+        NAME2TYPE.put("geolong", GEOLONG);
+        NAME2TYPE.put("binary", BINARY);
+        NAME2TYPE.put("uuid", UUID);
+        NAME2TYPE.put("cursor", CURSOR);
+        NAME2TYPE.put("vararg", VAR_ARG);
+        NAME2TYPE.put("record", RECORD);
+        NAME2TYPE.put("geohash", GEOHASH);
+        NAME2TYPE.put("long128", LONG128);
+        NAME2TYPE.put("IPv4", IPv4);
+        NAME2TYPE.put("regclass", REGCLASS);
+        NAME2TYPE.put("regprocedure", REGPROCEDURE);
+        NAME2TYPE.put("text[]", ARRAY_STRING);
+        NAME2TYPE.put("null", NULL);
     }
 }
