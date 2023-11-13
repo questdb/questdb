@@ -45,7 +45,7 @@ public class TableTokenTest {
         Assert.assertEquals(t1.getTableId(), t1.hashCode());
 
         final String descr = t1.toString();
-        Assert.assertEquals("TableToken{tableName=table1, dirName=dir1, tableId=1, isWal=true}", descr);
+        Assert.assertEquals("TableToken{tableName=table1, dirName=dir1, tableId=1, isWal=true, isSystem=false}", descr);
 
         final TableToken t2 = t1.renamed("table2");
         Assert.assertEquals("table2", t2.getTableName());
@@ -57,6 +57,18 @@ public class TableTokenTest {
         final TableToken t1b = new TableToken("table1", "dir1", 1, true, false, false);
 
         Assert.assertEquals(t1, t1b);
+
+        final TableToken t3 = new TableToken("table3", "dir3", 3, false, true, true);
+        Assert.assertEquals("table3", t3.getTableName());
+        Assert.assertEquals("dir3", t3.getDirName());
+        Assert.assertEquals(3, t3.getTableId());
+        Assert.assertFalse(t3.isWal());
+        Assert.assertTrue(t3.isSystem());
+        Assert.assertTrue(t3.isProtected());
+        Assert.assertEquals(t3.getTableId(), t3.hashCode());
+
+        final String descr3 = t3.toString();
+        Assert.assertEquals("TableToken{tableName=table3, dirName=dir3, tableId=3, isWal=false, isSystem=true}", descr3);
     }
 
     @Test
