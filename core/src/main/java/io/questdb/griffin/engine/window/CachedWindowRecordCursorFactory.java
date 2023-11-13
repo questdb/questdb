@@ -167,6 +167,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
+    public int getScanDirection() {
+        return base.getScanDirection();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
@@ -255,7 +260,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
         private final RecordChain recordChain;
-        private RecordCursor base;
+        private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private boolean isRecordChainBuilt;
@@ -271,13 +276,13 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
-            return base.calculateSize(circuitBreaker);
+            return baseCursor.calculateSize(circuitBreaker);
         }
 
         @Override
         public void close() {
             if (isOpen) {
-                Misc.free(base);
+                Misc.free(baseCursor);
                 Misc.free(recordChain);
                 for (int i = 0, n = orderedSources.size(); i < n; i++) {
                     Misc.free(orderedSources.getQuick(i));
@@ -299,7 +304,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return base.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            return baseCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
         @Override
@@ -313,7 +318,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return base.newSymbolTable(columnIndexes.getQuick(columnIndex));
+            return baseCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
         @Override
@@ -336,11 +341,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             // - add record list's row ids to all trees, which will put these row ids in necessary order
             // for this we will be using out comparator, which helps tree compare long values
             // based on record these values are addressing
-            final Record record = base.getRecord();
+            final Record record = baseCursor.getRecord();
             final Record chainRecord = recordChain.getRecord();
             final Record chainRightRecord = recordChain.getRecordB();
             if (orderedGroupCount > 0) {
-                while (base.hasNext()) {
+                while (baseCursor.hasNext()) {
                     recordChainOffset = recordChain.put(record, recordChainOffset);
                     recordChain.recordAt(chainRecord, recordChainOffset);
                     for (int i = 0; i < orderedGroupCount; i++) {
@@ -349,7 +354,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                 }
             } else {
-                while (base.hasNext()) {
+                while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     recordChainOffset = recordChain.put(record, recordChainOffset);
                 }
@@ -442,11 +447,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             recordChain.toTop();
         }
 
-        private void of(RecordCursor base, SqlExecutionContext context) {
-            this.base = base;
+        private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+            this.baseCursor = baseCursor;
             isRecordChainBuilt = false;
             recordChainOffset = -1;
-            circuitBreaker = context.getCircuitBreaker();
+            circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 recordChain.reopen();
                 recordChain.setSymbolTableResolver(this);
@@ -454,6 +459,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 reopen(allFunctions);
                 isOpen = true;
             }
+            Function.init(allFunctions, this, executionContext);
         }
 
         private void reopen(ObjList<?> list) {

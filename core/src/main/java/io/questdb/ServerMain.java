@@ -309,7 +309,7 @@ public class ServerMain implements Closeable {
         }
 
         // http
-        freeOnExit.register(Services.createHttpServer(
+        freeOnExit.register(services().createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -317,7 +317,7 @@ public class ServerMain implements Closeable {
         ));
 
         // http min
-        freeOnExit.register(Services.createMinHttpServer(
+        freeOnExit.register(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -325,7 +325,7 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExit.register(Services.createPGWireServer(
+        freeOnExit.register(services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
@@ -334,7 +334,7 @@ public class ServerMain implements Closeable {
 
         if (!isReadOnly && config.isLineTcpEnabled()) {
             // ilp/tcp
-            freeOnExit.register(Services.createLineTcpReceiver(
+            freeOnExit.register(services().createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
                     workerPoolManager,
@@ -342,7 +342,7 @@ public class ServerMain implements Closeable {
             ));
 
             // ilp/udp
-            freeOnExit.register(Services.createLineUdpReceiver(
+            freeOnExit.register(services().createLineUdpReceiver(
                     config.getLineUdpReceiverConfiguration(),
                     engine,
                     workerPoolManager
@@ -351,6 +351,10 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("server is ready to be started").$();
+    }
+
+    protected Services services() {
+        return Services.INSTANCE;
     }
 
     protected void setupWalApplyJob(
