@@ -2229,7 +2229,11 @@ if __name__ == "__main__":
     @Test
     public void testCancelOneQueryOutOfMultipleRunningOnes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+            ddl("create table if not exists tab as " +
+                    "(select x::timestamp ts, x, rnd_double() d " +
+                    "from long_sequence(1000000)) " +
+                    "timestamp(ts) " +
+                    "partition by day");
             mayDrainWalQueue();
 
             final int THREADS = 5;
@@ -2253,7 +2257,8 @@ if __name__ == "__main__":
                 for (int i = 0; i < THREADS; i++) {
                     final int j = i;
                     new Thread(() -> {
-                        final String query = (j == BLOCKED_THREAD) ? "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0" :
+                        final String query = (j == BLOCKED_THREAD) ?
+                                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0" :
                                 "select count(*) from tab where x > 0";
                         try (PreparedStatement stmt = conns.getQuick(j).prepareStatement(query)) {
                             startLatch.countDown();

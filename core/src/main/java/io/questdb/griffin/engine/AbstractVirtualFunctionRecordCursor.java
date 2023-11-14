@@ -53,7 +53,11 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     @Override
     public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
-        return baseCursor.calculateSize(circuitBreaker);
+        if (baseCursor != null) {
+            return baseCursor.calculateSize(circuitBreaker);
+        } else {
+            return RecordCursor.super.calculateSize(circuitBreaker);
+        }
     }
 
     @Override
