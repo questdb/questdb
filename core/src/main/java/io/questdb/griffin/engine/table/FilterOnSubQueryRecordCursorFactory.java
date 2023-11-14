@@ -193,8 +193,8 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         }
 
         @Override
-        public long skipTo(long rowCount) {
-            return delegate.skipTo(rowCount);
+        public void skipRows(Counter rowCount) {
+            delegate.skipRows(rowCount);
         }
 
         @Override

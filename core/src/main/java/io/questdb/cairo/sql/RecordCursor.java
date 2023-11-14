@@ -38,26 +38,24 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
      * Counts remaining number of records in this cursor, moving the cursor to the end.
-     * <p>
+     * <p/>
      * Note - this method should handle return correct result even it's interrupted by {@link DataUnavailableException}
+     * The number of rows counted so far is kept in the counter parameter.
      *
      * @param circuitBreaker - circuit breaker to use to check for timeouts or stale connection.
-     * @return number of rows left to read
+     * @param counter        - counter to store partial or complete result
      */
-    default long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
-        long count = 0;
-
+    default void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         if (circuitBreaker != null) {
             while (hasNext()) {
-                count++;
+                counter.inc();
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         } else {
             while (hasNext()) {
-                count++;
+                counter.inc();
             }
         }
-        return count;
     }
 
     /**
@@ -133,23 +131,18 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     long size() throws DataUnavailableException;
 
     /**
-     * Tries to position the record at the given row count to skip in an efficient way.
+     * Tries to position the record at the given row count (relative to current position) to skip in an efficient way.
      * Rows are counted top of table.
      * <p>
-     * Supported by some record cursors that support random access (e.g. tables ordered by
-     * designated timestamp).
+     * Supported by some record cursors that support random access (e.g. tables ordered by designated timestamp).
      *
-     * @param rowCount row count to skip down the cursor
-     * @return number of skipped rows
+     * @param rowCount number of rows to skip down the cursor; method subtracts the number of actually skipped rows from argument
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    default long skipTo(long rowCount) throws DataUnavailableException {
-        long skipped = 0;
-        while (skipped < rowCount && hasNext()) {
-            skipped++;
+    default void skipRows(Counter rowCount) throws DataUnavailableException {
+        while (rowCount.get() > 0 && hasNext()) {
+            rowCount.dec();
         }
-
-        return skipped;
     }
 
     /**
@@ -157,4 +150,36 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * Sets location to first column.
      */
     void toTop();
+
+    class Counter {
+        private long value;
+
+        public void add(long val) {
+            value += val;
+        }
+
+        public void clear() {
+            value = 0;
+        }
+
+        public void dec() {
+            value--;
+        }
+
+        public void dec(long val) {
+            value -= val;
+        }
+
+        public long get() {
+            return value;
+        }
+
+        public void inc() {
+            value++;
+        }
+
+        public void set(long val) {
+            value = val;
+        }
+    }
 }

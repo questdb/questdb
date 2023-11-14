@@ -52,11 +52,11 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     }
 
     @Override
-    public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (baseCursor != null) {
-            return baseCursor.calculateSize(circuitBreaker);
+            baseCursor.calculateSize(circuitBreaker, counter);
         } else {
-            return RecordCursor.super.calculateSize(circuitBreaker);
+            RecordCursor.super.calculateSize(circuitBreaker, counter);
         }
     }
 
@@ -118,8 +118,12 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     }
 
     @Override
-    public long skipTo(long rowCount) throws DataUnavailableException {
-        return baseCursor.skipTo(rowCount);
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        if (baseCursor != null) {
+            baseCursor.skipRows(rowCount);
+        } else {
+            RecordCursor.super.skipRows(rowCount);
+        }
     }
 
     @Override

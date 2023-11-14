@@ -24,7 +24,10 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -76,6 +79,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
+        private final RecordCursor.Counter counter = new Counter();
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long count;
@@ -98,13 +102,8 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (size > -1) {
                     count = size;
                 } else {
-                    count = 0;
-                    try {
-                        count = baseCursor.calculateSize(circuitBreaker);
-                    } catch (DataUnavailableException e) {
-                        baseCursor.toTop();
-                        throw e;
-                    }
+                    baseCursor.calculateSize(circuitBreaker, counter);
+                    count = counter.get();
                 }
                 hasNext = false;
                 return true;
@@ -121,6 +120,8 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         public void toTop() {
             baseCursor.toTop();
             hasNext = true;
+            count = 0;
+            counter.clear();
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {

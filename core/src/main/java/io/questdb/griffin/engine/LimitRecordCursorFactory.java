@@ -99,6 +99,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class LimitRecordCursor implements RecordCursor {
+        private final RecordCursor.Counter counter = new Counter();
         private final Function hiFunction;
         private final Function loFunction;
         private boolean areRowsCounted;
@@ -188,6 +189,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             hi = hiFunction != null ? hiFunction.getLong(null) : -1;
             isLimitCounted = false;
             areRowsCounted = false;
+            counter.clear();
         }
 
         private void countLimit() {
@@ -280,19 +282,23 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             if (!areRowsCounted) {
-                rowCount = base.calculateSize(circuitBreaker);
+                base.calculateSize(circuitBreaker, counter);
+                rowCount = counter.get();
                 areRowsCounted = true;
+                counter.clear();
             }
         }
 
         private void skipRows(long rowCount) {
             if (skipToRows == -1) {
                 skipToRows = Math.max(0, rowCount);
+                counter.set(skipToRows);
                 base.toTop();
             }
             if (skipToRows > 0) {
-                base.skipTo(rowCount);
+                base.skipRows(counter);
                 skipToRows = 0;
+                counter.clear();
             }
         }
     }

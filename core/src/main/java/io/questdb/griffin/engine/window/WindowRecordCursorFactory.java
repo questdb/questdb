@@ -171,15 +171,12 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public long skipTo(long rowCount) throws DataUnavailableException {
+        public void skipRows(Counter rowCount) throws DataUnavailableException {
             // we can't skip to an arbitrary result set point because current window function value might depend
             // on values in other rows that could be located anywhere
-            long skipped = 0;
-            while (skipped < rowCount && hasNext()) {
-                skipped++;
+            while (rowCount.get() > 0 && hasNext()) {
+                rowCount.dec();
             }
-
-            return skipped;
         }
 
         @Override
