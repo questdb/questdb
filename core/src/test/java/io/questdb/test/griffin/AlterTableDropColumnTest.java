@@ -171,7 +171,7 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x drop column l, kk", 29, "Invalid column: kk");
+        assertFailure("alter table x drop column l, kk", 29, "invalid column [name=kk]");
     }
 
     @Test

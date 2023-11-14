@@ -936,7 +936,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAmbiguousColumn() throws Exception {
-        assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
+        assertSyntaxError("orders join customers on customerId = customerId", 25, "ambiguous column [name=customerId]",
                 modelOf("orders").col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)
         );
@@ -1537,7 +1537,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table tab as (select rnd_byte() b, rnd_boolean() b from long_sequence(1))",
                 56,
-                "Duplicate column [name=b]",
+                "duplicate column [name=b]",
                 modelOf("tab")
                         .col("b", ColumnType.BYTE)
                         .col("b", ColumnType.BOOLEAN)
@@ -1549,7 +1549,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table tab as (select rnd_byte() b, rnd_boolean() \"B\" from long_sequence(1))",
                 56,
-                "Duplicate column [name=B]",
+                "duplicate column [name=B]",
                 modelOf("tab")
                         .col("b", ColumnType.BYTE)
                         .col("b", ColumnType.BOOLEAN)
@@ -1561,7 +1561,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table tab as (select rnd_byte() \"गाजर का हलवा\", rnd_boolean() as \"गाजर का हलवा\" from long_sequence(1))",
                 69,
-                "Duplicate column [name=गाजर का हलवा]",
+                "duplicate column [name=गाजर का हलवा]",
                 modelOf("tab")
                         .col("b", ColumnType.BYTE)
                         .col("b", ColumnType.BOOLEAN)
@@ -1573,7 +1573,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table X as ( select a, b, c from tab ), index(x)",
                 53,
-                "Invalid column",
+                "invalid column [name=x]",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
@@ -2009,7 +2009,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by YEAR",
                 124,
-                "Duplicate column [name=T]"
+                "duplicate column [name=T]"
         );
     }
 
@@ -2018,7 +2018,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (侘寂 INT, 侘寂 BOOLEAN)",
                 24,
-                "Duplicate column [name=侘寂]"
+                "duplicate column [name=侘寂]"
         );
     }
 
@@ -2499,7 +2499,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by YEAR",
                 109,
-                "Invalid column"
+                "invalid column [name=k]"
         );
     }
 
@@ -2546,7 +2546,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(zyz) " +
                         "partition by YEAR",
                 112,
-                "Invalid column"
+                "invalid column [name=zyz]"
         );
     }
 
@@ -3247,7 +3247,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException(
                 "select (pg_catalog.pg_class()).n, (pg_catalog.pg_description()).z, pg_catalog.pg_class() x, pg_catalog.pg_description() x from long_sequence(2)",
                 120,
-                "Duplicate column [name=x]"
+                "duplicate column [name=x]"
         );
     }
 
@@ -3305,7 +3305,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x, pg_catalog.pg_class() X from long_sequence(2)",
                 81,
-                "Duplicate column [name=X]"
+                "duplicate column [name=X]"
         );
     }
 
@@ -3314,7 +3314,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() 侘寂, pg_catalog.pg_class() 侘寂 from long_sequence(2)",
                 82,
-                "Duplicate column [name=侘寂]"
+                "duplicate column [name=侘寂]"
         );
     }
 
@@ -3339,7 +3339,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select pg_catalog.pg_class() cc, pg_catalog.pg_description() cc from long_sequence(2)",
                 61,
-                "Duplicate column [name=cc]"
+                "duplicate column [name=cc]"
         );
     }
 
@@ -3533,7 +3533,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testDuplicateAlias() throws Exception {
         assertSyntaxError("customers a" +
-                        " cross join orders a", 30, "Duplicate table or alias: a",
+                        " cross join orders a", 30, "duplicate table or alias: a",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
         );
@@ -3544,7 +3544,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException(
                 "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
                 79,
-                "Duplicate column [name=col4]"
+                "duplicate column [name=col4]"
         );
     }
 
@@ -4498,7 +4498,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testInsertAsSelectDuplicateColumns() throws Exception {
         assertSyntaxError("insert into x (b,b) select * from y",
-                17, "Duplicate column [name=b]",
+                17, "duplicate column [name=b]",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING),
@@ -4697,7 +4697,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertSyntaxError("orders join customers on customerIdx = customerId", 25, "Invalid column",
+        assertSyntaxError("orders join customers on customerIdx = customerId", 25, "invalid column [name=customerIdx]",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
         );
@@ -4708,7 +4708,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select a + b x from tab",
                 11,
-                "Invalid column",
+                "invalid column [name=b]",
                 modelOf("tab").col("a", ColumnType.INT)
         );
     }
@@ -4808,7 +4808,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "customers c " +
                         "join (" +
                         "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
-                        ") o on c.customerId = o.customerId", 21, "Invalid column",
+                        ") o on c.customerId = o.customerId", 21, "invalid column [name=orderIdx]",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
                 modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
@@ -4817,7 +4817,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "customers c " +
                         "join (" +
                         "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
-                        ") o on c.customerId = o.customerId", 30, "Invalid column",
+                        ") o on c.customerId = o.customerId", 30, "invalid column [name=o.productId2]",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
                 modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
@@ -5090,7 +5090,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab cross join tab",
                 29,
-                "Duplicate table or alias: tab",
+                "duplicate table or alias: tab",
                 modelOf("tab").col("y", ColumnType.INT)
         );
     }
@@ -6508,7 +6508,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select tab1.x from tab1 join tab2 on (x) order by y",
                 50,
-                "Ambiguous",
+                "ambiguous column [name=y]",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
@@ -6739,7 +6739,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "tab order by 3a, 1",
                 13,
-                "Invalid column: 3a",
+                "invalid column [name=3a]",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7568,7 +7568,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from tab timestamp(z) sample by 2m",
                 35,
-                "Invalid column",
+                "invalid column [name=z]",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7865,7 +7865,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "   b.b bb " +
                         "FROM DB a lt join DB a",
                 71,
-                "Duplicate table or alias: a",
+                "duplicate table or alias: a",
                 modelOf("DB").col("a", ColumnType.SYMBOL).timestamp("b")
         );
 
@@ -7877,7 +7877,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "   b.b bb " +
                         "FROM DB a lt join DB b",
                 36,
-                "Duplicate column [name=ab]",
+                "duplicate column [name=ab]",
                 modelOf("DB").col("a", ColumnType.SYMBOL).timestamp("b")
         );
     }
@@ -7976,13 +7976,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x x, x x from long_sequence(1)",
                 14,
-                "Duplicate column [name=x]"
+                "duplicate column [name=x]"
         );
 
         assertSyntaxError(
                 "select x x, y x from tabula",
                 14,
-                "Duplicate column [name=x]",
+                "duplicate column [name=x]",
                 modelOf("tabula")
                         .col("x", ColumnType.LONG)
                         .col("y", ColumnType.LONG)
@@ -8300,7 +8300,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from (select x from tab1) timestamp(y)",
                 45,
-                "Invalid column",
+                "invalid column [name=y]",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.TIMESTAMP)
         );
     }

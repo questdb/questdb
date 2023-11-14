@@ -105,7 +105,7 @@ public class CaseCommon {
         final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
 
         if (type == LongIntHashMap.NO_ENTRY_VALUE) {
-            throw SqlException.$(valuePos, "inconvertible types ").put(ColumnType.nameOf(valueType)).put(" to ").put(ColumnType.nameOf(commonType));
+            throw SqlException.inconvertibleTypes(valuePos, valueType, commonType);
         }
         return type;
     }

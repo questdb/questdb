@@ -156,7 +156,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void test2FailOnSelectAliasUsedInGroupByExpression() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
-            final String errorMessage = "[48] Invalid column: agx";
+            final String errorMessage = "[48] invalid column [name=agx]";
 
             assertError("select x, abs(x) as agx, avg(y) from t group by agx+1 ", errorMessage);
             assertError("select x, x+5    as agx, avg(y) from t group by agx+1 ", errorMessage);
@@ -205,7 +205,7 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
             String query = "select x, avg(y), case when x > 0 then 1 else row_number() over (partition by x) end as z from t group by x, z";
-            assertError(query, "[75] Invalid column: by");
+            assertError(query, "[75] invalid column [name=by]");
         });
     }
 
@@ -408,7 +408,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by windSpeed " +
                     "order by windSpeed";
 
-            assertError(query, "[35] Invalid column: avg");
+            assertError(query, "[35] invalid column [name=avg]");
         });
     }
 
@@ -636,7 +636,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "join det details on ordr.x = details.x " +
                     "group by details.date_report " +
                     "order by details.date_report";
-            assertError(query, "[35] Ambiguous column [name=date_report]");
+            assertError(query, "[35] ambiguous column [name=date_report]");
         });
     }
 
@@ -651,7 +651,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "join det details on ordr.x = details.x " +
                     "group by details.date_report " +
                     "order by details.date_report";
-            assertError(query, "[44] Ambiguous column [name=date_report]");
+            assertError(query, "[44] ambiguous column [name=date_report]");
         });
     }
 

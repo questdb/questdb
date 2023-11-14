@@ -2411,7 +2411,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                     if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
                         // get column position
                         ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                        throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "VIRTUAL_" + i, tableColumnType, updateColumnName);
+                        throw SqlException.inconvertibleTypes(
+                                setRhs.position,
+                                virtualColumnType,
+                                "VIRTUAL_" + i,
+                                tableColumnType,
+                                updateColumnName
+                        );
                     }
                 }
             }

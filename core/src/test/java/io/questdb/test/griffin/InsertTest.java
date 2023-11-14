@@ -612,7 +612,7 @@ public class InsertTest extends AbstractCairoTest {
                 assertException("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(30, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid column [name=ccy2]");
             }
         });
     }
@@ -754,7 +754,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertNoSelfReference() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)");
-            assertException("insert into trades_aapl (ts) values (ts)", 37, "Invalid column");
+            assertException("insert into trades_aapl (ts) values (ts)", 37, "invalid column [name=ts]");
         });
     }
 
@@ -941,7 +941,7 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertValueCannotReferenceTableColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException("insert into balances values (1, ccy, 356.12)", 32, "Invalid column: ccy");
+            assertException("insert into balances values (1, ccy, 356.12)", 32, "invalid column [name=ccy]");
         });
     }
 

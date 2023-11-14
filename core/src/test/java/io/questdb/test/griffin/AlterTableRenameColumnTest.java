@@ -63,7 +63,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x rename column y yy", 28, "Invalid column: y");
+        assertFailure("alter table x rename column y yy", 28, "invalid column [name=y]");
     }
 
     @Test

@@ -37,7 +37,7 @@ public class CastNullTypeFunctionFactoryTest extends AbstractCairoTest {
         assertException(
                 "cast(null as CURSOR)",
                 13,
-                "Invalid constant [value=CURSOR]"
+                "invalid constant [value=CURSOR]"
         );
     }
 
@@ -46,7 +46,7 @@ public class CastNullTypeFunctionFactoryTest extends AbstractCairoTest {
         assertException(
                 "cast(null as NON_EXISTING_TYPE)",
                 13,
-                "Invalid constant [value=NON_EXISTING_TYPE]"
+                "invalid constant [value=NON_EXISTING_TYPE]"
         );
     }
 

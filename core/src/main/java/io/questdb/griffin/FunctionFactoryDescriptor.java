@@ -53,14 +53,14 @@ public class FunctionFactoryDescriptor {
         ) {
             char cc = sig.charAt(i);
             if (FunctionFactoryDescriptor.getArgType(cc) == ColumnType.UNDEFINED) {
-                throw SqlException.position(0).put("illegal argument type: ").put('`').put(cc).put('`');
+                throw SqlException.invalidSignature(0, sig, cc);
             }
             // check if this is an array
             i++;
             if (i < n && sig.charAt(i) == '[') {
                 i++;
                 if (i >= n || sig.charAt(i) != ']') {
-                    throw SqlException.position(0).put("invalid array declaration");
+                    throw SqlException.invalidSignature(i, sig, "invalid array declaration");
                 }
                 i++;
             }
@@ -222,36 +222,36 @@ public class FunctionFactoryDescriptor {
 
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
         if (sig == null) {
-            throw SqlException.$(0, "NULL signature");
+            throw SqlException.invalidSignature(0, sig, "NULL signature");
         }
 
         int openBraceIndex = sig.indexOf('(');
         if (openBraceIndex == -1) {
-            throw SqlException.$(0, "open brace expected");
+            throw SqlException.invalidSignature(0, sig, "open brace expected");
         }
 
         if (openBraceIndex == 0) {
-            throw SqlException.$(0, "empty function name");
+            throw SqlException.invalidSignature(0, sig, "empty function name");
         }
 
         if (sig.charAt(sig.length() - 1) != ')') {
-            throw SqlException.$(0, "close brace expected");
+            throw SqlException.invalidSignature(sig.length() - 1, sig, "close brace expected");
         }
 
         int c = sig.charAt(0);
         if (c >= '0' && c <= '9') {
-            throw SqlException.$(0, "name must not start with digit");
+            throw SqlException.invalidSignature(0, sig, "name must not start with digit");
         }
 
         for (int i = 0; i < openBraceIndex; i++) {
             char cc = sig.charAt(i);
             if (FunctionFactoryCache.invalidFunctionNameChars.contains(cc)) {
-                throw SqlException.position(0).put("invalid character: ").put(cc);
+                throw SqlException.invalidSignature(i, sig, cc);
             }
         }
 
         if (FunctionFactoryCache.invalidFunctionNames.keyIndex(sig, 0, openBraceIndex) < 0) {
-            throw SqlException.position(0).put("invalid function name character: ").put(sig);
+            throw SqlException.invalidSignature(0, sig, "invalid function name");
         }
         return openBraceIndex;
     }

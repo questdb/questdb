@@ -56,7 +56,7 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
         try {
             assertQuery(
                     "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
-                    "xxxx where rnd_long256!='0xG56'",
+                    "xxxx where rnd_long256!='0xG56'", // G is not a valid hex
                     "create table xxxx as (select rnd_long256() from long_sequence(1));",
                     null,
                     true);

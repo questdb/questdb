@@ -68,7 +68,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 22,
-                "Invalid column: c"
+                "invalid column [name=c]"
         );
     }
 
@@ -251,7 +251,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE",
                 707,
-                "Invalid column: xy"
+                "invalid column [name=xy]"
         );
     }
 
@@ -2558,7 +2558,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE",
                 713,
-                "Invalid column: xy"
+                "invalid column [name=xy]"
         );
     }
 

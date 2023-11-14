@@ -994,7 +994,7 @@ public final class IntervalUtils {
             long hi = getEncodedPeriodHi(out, index);
             hi = Timestamps.addPeriod(hi, type, period);
             if (hi < low) {
-                throw SqlException.invalidDate(position);
+                throw SqlException.invalidDate(seq.subSequence(lo, p), position);
             }
             replaceHiLoInterval(low, hi, operation, out);
             return;
@@ -1005,11 +1005,11 @@ public final class IntervalUtils {
             long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);
             long hiMillis = Timestamps.addPeriod(loMillis, type, period);
             if (hiMillis < loMillis) {
-                throw SqlException.invalidDate(position);
+                throw SqlException.invalidDate(seq.subSequence(lo, p), position);
             }
             addHiLoInterval(loMillis, hiMillis, operation, out);
         } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
+            throw SqlException.invalidDate(seq.subSequence(lo, p), position);
         }
     }
 

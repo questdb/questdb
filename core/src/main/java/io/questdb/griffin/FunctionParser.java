@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -35,7 +36,6 @@ import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -127,7 +127,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.NULL:
                 return NullConstant.NULL;
             default:
-                throw invalidColumnType(position, columnType);
+                throw SqlException.invalidColumnType(position, columnType);
         }
     }
 
@@ -410,88 +410,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
     }
 
-    private static SqlException invalidArgument(ExpressionNode node, ObjList<Function> args, FunctionFactoryDescriptor descriptor) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put("Unexpected argument for function [name=");
-        ex.put(node.token);
-        ex.put(", signature=");
-        ex.put('(');
-        if (descriptor != null) {
-            for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(", ");
-                }
-                final int mask = descriptor.getArgTypeMask(i);
-                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(mask)));
-                if (FunctionFactoryDescriptor.isArray(mask)) {
-                    ex.put("[]");
-                }
-                if (FunctionFactoryDescriptor.isConstant(mask)) {
-                    ex.put(" constant");
-                }
-            }
-        }
-        ex.put("), args=");
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(", ");
-                }
-                Function arg = args.getQuick(i);
-                ex.put(ColumnType.nameOf(arg.getType()));
-                if (arg.isConstant()) {
-                    ex.put(" constant");
-                }
-            }
-        }
-        ex.put(")]");
-        Misc.freeObjList(args);
-        return ex;
-    }
-
-    private static SqlException invalidColumnType(int position, int columnType) {
-        return SqlException.$(position, "Invalid column type [name=").put(ColumnType.nameOf(columnType)).put(", value=").put(columnType).put(']');
-    }
-
-    private static SqlException invalidConstant(int position, CharSequence constant) {
-        return SqlException.position(position).put("Invalid constant [value=").put(constant).put(']');
-    }
-
-    private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put("unknown function name: ");
-        ex.put(node.token);
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
-            }
-        }
-        ex.put(')');
-        Misc.freeObjList(args);
-        return ex;
-    }
-
-    private static long parseDate(CharSequence str, int position) throws SqlException {
-        try {
-            return DateFormatUtils.parseDate(str);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(str, position);
-        }
-    }
-
-    private static long parseTimestamp(CharSequence str, int position) throws SqlException {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(str);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(str, position);
-        }
-    }
-
     private Function checkAndCreateFunction(
             FunctionFactory factory,
             @Transient ObjList<Function> args,
@@ -641,7 +559,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         } catch (NumericException ignore) {
         }
 
-        throw invalidConstant(position, tok);
+        throw SqlException.invalidConstant(position, tok);
     }
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
@@ -667,7 +585,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         if (overload == null) {
-            throw invalidFunction(node, args);
+            throw SqlException.invalidFunction(node, args);
         }
 
         final int argCount = args == null ? 0 : args.size();
@@ -870,7 +788,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         if (candidate == null) {
             // no signature match
-            throw invalidArgument(node, args, candidateDescriptor);
+            throw SqlException.invalidArgument(node, args, candidateDescriptor);
         }
 
         if (candidateSigVarArgConst) {
@@ -908,14 +826,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     args.setQuick(k, IntConstant.NULL);
                 }
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && arg.isConstant()) {
-                if (sigArgTypeTag == ColumnType.TIMESTAMP) {
-                    int position = argPositions.getQuick(k);
-                    long timestamp = parseTimestamp(arg.getStr(null), position);
-                    args.set(k, TimestampConstant.newInstance(timestamp));
-                } else if (sigArgTypeTag == ColumnType.DATE) {
-                    int position = argPositions.getQuick(k);
-                    long millis = parseDate(arg.getStr(null), position);
-                    args.set(k, DateConstant.newInstance(millis));
+                CharSequence str = arg.getStr(null);
+                try {
+                    if (sigArgTypeTag == ColumnType.TIMESTAMP) {
+                        args.set(k, TimestampConstant.newInstance(SqlUtil.implicitCastStrAsTimestamp(str)));
+
+                    } else if (sigArgTypeTag == ColumnType.DATE) {
+                        args.set(k, DateConstant.newInstance(SqlUtil.implicitCastStrAsDate(str)));
+                    }
+                } catch (ImplicitCastException e) {
+                    throw SqlException.invalidDate(str, argPositions.getQuick(k));
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));

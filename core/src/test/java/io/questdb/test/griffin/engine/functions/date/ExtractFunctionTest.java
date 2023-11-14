@@ -106,7 +106,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
         assertException(
                 "select extract(hour, '2022-03-11T22:00:30.555555Z'::timestamp)",
                 15,
-                "Invalid column: hour"
+                "invalid column [name=hour]"
         );
     }
 

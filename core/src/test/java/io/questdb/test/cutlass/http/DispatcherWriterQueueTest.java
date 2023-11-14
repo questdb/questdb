@@ -690,8 +690,8 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "4a\r\n" +
-                        "{\"query\":\"update x set ts=123\",\"error\":\"Invalid column: ts\",\"position\":13}\r\n" +
+                        "50\r\n" +
+                        "{\"query\":\"update x set ts=123\",\"error\":\"invalid column [name=ts]\",\"position\":13}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 -1L,

@@ -231,6 +231,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         typeNameToId.put("long256", ColumnType.LONG256);
         typeNameToId.put("binary", ColumnType.BINARY);
         typeNameToId.put("uuid", ColumnType.UUID);
+        typeNameToId.put("long128", ColumnType.LONG128);
         typeNameToId.put("IPv4", ColumnType.IPv4);
     }
 }

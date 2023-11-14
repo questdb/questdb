@@ -254,7 +254,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
             estimate("sym0 = 'a'", "sym");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid column [name=sym0]");
         }
     }
 
@@ -264,7 +264,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
             estimate("sym0 in ('a')", "sym");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid column [name=in]");
         }
     }
 
@@ -274,7 +274,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
             estimate("sym0 != 'a'", "sym");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid column [name=sym0]");
         }
     }
 
@@ -284,7 +284,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
             estimate("sym0 not in ('a')", "sym");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid column [name=in]");
         }
     }
 

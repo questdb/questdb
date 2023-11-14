@@ -268,7 +268,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 return Numbers.parseLong(lo.token);
             } catch (NumericException ignore) {
-                throw SqlException.invalidDate(lo.position);
+                throw SqlException.invalidDate(lo.token, lo.position);
             }
         }
     }
@@ -1450,7 +1450,7 @@ public final class WhereClauseParser implements Mutable {
             int timestampType = metadata.getColumnType(metadata.getTimestampIndex());
             function.assignType(timestampType, executionContext.getBindVariableService());
         } else if (!canCastToTimestamp(function.getType())) {
-            throw SqlException.invalidDate(functionPosition);
+            throw SqlException.invalidDate(function.getName(), functionPosition);
         }
     }
 

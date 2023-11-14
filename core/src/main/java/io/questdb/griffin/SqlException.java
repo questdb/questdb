@@ -25,11 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -53,7 +58,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException ambiguousColumn(int position, CharSequence columnName) {
-        return position(position).put("Ambiguous column [name=").put(columnName).put(']');
+        return position(position).put("ambiguous column [name=").put(columnName).put(']');
     }
 
     public static SqlException duplicateColumn(int position, CharSequence colName) {
@@ -61,7 +66,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException duplicateColumn(int position, CharSequence colName, CharSequence additionalMessage) {
-        SqlException exception = SqlException.$(position, "Duplicate column [name=").put(colName).put(']');
+        SqlException exception = SqlException.$(position, "duplicate column [name=").put(colName).put(']');
         if (additionalMessage != null) {
             exception.put(' ').put(additionalMessage);
         }
@@ -72,25 +77,139 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return SqlException.$(position, "window function called in non-window context, make sure to add OVER clause");
     }
 
+    public static SqlException inconvertibleTypes(int position, int fromType, int toType) {
+        return inconvertibleTypes(position, fromType, null, toType, null, -1);
+    }
+
+    public static SqlException inconvertibleTypes(int position, int fromType, int toType, CharSequence toName) {
+        return inconvertibleTypes(position, fromType, null, toType, toName, -1);
+    }
+
+    public static SqlException inconvertibleTypes(int position, int fromType, int toType, int toTypeIndex) {
+        return inconvertibleTypes(position, fromType, null, toType, null, toTypeIndex);
+    }
+
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
-        return $(position, "inconvertible types: ")
-                .put(ColumnType.nameOf(fromType))
-                .put(" -> ")
-                .put(ColumnType.nameOf(toType))
-                .put(" [from=").put(fromName)
-                .put(", to=").put(toName).put(']');
+        return inconvertibleTypes(position, fromType, fromName, toType, toName, -1);
+    }
+
+    public static SqlException inconvertibleValue(double value, int fromType, int toType) {
+        return addCastDirection(tlInconvertibleValueInstance().put(value), fromType, toType);
+    }
+
+    public static SqlException inconvertibleValue(char value, int fromType, int toType) {
+        return addCastDirection(tlInconvertibleValueInstance().put(value), fromType, toType);
+    }
+
+    public static SqlException inconvertibleValue(int tupleIndex, CharSequence value, int fromType, int toType) {
+        SqlException ice = inconvertibleValue(value, fromType, toType);
+        return tupleIndex == -1 ? ice : ice.put(" tuple: ").put(tupleIndex);
+    }
+
+    public static SqlException inconvertibleValue(CharSequence value, int fromType, int toType) {
+        SqlException ice = tlInconvertibleValueInstance();
+        if (value != null) {
+            ice.put('`').put(value).put('`');
+        } else {
+            ice.put("null");
+        }
+        return addCastDirection(ice, fromType, toType);
+    }
+
+    public static SqlException inconvertibleValue(Utf8Sequence value, int fromType, int toType) {
+        SqlException ice = tlInconvertibleValueInstance();
+        if (value != null) {
+            ice.put('`').put(value.asAsciiCharSequence()).put('`');
+        } else {
+            ice.put("null");
+        }
+        return addCastDirection(ice, fromType, toType);
+    }
+
+    public static SqlException inconvertibleValue(long value, int fromType, int toType) {
+        return addCastDirection(tlInconvertibleValueInstance().put(value), fromType, toType);
+    }
+
+    public static SqlException invalidArgument(ExpressionNode node, ObjList<Function> args, FunctionFactoryDescriptor descriptor) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put("unexpected argument for function [name=");
+        ex.put(node.token);
+        ex.put(", signature=");
+        ex.put('(');
+        if (descriptor != null) {
+            for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(", ");
+                }
+                final int mask = descriptor.getArgTypeMask(i);
+                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(mask)));
+                if (FunctionFactoryDescriptor.isArray(mask)) {
+                    ex.put("[]");
+                }
+                if (FunctionFactoryDescriptor.isConstant(mask)) {
+                    ex.put(" constant");
+                }
+            }
+        }
+        ex.put("), args=");
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(", ");
+                }
+                Function arg = args.getQuick(i);
+                ex.put(ColumnType.nameOf(arg.getType()));
+                if (arg.isConstant()) {
+                    ex.put(" constant");
+                }
+            }
+        }
+        ex.put(")]");
+        Misc.freeObjList(args);
+        return ex;
     }
 
     public static SqlException invalidColumn(int position, CharSequence column) {
-        return position(position).put("Invalid column: ").put(column);
+        return position(position).put("invalid column [name=").put(column).put(']');
+    }
+
+    public static SqlException invalidColumnType(int position, int columnType) {
+        return SqlException.$(position, "invalid column type [name=").put(ColumnType.nameOf(columnType)).put(", value=").put(columnType).put(']');
+    }
+
+    public static SqlException invalidConstant(int position, CharSequence constant) {
+        return SqlException.position(position).put("invalid constant [value=").put(constant).put(']');
     }
 
     public static SqlException invalidDate(CharSequence str, int position) {
-        return position(position).put("Invalid date [str=").put(str).put(']');
+        return position(position).put("invalid date [value=").put(str).put(']');
     }
 
-    public static SqlException invalidDate(int position) {
-        return position(position).put("Invalid date");
+    public static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put("unknown function name: ");
+        ex.put(node.token);
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
+            }
+        }
+        ex.put(')');
+        Misc.freeObjList(args);
+        return ex;
+    }
+
+    public static SqlException invalidSignature(int position, CharSequence signature, String message) {
+        return position(position).put("invalid signature: ").put(signature).put(" [reason=").put(message).put(']');
+    }
+
+    public static SqlException invalidSignature(int position, CharSequence signature, char chr) {
+        return position(position).put("invalid signature: ").put(signature).put(" [reason=invalid character ").put(chr).put(']');
     }
 
     public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
@@ -195,5 +314,39 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     @Override
     public void toSink(@NotNull CharSinkBase<?> sink) {
         sink.putAscii('[').put(position).putAscii("]: ").put(message);
+    }
+
+    private static SqlException addCastDirection(SqlException ice, int fromType, int toType) {
+        return ice.put(" [").put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType)).put(']');
+    }
+
+    private static SqlException inconvertibleTypes(
+            int position,
+            int fromType,
+            @Nullable CharSequence fromName,
+            int toType,
+            @Nullable CharSequence toName,
+            int toTypeIndex
+    ) {
+        SqlException ex = SqlException.$(position, "inconvertible types: ")
+                .put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
+        if (fromName != null) {
+            if (toName != null) {
+                ex.put(" [from=").put(fromName).put(", to=").put(toName);
+            } else {
+                ex.put(" [varName=").put(fromName);
+            }
+            ex.put(']');
+        } else if (toTypeIndex > -1) {
+            ex.put(" [varIndex=").put(toTypeIndex).put(']');
+        }
+        return ex;
+    }
+
+    private static SqlException tlInconvertibleValueInstance() {
+        SqlException ex = tlException.get();
+        ex.message.clear();
+        ex.message.put("inconvertible value: ");
+        return ex;
     }
 }

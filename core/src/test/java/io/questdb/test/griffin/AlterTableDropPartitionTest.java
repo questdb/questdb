@@ -147,7 +147,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropPartitionInvalidTimestampColumn() throws Exception {
-        assertFailure("alter table x drop partition where a > 1", 35, "Invalid column: a");
+        assertFailure("alter table x drop partition where a > 1", 35, "invalid column [name=a]");
     }
 
     @Test

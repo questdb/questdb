@@ -139,7 +139,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             );
         }
 
-        String unexpectedError = "Unexpected argument for function [name=and, signature=(BOOLEAN, BOOLEAN), args=(INT, INT)]";
+        String unexpectedError = "unexpected argument for function [name=and, signature=(BOOLEAN, BOOLEAN), args=(INT, INT)]";
         assertFailure(44, unexpectedError,
                 "select * from a " +
                         "join b on a.i + b.i and a.i - b.i"
@@ -2156,7 +2156,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid constant [value=##1000111000111000111000111000111000111000111000110000110100101]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid constant [value=##1000111000111000111000111000111000111000111000110000110100101]");
             }
         });
     }
@@ -2177,7 +2177,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid constant [value=##sp052w92p1p82]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid constant [value=##sp052w92p1p82]");
             }
         });
     }
@@ -2239,7 +2239,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid constant [value=#sp@in]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid constant [value=#sp@in]");
             }
         });
     }
@@ -2278,7 +2278,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(27, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid constant [value=#sp052w92p1p8889]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid constant [value=#sp052w92p1p8889]");
         }
     }
 
@@ -2301,16 +2301,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectGeoHashCharsLiteralWithWrongBits() throws Exception {
-        assertFailure(7, "Invalid constant [value=#sp052w92p1p87]", "select #sp052w92p1p87");
+        assertFailure(7, "invalid constant [value=#sp052w92p1p87]", "select #sp052w92p1p87");
         assertFailure(20, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/");
         assertFailure(22, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/ R");
         assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/0R");
         assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/t");
         assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/-1");
         assertFailure(7, "invalid bits size for GEOHASH constant", "select #sp052w92p1p8/ 61");
-        assertFailure(7, "Invalid constant [value=#sp052w92p1p8/011]", "select #sp052w92p1p8/ 011");
-        assertFailure(7, "Invalid constant [value=#sp052w92p1p8/045]", "select #sp052w92p1p8/045");
-        assertFailure(7, "Invalid constant [value=#sp/15]", "select #sp/15"); // lacks precision
+        assertFailure(7, "invalid constant [value=#sp052w92p1p8/011]", "select #sp052w92p1p8/ 011");
+        assertFailure(7, "invalid constant [value=#sp052w92p1p8/045]", "select #sp052w92p1p8/045");
+        assertFailure(7, "invalid constant [value=#sp/15]", "select #sp/15"); // lacks precision
         assertFailure(7, "invalid bits size for GEOHASH constant: #/0", "select #/0");
         assertFailure(7, "invalid bits size for GEOHASH constant", "select #sp052w92p18/0");
     }
@@ -2619,7 +2619,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(43, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: b");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid column [name=b]");
         }
     }
 
@@ -3065,7 +3065,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testFailOnBadFunctionCallInOrderBy() throws Exception {
         ddl("create table test(time TIMESTAMP, symbol STRING);");
 
-        assertFailure(97, "Unexpected argument for function [name=SUM, signature=(DOUBLE), args=(INT constant, INT constant)]",
+        assertFailure(97, "unexpected argument for function [name=SUM, signature=(DOUBLE), args=(INT constant, INT constant)]",
                 "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)"
         );
     }
@@ -3074,8 +3074,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testFailOnEmptyColumnName() throws Exception {
         ddl("create table tab ( ts timestamp)");
 
-        assertFailure(32, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"\")");
-        assertFailure(28, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"ts\")");
+        assertFailure(32, "invalid column [name=]", "SELECT * FROM tab WHERE SUM(\"\", \"\")");
+        assertFailure(28, "invalid column [name=]", "SELECT * FROM tab WHERE SUM(\"\", \"ts\")");
     }
 
     @Test
@@ -3807,7 +3807,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         engine.releaseAllWriters();
 
-        assertFailure(21, "Duplicate column [name=X]",
+        assertFailure(21, "duplicate column [name=X]",
                 "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )"
         );
     }
@@ -3823,7 +3823,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         engine.releaseAllWriters();
 
-        assertFailure(24, "Duplicate column [name=龜]",
+        assertFailure(24, "duplicate column [name=龜]",
                 "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )"
         );
     }
@@ -3965,7 +3965,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int()," +
                         " rnd_long()" +
-                        " from long_sequence(30)", 20, "Invalid column: blast"
+                        " from long_sequence(30)", 20, "invalid column [name=blast]"
         );
     }
 
@@ -4140,7 +4140,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid constant [value=##11211]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid constant [value=##11211]");
             }
         });
     }
@@ -5249,7 +5249,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertException(
                 "select ##k from long_sequence(10)",
                 7,
-                "Invalid constant [value=##k]"
+                "invalid constant [value=##k]"
         );
     }
 
@@ -5369,11 +5369,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
         assertException("select 1 from tab where (\"\")",
                 "create table tab (i int)",
-                25, "Invalid column"
+                25, "invalid column"
         );
 
         assertException("select 1 from tab where (\"a\")",
-                25, "Invalid column"
+                25, "invalid column"
         );
 
         assertException("select 1 from tab where ('')",

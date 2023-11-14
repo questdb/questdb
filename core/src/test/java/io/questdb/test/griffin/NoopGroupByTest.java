@@ -167,7 +167,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
                         "    ask int\n" +
                         ")",
                 71,
-                "Invalid column: badColumn"
+                "invalid column [name=badColumn]"
         );
     }
 
@@ -426,7 +426,7 @@ public class NoopGroupByTest extends AbstractCairoTest {
                         "    bid double,\n" +
                         "    ask double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY", 80, "Invalid column: a.ccy"
+                        ") timestamp(ts) partition by DAY", 80, "invalid column [name=a.ccy]"
         );
     }
 

@@ -34,12 +34,12 @@ public class SqlExceptionTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumn() {
         TestUtils.assertEquals(
-                "[17] Duplicate column [name=COL-0]",
+                "[17] duplicate column [name=COL-0]",
                 SqlException.duplicateColumn(17, "COL-0").getMessage()
         );
 
         TestUtils.assertEquals(
-                "[2022] Duplicate column [name=我们是最棒的]",
+                "[2022] duplicate column [name=我们是最棒的]",
                 SqlException.duplicateColumn(2022, "我们是最棒的").getMessage()
         );
     }

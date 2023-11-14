@@ -240,7 +240,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            Assert.assertEquals("[0] Invalid date [str='2014-0x-01T12:30:00.000Z']", e.getMessage());
+            Assert.assertEquals("[0] invalid date [value='2014-0x-01T12:30:00.000Z']", e.getMessage());
         }
     }
 
@@ -250,7 +250,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp > '2014-0x-01T12:30:00.000Z'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date [str='2014-0x-01T12:30:00.000Z']", e.getMessage());
+            Assert.assertEquals("[12] invalid date [value='2014-0x-01T12:30:00.000Z']", e.getMessage());
         }
     }
 
@@ -270,7 +270,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in ('2014-01-02T12:30:00.000Z', '2014-01Z')");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertEquals("[42] Invalid date", e.getMessage());
+            TestUtils.assertEquals("[42] invalid date [value='2014-01Z']", e.getMessage());
         }
     }
 
@@ -281,7 +281,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            Assert.assertEquals("[0] Invalid date [str='1663676011000000']", e.getMessage());
+            Assert.assertEquals("[0] invalid date [value='1663676011000000']", e.getMessage());
         }
     }
 
@@ -291,7 +291,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp < '1663676011000000'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date [str='1663676011000000']", e.getMessage());
+            Assert.assertEquals("[12] invalid date [value='1663676011000000']", e.getMessage());
         }
     }
 
@@ -363,7 +363,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in ('2014-01Z', '2014-01-02T12:30:00.000Z')");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid date");
             Assert.assertEquals(14, e.getPosition());
         }
     }
@@ -2216,7 +2216,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         try {
             modelOf("ex != null and abb != 'blah'");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid column [name=abb]");
             Assert.assertEquals(15, e.getPosition());
         }
     }
@@ -2297,7 +2297,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("not (timestamp in  ('2015-05-11T15:00:00.000Z', 'abc')) and timestamp in '2015-05-11'");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid date");
             Assert.assertEquals(48, e.getPosition());
         }
     }
@@ -2308,7 +2308,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("not (timestamp in  ('abc','2015-05-11T15:00:00.000Z')) and timestamp in '2015-05-11'");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid date");
             Assert.assertEquals(20, e.getPosition());
         }
     }
@@ -2352,7 +2352,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("not (xyz in  ('2015-05-11T15:00:00.000Z')) and timestamp = '2015-05-11'");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid column [name=xyz]");
             Assert.assertEquals(5, e.getPosition());
         }
     }

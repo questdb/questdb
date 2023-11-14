@@ -4364,7 +4364,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 41,
-                "Invalid column"
+                "invalid column [name=y]"
         );
     }
 

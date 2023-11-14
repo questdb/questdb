@@ -200,7 +200,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x alter column y cache", 27, "Invalid column: y");
+        assertFailure("alter table x alter column y cache", 27, "invalid column [name=y]");
     }
 
     @Test

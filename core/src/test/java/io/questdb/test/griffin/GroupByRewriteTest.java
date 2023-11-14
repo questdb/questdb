@@ -43,7 +43,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             });
             throw new RuntimeException("query above should have thrown");
         } catch (SqlException e) {
-            String expected = "[49] Unexpected argument for function [name=SUM, signature=(DOUBLE), args=(INT constant, BOOLEAN, INT constant)]";
+            String expected = "[49] unexpected argument for function [name=SUM, signature=(DOUBLE), args=(INT constant, BOOLEAN, INT constant)]";
             Assert.assertEquals(expected, e.getMessage());
         }
     }
@@ -83,7 +83,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             compile("CREATE TABLE tabb ( x int, bid int );");
             assertException("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
                     "FROM taba " +
-                    "join tabb on aid = bid", 11, "Invalid column: taba.k");
+                    "join tabb on aid = bid", 11, "invalid column [name=taba.k]");
         });
     }
 
@@ -94,7 +94,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             compile("  CREATE TABLE tabb ( x int, bid int );");
             assertException("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
                     "FROM taba " +
-                    "join tabb on aid = bid", 11, "Ambiguous column [name=x]");
+                    "join tabb on aid = bid", 11, "ambiguous column [name=x]");
         });
     }
 

@@ -4138,7 +4138,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastStrIPv4BadStr() throws Exception {
-        assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 0, "invalid ipv4 format: dhukdsvhiu");
+        assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 0, "inconvertible value: `dhukdsvhiu` [STRING -> IPv4]");
     }
 
     @Test

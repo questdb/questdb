@@ -417,7 +417,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                     assertException("UPDATE " + tableName + " SET b = a");
                 } catch (Exception e) {
-                    assertTrue(e.getMessage().endsWith("Invalid column: b"));
+                    assertTrue(e.getMessage().endsWith("invalid column [name=b]"));
                 }
             }
         });

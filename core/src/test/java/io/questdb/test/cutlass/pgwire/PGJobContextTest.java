@@ -2710,7 +2710,7 @@ if __name__ == "__main__":
                         "        )").execute();
                 Assert.fail();
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "Duplicate column [name=B]");
+                assertContains(e.getMessage(), "duplicate column [name=B]");
             }
         });
     }
@@ -2728,7 +2728,7 @@ if __name__ == "__main__":
                         "        )").execute();
                 Assert.fail();
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "Duplicate column [name=侘寂]");
+                assertContains(e.getMessage(), "duplicate column [name=侘寂]");
             }
         });
     }
@@ -5659,7 +5659,7 @@ nodejs code:
                         ps1.executeQuery();
                         Assert.fail("PSQLException should be thrown");
                     } catch (PSQLException e) {
-                        assertContains(e.getMessage(), "ERROR: Unexpected argument for function [name=between, signature=(TIMESTAMP, TIMESTAMP, TIMESTAMP), args=(TIMESTAMP, STRING constant, STRING)]");
+                        assertContains(e.getMessage(), "ERROR: unexpected argument for function [name=between, signature=(TIMESTAMP, TIMESTAMP, TIMESTAMP), args=(TIMESTAMP, STRING constant, STRING)]");
                     }
 
                     try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -5694,7 +5694,7 @@ nodejs code:
                         ps1.executeQuery();
                         Assert.fail("PSQLException should be thrown");
                     } catch (PSQLException e) {
-                        assertContains(e.getMessage(), "ERROR: Unexpected argument for function [name=between, signature=(TIMESTAMP, TIMESTAMP, TIMESTAMP), args=(TIMESTAMP, STRING constant, STRING)]");
+                        assertContains(e.getMessage(), "ERROR: unexpected argument for function [name=between, signature=(TIMESTAMP, TIMESTAMP, TIMESTAMP), args=(TIMESTAMP, STRING constant, STRING)]");
                     }
 
                     try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -8608,7 +8608,7 @@ create table tab as (
                     connection.prepareStatement("select x2 from long_sequence(5)").execute();
                     Assert.fail();
                 } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "Invalid column: x2");
+                    TestUtils.assertContains(e.getMessage(), "invalid column [name=x2]");
                     TestUtils.assertEquals("00000", e.getSQLState());
                 }
             }
@@ -9091,7 +9091,7 @@ create table tab as (
                         stmt.executeUpdate();
                         assertException("id column was dropped, the UPDATE should have failed");
                     } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                        TestUtils.assertContains(e.getMessage(), "invalid column [name=id]");
                     }
                 }
             }

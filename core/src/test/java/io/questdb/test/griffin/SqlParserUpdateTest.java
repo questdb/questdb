@@ -35,7 +35,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx set y = y from tbly y where tblx.x = tbly.y and tblx.x > 10",
                 "update tblx set y = ".length(),
-                "Ambiguous column [name=y]",
+                "ambiguous column [name=y]",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
@@ -120,7 +120,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx set x = 1, s = 'abc', x = 2",
                 "update tblx set x = 1, s = 'abc', ".length(),
-                "Duplicate column [name=x] in SET clause",
+                "duplicate column [name=x] in SET clause",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
@@ -134,7 +134,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx set x = 1, s = 'abc', \"X\" = 2",
                 "update tblx set x = 1, s = 'abc', ".length(),
-                "Duplicate column [name=X] in SET clause",
+                "duplicate column [name=X] in SET clause",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
@@ -148,7 +148,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx set 侘寂 = 1, s = 'abc', 侘寂 = 2",
                 35,
-                "Duplicate column [name=侘寂] in SET clause",
+                "duplicate column [name=侘寂] in SET clause",
                 partitionedModelOf("tblx")
                         .col("侘寂", ColumnType.TIMESTAMP)
                         .col("s", ColumnType.SYMBOL)
@@ -334,7 +334,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx as xx set invalidcol = t where x > 10",
                 "update tblx as xx set ".length(),
-                "Invalid column: invalidcol",
+                "invalid column [name=invalidcol]",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
@@ -348,7 +348,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx as xx set t = invalidcol where x > 10",
                 "update tblx as xx set t = ".length(),
-                "Invalid column: invalidcol",
+                "invalid column [name=invalidcol]",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
@@ -362,7 +362,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx as xx set tt = t + 1 where invalidcol > 10",
                 "update tblx as xx set tt = t + 1 where ".length(),
-                "Invalid column: invalidcol",
+                "invalid column [name=invalidcol]",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)

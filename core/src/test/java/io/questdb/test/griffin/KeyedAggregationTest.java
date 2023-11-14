@@ -166,7 +166,7 @@ public class KeyedAggregationTest extends AbstractCairoTest {
             testAggregations(aggregateFunctions, aggregateColTypes);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Unexpected argument for function [name=first, signature=(DOUBLE), args=(BINARY)]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function [name=first, signature=(DOUBLE), args=(BINARY)]");
         }
     }
 

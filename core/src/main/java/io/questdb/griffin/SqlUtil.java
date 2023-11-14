@@ -528,7 +528,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseIPv4(value);
             } catch (NumericException exception) {
-                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.IPv4);
             }
         }
         return Numbers.IPv4_NULL;

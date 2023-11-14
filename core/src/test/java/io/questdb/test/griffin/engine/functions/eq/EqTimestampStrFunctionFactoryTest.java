@@ -112,7 +112,7 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         try {
             callBySignature(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000000Z;-1s");
         } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "Invalid date");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "invalid date [value=2020-12-31T23:59:59.000000Z]");
         }
     }
 
@@ -131,7 +131,7 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         try {
             callBySignature(signature, parseUTCTimestamp(t1), "2020-12-24T00:00:00.000000Z;-1s;2d;5");
         } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "Invalid date");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "invalid date [value=2020-12-24T00:00:00.000000Z]");
         }
     }
 
