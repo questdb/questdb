@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -55,6 +56,10 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    default SecurityContext getAllowAllSecurityContext() {
+        return AllowAllSecurityContext.INSTANCE;
+    }
 
     boolean getAllowTableRegistrySharedWrite();
 

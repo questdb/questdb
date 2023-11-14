@@ -531,7 +531,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     throw PeerDisconnectedException.INSTANCE;
                 }
             }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
+        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
+            // BAU, not error metric
+            throw e;
+        } catch (PeerDisconnectedException e) {
+            // clear security context on disconnect
+            sqlExecutionContext.getSecurityContext().clear();
+
             // BAU, not error metric
             throw e;
         } catch (Throwable th) {
@@ -1704,16 +1710,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             r = authenticator.handleIO();
             if (r == Authenticator.OK) {
-                SecurityContext securityContext = securityContextFactory.getInstance(
-                        authenticator.getPrincipal(),
-                        authenticator.getAuthType(),
-                        SecurityContextFactory.PGWIRE
-                );
                 try {
-                    securityContext.authorizePGWire();
+                    final SecurityContext securityContext = securityContextFactory.getInstance(
+                            authenticator.getPrincipal(),
+                            authenticator.getAuthType(),
+                            SecurityContextFactory.PGWIRE
+                    );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+                    securityContext.authorizePGWire();
                     r = authenticator.loginOK();
                 } catch (CairoException e) {
+                    // todo: handle this separately from auth failure
                     r = authenticator.denyAccess();
                 }
             }

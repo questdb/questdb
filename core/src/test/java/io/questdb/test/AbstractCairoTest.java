@@ -409,7 +409,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         nodes.clear();
         node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides(), getEngineFactory(), getConfigurationFactory());
         configuration = node1.getConfiguration();
-        securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
+        securityContext = configuration.getAllowAllSecurityContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         messageBus = node1.getMessageBus();
@@ -1142,6 +1142,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
     }
 
+    protected static void configOverrideEnv(Map<String, String> env) {
+        node1.getConfigurationOverrides().setEnv(env);
+    }
+
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
         node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
@@ -1158,10 +1162,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
         node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
-    }
-
-    protected static void configOverrideEnv(Map<String, String> env) {
-        node1.getConfigurationOverrides().setEnv(env);
     }
 
     protected static void configOverrideO3ColumnMemorySize(int size) {

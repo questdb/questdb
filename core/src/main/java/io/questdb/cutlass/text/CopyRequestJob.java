@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -74,7 +75,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
         this.clock = configuration.getMicrosecondClock();
 
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
+        this.sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE, null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             this.statusTableToken = compiler.query()

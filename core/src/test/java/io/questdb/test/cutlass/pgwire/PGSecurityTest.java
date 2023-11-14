@@ -49,11 +49,10 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 
 public class PGSecurityTest extends BasePGTest {
 
-    private static final SecurityContextFactory READ_ONLY_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
     private static final FactoryProvider READ_ONLY_FACTORY_PROVIDER = new DefaultFactoryProvider() {
         @Override
         public @NotNull SecurityContextFactory getSecurityContextFactory() {
-            return READ_ONLY_SECURITY_CONTEXT_FACTORY;
+            return new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
         }
     };
     private static final PGWireConfiguration READ_ONLY_CONF = new Port0PGWireConfiguration() {
@@ -62,11 +61,10 @@ public class PGSecurityTest extends BasePGTest {
             return READ_ONLY_FACTORY_PROVIDER;
         }
     };
-    private static final SecurityContextFactory READ_ONLY_USER_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(false, "user", false);
     private static final FactoryProvider READ_ONLY_USER_FACTORY_PROVIDER = new DefaultFactoryProvider() {
         @Override
         public @NotNull SecurityContextFactory getSecurityContextFactory() {
-            return READ_ONLY_USER_SECURITY_CONTEXT_FACTORY;
+            return new ReadOnlyUsersAwareSecurityContextFactory(false, "user", false);
         }
     };
     private static final PGWireConfiguration READ_ONLY_USER_CONF = new Port0PGWireConfiguration() {

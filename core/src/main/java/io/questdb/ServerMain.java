@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
-import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
@@ -37,7 +35,6 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
@@ -104,21 +101,6 @@ public class ServerMain implements Closeable {
     public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(ServerConfiguration configuration, DirectUtf8Sink defaultUserPasswordSink, DirectUtf8Sink readOnlyUserPasswordSink) {
         UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
         return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
-    }
-
-    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
-        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
-        if (readOnlyInstance) {
-            return ReadOnlySecurityContextFactory.INSTANCE;
-        } else {
-            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
-            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
-            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
-            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
-        }
     }
 
     public static void main(String[] args) {
