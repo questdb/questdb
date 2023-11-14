@@ -70,23 +70,24 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
         if (frameIndex == -1) {
             fetchNextFrame();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
 
-        if (rowsRemaining < 0) {
+        if (rowsRemaining < 1) {
             return 0;
         }
 
-        long count = 0;
+        long size = 0;
 
         // We have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
             long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
             rowsRemaining -= frameRowsLeft;
             frameRowIndex += frameRowsLeft;
-            count += frameRowsLeft;
+            size += frameRowsLeft;
             if (rowsRemaining < 1) {
                 frameSequence.cancel();
-                return count;
+                return size;
             }
         }
 
@@ -101,10 +102,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
                 rowsRemaining -= frameRowsLeft;
                 frameRowIndex += frameRowsLeft;
-                count += frameRowsLeft;
+                size += frameRowsLeft;
                 if (rowsRemaining < 1) {
                     frameSequence.cancel();
-                    return count;
+                    return size;
                 } else {
                     collectCursor(false);
                 }
@@ -113,9 +114,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             if (!allFramesActive) {
                 throwTimeoutException();
             }
+
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
 
-        return count;
+        return size;
     }
 
     @Override
