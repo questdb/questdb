@@ -275,7 +275,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             }
 
                             boolean isProtected = protectedTableResolver.test(tableName);
-                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isProtected);
+                            boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
+                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected);
                             nameTableTokenMap.put(tableName, token);
                             reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
                         }
@@ -358,12 +359,15 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             } else {
                 if (tableIds.contains(tableId)) {
                     LOG.critical().$("duplicate table id found, table will not be accessible " +
-                            "[dirName=").utf8(dirName).$(", id=").$(tableId).I$();
+                                    "[dirName=").utf8(dirName)
+                            .$(", id=").$(tableId)
+                            .I$();
                     continue;
                 }
 
                 boolean isProtected = protectedTableResolver.test(tableName);
-                final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isProtected);
+                boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
+                final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected);
                 nameTableTokenMap.put(tableName, token);
                 if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                     // This table is renamed, log system to real table name mapping
@@ -381,8 +385,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             for (TableToken token : nameTableTokenMap.values()) {
                 if (TableUtils.exists(ff, path, configuration.getRoot(), token.getDirName()) != TableUtils.TABLE_EXISTS) {
                     LOG.error().$("table directory directly removed from File System, table will not be available [path=").$(path)
-                            .$(", dirName=").utf8(token.getDirName()).
-                            $(", table=").utf8(token.getTableName())
+                            .$(", dirName=").utf8(token.getDirName())
+                            .$(", table=").utf8(token.getTableName())
                             .I$();
 
                     nameTableTokenMap.remove(token.getTableName());

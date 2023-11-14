@@ -47,6 +47,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 
 import java.io.Closeable;
@@ -79,6 +80,7 @@ public class ServerMain implements Closeable {
         // create cairo engine
         engine = freeOnExit.register(bootstrap.newCairoEngine());
         config.init(engine, freeOnExit);
+        Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
         freeOnExit.register(config.getFactoryProvider());
         engine.load();
     }
