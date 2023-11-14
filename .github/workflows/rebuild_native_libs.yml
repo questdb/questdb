@@ -182,7 +182,7 @@ jobs:
           find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
       - name: Commit the files
         run: |
-          git config --global user.name 'GitHub Actions - ARM build'
+          git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
           git config --global user.email 'jaromir@questdb.io'
           git add core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
           git add core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
