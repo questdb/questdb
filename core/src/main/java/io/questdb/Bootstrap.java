@@ -537,7 +537,7 @@ public class Bootstrap {
         }
     }
 
-    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner) {
+    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner, String schema) {
         if (config.getHttpServerConfiguration().isEnabled()) {
             final LogRecord r = log.infoW().$('\n').$(banner).$("Web Console URL(s):").$("\n\n");
 
@@ -550,7 +550,7 @@ public class Bootstrap {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                r.$('\t').$("http://").$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');
+                                r.$('\t').$(schema).$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');
                             }
                         }
                     }

@@ -38,7 +38,7 @@ import io.questdb.griffin.engine.table.VirtualFunctionDirectSymbolRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-/*
+/**
  * Factory implements select with window functions that support streaming, that is:
  * - they don't specify order by or order by is the same as underlying query
  * - all functions and their framing clause do support stream-ed processing (single pass)
@@ -60,7 +60,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.functions = functions;
 
-        windowFunctions = new ObjList<WindowFunction>();
+        windowFunctions = new ObjList<>();
         for (int i = 0, n = functions.size(); i < n; i++) {
             Function func = functions.getQuick(i);
             if (func instanceof WindowFunction) {
@@ -69,8 +69,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
         windowFunctionsCount = windowFunctions.size();
 
-        //random access is not supported because window function value depends on the window/frame context and can't be computed from single row alone
-        //e.g. even though we might be able to skip to a rowId, we'd still need to compute values for all the rows in between
+        // random access is not supported because window function value depends on the window/frame
+        // context and can't be computed from single row alone, e.g. even though we might be able
+        // to skip to a rowId, we'd still need to compute values for all the rows in between
         this.cursor = new WindowRecordCursor(functions, false);
     }
 
@@ -89,6 +90,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         cursor.of(baseCursor, executionContext);
         return cursor;
+    }
+
+    @Override
+    public int getScanDirection() {
+        return base.getScanDirection();
     }
 
     @Override
@@ -171,21 +177,14 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             baseCursor.toTop();
         }
 
-        private void init(ObjList<Function> functions, SqlExecutionContext context) throws SqlException {
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                Function function = functions.getQuick(i);
-                function.init(baseCursor, context);
-            }
-        }
-
-        private void of(RecordCursor base, SqlExecutionContext context) throws SqlException {
-            super.of(base);
-            circuitBreaker = context.getCircuitBreaker();
-            init(functions, context);
+        private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+            super.of(baseCursor);
+            circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 reopen(functions);
                 isOpen = true;
             }
+            Function.init(functions, baseCursor, executionContext);
         }
 
         private void reopen(ObjList<Function> list) {

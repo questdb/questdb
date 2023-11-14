@@ -33,6 +33,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -300,6 +301,21 @@ public class LogRecordSinkTest {
             } finally {
                 Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
                 Misc.free(utf8);
+            }
+        });
+    }
+
+    @Test
+    public void testUtf8LineTrimmingFromUtf8Sequence() throws Exception {
+        runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
+            final Utf8String utf8 = new Utf8String(msg);
+            final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
+                logRecord.put(utf8);
+                Assert.assertEquals(expectedLen, logRecord.size());
+            } finally {
+                Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
