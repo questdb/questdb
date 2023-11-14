@@ -638,21 +638,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
+                boolean isWindowFunction = factory.isWindow();
                 Match match = sigArgCount == 0 ? Match.EXACT_MATCH : Match.NO_MATCH;
                 int sigArgTypeScore = 0;
                 for (int argIdx = 0; argIdx < sigArgCount; argIdx++) {
                     final Function arg = args.getQuick(argIdx);
                     final int sigArgTypeMask = descriptor.getArgTypeMask(argIdx);
-
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
-                        match = Match.NO_MATCH; // no match
+                        match = Match.NO_MATCH;
                         break;
                     }
-
                     final boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
                     final boolean isScalar = arg instanceof ScalarFunction;
                     if ((isArray && isScalar) || (!isArray && !isScalar)) {
-                        match = Match.NO_MATCH; // no match
+                        match = Match.NO_MATCH;
                         break;
                     }
 
@@ -660,7 +659,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     final byte argTypeTag = ColumnType.tagOf(argType);
                     final byte sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgTypeMask);
 
-                    if (sigArgTypeTag == argTypeTag ||
+                    if (argTypeTag == sigArgTypeTag ||
                             (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
                                     sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though
                                     arg.isConstant() &&                    // bind variable parameter might be a string and throw error during execution.
@@ -671,25 +670,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                 match = Match.EXACT_MATCH;
                                 break;
                             case FUZZY_MATCH:
-                                match = Match.PARTIAL_MATCH; // this is mixed match, fuzzy and exact
+                                match = Match.PARTIAL_MATCH;
                                 break;
                         }
                         continue;
                     }
 
+                    // can we use overload mechanism?
                     boolean overloadPossible = false;
-                    // we do not want to use any overload when checking the output of a cast() function.
-                    // the output must be the exact type as specified by a user. that's the whole point of casting.
-                    // for all other functions, else, we want to explore possible casting opportunities
-                    //
-                    // output of a cast() function is always the 2nd argument in a function signature
+                    // we do not want to use any overload when checking the output of a cast() function,
+                    // which is always the 2nd argument in a function signature.
+                    // for all other functions, else, we want to explore possible casting opportunities.
                     if (argIdx != 1 || !Chars.equals("cast", node.token)) {
-                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgTypeTag); // NULL to any is 0
-
+                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgTypeTag);
                         if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.CHAR) {
                             if (arg.isConstant()) {
-                                // string longer than 1 char can't be cast to char implicitly
                                 if (arg.getStrLen(null) > 1) {
+                                    // string longer than 1 char can't be cast to char implicitly
                                     overloadDistance = ColumnType.OVERLOAD_NONE;
                                 }
                             } else {
@@ -697,55 +694,38 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                 overloadDistance = 2 * overloadDistance;
                             }
                         }
-
                         sigArgTypeScore += overloadDistance;
+                        // prefer window functions in window context, otherwise non-window functions
+                        sigArgTypeScore += isWindowFunction? isWindowContext ? -1 : 1 : 0;
                         // Overload with cast to higher precision
-                        overloadPossible = overloadDistance != ColumnType.OVERLOAD_NONE;
-
-                        // Overload when arg is double NaN to func which accepts INT, LONG
-                        overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
-                                arg.isConstant() &&
-                                Double.isNaN(arg.getDouble(null)) &&
-                                (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
-
+                        overloadPossible = overloadDistance != ColumnType.OVERLOAD_NONE || arg.isUndefined();
                         // Implicit cast from CHAR to STRING
                         overloadPossible |= argTypeTag == ColumnType.CHAR && sigArgTypeTag == ColumnType.STRING;
-
-                        // Implicit cast from STRING to TIMESTAMP
-                        overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
-                                sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
-
-                        // Implicit cast from STRING to DATE
-                        overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
-                                sigArgTypeTag == ColumnType.DATE && !factory.isGroupBy();
-
                         // Implicit cast from STRING to GEOHASH
-                        overloadPossible |= argTypeTag == ColumnType.STRING &&
-                                sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
-
-                        // Implicit cast from SYMBOL to TIMESTAMP
-                        overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
-                                sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
-
-                        overloadPossible |= arg.isUndefined();
+                        overloadPossible |= argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.GEOHASH;
+                        if (arg.isConstant()) {
+                            // Overload when arg is double NaN to func which accepts INT, LONG
+                            overloadPossible |= argTypeTag == ColumnType.DOUBLE && Double.isNaN(arg.getDouble(null)) && (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
+                            if (!factory.isGroupBy()) {
+                                // Implicit cast from STRING to TIMESTAMP
+                                overloadPossible |= argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.TIMESTAMP;
+                                // Implicit cast from SYMBOL to TIMESTAMP
+                                overloadPossible |= argTypeTag == ColumnType.SYMBOL && sigArgTypeTag == ColumnType.TIMESTAMP;
+                                // Implicit cast from STRING to DATE
+                                overloadPossible |= argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.DATE;
+                            }
+                        }
                     }
-
-                    // can we use overload mechanism?
                     if (overloadPossible) {
                         switch (match) {
                             case NO_MATCH:
-                                if (argTypeTag == ColumnType.NULL) {
-                                    match = Match.PARTIAL_MATCH;
-                                } else {
-                                    match = Match.FUZZY_MATCH; // upgrade to fuzzy match
-                                }
+                                match = argTypeTag == ColumnType.NULL ? Match.PARTIAL_MATCH : Match.FUZZY_MATCH; // upgrade
                                 break;
-                            case EXACT_MATCH: // was it full match so far? ? oh, well, fuzzy now
+                            case EXACT_MATCH:
                                 match = Match.PARTIAL_MATCH; // downgrade
                                 break;
                         }
                     } else {
-                        // types mismatch
                         match = Match.NO_MATCH;
                         break;
                     }
@@ -753,11 +733,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 if (match == Match.NO_MATCH) {
                     continue;
-                }
-
-                if (factory.isWindow()) {
-                    // prefer window functions in window context, otherwise non-window functions
-                    sigArgTypeScore += isWindowContext ? -1 : 1;
                 }
 
                 if (match == Match.EXACT_MATCH || match.order >= bestMatch.order) {
@@ -778,7 +753,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         candidateDescriptor = descriptor;
                         candidateSigArgCount = sigArgCount;
                         candidateSigVarArgConst = sigVarArgConst;
-                        if (isWindowContext == factory.isWindow()) {
+                        if (isWindowContext == isWindowFunction) {
                             break;
                         }
                     }
