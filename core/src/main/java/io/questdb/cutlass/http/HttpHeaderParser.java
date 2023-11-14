@@ -40,6 +40,8 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private final ObjectPool<DirectUtf8String> pool;
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
+    protected boolean incomplete;
+    protected Utf8Sequence url;
     private long _lo;
     private long _wptr;
     private DirectUtf8String boundary;
@@ -50,7 +52,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
-    private boolean incomplete;
     private boolean isMethod = true;
     private boolean isProtocol = true;
     private boolean isQueryParams = false;
@@ -66,7 +67,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private long statementTimeout = -1L;
     private DirectUtf8String statusCode;
     private DirectUtf8String statusText;
-    private DirectUtf8String url;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> pool) {
         final int sz = Numbers.ceilPow2(bufferLen);
@@ -183,7 +183,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     }
 
     @Override
-    public DirectUtf8Sequence getUrl() {
+    public Utf8Sequence getUrl() {
         return url;
     }
 
@@ -198,6 +198,16 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
     public boolean isIncomplete() {
         return incomplete;
+    }
+
+    /**
+     * Called when there is an error reading from socket.
+     *
+     * @param err return of the latest read operation
+     * @return true if error is recoverable, false if not
+     */
+    public boolean onRecvError(int err) {
+        return false;
     }
 
     public long parse(long ptr, long hi, boolean _method, boolean _protocol) {

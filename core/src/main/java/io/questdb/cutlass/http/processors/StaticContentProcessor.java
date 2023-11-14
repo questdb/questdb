@@ -74,7 +74,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpRequestHeader headers = context.getRequestHeader();
-        DirectUtf8Sequence url = headers.getUrl();
+        Utf8Sequence url = headers.getUrl();
         logInfoWithFd(context).$("incoming [url=").$(url).$(']').$();
         if (Utf8s.containsAscii(url, "..")) {
             logInfoWithFd(context).$("URL abuse: ").$(url).$();
