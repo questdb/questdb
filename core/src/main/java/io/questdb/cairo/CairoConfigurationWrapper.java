@@ -927,6 +927,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWriterMemoryLimit() {
+        return 0;
+    }
+
+    @Override
     public int getWriterTickRowsCountMod() {
         return delegate.getWriterTickRowsCountMod();
     }

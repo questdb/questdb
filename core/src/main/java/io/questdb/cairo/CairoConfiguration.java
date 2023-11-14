@@ -517,6 +517,8 @@ public interface CairoConfiguration {
 
     long getWriterFileOpenOpts();
 
+    long getWriterMemoryLimit();
+
     int getWriterTickRowsCountMod();
 
     boolean isIOURingEnabled();
