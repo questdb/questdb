@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 // @formatter:off
+import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -34,6 +35,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
+
+import static io.questdb.std.MemoryTag.NATIVE_O3;
 
 public final class Unsafe {
     public static final long BYTE_OFFSET;
@@ -55,11 +58,27 @@ public final class Unsafe {
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
+    private static long WRITER_MEM_LIMIT = 0;
     //#if jdk.version!=8
     private static final Method implAddExports;
     //#endif
 
     private Unsafe() {
+    }
+
+    public static long malloc(long size, int memoryTag) {
+        try {
+            checkAllocLimit(size, memoryTag);
+            long ptr = getUnsafe().allocateMemory(size);
+            recordMemAlloc(size, memoryTag);
+            MALLOC_COUNT.incrementAndGet();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            System.err.printf(
+                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d",
+                    MEM_USED.get(), size, memoryTag);
+            throw oom;
+        }
     }
 
     //#if jdk.version!=8
@@ -221,22 +240,9 @@ public final class Unsafe {
     }
     //#endif
 
-    public static long malloc(long size, int memoryTag) {
-        try {
-            long ptr = getUnsafe().allocateMemory(size);
-            recordMemAlloc(size, memoryTag);
-            MALLOC_COUNT.incrementAndGet();
-            return ptr;
-        } catch (OutOfMemoryError oom) {
-            System.err.printf(
-                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d",
-                    MEM_USED.get(), size, memoryTag);
-            throw oom;
-        }
-    }
-
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
+            checkAllocLimit(-oldSize + newSize, memoryTag);
             long ptr = getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
@@ -246,6 +252,23 @@ public final class Unsafe {
                     "Unsafe.realloc() OutOfMemoryError, mem_used=%d, old_size=%d, new_size=%d, memoryTag=%d",
                     MEM_USED.get(), oldSize, newSize, memoryTag);
             throw oom;
+        }
+    }
+
+    public static void setWriterMemLimit(long limit) {
+        WRITER_MEM_LIMIT = limit;
+    }
+
+    private static void checkAllocLimit(long size, int memoryTag) {
+        if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
+            long usage = COUNTERS[memoryTag].sum();
+            if (usage + size > WRITER_MEM_LIMIT) {
+                throw CairoException.critical(0).put("table writing memory limit reached [usage=")
+                        .put(usage)
+                        .put(", limit=").put(WRITER_MEM_LIMIT)
+                        .put(", allocation=").put(size)
+                        .put(']');
+            }
         }
     }
 

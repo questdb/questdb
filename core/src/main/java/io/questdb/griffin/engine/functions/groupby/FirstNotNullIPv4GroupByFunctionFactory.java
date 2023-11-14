@@ -24,29 +24,49 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class StdDevPopGroupByFunction extends AbstractStdDevGroupByFunction {
+public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
 
-    public StdDevPopGroupByFunction(@NotNull Function arg) {
-        super(arg);
+    @Override
+    public String getSignature() {
+        return "first_not_null(X)";
     }
 
     @Override
-    public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 2);
-        if (count > 0) {
-            double sum = rec.getDouble(valueIndex + 1);
-            double variance = sum / count;
-            return Math.sqrt(variance);
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(args.getQuick(0));
+    }
+
+    private static class Func extends FirstIPv4GroupByFunction {
+        public Func(@NotNull Function arg) {
+            super(arg);
         }
-        return Double.NaN;
-    }
 
-    @Override
-    public String getName() {
-        return "stddev_pop";
+        @Override
+        public void computeNext(MapValue mapValue, Record record) {
+            if (Numbers.IPv4_NULL == mapValue.getIPv4(valueIndex)) {
+                computeFirst(mapValue, record);
+            }
+        }
+
+        @Override
+        public String getName() {
+            return "first_not_null";
+        }
     }
 }

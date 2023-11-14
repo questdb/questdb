@@ -107,6 +107,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE("cairo.writer.data.index.key.append.page.size"),
     CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE("cairo.writer.data.index.value.append.page.size"),
     CAIRO_WRITER_DATA_APPEND_PAGE_SIZE("cairo.writer.data.append.page.size"),
+    CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.writer.data.append.page.size"),
     CAIRO_WRITER_MISC_APPEND_PAGE_SIZE("cairo.writer.misc.append.page.size"),
     CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE("cairo.writer.command.queue.slot.size"),
     CAIRO_SQL_SAMPLEBY_PAGE_SIZE("cairo.sql.sampleby.page.size"),
@@ -156,6 +157,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_O3_UPD_PARTITION_SIZE_QUEUE_CAPACITY("cairo.o3.upd.partition.size.queue.capacity"),
     CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY("cairo.o3.purge.discovery.queue.capacity"),
     CAIRO_O3_COLUMN_MEMORY_SIZE("cairo.o3.column.memory.size"),
+    CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE("cairo.system.o3.column.memory.size"),
     CAIRO_MAX_UNCOMMITTED_ROWS("cairo.max.uncommitted.rows"),
     CAIRO_COMMIT_LAG("cairo.commit.lag"),
     CAIRO_O3_MAX_LAG("cairo.o3.max.lag"),
@@ -400,6 +402,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
     CAIRO_WAL_SEGMENT_ROLLOVER_SIZE("cairo.wal.segment.rollover.size"),
     CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.wal.writer.data.append.page.size"),
+    CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.wal.writer.data.append.page.size"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
@@ -417,13 +420,15 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_WAL_APPLY_TABLE_TIME_QUOTA("cairo.wal.apply.table.time.quota"),
     CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
     CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX("cairo.wal.temp.pending.rename.table.prefix"),
+    CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS("cairo.wal.writer.pool.max.segments"),
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
     CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
-    DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete");
+    DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete"),
+    WRITER_MEMORY_LIMIT("cairo.writer.memory.limit");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

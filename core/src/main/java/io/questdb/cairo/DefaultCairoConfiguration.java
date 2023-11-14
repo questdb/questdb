@@ -772,8 +772,23 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemDataAppendPageSize() {
+        return 256 * 1024;
+    }
+
+    @Override
+    public int getSystemO3ColumnMemorySize() {
+        return 256 * 1024;
+    }
+
+    @Override
     public @NotNull CharSequence getSystemTableNamePrefix() {
         return "__sys";
+    }
+
+    @Override
+    public long getSystemWalDataAppendPageSize() {
+        return 256 * 1024;
     }
 
     @Override
@@ -872,6 +887,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterPoolMaxSegments() {
+        return 5;
+    }
+
+    @Override
     public int getWindowColumnPoolCapacity() {
         return 64;
     }
@@ -913,6 +933,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         // case on Linux it is absolutely not the case on Windows. We must not enable anything other
         // than MMAP on Windows.
         return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
+    }
+
+    @Override
+    public long getWriterMemoryLimit() {
+        return 0;
     }
 
     @Override

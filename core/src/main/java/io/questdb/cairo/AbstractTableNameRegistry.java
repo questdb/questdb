@@ -31,6 +31,7 @@ import io.questdb.std.ObjHashSet;
 import java.util.function.Predicate;
 
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
+    protected final CairoConfiguration configuration;
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryStore nameStore;
     protected final Predicate<CharSequence> protectedTableResolver;
@@ -38,6 +39,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     private ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
 
     public AbstractTableNameRegistry(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+        this.configuration = configuration;
         this.nameStore = new TableNameRegistryStore(configuration, protectedTableResolver);
         this.protectedTableResolver = protectedTableResolver;
     }

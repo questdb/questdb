@@ -762,8 +762,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemDataAppendPageSize() {
+        return delegate.getSystemDataAppendPageSize();
+    }
+
+    @Override
+    public int getSystemO3ColumnMemorySize() {
+        return delegate.getSystemO3ColumnMemorySize();
+    }
+
+    @Override
     public @NotNull CharSequence getSystemTableNamePrefix() {
         return delegate.getSystemTableNamePrefix();
+    }
+
+    @Override
+    public long getSystemWalDataAppendPageSize() {
+        return delegate.getSystemWalDataAppendPageSize();
     }
 
     @Override
@@ -867,6 +882,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterPoolMaxSegments() {
+        return delegate.getWalWriterPoolMaxSegments();
+    }
+
+    @Override
     public int getWindowColumnPoolCapacity() {
         return delegate.getWindowColumnPoolCapacity();
     }
@@ -904,6 +924,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWriterFileOpenOpts() {
         return delegate.getWriterFileOpenOpts();
+    }
+
+    @Override
+    public long getWriterMemoryLimit() {
+        return 0;
     }
 
     @Override

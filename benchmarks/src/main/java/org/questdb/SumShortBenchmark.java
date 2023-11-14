@@ -36,15 +36,15 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class CountLongBenchmark {
-    private final static long memSize = 16 * 1024;
-    private final static int longCount = (int) (memSize / Long.BYTES);
-    private long[] longArr;
+public class SumShortBenchmark {
+    private final static long memSize = 1_000_000 * Short.BYTES;
+    private final static int shortCount = (int) (memSize / Short.BYTES);
     private long mem;
+    private short[] sarr;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(CountLongBenchmark.class.getSimpleName())
+                .include(SumShortBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(2)
                 .forks(1)
@@ -57,19 +57,14 @@ public class CountLongBenchmark {
     public void setup() {
         Os.init();
         mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
-        longArr = new long[longCount];
+        sarr = new short[shortCount];
         final Rnd rnd = new Rnd();
         long p = mem;
-        for (int i = 0; i < longCount; i++) {
-            long l = rnd.nextLong();
-            byte b = rnd.nextByte();
-            if (Math.abs(b) % 10 == 0) {
-                l = Numbers.LONG_NaN;
-            }
-
-            Unsafe.getUnsafe().putLong(p, l);
-            longArr[i] = l;
-            p += Long.BYTES;
+        for (int i = 0; i < shortCount; i++) {
+            short s = rnd.nextShort();
+            Unsafe.getUnsafe().putShort(p, s);
+            sarr[i] = s;
+            p += Short.BYTES;
         }
     }
 
@@ -79,25 +74,25 @@ public class CountLongBenchmark {
     }
 
     @Benchmark
-    public long testJavaHeapCount() {
-        long result = 0;
-        for (int i = 0; i < longCount; i++) {
-            result += longArr[i] == Numbers.LONG_NaN ? 0 : 1;
+    public double testJavaHeapSum() {
+        double result = 0.0;
+        for (int i = 0; i < shortCount; i++) {
+            result += sarr[i];
         }
         return result;
     }
 
     @Benchmark
-    public long testJavaNativeCount() {
-        long result = 0;
-        for (int i = 0; i < longCount; i++) {
-            result += Unsafe.getUnsafe().getLong(mem + i * Long.BYTES) != Numbers.LONG_NaN ? 1 : 0;
+    public double testJavaNativeSum() {
+        double result = 0.0;
+        for (int i = 0; i < shortCount; i++) {
+            result += Unsafe.getUnsafe().getShort(mem + i * Short.BYTES);
         }
         return result;
     }
 
     @Benchmark
-    public long testNativeCount() {
-        return Vect.countLong(mem, longCount);
+    public double testNativeSum() {
+        return Vect.sumShort(mem, shortCount);
     }
 }

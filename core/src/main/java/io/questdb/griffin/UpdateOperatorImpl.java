@@ -66,7 +66,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         this.rootLen = rootLen;
         this.purgingOperator = purgingOperator;
         this.indexBuilder = new IndexBuilder(configuration);
-        this.dataAppendPageSize = configuration.getDataAppendPageSize();
+        this.dataAppendPageSize = tableWriter.getDataAppendPageSize();
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
         this.path = path;
