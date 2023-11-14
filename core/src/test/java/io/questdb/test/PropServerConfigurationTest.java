@@ -284,6 +284,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(500_000, configuration.getCairoConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getO3MinLag());
         Assert.assertEquals(600_000_000, configuration.getCairoConfiguration().getO3MaxLag());
+        Assert.assertEquals(8388608, configuration.getCairoConfiguration().getO3ColumnMemorySize());
+        Assert.assertEquals(262144, configuration.getCairoConfiguration().getSystemO3ColumnMemorySize());
 
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
@@ -336,6 +338,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
 
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataAppendPageSize());
+        Assert.assertEquals(262144, configuration.getCairoConfiguration().getSystemDataAppendPageSize());
         Assert.assertEquals(524288, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
@@ -346,7 +349,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
 
-        // Pg wire
+        // PG wire
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getLimit());
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
@@ -399,6 +402,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
         Assert.assertEquals(20, configuration.getCairoConfiguration().getWalMaxLagTxnCount());
         Assert.assertEquals(1048576, configuration.getCairoConfiguration().getWalDataAppendPageSize());
+        Assert.assertEquals(262144, configuration.getCairoConfiguration().getSystemWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getWalWriterPoolMaxSegments());
 
@@ -1058,6 +1062,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(100_000, configuration.getCairoConfiguration().getMaxUncommittedRows());
             Assert.assertEquals(42_000_000, configuration.getCairoConfiguration().getO3MinLag());
             Assert.assertEquals(420_000_000, configuration.getCairoConfiguration().getO3MaxLag());
+            Assert.assertEquals(262144, configuration.getCairoConfiguration().getO3ColumnMemorySize());
+            Assert.assertEquals(65536, configuration.getCairoConfiguration().getSystemO3ColumnMemorySize());
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlDistinctTimestampKeyCapacity());
             Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlDistinctTimestampLoadFactor(), 0.001);
@@ -1137,6 +1143,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
             Assert.assertEquals(1048576, configuration.getCairoConfiguration().getDataAppendPageSize());
+            Assert.assertEquals(131072, configuration.getCairoConfiguration().getSystemDataAppendPageSize());
             Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
             Assert.assertEquals(131072, configuration.getCairoConfiguration().getMiscAppendPageSize());
@@ -1149,7 +1156,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(30000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
             Assert.assertEquals(30000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
 
-            // Pg wire
+            // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
             Assert.assertFalse(configuration.getPGWireConfiguration().isSelectCacheEnabled());
             Assert.assertEquals(1, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
@@ -1204,6 +1211,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(42.2d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
             Assert.assertEquals(4242, configuration.getCairoConfiguration().getWalMaxLagTxnCount());
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getWalDataAppendPageSize());
+            Assert.assertEquals(524288, configuration.getCairoConfiguration().getSystemWalDataAppendPageSize());
 
             Assert.assertEquals(1, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
             final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;

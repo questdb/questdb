@@ -433,8 +433,14 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    long getSystemDataAppendPageSize();
+
+    int getSystemO3ColumnMemorySize();
+
     @NotNull
     CharSequence getSystemTableNamePrefix();
+
+    long getSystemWalDataAppendPageSize();
 
     long getTableRegistryAutoReloadFrequency();
 
