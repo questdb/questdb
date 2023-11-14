@@ -30,10 +30,7 @@ import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
-import io.questdb.cutlass.http.DefaultHttpCookieHandler;
-import io.questdb.cutlass.http.HttpAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.PlainSocketFactory;
@@ -51,6 +48,11 @@ public class DefaultFactoryProvider implements FactoryProvider {
     @Override
     public @NotNull HttpCookieHandler getHttpCookieHandler() {
         return DefaultHttpCookieHandler.INSTANCE;
+    }
+
+    @Override
+    public @NotNull HttpHeaderParserFactory getHttpHeaderParserFactory() {
+        return DefaultHttpHeaderParserFactory.INSTANCE;
     }
 
     @Override

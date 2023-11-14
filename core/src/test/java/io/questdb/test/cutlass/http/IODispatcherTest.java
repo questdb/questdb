@@ -7886,7 +7886,7 @@ public class IODispatcherTest extends AbstractTest {
             CairoEngine cairoEngine,
             WorkerPool workerPool
     ) {
-        return Services.createHttpServer(
+        return Services.INSTANCE.createHttpServer(
                 configuration,
                 cairoEngine,
                 workerPool,
