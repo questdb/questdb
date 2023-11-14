@@ -37,7 +37,10 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
+    private final long[] skipped;
     private boolean areCursorsPrepared;
+    private long count;
+    private boolean isSkipped;
     private RowCursor rowCursor;
 
     public DataFrameRecordCursorImpl(
@@ -51,6 +54,32 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
         this.filter = filter;
+        this.skipped = new long[1];
+    }
+
+    @Override
+    public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
+        if (!areCursorsPrepared) {
+            rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
+            areCursorsPrepared = true;
+        }
+
+        if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
+            while (hasNext()) {
+                count++;
+            }
+            return count;
+        }
+
+        if (rowCursor != null) {
+            while (rowCursor.hasNext()) {
+                rowCursor.next();
+                count++;
+            }
+            rowCursor = null;
+        }
+
+        return count + dataFrameCursor.calculateSize();
     }
 
     public RowCursorFactory getRowCursorFactory() {
@@ -101,6 +130,8 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         rowCursorFactory.init(dataFrameCursor.getTableReader(), sqlExecutionContext);
         rowCursor = null;
         areCursorsPrepared = false;
+        skipped[0] = 0;
+        this.count = 0;
     }
 
     @Override
@@ -109,18 +140,34 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public boolean skipTo(long rowCount) {
-        if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
-            return false;
+    public long skipTo(long rowCount) {
+        if (isSkipped) {
+            return skipped[0];
         }
 
-        DataFrame dataFrame = dataFrameCursor.skipTo(rowCount);
+        if (!areCursorsPrepared) {
+            rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
+            areCursorsPrepared = true;
+        }
+
+        if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
+            while (skipped[0] < rowCount && hasNext()) {
+                skipped[0]++;
+            }
+            isSkipped = true;
+            return skipped[0];
+        }
+
+        DataFrame dataFrame = dataFrameCursor.skipTo(rowCount, skipped);
+        isSkipped = true;
         if (dataFrame != null) {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); // move to partition, rowlo doesn't matter
-            return true;
+            return skipped[0];
+        } else {
+            // data frame is null when table has no partitions so there's nothing to skip
+            return 0;
         }
-        return false;
     }
 
     @Override
@@ -135,5 +182,8 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         }
         dataFrameCursor.toTop();
         rowCursor = null;
+        count = 0;
+        isSkipped = false;
+        skipped[0] = 0;
     }
 }

@@ -3429,7 +3429,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
             TableToken tableToken;
             for (int i = 0, n = dropTablesList.size(); i < n; i++) {
                 tableToken = dropTablesList.get(i);
-                if (!isSystemTable(tableToken)) {
+                if (!tableToken.isSystem()) {
                     securityContext.authorizeTableDrop(tableToken);
                     try {
                         engine.drop(path, tableToken);
@@ -3526,11 +3526,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 }
             }
             unknownDropStatement(executionContext, tok);
-        }
-
-        private boolean isSystemTable(TableToken tableToken) {
-            return Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix()) ||
-                    Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
         }
 
         private SqlException parseErrorExpected(CharSequence expected) {
