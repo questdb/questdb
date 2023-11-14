@@ -2,6 +2,19 @@ name: Rebuild Native C++ Libraries and Push to PR
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
+# It's meant to be run on a PR that changes the native C++ code.
+
+# It builds native libraries for all supported platforms and pushes them to the current branch.
+# It splits the building process into 3 build jobs:
+# 1. build-freebsd - Builds native libraries for x64 FreeBSD
+# 2. build-macos - Builds native libraries for MacOS: both ARM and x64.
+#    It uses native runners for each platform, because cross compilation on MacOS is complicated.
+# 3. build-others - Builds native libraries for x64 Linux, ARM Linux and Windows.
+#    It uses cross-compilation for ARM Linux and Windows.
+#
+# Each build job saves the resulting binaries to the cache under a unique key
+# When all build jobs are finished, the collect-commit-and-push job restores the binaries from the cache
+# and pushes them to the current branch.
 
 jobs:
   build-freebsd:
@@ -34,6 +47,9 @@ jobs:
   build-macos:
     strategy:
       matrix:
+        # macos-12-xlarge = ARM M1
+        # macos-latest = x64
+        # if you change OS definitions then you need to change conditions in cache-save steps below
         os: [ macos-13-xlarge, macos-latest ]
     runs-on: ${{ matrix.os }}
     steps:
