@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Build in FreeBSD
         # @d44bf830e7d is the same as the tag v1, but it's guaranteed to be immutable.
-        uses: vmactions/freebsd-vm@d44bf830e7d
+        uses: vmactions/freebsd-vm@d44bf830e7d850111d27aa120d468c905e5980f4
         with:
           # FreeBSD 13.2
           release: 13.2
