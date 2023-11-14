@@ -44,7 +44,11 @@ import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 public class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
 
-    public static ObjList<TableToken> convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI, Predicate<CharSequence> protectedTableResolver) {
+    public static ObjList<TableToken> convertTables(
+            CairoConfiguration configuration,
+            TableSequencerAPI tableSequencerAPI,
+            Predicate<CharSequence> protectedTableResolver
+    ) {
         final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
             LOG.info().$("Table type conversion is disabled").$();
@@ -90,7 +94,8 @@ public class TableConverter {
 
                                 final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                                 boolean isProtected = protectedTableResolver.test(tableName);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isProtected);
+                                boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
