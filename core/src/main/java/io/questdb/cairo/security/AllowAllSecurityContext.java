@@ -162,6 +162,11 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public SecurityContext copy() {
+        return this;
+    }
+
+    @Override
     public String getPrincipal() {
         return Constants.USER_NAME;
     }

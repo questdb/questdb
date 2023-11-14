@@ -114,9 +114,7 @@ public interface SecurityContext extends Mutable {
     default void clear() {
     }
 
-    default SecurityContext copy() {
-        return this;
-    }
+    SecurityContext copy();
 
     default CharSequence getAssumedServiceAccount() {
         final CharSequence principal = getPrincipal();
