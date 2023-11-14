@@ -37,6 +37,30 @@ import java.io.Closeable;
 public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
+     * Counts remaining number of records in this cursor, moving the cursor to the end.
+     * <p>
+     * Note - this method should handle return correct result even it's interrupted by {@link DataUnavailableException}
+     *
+     * @param circuitBreaker - circuit breaker to use to check for timeouts or stale connection.
+     * @return number of rows left to read
+     */
+    default long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
+        long count = 0;
+
+        if (circuitBreaker != null) {
+            while (hasNext()) {
+                count++;
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
+        } else {
+            while (hasNext()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
      * RecordCursor must be closed after other method calls are finished.
      */
     @Override
@@ -103,8 +127,8 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * Not every record cursor has a size, may return -1, in this case, keep going until hasNext()
      * indicated there are no more records to access.
      *
-     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      * @return size of records available to the cursor
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     long size() throws DataUnavailableException;
 
@@ -116,11 +140,16 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * designated timestamp).
      *
      * @param rowCount row count to skip down the cursor
-     * @return true if a fast skip is supported by the cursor and was executed, false otherwise
+     * @return number of skipped rows
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    default boolean skipTo(long rowCount) throws DataUnavailableException{
-        return false;
+    default long skipTo(long rowCount) throws DataUnavailableException {
+        long skipped = 0;
+        while (skipped < rowCount && hasNext()) {
+            skipped++;
+        }
+
+        return skipped;
     }
 
     /**

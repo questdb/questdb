@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
@@ -45,6 +46,12 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
+    public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
+        return cursorA.calculateSize(circuitBreaker) +
+                cursorB.calculateSize(circuitBreaker);
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }
@@ -62,6 +69,19 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
             return -1;
         }
         return sizeA + sizeB;
+    }
+
+    @Override
+    public long skipTo(long rowCount) throws DataUnavailableException {
+        long skipped = cursorA.skipTo(rowCount);
+        rowCount -= skipped;
+        if (rowCount > 0) {
+            skipped += cursorB.skipTo(rowCount);
+            record.setAb(false);
+            nextMethod = nextB;
+        }
+
+        return skipped;
     }
 
     @Override

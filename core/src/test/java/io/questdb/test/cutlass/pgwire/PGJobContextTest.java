@@ -2229,7 +2229,11 @@ if __name__ == "__main__":
     @Test
     public void testCancelOneQueryOutOfMultipleRunningOnes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+            ddl("create table if not exists tab as " +
+                    "(select x::timestamp ts, x, rnd_double() d " +
+                    "from long_sequence(1000000)) " +
+                    "timestamp(ts) " +
+                    "partition by day");
             mayDrainWalQueue();
 
             final int THREADS = 5;
@@ -2253,7 +2257,9 @@ if __name__ == "__main__":
                 for (int i = 0; i < THREADS; i++) {
                     final int j = i;
                     new Thread(() -> {
-                        final String query = (j == BLOCKED_THREAD) ? "select count(*) from tab t1 cross join tab t2 where t1.x > 0" : "select count(*) from tab where x > 0";
+                        final String query = (j == BLOCKED_THREAD) ?
+                                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0" :
+                                "select count(*) from tab where x > 0";
                         try (PreparedStatement stmt = conns.getQuick(j).prepareStatement(query)) {
                             startLatch.countDown();
                             startLatch.await();
@@ -2336,9 +2342,9 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
-        String[] queries = {"create table new_tab as (select count(*) from tab t1 cross join tab t2 where t1.x > 0)",
-                "select count(*) from tab t1 cross join tab t2 where t1.x > 0",
-                "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 cross join tab t2 where t1.x > 0",
+        String[] queries = {"create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0)",
+                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0",
+                "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0",
                 "update dest \n" +
                         "set l = t1.x \n" +
                         "from tab t1 \n" +
@@ -2373,7 +2379,7 @@ if __name__ == "__main__":
                     }, "cancellation thread").start();
                     try {
                         stmt.execute();
-                        Assert.fail("expected PSQLException with cancel message");
+                        Assert.fail("expected PSQLException with cancel message for query: " + query);
                     } catch (PSQLException e) {
                         isCancelled.set(true);
                         finished.await();
@@ -7247,7 +7253,12 @@ nodejs code:
     @Test
     public void testRunQueryAfterCancellingPreviousInTheSameConnection() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day");
+            ddl("create table if not exists tab as " +
+                    "(select x::timestamp ts, " +
+                    "        x, " +
+                    "        rnd_double() d " +
+                    " from long_sequence(1000000)) " +
+                    "timestamp(ts) partition by day");
             mayDrainWalQueue();
 
             try (
@@ -9542,7 +9553,7 @@ create table tab as (
         AtomicBoolean isCancelled = new AtomicBoolean(false);
         CountDownLatch finished = new CountDownLatch(1);
         backendPid = connection.getQueryExecutor().getBackendPID();
-        String query = "select count(*) from tab t1 cross join tab t2 where t1.x > 0";
+        String query = "select count(*) from tab t1 join tab t2 on t1.x = t2.x where t1.x > 0";
 
         try (final PreparedStatement stmt = connection.prepareStatement(query)) {
             new Thread(() -> {

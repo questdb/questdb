@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -63,6 +64,61 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         record = new PageAddressCacheRecord();
+    }
+
+    @Override
+    public long calculateSize(SqlExecutionCircuitBreaker circuitBreaker) {
+        if (frameIndex == -1) {
+            fetchNextFrame();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
+
+        if (rowsRemaining < 1) {
+            return 0;
+        }
+
+        long size = 0;
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
+            rowsRemaining -= frameRowsLeft;
+            frameRowIndex += frameRowsLeft;
+            size += frameRowsLeft;
+            if (rowsRemaining < 1) {
+                frameSequence.cancel();
+                return size;
+            }
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
+                rowsRemaining -= frameRowsLeft;
+                frameRowIndex += frameRowsLeft;
+                size += frameRowsLeft;
+                if (rowsRemaining < 1) {
+                    frameSequence.cancel();
+                    return size;
+                } else {
+                    collectCursor(false);
+                }
+            }
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
+
+        return size;
     }
 
     @Override
@@ -165,6 +221,55 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public long size() {
         return -1;
+    }
+
+    @Override
+    public long skipTo(long rowCount) throws DataUnavailableException {
+        if (frameIndex == -1) {
+            fetchNextFrame();
+        }
+
+        long rowCountLeft = Math.min(rowsRemaining, rowCount);
+        long skipped = 0;
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
+            rowsRemaining -= frameRowsLeft;
+            frameRowIndex += frameRowsLeft;
+            rowCountLeft -= frameRowsLeft;
+            skipped += frameRowsLeft;
+            if (rowCountLeft == 0) {
+                return skipped;
+            }
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
+                rowsRemaining -= frameRowsLeft;
+                frameRowIndex += frameRowsLeft;
+                rowCountLeft -= frameRowsLeft;
+                skipped += frameRowsLeft;
+                if (rowCountLeft == 0) {
+                    return skipped;
+                }
+            }
+
+            collectCursor(false);
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+        }
+
+        return skipped;
     }
 
     @Override
