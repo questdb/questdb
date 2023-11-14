@@ -33,43 +33,7 @@ public class ServerVersion {
 
     static {
         BuildInformationHolder buildInformation = new BuildInformationHolder(ShowServerVersionCursorFactory.class);
-        StringBuilder sb = new StringBuilder();
-        sb.append(buildInformation.getSwName()).append(' ')
-                .append(buildInformation.getSwVersion()).append(" JDK ")
-                .append(buildInformation.getJdkVersion()).append(", Hash ")
-                .append(buildInformation.getCommitHash()).append(" (");
-
-        switch (Os.type) {
-            case Os.FREEBSD:
-                sb.append("OS/ARCH freebsd/amd64");
-                break;
-            case Os.LINUX_AMD64:
-                sb.append("OS/Arch linux/amd64");
-                break;
-            case Os.LINUX_ARM64:
-                sb.append("OS/Arch linux/arm64");
-                break;
-            case Os.OSX_AMD64:
-                sb.append("OS/Arch apple/amd64");
-                break;
-            case Os.OSX_ARM64:
-                sb.append("OS/Arch apple/apple-silicon");
-                break;
-            case Os.WINDOWS:
-                sb.append("OS/Arch Windows/amd64");
-                break;
-            default:
-                sb.append("Unsupported OS");
-                break;
-        }
-        sb.append(Vect.getSupportedInstructionSetName());
-        if (sb.charAt(sb.length() - 1) == ']') {
-            sb.setLength(sb.length() - 1);
-        }
-        sb.append(", ").append(System.getProperty("os.arch")).append(", ")
-                .append(Runtime.getRuntime().availableProcessors()).append(" CPU")
-                .append("])");
-        SERVER_VERSION = sb.toString();
+        SERVER_VERSION = buildInformation.getSwVersion() + " (questdb)";
     }
 
 }
