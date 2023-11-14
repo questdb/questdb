@@ -1143,7 +1143,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
             Assert.assertEquals(1048576, configuration.getCairoConfiguration().getDataAppendPageSize());
-            Assert.assertEquals(4096, configuration.getCairoConfiguration().getSystemDataAppendPageSize());
+            Assert.assertEquals(131072, configuration.getCairoConfiguration().getSystemDataAppendPageSize());
             Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
             Assert.assertEquals(131072, configuration.getCairoConfiguration().getMiscAppendPageSize());
@@ -1210,7 +1210,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(42.2d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
             Assert.assertEquals(4242, configuration.getCairoConfiguration().getWalMaxLagTxnCount());
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getWalDataAppendPageSize());
-            Assert.assertEquals(16384, configuration.getCairoConfiguration().getSystemWalDataAppendPageSize());
+            Assert.assertEquals(524288, configuration.getCairoConfiguration().getSystemWalDataAppendPageSize());
 
             Assert.assertEquals(1, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
             final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;
