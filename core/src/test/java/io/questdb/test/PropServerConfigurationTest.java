@@ -57,9 +57,9 @@ public class PropServerConfigurationTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
-    protected final static Log LOG = LogFactory.getLog(PropServerConfigurationTest.class);
-    protected final static Rnd rnd = new Rnd();
-    protected final static StringSink sink = new StringSink();
+    protected static final Log LOG = LogFactory.getLog(PropServerConfigurationTest.class);
+    protected static final Rnd rnd = new Rnd();
+    protected static final StringSink sink = new StringSink();
     protected static String root;
 
     @AfterClass
@@ -176,7 +176,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
-        Assert.assertEquals(5, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
+        Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
         Assert.assertEquals(1_000, configuration.getCairoConfiguration().getSpinLockTimeout());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
@@ -381,7 +381,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWalPurgeInterval());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getWalRecreateDistressedSequencerAttempts());
-        Assert.assertEquals(60_000, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
+        Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
         Assert.assertFalse(configuration.getCairoConfiguration().getWalEnabledDefault());
@@ -400,7 +400,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(20, configuration.getCairoConfiguration().getWalMaxLagTxnCount());
         Assert.assertEquals(1048576, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
-
+        Assert.assertEquals(10, configuration.getCairoConfiguration().getWalWriterPoolMaxSegments());
 
         Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
@@ -1000,7 +1000,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
             Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
-            Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
+            Assert.assertEquals(42, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
             Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeout());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
@@ -1198,6 +1198,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
             Assert.assertEquals(23, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
             Assert.assertFalse(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
+            Assert.assertEquals(100, configuration.getCairoConfiguration().getWalWriterPoolMaxSegments());
             Assert.assertEquals(120, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
             Assert.assertEquals(42.2d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
