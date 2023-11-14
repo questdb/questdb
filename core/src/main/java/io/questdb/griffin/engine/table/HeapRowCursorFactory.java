@@ -73,6 +73,11 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public boolean isUsingIndex() {
+        return true;
+    }
+
+    @Override
     public void prepareCursor(TableReader tableReader) {
         RowCursorFactory.prepareCursor(cursorFactories, tableReader);
     }

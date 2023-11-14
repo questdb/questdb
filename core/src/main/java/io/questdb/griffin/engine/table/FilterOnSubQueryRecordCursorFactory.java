@@ -77,13 +77,13 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
+    public RecordCursorFactory getBaseFactory() {
+        return recordCursorFactory;
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return recordCursorFactory;
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
 
     @Override
@@ -193,7 +193,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         }
 
         @Override
-        public boolean skipTo(long rowCount) {
+        public long skipTo(long rowCount) {
             return delegate.skipTo(rowCount);
         }
 
