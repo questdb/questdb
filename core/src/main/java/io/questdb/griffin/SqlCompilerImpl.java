@@ -180,11 +180,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
     // public for testing
     public static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
         }
-
         if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
             throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
         }

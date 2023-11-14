@@ -560,7 +560,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.LastNotNullDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullFloatGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullGeoHashGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastNotNullIPv4GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullStrGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastNotNullSymbolGroupByFunctionFactory,
@@ -587,7 +589,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.FirstNotNullDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullFloatGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullGeoHashGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstNotNullIPv4GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullStrGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstNotNullSymbolGroupByFunctionFactory,
@@ -798,6 +802,8 @@ open module io.questdb {
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
+            io.questdb.griffin.engine.functions.metadata.InstanceNameFunctionFactory,
+            io.questdb.griffin.engine.functions.metadata.InstanceRGBFunctionFactory,
             // geohash functions
             io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
             // bin functions

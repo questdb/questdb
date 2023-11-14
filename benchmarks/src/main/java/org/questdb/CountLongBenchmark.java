@@ -47,7 +47,6 @@ public class CountLongBenchmark {
                 .include(CountLongBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(2)
-                .addProfiler("gc")
                 .forks(1)
                 .build();
 

@@ -17,7 +17,7 @@ public final class Utf8s {
     }
 
     public static boolean containsAscii(Utf8Sequence sequence, CharSequence term) {
-        return Chars.contains(sequence.asAsciiCharSequence(), term);
+        return indexOfAscii(sequence, 0, sequence.size(), term) != -1;
     }
 
     public static int encodeUtf16Char(@NotNull Utf8Sink sink, @NotNull CharSequence cs, int hi, int i, char c) {
@@ -245,19 +245,48 @@ public final class Utf8s {
         return indexOfAscii(seq, 0, asciiChar);
     }
 
-    public static int indexOfAscii(@NotNull Utf8Sequence seq, final int lo, char asciiChar) {
-        return indexOfAscii(seq, lo, seq.size(), asciiChar);
+    public static int indexOfAscii(@NotNull Utf8Sequence seq, int seqLo, char asciiChar) {
+        return indexOfAscii(seq, seqLo, seq.size(), asciiChar);
     }
 
-    public static int indexOfAscii(@NotNull Utf8Sequence seq, final int lo, int hi, char asciiChar) {
-        return indexOfAscii(seq, lo, hi, asciiChar, 1);
+    public static int indexOfAscii(@NotNull Utf8Sequence seq, int seqLo, int seqHi, char asciiChar) {
+        return indexOfAscii(seq, seqLo, seqHi, asciiChar, 1);
     }
 
-    public static int indexOfAscii(@NotNull Utf8Sequence seq, int lo, int hi, @NotNull CharSequence asciiTerm) {
-        return indexOfAscii(seq, lo, hi, asciiTerm, 1);
+    public static int indexOfAscii(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull CharSequence asciiTerm) {
+        int termLen = asciiTerm.length();
+        if (termLen == 0) {
+            return 0;
+        }
+
+        byte first = (byte) asciiTerm.charAt(0);
+        int max = seqHi - termLen;
+
+        for (int i = seqLo; i <= max; ++i) {
+            if (seq.byteAt(i) != first) {
+                do {
+                    ++i;
+                } while (i <= max && seq.byteAt(i) != first);
+            }
+
+            if (i <= max) {
+                int j = i + 1;
+                int end = j + termLen - 1;
+
+                for (int k = 1; j < end && seq.byteAt(j) == asciiTerm.charAt(k); ++k) {
+                    ++j;
+                }
+
+                if (j == end) {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
     }
 
-    public static int indexOfAscii(@NotNull Utf8Sequence seq, int lo, int hi, @NotNull CharSequence asciiTerm, int occurrence) {
+    public static int indexOfAscii(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull CharSequence asciiTerm, int occurrence) {
         int termLen = asciiTerm.length();
         if (termLen == 0) {
             return -1;
@@ -270,9 +299,9 @@ public final class Utf8s {
         int foundIndex = -1;
         int count = 0;
         if (occurrence > 0) {
-            for (int i = lo; i < hi; i++) {
+            for (int i = seqLo; i < seqHi; i++) {
                 if (foundIndex == -1) {
-                    if (hi - i < termLen) {
+                    if (seqHi - i < termLen) {
                         return -1;
                     }
                     if (seq.byteAt(i) == asciiTerm.charAt(0)) {
@@ -296,9 +325,9 @@ public final class Utf8s {
                 }
             }
         } else { // if occurrence is negative, search in reverse
-            for (int i = hi - 1; i >= lo; i--) {
+            for (int i = seqHi - 1; i >= seqLo; i--) {
                 if (foundIndex == -1) {
-                    if (i - lo + 1 < termLen) {
+                    if (i - seqLo + 1 < termLen) {
                         return -1;
                     }
                     if (seq.byteAt(i) == asciiTerm.charAt(termLen - 1)) {
@@ -326,14 +355,14 @@ public final class Utf8s {
         return -1;
     }
 
-    public static int indexOfAscii(@NotNull Utf8Sequence seq, int lo, int hi, char asciiChar, int occurrence) {
+    public static int indexOfAscii(@NotNull Utf8Sequence seq, int seqLo, int seqHi, char asciiChar, int occurrence) {
         if (occurrence == 0) {
             return -1;
         }
 
         int count = 0;
         if (occurrence > 0) {
-            for (int i = lo; i < hi; i++) {
+            for (int i = seqLo; i < seqHi; i++) {
                 if (seq.byteAt(i) == asciiChar) {
                     count++;
                     if (count == occurrence) {
@@ -342,7 +371,7 @@ public final class Utf8s {
                 }
             }
         } else { // if occurrence is negative, search in reverse
-            for (int i = hi - 1; i >= lo; i--) {
+            for (int i = seqHi - 1; i >= seqLo; i--) {
                 if (seq.byteAt(i) == asciiChar) {
                     count--;
                     if (count == occurrence) {

@@ -69,11 +69,6 @@ static inline jlong _io_questdb_std_Files_mremap0
     return (jlong) newAddr;
 }
 
-JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
-}
-
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
         (JNIEnv *e, jclass cl, jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
