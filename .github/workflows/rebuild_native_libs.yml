@@ -119,8 +119,6 @@ jobs:
       - name: Check C++ runtime dependency
         run: |
           cd ./core
-          which x86_64-w64-mingw32-objdump
-          x86_64-w64-mingw32-objdump -p ./src/main/resources/io/questdb/bin/windows/libquestdb.dll
           if x86_64-w64-mingw32-objdump -p ./src/main/resources/io/questdb/bin/windows/libquestdb.dll | grep -q libstdc++; then
             echo "Failure: C++ runtime dependency detected"
             exit 1
