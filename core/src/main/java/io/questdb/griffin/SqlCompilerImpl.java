@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -2541,6 +2540,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable {
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     factory = new ShowTimeZoneFactory();
                 }
+            } else if (SqlKeywords.isServerConfKeyword(tok)) {
+                factory = ShowServerConfCursorFactory();
             } else {
                 factory = unknownShowStatement(executionContext, tok);
             }

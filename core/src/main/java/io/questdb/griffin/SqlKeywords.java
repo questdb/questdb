@@ -1980,6 +1980,25 @@ public class SqlKeywords {
         return Chars.equals(token, ';');
     }
 
+    public static boolean isServerConfKeyword(CharSequence tok) {
+        if (tok.length() != 11) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'v'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && tok.charAt(i++) == '_'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i) | 32) == 'f';
+    }
+
     public static boolean isSetKeyword(CharSequence tok) {
         if (tok.length() != 3) {
             return false;

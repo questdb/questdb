@@ -156,6 +156,18 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsServerConfKeyword() {
+        Assert.assertTrue(SqlKeywords.isServerConfKeyword("SERVER_CONF"));
+        Assert.assertTrue(SqlKeywords.isServerConfKeyword("server_conf"));
+
+        Assert.assertFalse(SqlKeywords.isServerConfKeyword("SERVER CONF"));
+        Assert.assertFalse(SqlKeywords.isServerConfKeyword("server conf"));
+        Assert.assertFalse(SqlKeywords.isServerConfKeyword("server-conf"));
+        Assert.assertFalse(SqlKeywords.isServerConfKeyword("serverconf"));
+        Assert.assertFalse(SqlKeywords.isServerConfKeyword("server.conf"));
+    }
+
+    @Test
     public void testLinear() {
         Assert.assertFalse(isLinearKeyword("12345"));
         Assert.assertFalse(isLinearKeyword("123456"));
